@@ -2,5 +2,8 @@
 //!
 //! Module layering (each module depends only on those to its left):
 //! `base` <- `circuit` <- `stdlib` <- `honk` <- `goblin` <- `chonk` <- `acir`
+pub mod acir;
 pub mod base;
+pub mod circuit;
 pub mod honk;
+pub mod stdlib;

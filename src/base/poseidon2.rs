@@ -25,7 +25,7 @@ fn constants() -> &'static Constants {
 }
 
 /// MDS matrix [[5,7,1,3],[4,6,1,1],[1,3,5,7],[1,1,4,6]] applied in place.
-fn matrix_multiplication_external(s: &mut [Fr; 4]) {
+pub fn matrix_multiplication_external(s: &mut [Fr; 4]) {
     let t0 = s[0] + s[1];
     let t1 = s[2] + s[3];
     let mut t2 = s[1] + s[1];
@@ -43,7 +43,8 @@ fn matrix_multiplication_external(s: &mut [Fr; 4]) {
     *s = [t6, t5, t7, t4];
 }
 
-fn matrix_multiplication_internal(s: &mut [Fr; 4], diag_minus_one: &[Fr; 4]) {
+pub fn matrix_multiplication_internal(s: &mut [Fr; 4]) {
+    let diag_minus_one = &constants().diag_minus_one;
     let sum = s[0] + s[1] + s[2] + s[3];
     for i in 0..4 {
         s[i] *= diag_minus_one[i];
@@ -51,9 +52,14 @@ fn matrix_multiplication_internal(s: &mut [Fr; 4], diag_minus_one: &[Fr; 4]) {
     }
 }
 
-fn sbox(x: &mut Fr) {
+pub fn sbox(x: &mut Fr) {
     let x4 = x.sqr().sqr();
     *x *= x4;
+}
+
+/// The per-round constants, indexed `[round][state element]`.
+pub fn round_constants() -> &'static [[Fr; 4]; 64] {
+    &constants().round_constants
 }
 
 pub fn permutation(state: &mut [Fr; 4]) {
@@ -73,7 +79,7 @@ pub fn permutation(state: &mut [Fr; 4]) {
     for i in rounds_f_beginning..p_end {
         state[0] += c.round_constants[i][0];
         sbox(&mut state[0]);
-        matrix_multiplication_internal(state, &c.diag_minus_one);
+        matrix_multiplication_internal(state);
     }
     for i in p_end..num_rounds {
         for j in 0..4 {
