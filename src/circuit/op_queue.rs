@@ -397,7 +397,7 @@ fn fr_from_limbs(l: [u64; 4]) -> Fr {
 }
 
 /// The cube root of unity `β` used by bb's GLV decomposition (bb stores it in Montgomery form).
-fn cube_root_of_unity() -> Fr {
+pub fn cube_root_of_unity() -> Fr {
     static B: OnceLock<Fr> = OnceLock::new();
     *B.get_or_init(|| {
         let mont = fr_from_limbs([0x93e7cede4a0329b3, 0x7d4fdca77a96c167, 0x8be4ba08b19a750a, 0x1cbd5653a5661c25]);

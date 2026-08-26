@@ -132,7 +132,45 @@ impl<C: Curve> PairingPoints<C> {
     }
     pub fn from_fields(f: &[C::TF]) -> Self {
         let n = C::G::num_fields();
-        Self { p0: C::G::from_fields(&f[..n]), p1: C::G::from_fields(&f[n..2 * n]) }
+        Self {
+            p0: C::G::from_fields(&f[..n]),
+            p1: C::G::from_fields(&f[n..2 * n]),
+        }
+    }
+}
+
+impl<C: Curve> PairingPoints<C>
+where
+    C::TF: super::codec::ChallengeField,
+{
+    /// bb `PairingPoints::aggregate_multiple` (goblin form): a fresh transcript absorbs every point,
+    /// then `P = P_0 + Σ c_i P_i` with short challenges `c_i` and a batched multiplication.
+    pub fn aggregate_multiple(points: &[Self]) -> Self {
+        assert!(!points.is_empty());
+        if points.len() == 1 {
+            return Self {
+                p0: points[0].p0.clone(),
+                p1: points[0].p1.clone(),
+            };
+        }
+        let mut t = super::transcript::Transcript::<C::TF, C::Hash>::new();
+        let mut labels = Vec::new();
+        for (i, p) in points.iter().enumerate() {
+            t.add_to_hash_buffer(&format!("first_component_{i}"), &p.p0);
+            t.add_to_hash_buffer(&format!("second_component_{i}"), &p.p1);
+            if i > 0 {
+                labels.push(format!("pp_aggregation_challenge_{i}"));
+            }
+        }
+        let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let mut scalars: Vec<C::Fr> = vec![C::Fr::one()];
+        scalars.extend(t.short_challenges::<C::Fr>(&label_refs));
+        let firsts: Vec<C::G> = points.iter().map(|p| p.p0.clone()).collect();
+        let seconds: Vec<C::G> = points.iter().map(|p| p.p1.clone()).collect();
+        Self {
+            p0: C::G::batch_mul(&firsts, &scalars),
+            p1: C::G::batch_mul(&seconds, &scalars),
+        }
     }
 }
 

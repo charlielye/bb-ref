@@ -2,12 +2,15 @@
 //! (bb `stdlib::field_t`). Operations with a constant only update the scaling factors; operations
 //! between two witnesses emit one arithmetic gate. The gate shapes are bb's exactly.
 
-use crate::base::field::FieldLike;
+use crate::base::codec::{ChallengeField, FromChallenge, Transcriptable};
+use crate::base::field::{from_u256, u256, u256_low_bits, u256_num_bits, u256_shr, FieldLike};
 use crate::base::Fr;
-use crate::circuit::builder::{AddTriple, ArithmeticTriple, MulQuad};
+use crate::circuit::builder::{AddQuad, AddTriple, ArithmeticTriple, MulQuad, DEFAULT_PLOOKUP_RANGE_BITNUM};
 use crate::circuit::{Builder, IS_CONSTANT};
+use ark_ff::PrimeField;
 use std::cell::RefCell;
-use std::ops::{Add, Mul, Neg, Sub};
+use std::fmt;
+use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use std::rc::Rc;
 
 pub type Ctx = Rc<RefCell<Builder>>;
@@ -33,10 +36,20 @@ fn same_ctx(a: &Option<Ctx>, b: &Option<Ctx>) -> Option<Ctx> {
 
 impl FieldT {
     pub fn constant(v: Fr) -> Self {
-        Self { ctx: None, witness_index: IS_CONSTANT, additive_constant: v, multiplicative_constant: Fr::one() }
+        Self {
+            ctx: None,
+            witness_index: IS_CONSTANT,
+            additive_constant: v,
+            multiplicative_constant: Fr::one(),
+        }
     }
     pub fn from_witness_index(ctx: &Ctx, witness_index: u32) -> Self {
-        Self { ctx: Some(ctx.clone()), witness_index, additive_constant: Fr::zero(), multiplicative_constant: Fr::one() }
+        Self {
+            ctx: Some(ctx.clone()),
+            witness_index,
+            additive_constant: Fr::zero(),
+            multiplicative_constant: Fr::one(),
+        }
     }
     /// A new witness holding `v` (bb `witness_t`).
     pub fn from_witness(ctx: &Ctx, v: Fr) -> Self {
@@ -87,7 +100,12 @@ impl FieldT {
 
     pub fn add(&self, other: &Self) -> Self {
         let ctx = same_ctx(&self.ctx, &other.ctx);
-        let mut r = Self { ctx: ctx.clone(), witness_index: IS_CONSTANT, additive_constant: Fr::zero(), multiplicative_constant: Fr::one() };
+        let mut r = Self {
+            ctx: ctx.clone(),
+            witness_index: IS_CONSTANT,
+            additive_constant: Fr::zero(),
+            multiplicative_constant: Fr::one(),
+        };
         if self.witness_index == other.witness_index && !self.is_constant() {
             r.additive_constant = self.additive_constant + other.additive_constant;
             r.multiplicative_constant = self.multiplicative_constant + other.multiplicative_constant;
@@ -137,7 +155,12 @@ impl FieldT {
 
     pub fn mul(&self, other: &Self) -> Self {
         let ctx = same_ctx(&self.ctx, &other.ctx);
-        let mut r = Self { ctx: ctx.clone(), witness_index: IS_CONSTANT, additive_constant: Fr::zero(), multiplicative_constant: Fr::one() };
+        let mut r = Self {
+            ctx: ctx.clone(),
+            witness_index: IS_CONSTANT,
+            additive_constant: Fr::zero(),
+            multiplicative_constant: Fr::one(),
+        };
         if self.is_constant() && other.is_constant() {
             r.additive_constant = self.additive_constant * other.additive_constant;
         } else if !self.is_constant() && other.is_constant() {
@@ -159,7 +182,16 @@ impl FieldT {
             let right = b.get_variable(other.witness_index);
             let value = left * right * q_m + left * q_l + right * q_r + q_c;
             r.witness_index = b.add_variable(value);
-            b.create_arithmetic_gate(ArithmeticTriple { a: self.witness_index, b: other.witness_index, c: r.witness_index, q_m, q_l, q_r, q_o: -Fr::one(), q_c });
+            b.create_arithmetic_gate(ArithmeticTriple {
+                a: self.witness_index,
+                b: other.witness_index,
+                c: r.witness_index,
+                q_m,
+                q_l,
+                q_r,
+                q_o: -Fr::one(),
+                q_c,
+            });
         }
         r
     }
@@ -215,7 +247,18 @@ impl FieldT {
         let idx = b.add_variable(value);
         let wire = |f: &FieldT| if f.is_constant() { z } else { f.witness_index };
         b.create_big_mul_add_gate(
-            &MulQuad { a: wire(self), b: wire(to_mul), c: wire(to_add), d: idx, mul_scaling, a_scaling, b_scaling, c_scaling, d_scaling: -Fr::one(), const_scaling },
+            &MulQuad {
+                a: wire(self),
+                b: wire(to_mul),
+                c: wire(to_add),
+                d: idx,
+                mul_scaling,
+                a_scaling,
+                b_scaling,
+                c_scaling,
+                d_scaling: -Fr::one(),
+                const_scaling,
+            },
             false,
         );
         drop(b);
@@ -262,6 +305,444 @@ impl FieldT {
         assert!(!self.is_constant());
         let w = self.get_witness_index();
         self.ctx().borrow_mut().set_public_input(w)
+    }
+
+    /// bb `divide_no_zero_check`: `self / other` with the divisor assumed non-zero.
+    pub fn divide_no_zero_check(&self, other: &Self) -> Self {
+        let ctx = same_ctx(&self.ctx, &other.ctx);
+        let mut r = Self {
+            ctx: ctx.clone(),
+            witness_index: IS_CONSTANT,
+            additive_constant: Fr::zero(),
+            multiplicative_constant: Fr::one(),
+        };
+        let additive_multiplier = if other.additive_constant.is_zero() { Fr::one() } else { other.additive_constant.invert() };
+        if self.is_constant() && other.is_constant() {
+            r.additive_constant = self.additive_constant * additive_multiplier;
+        } else if !self.is_constant() && other.is_constant() {
+            r.additive_constant = self.additive_constant * additive_multiplier;
+            r.multiplicative_constant = self.multiplicative_constant * additive_multiplier;
+            r.witness_index = self.witness_index;
+        } else if self.is_constant() && !other.is_constant() {
+            if self.get_value().is_zero() {
+                r.additive_constant = Fr::zero();
+                r.multiplicative_constant = Fr::one();
+                r.witness_index = IS_CONSTANT;
+            } else {
+                let denominator = other.get_value();
+                let out = self.get_value() * if denominator.is_zero() { Fr::zero() } else { denominator.invert() };
+                let q_c = -self.get_value();
+                let ctx = ctx.unwrap();
+                let mut b = ctx.borrow_mut();
+                r.witness_index = b.add_variable(out);
+                b.create_arithmetic_gate(ArithmeticTriple {
+                    a: r.witness_index,
+                    b: other.witness_index,
+                    c: r.witness_index,
+                    q_m: other.multiplicative_constant,
+                    q_l: other.additive_constant,
+                    q_r: Fr::zero(),
+                    q_o: Fr::zero(),
+                    q_c,
+                });
+            }
+        } else {
+            let denominator = other.get_value();
+            let out = self.get_value() * if denominator.is_zero() { Fr::zero() } else { denominator.invert() };
+            let ctx = ctx.unwrap();
+            let mut b = ctx.borrow_mut();
+            r.witness_index = b.add_variable(out);
+            b.create_arithmetic_gate(ArithmeticTriple {
+                a: r.witness_index,
+                b: other.witness_index,
+                c: self.witness_index,
+                q_m: other.multiplicative_constant,
+                q_l: other.additive_constant,
+                q_r: Fr::zero(),
+                q_o: -self.multiplicative_constant,
+                q_c: -self.additive_constant,
+            });
+        }
+        r
+    }
+
+    /// bb `operator/`: asserts the divisor is non-zero, then divides.
+    pub fn div(&self, other: &Self) -> Self {
+        other.assert_is_not_zero();
+        self.divide_no_zero_check(other)
+    }
+
+    /// bb `invert`: `1 / self`; the division gate doubles as the non-zero check.
+    pub fn inverse(&self) -> Self {
+        if self.is_constant() {
+            assert!(!self.get_value().is_zero(), "field_t::invert denominator is constant 0");
+        } else if self.get_value().is_zero() {
+            self.ctx().borrow_mut().failure("field_t::invert denominator is 0");
+        }
+        Self::constant(Fr::one()).divide_no_zero_check(self)
+    }
+
+    /// bb `pow(uint32_t)`: square-and-multiply, the accumulator initialised by the first set bit.
+    pub fn pow_u32(&self, exponent: u32) -> Self {
+        if self.is_constant() {
+            return Self::constant(self.get_value().pow_u64(exponent as u64));
+        }
+        if exponent == 0 {
+            return Self::constant(Fr::one());
+        }
+        let mut accumulator: Option<Self> = None;
+        let mut running_power = self.clone();
+        let mut shifted = exponent;
+        while shifted != 0 {
+            if shifted & 1 == 1 {
+                accumulator = Some(match accumulator {
+                    None => running_power.clone(),
+                    Some(acc) => FieldT::mul(&acc, &running_power),
+                });
+            }
+            if shifted >= 2 {
+                running_power = FieldT::mul(&running_power, &running_power);
+            }
+            shifted >>= 1;
+        }
+        accumulator.unwrap()
+    }
+
+    pub fn assert_is_zero(&self) {
+        if self.is_constant() {
+            assert!(self.additive_constant.is_zero(), "assert_is_zero on a non-zero constant");
+            return;
+        }
+        let ctx = self.ctx();
+        if !self.get_value().is_zero() {
+            ctx.borrow_mut().failure("field_t::assert_is_zero");
+        }
+        let mut b = ctx.borrow_mut();
+        let z = b.zero_idx();
+        b.create_arithmetic_gate(ArithmeticTriple {
+            a: self.witness_index,
+            b: z,
+            c: z,
+            q_m: Fr::zero(),
+            q_l: self.multiplicative_constant,
+            q_r: Fr::zero(),
+            q_o: Fr::zero(),
+            q_c: self.additive_constant,
+        });
+    }
+
+    pub fn assert_is_not_zero(&self) {
+        if self.is_constant() {
+            assert!(!self.additive_constant.is_zero(), "assert_is_not_zero on a zero constant");
+            return;
+        }
+        let ctx = self.ctx();
+        let value = self.get_value();
+        if value.is_zero() {
+            ctx.borrow_mut().failure("field_t::assert_is_not_zero");
+        }
+        let inverse = Self::from_witness(&ctx, if value.is_zero() { Fr::zero() } else { value.invert() });
+        let mut b = ctx.borrow_mut();
+        let z = b.zero_idx();
+        b.create_arithmetic_gate(ArithmeticTriple {
+            a: self.witness_index,
+            b: inverse.witness_index,
+            c: z,
+            q_m: self.multiplicative_constant,
+            q_l: Fr::zero(),
+            q_r: self.additive_constant,
+            q_o: Fr::zero(),
+            q_c: -Fr::one(),
+        });
+    }
+
+    fn wire_or_zero(b: &Builder, f: &Self) -> u32 {
+        if f.is_constant() {
+            b.zero_idx()
+        } else {
+            f.witness_index
+        }
+    }
+
+    /// bb `evaluate_linear_identity`: constrain `a + b + c + d == 0` with one big-add gate.
+    pub fn evaluate_linear_identity(a: &Self, b: &Self, c: &Self, d: &Self) {
+        let ctx = same_ctx(&same_ctx(&a.ctx, &b.ctx), &same_ctx(&c.ctx, &d.ctx));
+        let sum = a.get_value() + b.get_value() + c.get_value() + d.get_value();
+        if a.is_constant() && b.is_constant() && c.is_constant() && d.is_constant() {
+            assert!(sum.is_zero(), "evaluate_linear_identity on constants");
+            return;
+        }
+        let ctx = ctx.unwrap();
+        if !sum.is_zero() {
+            ctx.borrow_mut().failure("field_t::evaluate_linear_identity");
+        }
+        let mut bd = ctx.borrow_mut();
+        let gate = AddQuad {
+            a: Self::wire_or_zero(&bd, a),
+            b: Self::wire_or_zero(&bd, b),
+            c: Self::wire_or_zero(&bd, c),
+            d: Self::wire_or_zero(&bd, d),
+            a_scaling: a.multiplicative_constant,
+            b_scaling: b.multiplicative_constant,
+            c_scaling: c.multiplicative_constant,
+            d_scaling: d.multiplicative_constant,
+            const_scaling: a.additive_constant + b.additive_constant + c.additive_constant + d.additive_constant,
+        };
+        bd.create_big_add_gate(gate, false);
+    }
+
+    /// bb `evaluate_polynomial_identity`: constrain `a * b + c + d == 0` with one big-mul-add gate.
+    pub fn evaluate_polynomial_identity(a: &Self, b: &Self, c: &Self, d: &Self) {
+        let value = a.get_value() * b.get_value() + c.get_value() + d.get_value();
+        if a.is_constant() && b.is_constant() && c.is_constant() && d.is_constant() {
+            assert!(value.is_zero(), "evaluate_polynomial_identity on constants");
+            return;
+        }
+        let ctx = same_ctx(&same_ctx(&a.ctx, &b.ctx), &same_ctx(&c.ctx, &d.ctx)).unwrap();
+        if !value.is_zero() {
+            ctx.borrow_mut().failure("field_t::evaluate_polynomial_identity");
+        }
+        let mut bd = ctx.borrow_mut();
+        let gate = MulQuad {
+            a: Self::wire_or_zero(&bd, a),
+            b: Self::wire_or_zero(&bd, b),
+            c: Self::wire_or_zero(&bd, c),
+            d: Self::wire_or_zero(&bd, d),
+            mul_scaling: a.multiplicative_constant * b.multiplicative_constant,
+            a_scaling: a.multiplicative_constant * b.additive_constant,
+            b_scaling: b.multiplicative_constant * a.additive_constant,
+            c_scaling: c.multiplicative_constant,
+            d_scaling: d.multiplicative_constant,
+            const_scaling: a.additive_constant * b.additive_constant + c.additive_constant + d.additive_constant,
+        };
+        bd.create_big_mul_add_gate(&gate, false);
+    }
+
+    /// bb `accumulate`: the sum of many terms as a chain of big-add gates, three terms per gate,
+    /// the running total carried in the next gate's fourth wire.
+    pub fn accumulate(input: &[Self]) -> Self {
+        if input.is_empty() {
+            return Self::constant(Fr::zero());
+        }
+        if input.len() == 1 {
+            return input[0].normalize();
+        }
+        let mut accumulator: Vec<Self> = Vec::new();
+        let mut constant_term = Self::constant(Fr::zero());
+        for element in input {
+            if element.is_constant() {
+                constant_term = FieldT::add(&constant_term, element);
+            } else {
+                accumulator.push(element.clone());
+            }
+        }
+        if accumulator.is_empty() {
+            return constant_term;
+        }
+        accumulator[0] = FieldT::add(&accumulator[0], &constant_term);
+        let ctx = accumulator[0].ctx();
+        let output: Fr = accumulator.iter().map(|a| a.get_value()).sum();
+        let num_padding = (3 - accumulator.len() % 3) % 3;
+        let zero_idx = ctx.borrow().zero_idx();
+        for _ in 0..num_padding {
+            accumulator.push(Self::from_witness_index(&ctx, zero_idx));
+        }
+        let num_gates = accumulator.len() / 3;
+        let total = Self::from_witness(&ctx, output);
+        let mut accumulating_total = total.clone();
+        for i in 0..num_gates {
+            let (x, y, z) = (&accumulator[3 * i], &accumulator[3 * i + 1], &accumulator[3 * i + 2]);
+            let gate = AddQuad {
+                a: x.witness_index,
+                b: y.witness_index,
+                c: z.witness_index,
+                d: accumulating_total.witness_index,
+                a_scaling: x.multiplicative_constant,
+                b_scaling: y.multiplicative_constant,
+                c_scaling: z.multiplicative_constant,
+                d_scaling: -Fr::one(),
+                const_scaling: x.additive_constant + y.additive_constant + z.additive_constant,
+            };
+            let last = i + 1 == num_gates;
+            ctx.borrow_mut().create_big_add_gate(gate, !last);
+            if !last {
+                let new_total = accumulating_total.get_value() - x.get_value() - y.get_value() - z.get_value();
+                accumulating_total = Self::from_witness(&ctx, new_total);
+            }
+        }
+        total.normalize()
+    }
+
+    /// bb `create_range_constraint`: `self < 2^num_bits` by limb decomposition into 14-bit lookups.
+    pub fn create_range_constraint(&self, num_bits: u64) {
+        if num_bits == 0 {
+            self.assert_is_zero();
+        } else if self.is_constant() {
+            assert!((u256_num_bits(&u256(&self.get_value())) as u64) <= num_bits, "constant out of range");
+        } else {
+            let w = self.normalize().witness_index;
+            self.ctx().borrow_mut().create_limbed_range_constraint(w, num_bits, DEFAULT_PLOOKUP_RANGE_BITNUM);
+        }
+    }
+
+    /// bb `convert_constant_to_fixed_witness`: a new witness holding the constant, fixed by a gate.
+    pub fn convert_constant_to_fixed_witness(&mut self, ctx: &Ctx) {
+        assert!(self.is_constant());
+        let value = self.get_value();
+        let idx = ctx.borrow_mut().add_variable(value);
+        ctx.borrow_mut().fix_witness(idx, value);
+        *self = Self::from_witness_index(ctx, idx);
+    }
+
+    pub fn fix_witness(&self) {
+        assert!(!self.is_constant());
+        self.ctx().borrow_mut().fix_witness(self.witness_index, self.get_value());
+    }
+}
+
+/// bb `split_unique`: `field = lo + hi * 2^lo_bits` with `lo < 2^lo_bits`, `hi < 2^(254 - lo_bits)`
+/// and the pair validated to be the unique in-field decomposition.
+pub fn split_unique(field: &FieldT, lo_bits: u32) -> (FieldT, FieldT) {
+    const MAX_BITS: u32 = 254;
+    let value = u256(&field.get_value());
+    let lo_val: Fr = from_u256(u256_low_bits(value, lo_bits));
+    let hi_val: Fr = from_u256(u256_shr(value, lo_bits));
+    if field.is_constant() {
+        return (FieldT::constant(lo_val), FieldT::constant(hi_val));
+    }
+    let ctx = field.ctx();
+    let lo = FieldT::from_witness(&ctx, lo_val);
+    let hi = FieldT::from_witness(&ctx, hi_val);
+    let shift: Fr = from_u256(crate::base::field::U256::from(1u64) << lo_bits);
+    let zero_idx = ctx.borrow().zero_idx();
+    let zero = FieldT::from_witness_index(&ctx, zero_idx);
+    FieldT::evaluate_linear_identity(&lo, &FieldT::mul(&hi, &FieldT::constant(shift)), &FieldT::neg(field), &zero);
+    validate_split_in_field_unsafe(&lo, &hi, lo_bits);
+    lo.create_range_constraint(lo_bits as u64);
+    hi.create_range_constraint((MAX_BITS - lo_bits) as u64);
+    (lo, hi)
+}
+
+/// bb `validate_split_in_field_unsafe`: borrow-subtraction check that `lo + hi * 2^lo_bits < r`.
+fn validate_split_in_field_unsafe(lo: &FieldT, hi: &FieldT, lo_bits: u32) {
+    let modulus = Fr::MODULUS;
+    let hi_bits = 254 - lo_bits;
+    let r_lo = u256_low_bits(modulus, lo_bits);
+    let r_hi = u256_shr(modulus, lo_bits);
+    let need_borrow = u256(&lo.get_value()) >= r_lo;
+    let ctx = lo.ctx();
+    let borrow = FieldT::from_witness(&ctx, Fr::from(need_borrow as u64));
+    ctx.borrow_mut().create_small_range_constraint(borrow.witness_index, 1);
+    let hi_diff = &(&FieldT::neg(hi) + &FieldT::constant(from_u256(r_hi))) - &borrow;
+    let shift = FieldT::constant(from_u256(crate::base::field::U256::from(1u64) << lo_bits));
+    let lo_diff = &(&FieldT::neg(lo) + &FieldT::constant(from_u256::<Fr>(r_lo) - Fr::one())) + &(&borrow * &shift);
+    hi_diff.create_range_constraint(hi_bits as u64);
+    lo_diff.create_range_constraint(lo_bits as u64);
+}
+
+impl fmt::Debug for FieldT {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "FieldT({:?})", self.get_value())
+    }
+}
+
+/// Structural equality (bb `witness_indices_match` plus the scaling constants); use `value()` to
+/// compare represented values.
+impl PartialEq for FieldT {
+    fn eq(&self, other: &Self) -> bool {
+        self.witness_index == other.witness_index && self.additive_constant == other.additive_constant && self.multiplicative_constant == other.multiplicative_constant
+    }
+}
+
+impl FieldLike for FieldT {
+    type Native = Fr;
+    type Ctx = Ctx;
+    fn ctx(&self) -> Option<Ctx> {
+        self.ctx.clone()
+    }
+    fn constant(v: Fr) -> Self {
+        FieldT::constant(v)
+    }
+    fn from_witness(ctx: &Ctx, v: Fr) -> Self {
+        FieldT::from_witness(ctx, v)
+    }
+    fn value(&self) -> Fr {
+        self.get_value()
+    }
+    fn invert(&self) -> Self {
+        self.inverse()
+    }
+    fn assert_equal(&self, other: &Self) {
+        FieldT::assert_equal(self, other)
+    }
+    fn pow_u64(&self, e: u64) -> Self {
+        self.pow_u32(u32::try_from(e).expect("in-circuit exponents are 32-bit"))
+    }
+}
+
+impl Neg for FieldT {
+    type Output = FieldT;
+    fn neg(self) -> FieldT {
+        FieldT::neg(&self)
+    }
+}
+impl AddAssign<&FieldT> for FieldT {
+    fn add_assign(&mut self, o: &FieldT) {
+        *self = FieldT::add(self, o);
+    }
+}
+impl SubAssign<&FieldT> for FieldT {
+    fn sub_assign(&mut self, o: &FieldT) {
+        *self = FieldT::sub(self, o);
+    }
+}
+impl MulAssign<&FieldT> for FieldT {
+    fn mul_assign(&mut self, o: &FieldT) {
+        *self = FieldT::mul(self, o);
+    }
+}
+impl AddAssign for FieldT {
+    fn add_assign(&mut self, o: FieldT) {
+        *self = FieldT::add(self, &o);
+    }
+}
+impl SubAssign for FieldT {
+    fn sub_assign(&mut self, o: FieldT) {
+        *self = FieldT::sub(self, &o);
+    }
+}
+impl MulAssign for FieldT {
+    fn mul_assign(&mut self, o: FieldT) {
+        *self = FieldT::mul(self, &o);
+    }
+}
+
+impl Transcriptable<FieldT> for FieldT {
+    fn num_fields() -> usize {
+        1
+    }
+    fn to_fields(&self) -> Vec<FieldT> {
+        vec![self.clone()]
+    }
+    fn from_fields(f: &[FieldT]) -> Self {
+        f[0].clone()
+    }
+}
+
+impl FromChallenge<FieldT> for FieldT {
+    fn full(c: FieldT) -> Self {
+        c
+    }
+    fn short(c: FieldT) -> Self {
+        c
+    }
+}
+
+/// bb `StdlibCodec::split_challenge`: the two 127-bit halves as range-constrained witnesses.
+impl ChallengeField for FieldT {
+    fn split_challenge(&self) -> [Self; 2] {
+        let (lo, hi) = split_unique(self, 127);
+        [lo, hi]
     }
 }
 

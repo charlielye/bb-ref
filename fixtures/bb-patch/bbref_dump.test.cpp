@@ -36,7 +36,12 @@
 #include "barretenberg/hypernova/hypernova_prover.hpp"
 #include "barretenberg/hypernova/hypernova_verifier.hpp"
 #include "barretenberg/ultra_honk/verifier_instance.hpp"
+#include "barretenberg/stdlib/hash/poseidon2/poseidon2.hpp"
 #include "barretenberg/stdlib/hash/poseidon2/poseidon2_permutation.hpp"
+#include "barretenberg/stdlib/primitives/databus/databus.hpp"
+#include "barretenberg/stdlib/primitives/pairing_points.hpp"
+#include "barretenberg/stdlib/primitives/field/field_utils.hpp"
+#include "barretenberg/transcript/transcript.hpp"
 #include "barretenberg/stdlib/primitives/memory/ram_table.hpp"
 #include "barretenberg/stdlib/primitives/memory/rom_table.hpp"
 #include "barretenberg/stdlib/special_public_inputs/special_public_inputs.hpp"
@@ -1051,4 +1056,185 @@ TEST(BbRefDump, Chonk)
     proof.to_file_msgpack((out / "proof.msgpack").string());
     write_file(out / "vk", to_buffer(*vk));
     EXPECT_TRUE(verify(proof, vk));
+}
+
+// --- M13: stdlib programs (gate-exactness of the in-circuit primitives) ---------------------------------
+// BBREF_STDLIB=<program> BBREF_OUT=<dir> ./bin/dsl_tests --gtest_filter='BbRefDump.Stdlib'
+// Programs: field_ops, poseidon2_hash_<N>, transcript, goblin_batch_mul_<K>, aggregate_multiple_<N>,
+// io_app_default, io_kernel_default, io_hiding_default, kernel_io_set, hiding_io_set. Each builds a Mega circuit
+// from deterministic values through the stdlib API only; the dump is compared polynomial-for-polynomial in Rust.
+namespace stdlib_programs {
+using Builder = MegaCircuitBuilder;
+using field_ct = stdlib::field_t<Builder>;
+using witness_ct = stdlib::witness_t<Builder>;
+using Curve = stdlib::bn254<Builder>;
+using G1 = Curve::Group;
+using PairingPointsCt = stdlib::recursion::PairingPoints<Curve>;
+using bb::g1;
+
+field_ct w(Builder& b, uint64_t v) { return field_ct(witness_ct(&b, fr(v))); }
+g1::affine_element pt(uint64_t k) { return g1::affine_element(g1::element(g1::affine_element::one()) * fr(k)); }
+
+void field_ops(Builder& b)
+{
+    field_ct a = w(b, 3), bb_ = w(b, 5), c = w(b, 7);
+    field_ct d = a + bb_;
+    field_ct e = d * c;
+    field_ct f = e - a;
+    field_ct g = -f;
+    field_ct h = (g + field_ct(11)) * field_ct(2);
+    field_ct i = a.madd(bb_, c);
+    field_ct j = a.add_two(bb_, c);
+    field_ct k = e / bb_;
+    field_ct l = c.invert();
+    field_ct m = d.pow(5);
+    field_ct n = field_ct::accumulate({ a, bb_, c, d, e, field_ct(4), f, g, h, i, j });
+    field_ct p = m * field_ct(3) + field_ct(1);
+    field_ct r = field_ct(witness_ct(&b, p.get_value()));
+    p.assert_equal(r);
+    field_ct s = w(b, 0);
+    s.assert_is_zero();
+    a.assert_is_not_zero();
+    (a * bb_).assert_equal(field_ct(15));
+    field_ct neg22 = field_ct(witness_ct(&b, -fr(22)));
+    field_ct::evaluate_polynomial_identity(a, bb_, c, neg22);
+    field_ct neg15 = field_ct(witness_ct(&b, -fr(15)));
+    field_ct::evaluate_linear_identity(a, bb_, c, neg15);
+    a.create_range_constraint(8);
+    e.create_range_constraint(20);
+    (d * field_ct(1000)).create_range_constraint(68);
+    field_ct t = field_ct(witness_ct(&b, fr(uint256_t("0x00000000000000000123456789abcdef0123456789abcdef0123456789abcdef"))));
+    auto [lo, hi] = stdlib::split_unique(t, 127);
+    field_ct u(9);
+    u.convert_constant_to_fixed_witness(&b);
+    u.set_public();
+    a.set_public();
+    (k + l + n + lo + hi).set_public();
+}
+
+void poseidon2_hash(Builder& b, size_t n)
+{
+    std::vector<field_ct> inputs;
+    for (size_t i = 0; i < n; ++i) {
+        inputs.push_back(w(b, i + 1));
+    }
+    stdlib::poseidon2<Builder>::hash(inputs).set_public();
+}
+
+void transcript(Builder& b)
+{
+    bb::StdlibTranscript<Builder> t;
+    t.send_to_verifier("a", w(b, 42));
+    t.add_to_hash_buffer("vk", w(b, 43));
+    field_ct c1 = t.get_challenge<field_ct>("c1");
+    G1 p = G1::from_witness(&b, pt(7));
+    t.send_to_verifier("P", p);
+    auto shorts = t.get_short_challenges<field_ct>(std::vector<std::string>{ "s1", "s2" });
+    field_ct c2 = t.get_challenge<field_ct>("c2");
+    auto powers = t.get_dyadic_powers_of_challenge<field_ct>("gate", 4);
+    (c1 + shorts[0] + shorts[1] + c2 + powers[3]).set_public();
+}
+
+void goblin_batch_mul(Builder& b, size_t k)
+{
+    std::vector<G1> points;
+    std::vector<field_ct> scalars;
+    for (size_t i = 0; i < k; ++i) {
+        points.push_back(G1::from_witness(&b, pt(i + 1)));
+        scalars.push_back(i == 1 ? field_ct(1) : w(b, i + 3));
+    }
+    G1 r = G1::batch_mul(points, scalars);
+    G1 expected = G1::from_witness(&b, r.get_value());
+    r.incomplete_assert_equal(expected);
+    if (k >= 2) {
+        G1 s = points[0] + points[1];
+        G1 d = points[0] - points[1];
+        s.set_public();
+        d.set_public();
+    }
+    G1 neg = -points[0];
+    neg.set_public();
+    (r * scalars[0]).set_public();
+    (G1::one(&b) + points[0]).set_public();
+}
+
+void aggregate_multiple(Builder& b, size_t n)
+{
+    std::vector<PairingPointsCt> pps;
+    for (size_t i = 0; i < n; ++i) {
+        pps.emplace_back(G1::from_witness(&b, pt(2 * i + 1)), G1::from_witness(&b, pt(2 * i + 2)));
+    }
+    PairingPointsCt agg = PairingPointsCt::aggregate_multiple(pps, /*handle_edge_cases=*/false);
+    agg.set_public(&b);
+    b.finalize_public_inputs();
+}
+
+void kernel_io_set(Builder& b)
+{
+    stdlib::DataBusDepot<Builder> depot;
+    depot.set_app_return_data_commitment(G1::from_witness(&b, pt(5)));
+    depot.set_kernel_return_data_commitment(G1::from_witness(&b, pt(6)));
+    stdlib::recursion::honk::KernelIO io;
+    io.pairing_inputs = PairingPointsCt(G1::from_witness(&b, pt(1)), G1::from_witness(&b, pt(2)));
+    io.kernel_return_data = depot.get_kernel_return_data_commitment(b);
+    for (size_t i = 0; i < MAX_APPS_PER_KERNEL; ++i) {
+        io.app_return_data[i] = depot.get_app_return_data_commitment(b, i);
+    }
+    io.ecc_op_hash = w(b, 9);
+    io.output_hn_accum_hash = w(b, 10);
+    io.set_public();
+}
+
+void hiding_io_set(Builder& b)
+{
+    stdlib::recursion::honk::HidingKernelIO<Builder> io;
+    io.pairing_inputs = PairingPointsCt(G1::from_witness(&b, pt(1)), G1::from_witness(&b, pt(2)));
+    io.kernel_return_data = G1::from_witness(&b, pt(3));
+    for (size_t i = 0; i < 4; ++i) {
+        io.ecc_op_tables[i] = G1::from_witness(&b, pt(10 + i));
+    }
+    io.set_public();
+}
+
+void run(Builder& b, const std::string& name)
+{
+    auto suffix = [&](const std::string& prefix) { return std::stoul(name.substr(prefix.size())); };
+    if (name == "field_ops") {
+        field_ops(b);
+    } else if (name.starts_with("poseidon2_hash_")) {
+        poseidon2_hash(b, suffix("poseidon2_hash_"));
+    } else if (name == "transcript") {
+        transcript(b);
+    } else if (name.starts_with("goblin_batch_mul_")) {
+        goblin_batch_mul(b, suffix("goblin_batch_mul_"));
+    } else if (name.starts_with("aggregate_multiple_")) {
+        aggregate_multiple(b, suffix("aggregate_multiple_"));
+    } else if (name == "io_app_default") {
+        stdlib::recursion::honk::AppIO::add_default(b);
+    } else if (name == "io_kernel_default") {
+        stdlib::recursion::honk::KernelIO::add_default(b);
+    } else if (name == "io_hiding_default") {
+        stdlib::recursion::honk::HidingKernelIO<Builder>::add_default(b);
+    } else if (name == "kernel_io_set") {
+        kernel_io_set(b);
+    } else if (name == "hiding_io_set") {
+        hiding_io_set(b);
+    } else {
+        throw_or_abort("unknown stdlib program " + name);
+    }
+}
+} // namespace stdlib_programs
+
+TEST(BbRefDump, Stdlib)
+{
+    const char* program = std::getenv("BBREF_STDLIB");
+    const char* out = std::getenv("BBREF_OUT");
+    if (program == nullptr || out == nullptr) {
+        GTEST_SKIP() << "set BBREF_STDLIB, BBREF_OUT";
+    }
+    bb::srs::init_file_crs_factory(bb::srs::bb_crs_path());
+    MegaCircuitBuilder builder{ std::make_shared<ECCOpQueue>() };
+    stdlib_programs::run(builder, program);
+    ASSERT_FALSE(builder.failed()) << builder.err();
+    dump_from_builder<MegaKernelFlavor>(builder, out);
 }
