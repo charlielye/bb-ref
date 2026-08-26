@@ -8,7 +8,7 @@ use super::multilinear_batching::{mlb_prove, mlb_verify};
 use super::oink::verify_oink;
 use super::oink_prover::prove_oink;
 use super::prover_instance::ProverInstance;
-use super::sumcheck::{prove_sumcheck, verify_sumcheck};
+use super::sumcheck::{prove_sumcheck, verify_sumcheck, HonkRelations, SumcheckSpec};
 use crate::base::codec::{ChallengeField, Transcriptable};
 use crate::base::field::FieldLike;
 use crate::base::group::{Curve, GroupLike};
@@ -113,7 +113,7 @@ pub fn instance_to_accumulator(inst: &mut ProverInstance, vk: &Vk<Bn254>, ck: &C
     let oink = prove_oink(inst, vk, ck, t, rng);
     let betas: Vec<Fr> = t.dyadic_powers("HypernovaFoldingProver:gate_challenge", flavor.virtual_log_n);
     let polys = inst.all_polys();
-    let sc = prove_sumcheck(flavor, &inst.layout, &polys, t, &oink.alpha, &betas, &oink.params, None);
+    let sc = prove_sumcheck::<Bn254>(&HonkRelations { flavor, layout: &inst.layout }, &SumcheckSpec::honk(flavor, &inst.layout), &polys, t, &oink.alpha, &betas, &oink.params, None, None);
 
     let layout = &inst.layout;
     let (uc, sh) = batching_challenges::<Bn254>(t, layout.num_unshifted(), layout.num_shifted());
@@ -150,7 +150,7 @@ where
     let layout = flavor.layout();
     let oink = verify_oink::<C>(flavor, &layout, vk, t, num_public_inputs);
     let betas: Vec<C::Fr> = t.dyadic_powers("HypernovaFoldingProver:gate_challenge", flavor.virtual_log_n);
-    let sc = verify_sumcheck::<C>(flavor, &layout, t, &oink.alpha, &oink.params, &betas);
+    let sc = verify_sumcheck::<C>(&HonkRelations { flavor, layout: &layout }, &SumcheckSpec::honk(flavor, &layout), t, &oink.alpha, &oink.params, &betas);
     let (uc, sh) = batching_challenges::<C>(t, layout.num_unshifted(), layout.num_shifted());
     let mut non_shifted_evaluation = C::Fr::zero();
     let mut shifted_evaluation = C::Fr::zero();

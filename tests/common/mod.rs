@@ -14,4 +14,5 @@ pub fn read(rel: &str) -> Vec<u8> {
     std::fs::read(&p).unwrap_or_else(|e| panic!("missing fixture {}: {e}", p.display()))
 }
 
+pub mod eccvm_ops;
 pub mod script;

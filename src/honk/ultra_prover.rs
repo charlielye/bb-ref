@@ -3,7 +3,7 @@
 use super::oink_prover::prove_oink;
 use super::pcs::{kzg_open, shplemini_prove, small_subgroup_ipa_prove};
 use super::prover_instance::ProverInstance;
-use super::sumcheck::{prove_sumcheck, ZkData};
+use super::sumcheck::{prove_sumcheck, HonkRelations, SumcheckSpec, ZkData};
 use crate::base::group::Curve;
 use crate::base::rng::Rng;
 use crate::base::transcript::NativeTranscript;
@@ -24,13 +24,14 @@ pub fn prove_ultra(inst: &mut ProverInstance, vk: &Vk<Bn254>, rng: &mut dyn Rng)
     let betas: Vec<Fr> = t.dyadic_powers("Sumcheck:gate_challenge", flavor.virtual_log_n);
 
     let polys = inst.all_polys();
-    let mut zk = flavor.has_zk.then(|| ZkData::new(flavor.virtual_log_n, &mut t, &ck, rng));
-    let sc = prove_sumcheck(flavor, &inst.layout, &polys, &mut t, &oink.alpha, &betas, &oink.params, zk.as_mut());
+    let mut zk = flavor.has_zk.then(|| ZkData::<Bn254>::new(flavor.virtual_log_n, &mut t, &ck, rng));
+    let rels = HonkRelations { flavor, layout: &inst.layout };
+    let sc = prove_sumcheck::<Bn254>(&rels, &SumcheckSpec::honk(flavor, &inst.layout), &polys, &mut t, &oink.alpha, &betas, &oink.params, zk.as_mut(), None);
 
     let layout = &inst.layout;
     let unshifted: Vec<&_> = inst.polys.iter().collect();
     let to_be_shifted: Vec<&_> = layout.shifted.iter().map(|e| inst.poly(*e)).collect();
-    let libra = zk.as_ref().map(|z| small_subgroup_ipa_prove(z, &sc.challenge, &sc.libra_evaluation, &ck, &mut t, rng));
+    let libra = zk.as_ref().map(|z| small_subgroup_ipa_prove::<Bn254>(z, &sc.challenge, &sc.libra_evaluation, &ck, &mut t, rng));
     let claim = shplemini_prove(&unshifted, &to_be_shifted, &sc.challenge, &ck, &mut t, libra.as_ref());
     kzg_open(claim, &ck, &mut t);
     t.export_proof()

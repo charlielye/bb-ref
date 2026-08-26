@@ -8,7 +8,7 @@ use crate::base::codec::{FromChallenge, Transcriptable};
 use crate::base::field::{u256, u256_to_u64, FieldLike};
 use crate::base::group::{Curve, GroupLike, PairingPoints};
 use crate::base::poseidon2::Hasher;
-use crate::base::{CommitmentKey, Fr, G1Affine, NativeTranscript, Poly, Transcript};
+use crate::base::{Bn254, CommitmentKey, Fr, G1Affine, NativeTranscript, Poly, Transcript};
 use crate::circuit::op_queue::{EccOpQueue, ZK_ULTRA_OPS};
 use crate::honk::pcs::{kzg_open, kzg_reduce_verify_batch_opening_claim, shplonk_prove, shplonk_verify, ProverClaim, VerifierOpeningClaim};
 
@@ -96,7 +96,7 @@ pub fn batch_merge_prove(q: &EccOpQueue, max_subtables: usize, ck: &CommitmentKe
         claims.push(ProverClaim { poly, challenge: kappa, evaluation: evals[(m + 1) * NUM_WIRES + col], gemini_fold: false });
     }
     claims.push(ProverClaim { poly: g, challenge: kappa_inv, evaluation: *evals.last().unwrap(), gemini_fold: false });
-    let opening = shplonk_prove(0, &claims, &[], ck, &mut t);
+    let opening = shplonk_prove::<Bn254>(0, &claims, &[], ck, &mut t).claim;
     kzg_open(opening, ck, &mut t);
     t.export_proof()
 }

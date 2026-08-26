@@ -11,6 +11,9 @@ use std::sync::OnceLock;
 
 type Proj = ark_bn254::G1Projective;
 
+/// The five transcript columns the Translator consumes.
+pub const TRANSLATION_ENTITIES: [Ent; 5] = [transcript_op, transcript_Px, transcript_Py, transcript_z1, transcript_z2];
+
 /// bb `ECCVM_OFFSET_GENERATOR` (unscaled): the MSM accumulator's starting point.
 pub fn offset_generator_base() -> G1Affine {
     G1Affine::new_unchecked(

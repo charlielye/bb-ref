@@ -2,11 +2,14 @@
 //! the op queue — the transcript of ops, the wNAF point tables, and the Straus MSM rows.
 
 pub mod check;
+pub mod prover;
 pub mod relations;
 pub mod trace;
+pub mod verifier;
 
+use crate::base::field::from_hex;
 use crate::base::poly::Polynomial;
-use crate::base::Fq;
+use crate::base::{Fq, Fr, GrumpkinAffine};
 
 pub const TRACE_OFFSET: usize = 4;
 pub const CONST_ECCVM_LOG_N: usize = 15;
@@ -181,6 +184,34 @@ pub const TO_BE_SHIFTED: [Ent; NUM_SHIFTED] = [
     transcript_accumulator_y,
     z_perm,
 ];
+
+/// The fixed ECCVM verification key: commitments to the four Lagrange polynomials of the fixed-size
+/// trace (bb `ECCVMHardcodedVKAndHash`), and its hash.
+pub fn fixed_vk() -> [GrumpkinAffine; NUM_PRECOMPUTED] {
+    let p = |x: &str, y: &str| GrumpkinAffine::new_unchecked(from_hex(x), from_hex(y));
+    [
+        p("0x1227d829cc03e51a2cc68ca0e08381c02b78c484f4092a10584ef78381a31968", "0x10b233eb875fed8834f6235ed737946b68c0c7ed258053cd943dcc69212d90d6"),
+        p("0x1976c760e4bde34db58394888baeda91f57bcdddf60aec28b721b10aac55f555", "0x26eec8e50bdb2cfc3956e90bd72c9098d4a5de28c1c1c236955d14884a8f498d"),
+        p("0x1a96c5eae61aba7353221e65adf123d30255415db00b8063157f2764a3034e26", "0x0d04425c0f370a7aaace3cf41f9b2380079c95fa26f9f83b5fd5e26813dbd289"),
+        p("0x23a271e0e1d99d2a526cc8c06df7edf7c86e9cb985e577affb5a64b9daf24401", "0x12a74c457ae1f9bd6076c308f47a006deb82adfd576be1266cde1cdc0d008cd1"),
+    ]
+}
+
+pub fn fixed_vk_hash() -> Fr {
+    from_hex("0x032ece6c493f6e74ca8847127f189f8e759021e53df9820a88985e41e400fde2")
+}
+
+/// bb's commitment label of an entity (its name in upper case).
+pub fn label(e: Ent) -> String {
+    format!("{e:?}").to_uppercase()
+}
+
+/// The entity at index `i`.
+pub fn ent(i: usize) -> Ent {
+    assert!(i < NUM_ALL_ENTITIES);
+    // SAFETY: `Ent` is `repr(u8)` with contiguous discriminants `0..NUM_ALL_ENTITIES`.
+    unsafe { std::mem::transmute(i as u8) }
+}
 
 /// The ECCVM's polynomials, one per entity, all of the fixed dyadic size.
 pub struct EccvmPolys {

@@ -3,7 +3,7 @@
 use super::flavor::{FlavorDesc, Layout};
 use super::oink::verify_oink;
 use super::pcs::{kzg_reduce_verify_batch_opening_claim, shplemini_verify, ClaimBatcher, NUM_SMALL_IPA_COMMITMENTS};
-use super::sumcheck::verify_sumcheck;
+use super::sumcheck::{verify_sumcheck, HonkRelations, SumcheckSpec};
 use crate::base::codec::Transcriptable;
 use crate::base::field::FieldLike;
 use crate::base::group::{Bn254, Curve, G2Points, GroupLike, PairingPoints};
@@ -55,7 +55,7 @@ pub fn reduce_to_pairing_check<C: Curve>(flavor: &FlavorDesc, vk: &Vk<C>, proof:
     if flavor.has_zk {
         libra_commitments.push(t.receive("Libra:concatenation_commitment"));
     }
-    let sc = verify_sumcheck::<C>(flavor, &layout, &mut t, &oink.alpha, &oink.params, &gate_challenges);
+    let sc = verify_sumcheck::<C>(&HonkRelations { flavor, layout: &layout }, &SumcheckSpec::honk(flavor, &layout), &mut t, &oink.alpha, &oink.params, &gate_challenges);
     if flavor.has_zk {
         libra_commitments.push(t.receive("Libra:grand_sum_commitment"));
         libra_commitments.push(t.receive("Libra:quotient_commitment"));

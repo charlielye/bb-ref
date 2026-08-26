@@ -3,9 +3,14 @@
 //! Sources: `commitment_schemes/shplonk/shplemini.hpp`, `gemini/gemini.hpp`, `shplonk/shplonk.hpp`,
 //! `claim_batcher.hpp`, `small_subgroup_ipa/*`, `kzg/kzg.hpp`.
 
-use crate::base::field::FieldLike;
+use crate::base::field::{FieldLike, U256};
 use crate::base::group::{Curve, GroupLike, PairingPoints};
+use crate::base::poly::Polynomial;
+use crate::base::rng::random_field;
+use crate::base::srs::Ck;
 use crate::base::transcript::Transcript;
+use ark_ec::AffineRepr;
+use ark_ff::PrimeField;
 
 pub const NUM_SMALL_IPA_COMMITMENTS: usize = 3;
 pub const NUM_SMALL_IPA_OPENING_CLAIMS: usize = 5;
@@ -22,6 +27,105 @@ enum EvalPoint {
     Challenge,
     ChallengeShifted,
     One,
+}
+
+/// Which of the three witness commitments the `i`-th small-IPA claim opens.
+pub fn small_ipa_commitment_index(i: usize) -> usize {
+    SMALL_IPA_CLAIMS[i].0
+}
+
+/// The five small-IPA evaluation points for challenge `r`: `r`, `g r`, `r`, `1`, `r`.
+fn small_ipa_points<C: Curve>(r: &C::Fr) -> [C::Fr; NUM_SMALL_IPA_OPENING_CLAIMS] {
+    let g = C::Fr::constant(C::subgroup_generator());
+    std::array::from_fn(|i| match SMALL_IPA_CLAIMS[i].1 {
+        EvalPoint::Challenge => r.clone(),
+        EvalPoint::ChallengeShifted => r.clone() * &g,
+        EvalPoint::One => C::Fr::one(),
+    })
+}
+
+/// bb `make_small_ipa_verifier_opening_claims`: receive the transmitted evaluations under
+/// `<prefix><suffix>` and pair them with the witness commitments.
+pub fn small_ipa_verifier_claims<C: Curve>(commitments: &[C::G; NUM_SMALL_IPA_COMMITMENTS], r: &C::Fr, prefix: &str, t: &mut Transcript<C::TF, C::Hash>) -> Vec<VerifierOpeningClaim<C>> {
+    let points = small_ipa_points::<C>(r);
+    SMALL_IPA_CLAIMS
+        .iter()
+        .enumerate()
+        .map(|(i, (comm_idx, _, transmitted, suffix))| {
+            let evaluation = if *transmitted { t.receive(&format!("{prefix}{suffix}")) } else { C::Fr::zero() };
+            VerifierOpeningClaim { commitment: commitments[*comm_idx].clone(), challenge: points[i].clone(), evaluation }
+        })
+        .collect()
+}
+
+/// bb `SmallSubgroupIPAVerifier::check_consistency`: the grand-sum identity at `r`, with the
+/// challenge polynomial given by its Lagrange coefficients over the subgroup.
+pub fn small_ipa_check_consistency<C: Curve>(evals: &[C::Fr], r: &C::Fr, challenge_coeffs: &[C::Fr], inner_product_claim: &C::Fr) -> bool {
+    type F<C> = <C as Curve>::Fr;
+    let n = C::SUBGROUP_SIZE;
+    let vanishing_poly_eval = r.pow_u64(n as u64) - &F::<C>::one();
+    assert!(!vanishing_poly_eval.is_zero(), "SmallSubgroupIPA: evaluation challenge is in the small subgroup");
+    // compute_batched_barycentric_evaluations: F(r), L_1(r), L_{|H|}(r)
+    let g_inv = F::<C>::constant(C::subgroup_generator_inverse());
+    let mut denominators = Vec::with_capacity(n);
+    let mut running_power = F::<C>::one();
+    for _ in 0..n {
+        denominators.push((running_power.clone() * r - &F::<C>::one()).invert());
+        running_power *= &g_inv;
+    }
+    let numerator = vanishing_poly_eval.clone() * &F::<C>::from_u64(n as u64).invert();
+    let mut challenge_poly = F::<C>::zero();
+    for (c, d) in challenge_coeffs.iter().zip(&denominators) {
+        challenge_poly += &(c.clone() * d);
+    }
+    let challenge_poly = challenge_poly * &numerator;
+    let lagrange_first = denominators[0].clone() * &numerator;
+    let lagrange_last = denominators[n - 1].clone() * &numerator;
+
+    let concatenated_at_r = &evals[0];
+    let grand_sum_shifted_eval = &evals[1];
+    let grand_sum_eval = &evals[2];
+    let quotient_eval = &evals[4];
+    let mut diff = lagrange_first * grand_sum_eval;
+    diff += &((r.clone() - &g_inv) * &(grand_sum_shifted_eval.clone() - grand_sum_eval - &(concatenated_at_r.clone() * &challenge_poly)));
+    diff += &(lagrange_last * &(grand_sum_eval.clone() - inner_product_claim) - &(vanishing_poly_eval * quotient_eval));
+    let ok = diff.is_zero();
+    diff.assert_equal(&F::<C>::zero());
+    ok
+}
+
+/// bb `compute_challenge_polynomial_coeffs`: `(1, 1, u_0, ..., u_0^{L-1}, 1, u_1, ...)` over the subgroup.
+pub fn libra_challenge_coeffs<C: Curve>(multivariate_challenge: &[C::Fr]) -> Vec<C::Fr> {
+    let n = C::SUBGROUP_SIZE;
+    let libra_len = C::LIBRA_UNIVARIATES_LENGTH;
+    assert!(libra_len * multivariate_challenge.len() + 1 < n);
+    let mut coeffs = vec![C::Fr::zero(); n];
+    coeffs[0] = C::Fr::one();
+    for (round, u) in multivariate_challenge.iter().enumerate() {
+        let start = 1 + libra_len * round;
+        coeffs[start] = C::Fr::one();
+        for idx in start + 1..start + libra_len {
+            coeffs[idx] = coeffs[idx - 1].clone() * u;
+        }
+    }
+    coeffs
+}
+
+/// bb `compute_eccvm_challenge_coeffs`: `(v^i x^j)` for `i < num_polys`, `j < coeffs_per_poly`.
+pub fn eccvm_challenge_coeffs<C: Curve>(x: &C::Fr, v: &C::Fr, num_polys: usize, coeffs_per_poly: usize) -> Vec<C::Fr> {
+    let n = C::SUBGROUP_SIZE;
+    assert!(num_polys * coeffs_per_poly < n);
+    let mut coeffs = vec![C::Fr::zero(); n];
+    let mut v_power = C::Fr::one();
+    for poly_idx in 0..num_polys {
+        let start = coeffs_per_poly * poly_idx;
+        coeffs[start] = v_power.clone();
+        for idx in start + 1..start + coeffs_per_poly {
+            coeffs[idx] = coeffs[idx - 1].clone() * x;
+        }
+        v_power *= v;
+    }
+    coeffs
 }
 
 /// Commitments to be opened at the sumcheck challenge with their claimed evaluations.
@@ -212,57 +316,8 @@ pub fn shplemini_verify<C: Curve>(
 }
 
 /// bb `SmallSubgroupIPAVerifier::check_libra_evaluations_consistency`.
-pub fn check_libra_evaluations_consistency<C: Curve>(
-    evals: &[C::Fr; NUM_SMALL_IPA_OPENING_CLAIMS],
-    r: &C::Fr,
-    multivariate_challenge: &[C::Fr],
-    inner_product_claim: &C::Fr,
-) -> bool {
-    type F<C> = <C as Curve>::Fr;
-    let n = C::SUBGROUP_SIZE;
-    let vanishing_poly_eval = r.pow_u64(n as u64) - &F::<C>::one();
-    assert!(!vanishing_poly_eval.is_zero(), "SmallSubgroupIPA: evaluation challenge is in the small subgroup");
-
-    // challenge polynomial in the Lagrange basis over H: (1, u_0, u_0^2, ..., 1, u_{d-1}, ...)
-    let libra_len = C::LIBRA_UNIVARIATES_LENGTH;
-    assert!(libra_len * multivariate_challenge.len() + 1 < n);
-    let mut coeffs = vec![F::<C>::zero(); n];
-    coeffs[0] = F::<C>::one();
-    for (round, u) in multivariate_challenge.iter().enumerate() {
-        let start = 1 + libra_len * round;
-        coeffs[start] = F::<C>::one();
-        for idx in start + 1..start + libra_len {
-            coeffs[idx] = coeffs[idx - 1].clone() * u;
-        }
-    }
-
-    // compute_batched_barycentric_evaluations: F(r), L_1(r), L_{|H|}(r)
-    let g_inv = F::<C>::constant(C::subgroup_generator_inverse());
-    let mut denominators = Vec::with_capacity(n);
-    let mut running_power = F::<C>::one();
-    for _ in 0..n {
-        denominators.push((running_power.clone() * r - &F::<C>::one()).invert());
-        running_power *= &g_inv;
-    }
-    let numerator = vanishing_poly_eval.clone() * &F::<C>::from_u64(n as u64).invert();
-    let mut challenge_poly = F::<C>::zero();
-    for (c, d) in coeffs.iter().zip(&denominators) {
-        challenge_poly += &(c.clone() * d);
-    }
-    let challenge_poly = challenge_poly * &numerator;
-    let lagrange_first = denominators[0].clone() * &numerator;
-    let lagrange_last = denominators[n - 1].clone() * &numerator;
-
-    let concatenated_at_r = &evals[0];
-    let grand_sum_shifted_eval = &evals[1];
-    let grand_sum_eval = &evals[2];
-    let quotient_eval = &evals[4];
-    let mut diff = lagrange_first * grand_sum_eval;
-    diff += &((r.clone() - &g_inv) * &(grand_sum_shifted_eval.clone() - grand_sum_eval - &(concatenated_at_r.clone() * &challenge_poly)));
-    diff += &(lagrange_last * &(grand_sum_eval.clone() - inner_product_claim) - &(vanishing_poly_eval * quotient_eval));
-    let ok = diff.is_zero();
-    diff.assert_equal(&F::<C>::zero());
-    ok
+pub fn check_libra_evaluations_consistency<C: Curve>(evals: &[C::Fr; NUM_SMALL_IPA_OPENING_CLAIMS], r: &C::Fr, multivariate_challenge: &[C::Fr], inner_product_claim: &C::Fr) -> bool {
+    small_ipa_check_consistency::<C>(evals, r, &libra_challenge_coeffs::<C>(multivariate_challenge), inner_product_claim)
 }
 
 /// bb `KZG::reduce_verify_batch_opening_claim`: `P0 = C + z*[W]`, `P1 = -[W]`.
@@ -280,7 +335,12 @@ pub fn shplonk_verify<C: Curve>(claims: &[VerifierOpeningClaim<C>], g1_identity:
     let nu: C::Fr = t.challenge("Shplonk:nu");
     let q: C::G = t.receive("Shplonk:Q");
     let z: C::Fr = t.challenge("Shplonk:z");
-    let nu_pows = powers(&nu, claims.len());
+    shplonk_batch_claim(claims, q, &nu, &z, g1_identity)
+}
+
+/// The MSM behind bb `ShplonkVerifier_::compute_partially_evaluated_quotient_claim`.
+pub fn shplonk_batch_claim<C: Curve>(claims: &[VerifierOpeningClaim<C>], q: C::G, nu: &C::Fr, z: &C::Fr, g1_identity: C::G) -> BatchOpeningClaim<C> {
+    let nu_pows = powers(nu, claims.len());
     let mut commitments = vec![q];
     let mut scalars = vec![C::Fr::one()];
     let mut identity_scalar = C::Fr::zero();
@@ -292,7 +352,7 @@ pub fn shplonk_verify<C: Curve>(claims: &[VerifierOpeningClaim<C>], g1_identity:
     }
     commitments.push(g1_identity);
     scalars.push(identity_scalar);
-    BatchOpeningClaim { commitments, scalars, evaluation_point: z }
+    BatchOpeningClaim { commitments, scalars, evaluation_point: z.clone() }
 }
 
 pub fn kzg_reduce_verify_batch_opening_claim<C: Curve>(
@@ -316,19 +376,51 @@ use crate::base::poly::Poly;
 use crate::base::rng::Rng;
 use crate::base::transcript::NativeTranscript;
 use crate::base::{Bn254, CommitmentKey, Fr};
-use crate::honk::sumcheck::{interpolate_on_subgroup, ZkData};
+use crate::honk::sumcheck::{interpolate_on_subgroup, subgroup_domain, ZkData};
 
 /// A polynomial with a claimed evaluation (bb `ProverOpeningClaim`).
-pub struct ProverClaim {
-    pub poly: Poly,
-    pub challenge: Fr,
-    pub evaluation: Fr,
+pub struct ProverClaim<F: FieldLike = Fr> {
+    pub poly: Polynomial<F>,
+    pub challenge: F,
+    pub evaluation: F,
     /// Gemini fold polynomials are additionally opened at `-challenge` (the positive point).
     pub gemini_fold: bool,
 }
 
 /// The three SmallSubgroupIPA witness polynomials `[G, A, Q]` (bb `get_witness_polynomials`).
-pub struct LibraPolys(pub [Poly; NUM_SMALL_IPA_COMMITMENTS]);
+pub struct LibraPolys<F: FieldLike = Fr>(pub [Polynomial<F>; NUM_SMALL_IPA_COMMITMENTS]);
+
+/// bb `make_small_ipa_prover_opening_claims`: send the transmitted evaluations under
+/// `<prefix><suffix>` and return the five claims.
+pub fn small_ipa_prover_claims<C: Curve<TF = Fr>>(polys: &LibraPolys<C::Fr>, r: &C::Fr, prefix: &str, t: &mut NativeTranscript) -> Vec<ProverClaim<C::Fr>>
+where
+    C::Fr: Copy,
+{
+    let points = small_ipa_points::<C>(r);
+    SMALL_IPA_CLAIMS
+        .iter()
+        .enumerate()
+        .map(|(i, (comm_idx, _, transmitted, suffix))| {
+            let evaluation = if *transmitted {
+                let e = polys.0[*comm_idx].evaluate(&points[i]);
+                t.send(&format!("{prefix}{suffix}"), &e);
+                e
+            } else {
+                C::Fr::zero()
+            };
+            ProverClaim { poly: polys.0[*comm_idx].clone(), challenge: points[i], evaluation, gemini_fold: false }
+        })
+        .collect()
+}
+
+/// Output of the Shplonk prover: the partially evaluated quotient claim `(G, z, 0)` plus what the
+/// verifier needs to rebuild its side of it (bb `ShplonkProver_::PartiallyEvaluatedQuotient`).
+pub struct ShplonkProverOutput<C: Curve> {
+    pub claim: ProverClaim<C::Fr>,
+    pub quotient_commitment: C::G,
+    pub nu: C::Fr,
+    pub z: C::Fr,
+}
 
 /// bb `ShpleminiProver_::prove`: Gemini folds + (ZK) Libra claims + Shplonk batching. Returns the
 /// final opening claim `(G, z, 0)` to be opened with KZG.
@@ -410,44 +502,31 @@ pub fn shplemini_prove(
     }
 
     // --- Libra opening claims (ZK) ---
-    let mut libra_claims = Vec::new();
-    if let Some(LibraPolys(polys)) = libra {
-        let g = Bn254::subgroup_generator();
-        for (comm_idx, point_kind, transmitted, suffix) in SMALL_IPA_CLAIMS {
-            let point = match point_kind {
-                EvalPoint::Challenge => r,
-                EvalPoint::ChallengeShifted => r * g,
-                EvalPoint::One => Fr::one(),
-            };
-            let evaluation = if transmitted {
-                let e = polys[comm_idx].evaluate(&point);
-                t.send(&format!("Libra:{suffix}"), &e);
-                e
-            } else {
-                Fr::zero()
-            };
-            libra_claims.push(ProverClaim { poly: polys[comm_idx].clone(), challenge: point, evaluation, gemini_fold: false });
-        }
-    }
+    let libra_claims = libra.map_or(Vec::new(), |polys| small_ipa_prover_claims::<Bn254>(polys, &r, "Libra:", t));
 
     // --- Shplonk ---
-    shplonk_prove(virtual_log_n, &claims, &libra_claims, ck, t)
+    shplonk_prove::<Bn254>(virtual_log_n, &claims, &libra_claims, ck, t).claim
 }
 
 /// bb `ShplonkProver_::prove`: batched quotient `Q`, then `G = Q - Q_z` opened at `z` with value 0.
 /// `virtual_log_n` only matters when `libra_claims` is non-empty.
-pub fn shplonk_prove(virtual_log_n: usize, claims: &[ProverClaim], libra_claims: &[ProverClaim], ck: &CommitmentKey, t: &mut NativeTranscript) -> ProverClaim {
-    let nu: Fr = t.challenge("Shplonk:nu");
-    let fold_pos_evals: Vec<Fr> = claims.iter().filter(|c| c.gemini_fold).map(|c| c.poly.evaluate(&(-c.challenge))).collect();
+pub fn shplonk_prove<C: Curve<TF = Fr>>(virtual_log_n: usize, claims: &[ProverClaim<C::Fr>], libra_claims: &[ProverClaim<C::Fr>], ck: &Ck<C::G>, t: &mut NativeTranscript) -> ShplonkProverOutput<C>
+where
+    C::Fr: Copy,
+    C::G: AffineRepr<ScalarField = C::Fr>,
+{
+    type F<C> = <C as Curve>::Fr;
+    let nu: F<C> = t.challenge("Shplonk:nu");
+    let fold_pos_evals: Vec<F<C>> = claims.iter().filter(|c| c.gemini_fold).map(|c| c.poly.evaluate(&(-c.challenge))).collect();
     let max_size = claims.iter().chain(libra_claims).map(|c| c.poly.len()).max().unwrap();
 
     // Q = sum_j nu^j (f_j - v_j) / (X - x_j)
-    let mut q = Poly::zero(max_size);
-    let mut current_nu = Fr::one();
+    let mut q = Polynomial::<F<C>>::zero(max_size);
+    let mut current_nu = F::<C>::one();
     let mut fold_idx = 0;
-    let add_quotient = |q: &mut Poly, poly: &Poly, x: &Fr, v: &Fr, scale: &Fr| {
+    let add_quotient = |q: &mut Polynomial<F<C>>, poly: &Polynomial<F<C>>, x: &F<C>, v: &F<C>, scale: &F<C>| {
         let mut tmp = poly.clone();
-        tmp.coeffs.resize(max_size, Fr::zero());
+        tmp.coeffs.resize(max_size, F::<C>::zero());
         tmp.coeffs[0] -= v;
         tmp.factor_root(x);
         q.add_scaled(&tmp, scale);
@@ -468,14 +547,15 @@ pub fn shplonk_prove(virtual_log_n: usize, claims: &[ProverClaim], libra_claims:
             current_nu *= nu;
         }
     }
-    t.send("Shplonk:Q", &ck.commit(&q));
-    let z: Fr = t.challenge("Shplonk:z");
+    let quotient_commitment = ck.commit(&q);
+    t.send("Shplonk:Q", &quotient_commitment);
+    let z: F<C> = t.challenge("Shplonk:z");
 
     // G = Q - sum_j nu^j (f_j - v_j) / (z - x_j)
     let mut g = q;
-    let mut current_nu = Fr::one();
+    let mut current_nu = F::<C>::one();
     let mut fold_idx = 0;
-    let subtract = |g: &mut Poly, poly: &Poly, x: &Fr, v: &Fr, scale: &Fr| {
+    let subtract = |g: &mut Polynomial<F<C>>, poly: &Polynomial<F<C>>, x: &F<C>, v: &F<C>, scale: &F<C>| {
         let s = *scale * (z - x).invert();
         g.add_scaled(poly, &(-s));
         g.coeffs[0] += s * v;
@@ -496,7 +576,7 @@ pub fn shplonk_prove(virtual_log_n: usize, claims: &[ProverClaim], libra_claims:
             current_nu *= nu;
         }
     }
-    ProverClaim { poly: g, challenge: z, evaluation: Fr::zero(), gemini_fold: false }
+    ShplonkProverOutput { claim: ProverClaim { poly: g, challenge: z, evaluation: F::<C>::zero(), gemini_fold: false }, quotient_commitment, nu, z }
 }
 
 /// bb `KZG::compute_opening_proof`: commit to `(p - v) / (X - r)` and send it as `KZG:W`.
@@ -509,50 +589,63 @@ pub fn kzg_open(claim: ProverClaim, ck: &CommitmentKey, t: &mut NativeTranscript
 
 /// bb `SmallSubgroupIPAProver` for the Libra data: computes and commits to the grand-sum
 /// polynomial `A` and the identity quotient `Q`, returning `[G, A, Q]`.
-pub fn small_subgroup_ipa_prove(zk: &ZkData, u: &[Fr], claimed_inner_product: &Fr, ck: &CommitmentKey, t: &mut NativeTranscript, rng: &mut dyn Rng) -> LibraPolys {
-    use crate::base::group::Curve;
-    let n = Bn254::SUBGROUP_SIZE;
-    let libra_len = Bn254::LIBRA_UNIVARIATES_LENGTH;
-    let g = Bn254::subgroup_generator();
-    let domain = &zk.interpolation_domain;
+pub fn small_subgroup_ipa_prove<C: Curve<TF = Fr>>(zk: &ZkData<C>, u: &[C::Fr], claimed_inner_product: &C::Fr, ck: &Ck<C::G>, t: &mut NativeTranscript, rng: &mut dyn Rng) -> LibraPolys<C::Fr>
+where
+    C::Fr: PrimeField<BigInt = U256>,
+    C::G: AffineRepr<ScalarField = C::Fr>,
+{
+    let challenge_lagrange = libra_challenge_coeffs::<C>(u);
+    small_subgroup_ipa_prove_core::<C>(&zk.libra_concatenated_monomial, &zk.libra_concatenated_lagrange, &challenge_lagrange, claimed_inner_product, "Libra:", ck, t, rng)
+}
 
-    // challenge polynomial F: (1, 1, u_0, ..., u_0^{L-1}, 1, u_1, ...) in the Lagrange basis over H
-    let mut f_lagrange = vec![Fr::zero(); n];
-    f_lagrange[0] = Fr::one();
-    for (round, u_i) in u.iter().enumerate() {
-        let start = 1 + libra_len * round;
-        f_lagrange[start] = Fr::one();
-        for idx in start + 1..start + libra_len {
-            f_lagrange[idx] = f_lagrange[idx - 1] * u_i;
-        }
-    }
-    let f_monomial = interpolate_on_subgroup(&f_lagrange, &g);
-    let g_poly = &zk.libra_concatenated_monomial; // G, length n + 2
-    let g_lagrange = &zk.libra_concatenated_lagrange;
+/// The SmallSubgroupIPA prover proper (bb `SmallSubgroupIPAProver::prove`) for a concatenated
+/// witness `G` (monomial form, masked) with Lagrange values `g` over the subgroup and a challenge
+/// polynomial `F` given by its Lagrange values: proves `Σ_i g_i F_i = claimed_inner_product`.
+pub fn small_subgroup_ipa_prove_core<C: Curve<TF = Fr>>(
+    g_poly: &Polynomial<C::Fr>,
+    g_lagrange: &[C::Fr],
+    f_lagrange: &[C::Fr],
+    claimed_inner_product: &C::Fr,
+    prefix: &str,
+    ck: &Ck<C::G>,
+    t: &mut NativeTranscript,
+    rng: &mut dyn Rng,
+) -> LibraPolys<C::Fr>
+where
+    C::Fr: PrimeField<BigInt = U256>,
+    C::G: AffineRepr<ScalarField = C::Fr>,
+{
+    type F<C> = <C as Curve>::Fr;
+    let n = C::SUBGROUP_SIZE;
+    let g = F::<C>::constant(C::subgroup_generator());
+    let domain = subgroup_domain::<C>();
+    let f_monomial = interpolate_on_subgroup(f_lagrange, &g);
 
     // grand sum A: A_0 = 0, A_i = A_{i-1} + F_{i-1} G_{i-1}; masked by Z_H(X) R(X), deg R = 2
-    let mut a_lagrange = vec![Fr::zero(); n];
+    let mut a_lagrange = vec![F::<C>::zero(); n];
     for i in 1..n {
         a_lagrange[i] = a_lagrange[i - 1] + f_lagrange[i - 1] * g_lagrange[i - 1];
     }
     let mut a = interpolate_on_subgroup(&a_lagrange, &g);
-    a.coeffs.resize(n + 3, Fr::zero());
-    let masking = [rng.fr(), rng.fr(), rng.fr()];
+    a.coeffs.resize(n + 3, F::<C>::zero());
+    let masking: [F<C>; 3] = [random_field(rng), random_field(rng), random_field(rng)];
     for (i, m) in masking.iter().enumerate() {
         a.coeffs[i] -= m;
         a.coeffs[n + i] += m;
     }
-    t.send("Libra:grand_sum_commitment", &ck.commit(&a));
+    t.send(&format!("{prefix}grand_sum_commitment"), &ck.commit(&a));
 
     // identity C = L_1 A + (X - g^{-1})(A(gX) - A - F G) + L_{|H|}(A - s), then Q = C / Z_H
     let masked_g_len = n + 2;
     let masked_a_len = n + 3;
     let identity_len = masked_g_len + n;
-    let mut c = vec![Fr::zero(); identity_len];
-    let shifted_a: Vec<Fr> = (0..masked_a_len).map(|i| a.coeffs[i] * domain[i % n]).collect();
-    let l_first = interpolate_on_subgroup(&std::iter::once(Fr::one()).chain(std::iter::repeat(Fr::zero()).take(n - 1)).collect::<Vec<_>>(), &g);
-    let mut e_last = vec![Fr::zero(); n];
-    e_last[n - 1] = Fr::one();
+    let mut c = vec![F::<C>::zero(); identity_len];
+    let shifted_a: Vec<F<C>> = (0..masked_a_len).map(|i| a.coeffs[i] * domain[i % n]).collect();
+    let mut e_first = vec![F::<C>::zero(); n];
+    e_first[0] = F::<C>::one();
+    let l_first = interpolate_on_subgroup(&e_first, &g);
+    let mut e_last = vec![F::<C>::zero(); n];
+    e_last[n - 1] = F::<C>::one();
     let l_last = interpolate_on_subgroup(&e_last, &g);
     for i in 0..masked_g_len {
         for j in 0..n {
@@ -565,7 +658,7 @@ pub fn small_subgroup_ipa_prove(zk: &ZkData, u: &[Fr], claimed_inner_product: &F
     for i in (1..identity_len).rev() {
         c[i] = c[i - 1];
     }
-    c[0] = Fr::zero();
+    c[0] = F::<C>::zero();
     let g_inv = domain[n - 1];
     for i in 0..identity_len - 1 {
         c[i] = c[i] - c[i + 1] * g_inv;
@@ -576,15 +669,15 @@ pub fn small_subgroup_ipa_prove(zk: &ZkData, u: &[Fr], claimed_inner_product: &F
         }
     }
     for j in 0..n {
-        c[j] -= l_last.coeffs[j] * claimed_inner_product;
+        c[j] -= l_last.coeffs[j] * *claimed_inner_product;
     }
-    let mut quotient = vec![Fr::zero(); identity_len - n];
+    let mut quotient = vec![F::<C>::zero(); identity_len - n];
     let mut remainder = c;
     for i in (n..identity_len).rev() {
         quotient[i - n] = remainder[i];
         remainder[i - n] = remainder[i - n] + remainder[i];
     }
-    let q = Poly::from_coeffs(quotient);
-    t.send("Libra:quotient_commitment", &ck.commit(&q));
+    let q = Polynomial::from_coeffs(quotient);
+    t.send(&format!("{prefix}quotient_commitment"), &ck.commit(&q));
     LibraPolys([g_poly.clone(), a, q])
 }

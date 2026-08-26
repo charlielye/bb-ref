@@ -14,7 +14,9 @@
 #include "barretenberg/flavor/mega_zk_flavor.hpp"
 #include "barretenberg/commitment_schemes/triple_ipa/triple_ipa.hpp"
 #include "barretenberg/eccvm/eccvm_flavor.hpp"
+#include "barretenberg/eccvm/eccvm_prover.hpp"
 #include "barretenberg/eccvm/eccvm_trace_checker.hpp"
+#include "barretenberg/eccvm/eccvm_verifier.hpp"
 #include "barretenberg/honk/library/grand_product_library.hpp"
 #include "barretenberg/honk/proof_system/logderivative_library.hpp"
 #include "barretenberg/goblin/batch_merge_prover.hpp"
@@ -742,4 +744,56 @@ TEST(BbRefDump, Eccvm)
         }
     }
     write_file(out / "eccvm_columns.bin", buf);
+}
+
+// --- M9: ECCVM proof --------------------------------------------------------------------------------------
+// Dump:   BBREF_CASE=base BBREF_OUT=<dir> ./bin/dsl_tests --gtest_filter='BbRefDump.EccvmProof'
+// Verify: BBREF_IN=<dir with eccvm_proof.bin, ipa_proof.bin> ./bin/dsl_tests --gtest_filter='BbRefDump.EccvmProof'
+namespace {
+std::vector<fr> read_proof(const std::filesystem::path& path)
+{
+    std::ifstream f(path, std::ios::binary);
+    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    std::vector<fr> out;
+    for (size_t i = 0; i + 32 <= bytes.size(); i += 32) {
+        out.push_back(from_buffer<fr>(bytes.data() + i));
+    }
+    return out;
+}
+} // namespace
+
+TEST(BbRefDump, EccvmProof)
+{
+    const char* in_env = std::getenv("BBREF_IN");
+    const char* case_env = std::getenv("BBREF_CASE");
+    const char* out_env = std::getenv("BBREF_OUT");
+    if (in_env == nullptr && (case_env == nullptr || out_env == nullptr)) {
+        GTEST_SKIP() << "set BBREF_IN, or BBREF_CASE and BBREF_OUT";
+    }
+    srs::init_grumpkin_file_crs_factory(srs::bb_crs_path());
+    using Transcript = ECCVMFlavor::Transcript;
+    auto verify = [](const HonkProof& proof, const HonkProof& ipa_proof) {
+        ECCVMVerifier verifier(std::make_shared<Transcript>(), proof);
+        auto result = verifier.reduce_to_triple_ipa_claim();
+        EXPECT_TRUE(result.reduction_succeeded);
+        auto ipa_vk = ECCVMFlavor::VerifierCommitmentKey{ ECCVMFlavor::ECCVM_FIXED_SIZE };
+        auto ipa_transcript = std::make_shared<NativeTranscript>(ipa_proof);
+        EXPECT_TRUE(ECCVMVerifier::TripleIPA::reduce_verify(ipa_vk, result.triple_ipa_claim, ipa_transcript));
+    };
+    if (in_env != nullptr) {
+        std::filesystem::path in(in_env);
+        verify(read_proof(in / "eccvm_proof.bin"), read_proof(in / "ipa_proof.bin"));
+        return;
+    }
+    std::filesystem::path out(out_env);
+    std::filesystem::create_directories(out);
+    auto op_queue = std::make_shared<ECCOpQueue>();
+    build_eccvm_ops(*op_queue, case_env);
+    ECCVMCircuitBuilder builder{ op_queue };
+    auto transcript = std::make_shared<Transcript>();
+    ECCVMProver prover(builder, transcript);
+    auto proof = prover.construct_proof();
+    write_proof(out / "eccvm_proof.bin", proof);
+    write_proof(out / "ipa_proof.bin", prover.ipa_proof);
+    verify(proof, prover.ipa_proof);
 }

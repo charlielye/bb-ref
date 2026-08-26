@@ -6,7 +6,29 @@ use super::{Ent, LAST_ADDITION_ROUND};
 use crate::base::field::FieldLike;
 use crate::base::Fq;
 use crate::honk::relations::RelationParams;
+use crate::honk::sumcheck::RelationSet;
 use Ent::*;
+
+/// The ECCVM relations as a sumcheck [`RelationSet`].
+pub struct EccvmRelations;
+
+impl<T: FieldLike<Native = Fq>> RelationSet<T> for EccvmRelations {
+    fn num_relations(&self) -> usize {
+        ECCVM_RELATIONS.len()
+    }
+    fn num_subrelations(&self, r: usize) -> usize {
+        ECCVM_RELATIONS[r].num_subrelations()
+    }
+    fn linearly_independent(&self, r: usize, j: usize) -> bool {
+        ECCVM_RELATIONS[r].linearly_independent(j)
+    }
+    fn offset_only(&self, _r: usize) -> bool {
+        false
+    }
+    fn accumulate(&self, r: usize, acc: &mut [T], row: &[T], p: &RelationParams<T>, scaling: &T) {
+        ECCVM_RELATIONS[r].accumulate(acc, row, p, scaling)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EccvmRel {

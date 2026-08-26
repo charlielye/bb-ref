@@ -9,14 +9,19 @@ pub trait Rng {
 
     /// bb `field::random_element()`: `lo + 2^256 * hi` for two independent u256 draws, each reduced mod p.
     fn fr(&mut self) -> Fr {
-        random_field(self.next_u256(), self.next_u256())
+        random_field_from(self.next_u256(), self.next_u256())
     }
     fn fq(&mut self) -> Fq {
-        random_field(self.next_u256(), self.next_u256())
+        random_field_from(self.next_u256(), self.next_u256())
     }
 }
 
-fn random_field<F: PrimeField>(lo: U256, hi: U256) -> F {
+/// bb `field::random_element()` for any field: `lo + 2^256 * hi` from two u256 draws.
+pub fn random_field<F: PrimeField>(rng: &mut dyn Rng) -> F {
+    random_field_from(rng.next_u256(), rng.next_u256())
+}
+
+fn random_field_from<F: PrimeField>(lo: U256, hi: U256) -> F {
     let pow_2_256 = F::from(2u64).pow([256u64]);
     F::from_le_bytes_mod_order(&lo.to_bytes_le()) + pow_2_256 * F::from_le_bytes_mod_order(&hi.to_bytes_le())
 }
