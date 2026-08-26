@@ -1,0 +1,157 @@
+//! Field abstraction: the `FieldLike` trait is implemented natively by arkworks prime fields and,
+//! later, by the in-circuit `FieldT`, so verifier code is written once and runs in both settings.
+
+use ark_ff::{BigInt, BigInteger, PrimeField};
+use std::fmt::Debug;
+use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+
+pub type Fr = ark_bn254::Fr;
+pub type Fq = ark_bn254::Fq;
+/// 256-bit little-endian-limbed integer (canonical, non-Montgomery form).
+pub type U256 = BigInt<4>;
+
+pub trait FieldLike:
+    Clone
+    + Debug
+    + PartialEq
+    + Add<Output = Self>
+    + Sub<Output = Self>
+    + Mul<Output = Self>
+    + Neg<Output = Self>
+    + for<'a> Add<&'a Self, Output = Self>
+    + for<'a> Sub<&'a Self, Output = Self>
+    + for<'a> Mul<&'a Self, Output = Self>
+    + AddAssign
+    + SubAssign
+    + MulAssign
+    + for<'a> AddAssign<&'a Self>
+    + for<'a> SubAssign<&'a Self>
+    + for<'a> MulAssign<&'a Self>
+{
+    /// The underlying prime field of the values.
+    type Native: PrimeField<BigInt = U256>;
+    /// Builder context: `()` natively, a builder handle in-circuit.
+    type Ctx: Clone;
+
+    fn ctx(&self) -> Option<Self::Ctx>;
+    /// A constant. In-circuit this never emits a gate.
+    fn constant(v: Self::Native) -> Self;
+    fn from_witness(ctx: &Self::Ctx, v: Self::Native) -> Self;
+    fn value(&self) -> Self::Native;
+    fn invert(&self) -> Self;
+    /// In-circuit: a copy constraint (no gate). Natively: nothing.
+    fn assert_equal(&self, other: &Self);
+
+    fn from_u64(v: u64) -> Self {
+        Self::constant(Self::Native::from(v))
+    }
+    fn zero() -> Self {
+        Self::from_u64(0)
+    }
+    fn one() -> Self {
+        Self::from_u64(1)
+    }
+    fn sqr(&self) -> Self {
+        self.clone() * self
+    }
+    /// Square-and-multiply; in-circuit implementations override to reproduce bb's gate pattern.
+    fn pow_u64(&self, mut e: u64) -> Self {
+        let mut base = self.clone();
+        let mut acc = Self::one();
+        while e > 0 {
+            if e & 1 == 1 {
+                acc *= &base;
+            }
+            base = base.sqr();
+            e >>= 1;
+        }
+        acc
+    }
+    fn is_zero(&self) -> bool {
+        ark_ff::Zero::is_zero(&self.value())
+    }
+}
+
+impl<F: PrimeField<BigInt = U256>> FieldLike for F {
+    type Native = F;
+    type Ctx = ();
+    fn ctx(&self) -> Option<()> {
+        None
+    }
+    fn constant(v: F) -> Self {
+        v
+    }
+    fn from_witness(_: &(), v: F) -> Self {
+        v
+    }
+    fn value(&self) -> F {
+        *self
+    }
+    fn invert(&self) -> Self {
+        self.inverse().expect("inverse of zero")
+    }
+    fn assert_equal(&self, _other: &Self) {}
+}
+
+// ---- integer / byte helpers on the canonical representation ----
+
+pub fn u256<F: PrimeField<BigInt = U256>>(f: &F) -> U256 {
+    f.into_bigint()
+}
+
+/// Panics if `v >= modulus` (bb asserts the same in its codecs).
+pub fn from_u256<F: PrimeField<BigInt = U256>>(v: U256) -> F {
+    F::from_bigint(v).expect("value >= field modulus")
+}
+
+pub fn u256_from_u64(v: u64) -> U256 {
+    U256::from(v)
+}
+
+pub fn u256_shr(v: U256, bits: u32) -> U256 {
+    v >> bits
+}
+
+/// The low `bits` bits of `v`.
+pub fn u256_low_bits(v: U256, bits: u32) -> U256 {
+    let mut limbs = v.0;
+    for (i, limb) in limbs.iter_mut().enumerate() {
+        let lo = i as u32 * 64;
+        if bits <= lo {
+            *limb = 0;
+        } else if bits < lo + 64 {
+            *limb &= (1u64 << (bits - lo)) - 1;
+        }
+    }
+    BigInt(limbs)
+}
+
+pub fn u256_num_bits(v: &U256) -> u32 {
+    v.num_bits()
+}
+
+pub fn u256_to_u64(v: &U256) -> u64 {
+    assert!(v.0[1] == 0 && v.0[2] == 0 && v.0[3] == 0, "value does not fit in u64");
+    v.0[0]
+}
+
+/// bb's byte encoding of a field element: 32 bytes, big-endian, canonical form.
+pub fn to_bytes_be<F: PrimeField<BigInt = U256>>(f: &F) -> [u8; 32] {
+    f.into_bigint().to_bytes_be().try_into().unwrap()
+}
+
+pub fn from_bytes_be<F: PrimeField<BigInt = U256>>(bytes: &[u8]) -> F {
+    assert_eq!(bytes.len(), 32);
+    F::from_be_bytes_mod_order(bytes)
+}
+
+pub fn from_hex<F: PrimeField<BigInt = U256>>(s: &str) -> F {
+    let s = s.strip_prefix("0x").unwrap_or(s);
+    let padded = format!("{s:0>64}");
+    let bytes = hex::decode(padded).expect("bad hex");
+    F::from_be_bytes_mod_order(&bytes)
+}
+
+pub fn to_hex<F: PrimeField<BigInt = U256>>(f: &F) -> String {
+    format!("0x{}", hex::encode(to_bytes_be(f)))
+}

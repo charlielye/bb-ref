@@ -1,0 +1,22 @@
+[package]
+name = "bb-ref"
+version = "0.1.0"
+edition = "2021"
+description = "Minimal Rust reference implementation of barretenberg's UltraHonk and Chonk provers/verifiers"
+
+[dependencies]
+ark-ff = "0.6"
+ark-ec = "0.6"
+ark-bn254 = "0.6"
+ark-grumpkin = "0.6"
+ark-serialize = "0.6"
+ark-std = "0.6"
+serde = { version = "1", features = ["derive"] }
+rmp-serde = "1.3"
+hex = "0.4"
+
+[profile.dev]
+opt-level = 1
+
+[profile.test]
+opt-level = 1
