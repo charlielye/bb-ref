@@ -12,6 +12,11 @@
 #include "barretenberg/flavor/mega_app_flavor.hpp"
 #include "barretenberg/flavor/mega_kernel_flavor.hpp"
 #include "barretenberg/flavor/mega_zk_flavor.hpp"
+#include "barretenberg/hypernova/hypernova_decider_prover.hpp"
+#include "barretenberg/hypernova/hypernova_decider_verifier.hpp"
+#include "barretenberg/hypernova/hypernova_prover.hpp"
+#include "barretenberg/hypernova/hypernova_verifier.hpp"
+#include "barretenberg/ultra_honk/verifier_instance.hpp"
 #include "barretenberg/stdlib/hash/poseidon2/poseidon2_permutation.hpp"
 #include "barretenberg/stdlib/primitives/memory/ram_table.hpp"
 #include "barretenberg/stdlib/primitives/memory/rom_table.hpp"
@@ -274,6 +279,133 @@ TEST(BbRefDump, MegaScript)
     } else {
         throw_or_abort("BBREF_FLAVOR must be app|kernel|zk");
     }
+}
+
+// Serialize an accumulator: challenge, evaluations, then the two commitments as raw 64-byte affine points.
+void write_accumulator(const std::filesystem::path& path, const MultilinearBatchingVerifierClaim<curve::BN254>& acc)
+{
+    std::vector<uint8_t> buf;
+    auto push_fr = [&](const fr& x) {
+        auto b = to_buffer(x);
+        buf.insert(buf.end(), b.begin(), b.end());
+    };
+    for (const auto& c : acc.challenge) {
+        push_fr(c);
+    }
+    push_fr(acc.non_shifted_evaluation);
+    push_fr(acc.shifted_evaluation);
+    for (const auto& comm : { acc.non_shifted_commitment, acc.shifted_commitment }) {
+        auto b = to_buffer(comm);
+        buf.insert(buf.end(), b.begin(), b.end());
+    }
+    write_file(path, buf);
+}
+
+void write_proof(const std::filesystem::path& path, const HonkProof& proof)
+{
+    std::vector<uint8_t> buf;
+    for (const auto& x : proof) {
+        auto b = to_buffer(x);
+        buf.insert(buf.end(), b.begin(), b.end());
+    }
+    write_file(path, buf);
+}
+
+// BBREF_SCRIPTS=<script>:<kernel|app>,... BBREF_PREV=0|1 BBREF_OUT=<dir> ./bin/dsl_tests --gtest_filter='BbRefDump.Folding'
+// Folds the scripted circuits as one HyperNova group (optionally against a previous accumulator built from
+// the first circuit on a separate transcript), then runs the decider. Dumps every proof, VK and accumulator, and
+// cross-checks natively.
+TEST(BbRefDump, Folding)
+{
+    const char* scripts_env = std::getenv("BBREF_SCRIPTS");
+    const char* out_env = std::getenv("BBREF_OUT");
+    if (scripts_env == nullptr || out_env == nullptr) {
+        GTEST_SKIP() << "set BBREF_SCRIPTS, BBREF_OUT";
+    }
+    const bool use_prev = std::getenv("BBREF_PREV") != nullptr && std::string(std::getenv("BBREF_PREV")) == "1";
+    bb::srs::init_file_crs_factory(bb::srs::bb_crs_path());
+    std::filesystem::path out(out_env);
+    std::filesystem::create_directories(out);
+
+    std::vector<std::pair<std::string, std::string>> entries;
+    {
+        std::istringstream ss(scripts_env);
+        for (std::string item; std::getline(ss, item, ',');) {
+            auto colon = item.rfind(':');
+            entries.emplace_back(item.substr(0, colon), item.substr(colon + 1));
+        }
+    }
+
+    using ProverAccumulator = HypernovaFoldingProver::Accumulator;
+    using VerifierAccumulator = MultilinearBatchingVerifierClaim<curve::BN254>;
+
+    // Per-entry accumulate: builds the circuit, runs Oink + sumcheck under the entry's flavor. Returns the proof
+    // and registers a verifier callback.
+    std::vector<std::function<bool(HypernovaFoldingNativeVerifier&, const HonkProof&)>> verifiers;
+    auto accumulate = [&](HypernovaFoldingProver& prover, size_t idx, bool register_verifier) -> HonkProof {
+        const auto& [script, kind] = entries[idx];
+        MegaCircuitBuilder builder{ std::make_shared<ECCOpQueue>() };
+        run_script(builder, script);
+        auto run = [&]<typename Flavor>() -> HonkProof {
+            auto instance = std::make_shared<ProverInstance_<Flavor>>(builder);
+            auto vk = std::make_shared<typename Flavor::VerificationKey>(instance->get_precomputed());
+            if (register_verifier) {
+                write_file(out / ("vk_" + std::to_string(idx)), to_buffer(*vk));
+                verifiers.emplace_back([vk](HypernovaFoldingNativeVerifier& v, const HonkProof& proof) {
+                    auto vi = std::make_shared<VerifierInstance_<Flavor>>(std::make_shared<typename Flavor::VKAndHash>(vk));
+                    return v.accumulate_instance<Flavor>(vi, proof);
+                });
+            }
+            return prover.accumulate_instance<Flavor>(instance, vk);
+        };
+        if (kind == "kernel") {
+            return run.template operator()<MegaKernelFlavor>();
+        }
+        if (kind == "app") {
+            return run.template operator()<MegaAppFlavor>();
+        }
+        throw_or_abort("kind must be kernel|app");
+    };
+
+    std::optional<ProverAccumulator> prev;
+    std::optional<VerifierAccumulator> prev_verifier;
+    if (use_prev) {
+        auto transcript = std::make_shared<NativeTranscript>();
+        HypernovaFoldingProver prover(transcript);
+        accumulate(prover, 0, /*register_verifier=*/false);
+        auto [_p, acc] = prover.finalize();
+        prev_verifier = acc.to_verifier_claim_for_testing();
+        write_accumulator(out / "prev_accumulator.bin", *prev_verifier);
+        prev = std::move(acc);
+    }
+
+    auto transcript = std::make_shared<NativeTranscript>();
+    HypernovaFoldingProver prover(transcript);
+    std::vector<HonkProof> proofs;
+    for (size_t i = 0; i < entries.size(); ++i) {
+        proofs.push_back(accumulate(prover, i, /*register_verifier=*/true));
+        write_proof(out / ("instance_proof_" + std::to_string(i) + ".bin"), proofs.back());
+    }
+    auto [batch_proof, accumulator] = prover.finalize(std::move(prev));
+    write_proof(out / "batch_proof.bin", batch_proof);
+    write_accumulator(out / "accumulator.bin", accumulator.to_verifier_claim_for_testing());
+    HypernovaDeciderProver decider(transcript);
+    HonkProof decider_proof = decider.construct_proof(accumulator);
+    write_proof(out / "decider_proof.bin", decider_proof);
+
+    // Native cross-check: verify the group, compare accumulators, verify the decider.
+    auto verifier_transcript = std::make_shared<NativeTranscript>();
+    HypernovaFoldingNativeVerifier verifier(verifier_transcript);
+    for (size_t i = 0; i < entries.size(); ++i) {
+        ASSERT_TRUE(verifiers[i](verifier, proofs[i])) << "instance " << i;
+    }
+    auto [verified, verifier_acc] = verifier.finalize(batch_proof, prev_verifier);
+    ASSERT_TRUE(verified);
+    ASSERT_EQ(verifier_acc.non_shifted_commitment, accumulator.non_shifted_commitment);
+    ASSERT_EQ(verifier_acc.shifted_evaluation, accumulator.shifted_evaluation);
+    HypernovaDeciderVerifier<MegaKernelFlavor> decider_verifier(verifier_transcript);
+    auto pairing_points = decider_verifier.verify_proof(verifier_acc, decider_proof);
+    ASSERT_TRUE(pairing_points.check());
 }
 
 TEST(BbRefDump, UltraInstance)

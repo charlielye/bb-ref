@@ -265,7 +265,6 @@ fn split_into_endomorphism_scalars(k: U256) -> (U256, U256) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_ff::Field;
 
     #[test]
     fn cube_root_is_a_primitive_cube_root() {

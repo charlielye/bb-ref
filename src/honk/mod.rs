@@ -1,6 +1,9 @@
 //! The Honk proving system: flavors, relations, sumcheck, PCS, and the UltraHonk prover/verifier.
 pub mod circuit_checker;
+pub mod decider;
 pub mod flavor;
+pub mod hypernova;
+pub mod multilinear_batching;
 pub mod oink;
 pub mod oink_prover;
 pub mod pcs;
