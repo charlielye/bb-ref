@@ -12,6 +12,10 @@
 #include "barretenberg/flavor/mega_app_flavor.hpp"
 #include "barretenberg/flavor/mega_kernel_flavor.hpp"
 #include "barretenberg/flavor/mega_zk_flavor.hpp"
+#include "barretenberg/goblin/batch_merge_prover.hpp"
+#include "barretenberg/goblin/batch_merge_verifier.hpp"
+#include "barretenberg/goblin/merge_prover.hpp"
+#include "barretenberg/goblin/merge_verifier.hpp"
 #include "barretenberg/hypernova/hypernova_decider_prover.hpp"
 #include "barretenberg/hypernova/hypernova_decider_verifier.hpp"
 #include "barretenberg/hypernova/hypernova_prover.hpp"
@@ -420,4 +424,122 @@ TEST(BbRefDump, UltraInstance)
     dump_instance<UltraFlavor, UltraCircuitBuilder>(program, witness, std::filesystem::path(out) / "nozk");
     dump_instance<UltraZKFlavor, UltraCircuitBuilder>(program, witness, std::filesystem::path(out) / "zk");
     dump_instance<MegaAppFlavor, MegaCircuitBuilder>(program, witness, std::filesystem::path(out) / "mega_app");
+}
+
+// --- M6: Goblin merge / batch merge -----------------------------------------------------------------------
+// BBREF_MODE=merge|batch BBREF_NUM_SUBTABLES=<N> [BBREF_MAX=<M>] BBREF_OUT=<dir> ./bin/dsl_tests --gtest_filter='BbRefDump.Merge'
+// Builds a deterministic op queue (recipe mirrored in bb-ref tests/m6_merge.rs), dumps the random ZK prefix columns so
+// the Rust side can inject them, and dumps the (batch) merge proof. Cross-checks natively.
+namespace {
+// Subtable i: ((1 + i) % 10) + 1 triples of add / mul (with a >128-bit scalar) / eq_and_reset.
+void populate_subtable_deterministic(ECCOpQueue& q, size_t subtable_idx)
+{
+    using Point = curve::BN254::AffineElement;
+    const size_t num_triples = ((1 + subtable_idx) % 10) + 1;
+    for (size_t j = 0; j < num_triples; ++j) {
+        const uint64_t k = 1 + (100 * subtable_idx) + j;
+        q.add_accumulate(Point::one() * fr(k));
+        q.mul_accumulate(Point::one() * fr(k + 1), fr(k + 2).invert());
+        q.eq_and_reset();
+    }
+}
+
+void write_columns(const std::filesystem::path& path, const auto& columns)
+{
+    std::vector<uint8_t> buf;
+    for (const auto& col : columns) {
+        for (size_t j = 0; j < col.size(); ++j) {
+            auto b = to_buffer(fr(col[j]));
+            buf.insert(buf.end(), b.begin(), b.end());
+        }
+    }
+    write_file(path, buf);
+}
+} // namespace
+
+TEST(BbRefDump, Merge)
+{
+    const char* mode_env = std::getenv("BBREF_MODE");
+    const char* n_env = std::getenv("BBREF_NUM_SUBTABLES");
+    const char* out_env = std::getenv("BBREF_OUT");
+    if (mode_env == nullptr || n_env == nullptr || out_env == nullptr) {
+        GTEST_SKIP() << "set BBREF_MODE, BBREF_NUM_SUBTABLES, BBREF_OUT";
+    }
+    const std::string mode(mode_env);
+    const size_t num_subtables = std::stoul(n_env);
+    const size_t max_subtables = std::getenv("BBREF_MAX") != nullptr ? std::stoul(std::getenv("BBREF_MAX")) : 9;
+    bb::srs::init_file_crs_factory(bb::srs::bb_crs_path());
+    std::filesystem::path out(out_env);
+    std::filesystem::create_directories(out);
+
+    auto op_queue = std::make_shared<ECCOpQueue>();
+    for (size_t i = 0; i < num_subtables; ++i) {
+        if (i > 0) {
+            op_queue->initialize_new_subtable();
+        }
+        populate_subtable_deterministic(*op_queue, i);
+        op_queue->merge();
+    }
+    if (mode == "merge") {
+        write_columns(out / "zk_columns.bin", op_queue->construct_zk_columns());
+        op_queue->initialize_new_subtable();
+        populate_subtable_deterministic(*op_queue, num_subtables);
+        while (op_queue->get_current_subtable_size() < HIDING_KERNEL_ULTRA_OPS) {
+            op_queue->add_accumulate(curve::BN254::AffineElement::one() *
+                                     fr(1000 + op_queue->get_current_subtable_size()));
+        }
+        auto transcript = std::make_shared<NativeTranscript>();
+        MergeProver prover{ op_queue, transcript };
+        auto proof = prover.construct_proof();
+        write_proof(out / "merge_proof.bin", proof);
+        write_columns(out / "merged.bin", op_queue->construct_ultra_ops_table_columns());
+
+        MergeVerifier::InputCommitments inputs;
+        auto t_current = op_queue->construct_current_ultra_ops_subtable_columns();
+        auto T_prev = op_queue->construct_table_columns_up_to_tail();
+        for (size_t j = 0; j < 4; ++j) {
+            inputs.t_commitments[j] = prover.pcs_commitment_key.commit(t_current[j]);
+            inputs.T_prev_commitments[j] = prover.pcs_commitment_key.commit(T_prev[j]);
+        }
+        MergeVerifier verifier;
+        auto result = verifier.reduce_to_pairing_check(proof, inputs);
+        ASSERT_TRUE(result.reduction_succeeded);
+        ASSERT_TRUE(result.pairing_points.check());
+        return;
+    }
+    ASSERT_EQ(mode, "batch");
+    // The batch merge prover builds the ZK prefix itself; dump it from the head of the merged table.
+    BatchMergeProver prover{ op_queue, max_subtables };
+    auto proof = prover.construct_proof();
+    write_proof(out / "batch_merge_proof.bin", proof);
+    auto merged = op_queue->construct_ultra_ops_table_columns();
+    std::array<Polynomial<fr>, 4> zk_columns;
+    for (size_t j = 0; j < 4; ++j) {
+        zk_columns[j] = Polynomial<fr>(UltraEccOpsTable::ZK_ULTRA_OPS);
+        for (size_t r = 0; r < UltraEccOpsTable::ZK_ULTRA_OPS; ++r) {
+            zk_columns[j].at(r) = merged[j][r];
+        }
+    }
+    write_columns(out / "zk_columns.bin", zk_columns);
+
+    std::optional<fr> hash;
+    for (const auto& cols : op_queue->construct_subtable_columns()) {
+        std::vector<curve::BN254::AffineElement> comms;
+        for (const auto& col : cols) {
+            comms.push_back(prover.pcs_commitment_key.commit(col));
+        }
+        hash = BatchMergeVerifier::ecc_op_hash_step(comms, hash);
+    }
+    auto check = [&]<size_t M>() {
+        BatchMergeVerifier_<curve::BN254, M> verifier;
+        auto result = verifier.reduce_to_pairing_check(proof, *hash);
+        ASSERT_TRUE(result.reduction_succeeded);
+        ASSERT_TRUE(result.pairing_points.check());
+    };
+    if (max_subtables == 9) {
+        check.template operator()<9>();
+    } else {
+        ASSERT_EQ(max_subtables, CHONK_MAX_NUM_CIRCUITS);
+        check.template operator()<CHONK_MAX_NUM_CIRCUITS>();
+    }
 }

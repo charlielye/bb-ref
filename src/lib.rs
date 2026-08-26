@@ -5,5 +5,6 @@
 pub mod acir;
 pub mod base;
 pub mod circuit;
+pub mod goblin;
 pub mod honk;
 pub mod stdlib;

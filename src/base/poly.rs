@@ -32,6 +32,10 @@ impl Poly {
         c.push(Fr::zero());
         Self { coeffs: c }
     }
+    /// Coefficients in reverse order over the full length: `X^{n-1} p(1/X)` (bb `Polynomial::reverse`).
+    pub fn reverse(&self) -> Self {
+        Self { coeffs: self.coeffs.iter().rev().cloned().collect() }
+    }
     /// Horner evaluation of the univariate `sum_i coeffs[i] X^i`.
     pub fn evaluate(&self, z: &Fr) -> Fr {
         let mut acc = Fr::zero();

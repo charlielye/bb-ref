@@ -1,19 +1,24 @@
 //! Randomness source for ZK provers. A replayable tape can be substituted to reproduce bb's proofs.
 
-use super::field::{Fr, U256};
-use ark_ff::{BigInteger, Field, PrimeField, UniformRand};
+use super::field::{Fq, Fr, U256};
+use ark_ff::{BigInteger, PrimeField, UniformRand};
 
 pub trait Rng {
     /// A uniformly random 256-bit integer (bb `RNG::get_random_uint256`).
     fn next_u256(&mut self) -> U256;
 
-    /// bb `fr::random_element()`: `lo + 2^256 * hi` for two independent u256 draws, each reduced mod r.
+    /// bb `field::random_element()`: `lo + 2^256 * hi` for two independent u256 draws, each reduced mod p.
     fn fr(&mut self) -> Fr {
-        let lo = Fr::from_le_bytes_mod_order(&self.next_u256().to_bytes_le());
-        let hi = Fr::from_le_bytes_mod_order(&self.next_u256().to_bytes_le());
-        let pow_2_256 = Fr::from_bigint(U256::from(1u64) << 128).unwrap().square();
-        lo + pow_2_256 * hi
+        random_field(self.next_u256(), self.next_u256())
     }
+    fn fq(&mut self) -> Fq {
+        random_field(self.next_u256(), self.next_u256())
+    }
+}
+
+fn random_field<F: PrimeField>(lo: U256, hi: U256) -> F {
+    let pow_2_256 = F::from(2u64).pow([256u64]);
+    F::from_le_bytes_mod_order(&lo.to_bytes_le()) + pow_2_256 * F::from_le_bytes_mod_order(&hi.to_bytes_le())
 }
 
 /// OS randomness.

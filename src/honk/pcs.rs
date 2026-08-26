@@ -266,6 +266,35 @@ pub fn check_libra_evaluations_consistency<C: Curve>(
 }
 
 /// bb `KZG::reduce_verify_batch_opening_claim`: `P0 = C + z*[W]`, `P1 = -[W]`.
+/// An opening claim `f(x) = v` on a commitment, as seen by the verifier.
+pub struct VerifierOpeningClaim<C: Curve> {
+    pub commitment: C::G,
+    pub challenge: C::Fr,
+    pub evaluation: C::Fr,
+}
+
+/// bb `ShplonkVerifier_::reduce_verification_no_finalize` + `export_batch_opening_claim`: the batched
+/// claim `[Q] - sum_i nu^i/(z - x_i) [f_i] + (sum_i nu^i v_i/(z - x_i)) [1]` opened at `z` with value 0.
+pub fn shplonk_verify<C: Curve>(claims: &[VerifierOpeningClaim<C>], g1_identity: C::G, t: &mut Transcript<C::TF, C::Hash>) -> BatchOpeningClaim<C> {
+    assert!(claims.len() > 1, "Shplonk with one claim; open it directly");
+    let nu: C::Fr = t.challenge("Shplonk:nu");
+    let q: C::G = t.receive("Shplonk:Q");
+    let z: C::Fr = t.challenge("Shplonk:z");
+    let nu_pows = powers(&nu, claims.len());
+    let mut commitments = vec![q];
+    let mut scalars = vec![C::Fr::one()];
+    let mut identity_scalar = C::Fr::zero();
+    for (c, nu_pow) in claims.iter().zip(&nu_pows) {
+        let factor = nu_pow.clone() * (z.clone() - &c.challenge).invert();
+        commitments.push(c.commitment.clone());
+        scalars.push(C::Fr::zero() - &factor);
+        identity_scalar += factor * &c.evaluation;
+    }
+    commitments.push(g1_identity);
+    scalars.push(identity_scalar);
+    BatchOpeningClaim { commitments, scalars, evaluation_point: z }
+}
+
 pub fn kzg_reduce_verify_batch_opening_claim<C: Curve>(
     mut claim: BatchOpeningClaim<C>,
     t: &mut Transcript<C::TF, C::Hash>,
@@ -406,7 +435,8 @@ pub fn shplemini_prove(
 }
 
 /// bb `ShplonkProver_::prove`: batched quotient `Q`, then `G = Q - Q_z` opened at `z` with value 0.
-fn shplonk_prove(virtual_log_n: usize, claims: &[ProverClaim], libra_claims: &[ProverClaim], ck: &CommitmentKey, t: &mut NativeTranscript) -> ProverClaim {
+/// `virtual_log_n` only matters when `libra_claims` is non-empty.
+pub fn shplonk_prove(virtual_log_n: usize, claims: &[ProverClaim], libra_claims: &[ProverClaim], ck: &CommitmentKey, t: &mut NativeTranscript) -> ProverClaim {
     let nu: Fr = t.challenge("Shplonk:nu");
     let fold_pos_evals: Vec<Fr> = claims.iter().filter(|c| c.gemini_fold).map(|c| c.poly.evaluate(&(-c.challenge))).collect();
     let max_size = claims.iter().chain(libra_claims).map(|c| c.poly.len()).max().unwrap();
