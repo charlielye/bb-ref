@@ -23,12 +23,27 @@ pub struct RelationParams<T> {
     pub public_input_delta: T,
     pub beta_sqr: T,
     pub beta_cube: T,
+    pub beta_quartic: T,
+    /// ECCVM set relation: the inverse of the product the four inactive-row wNAF terms contribute.
+    pub eccvm_set_permutation_delta: T,
 }
 
 impl<T: FieldLike> Default for RelationParams<T> {
     fn default() -> Self {
         let z = T::zero;
-        Self { eta: z(), eta_two: z(), eta_three: z(), rom_logup_gamma: z(), beta: z(), gamma: z(), public_input_delta: z(), beta_sqr: z(), beta_cube: z() }
+        Self {
+            eta: z(),
+            eta_two: z(),
+            eta_three: z(),
+            rom_logup_gamma: z(),
+            beta: z(),
+            gamma: z(),
+            public_input_delta: z(),
+            beta_sqr: z(),
+            beta_cube: z(),
+            beta_quartic: z(),
+            eccvm_set_permutation_delta: z(),
+        }
     }
 }
 

@@ -13,6 +13,10 @@
 #include "barretenberg/flavor/mega_kernel_flavor.hpp"
 #include "barretenberg/flavor/mega_zk_flavor.hpp"
 #include "barretenberg/commitment_schemes/triple_ipa/triple_ipa.hpp"
+#include "barretenberg/eccvm/eccvm_flavor.hpp"
+#include "barretenberg/eccvm/eccvm_trace_checker.hpp"
+#include "barretenberg/honk/library/grand_product_library.hpp"
+#include "barretenberg/honk/proof_system/logderivative_library.hpp"
 #include "barretenberg/goblin/batch_merge_prover.hpp"
 #include "barretenberg/goblin/batch_merge_verifier.hpp"
 #include "barretenberg/goblin/merge_prover.hpp"
@@ -620,4 +624,122 @@ TEST(BbRefDump, TripleIpa)
         ASSERT_EQ(log_n, 15UL);
         dump_triple_ipa<15>(out);
     }
+}
+
+// --- M8: ECCVM trace --------------------------------------------------------------------------------------
+// BBREF_CASE=base|msm9 BBREF_OUT=<dir> ./bin/dsl_tests --gtest_filter='BbRefDump.Eccvm'
+// Deterministic op queues (mirrored in bb-ref tests/m8_eccvm.rs); dumps every ECCVM column (AllEntities order)
+// over the active rows, with the derived witness computed for beta = 2, gamma = 3.
+namespace {
+void build_eccvm_ops(ECCOpQueue& q, const std::string& kind)
+{
+    using G1 = bb::g1;
+    using Fr = G1::Fr;
+    using Point = G1::affine_element;
+    auto pt = [](uint64_t k) { return Point(G1::one * Fr(k)); };
+    const Point inf = G1::affine_point_at_infinity;
+    const Fr x = Fr(123456789).invert();
+    const Fr y = Fr(987654321).invert();
+    const Fr zero_scalar = 0;
+    if (kind == "base") {
+        const Point a = pt(3);
+        const Point b = pt(5);
+        const Point c = pt(7);
+        q.add_accumulate(a);
+        q.mul_accumulate(a, x);
+        q.mul_accumulate(b, x);
+        q.mul_accumulate(b, y);
+        q.add_accumulate(a);
+        q.mul_accumulate(b, x);
+        q.add_accumulate(b);
+        q.eq_and_reset();
+        q.add_accumulate(c);
+        q.mul_accumulate(a, x);
+        q.mul_accumulate(inf, x);
+        q.mul_accumulate(b, x);
+        q.eq_and_reset();
+        q.mul_accumulate(a, x);
+        q.mul_accumulate(b, x);
+        q.mul_accumulate(inf, zero_scalar);
+        q.mul_accumulate(c, x);
+        q.eq_and_reset();
+        q.mul_accumulate(inf, zero_scalar);
+        q.mul_accumulate(inf, x);
+        q.mul_accumulate(inf, zero_scalar);
+        q.add_accumulate(a);
+        q.eq_and_reset();
+        q.add_accumulate(a);
+        q.add_accumulate(inf);
+        q.eq_and_reset();
+        q.add_accumulate(inf);
+        q.eq_and_reset();
+        q.mul_accumulate(inf, x);
+        q.mul_accumulate(inf, -x);
+        q.eq_and_reset();
+        q.add_accumulate(a);
+        q.mul_accumulate(inf, x);
+        q.mul_accumulate(inf, -x);
+        q.add_accumulate(a);
+        q.add_accumulate(a);
+        q.eq_and_reset();
+    } else {
+        for (uint64_t k = 0; k < 9; ++k) {
+            q.mul_accumulate(pt(k + 11), Fr(1000 + k).invert());
+        }
+        q.eq_and_reset();
+    }
+    q.merge();
+    q.append_hiding_op(curve::BN254::BaseField(11), curve::BN254::BaseField(13));
+}
+} // namespace
+
+TEST(BbRefDump, Eccvm)
+{
+    const char* case_env = std::getenv("BBREF_CASE");
+    const char* out_env = std::getenv("BBREF_OUT");
+    if (case_env == nullptr || out_env == nullptr) {
+        GTEST_SKIP() << "set BBREF_CASE, BBREF_OUT";
+    }
+    std::filesystem::path out(out_env);
+    std::filesystem::create_directories(out);
+    auto op_queue = std::make_shared<ECCOpQueue>();
+    build_eccvm_ops(*op_queue, case_env);
+    ECCVMCircuitBuilder builder{ op_queue };
+    ASSERT_TRUE(ECCVMTraceChecker::check(builder));
+
+    using FF = ECCVMFlavor::FF;
+    ECCVMFlavor::ProverPolynomials polys(builder);
+    const FF beta(2);
+    const FF gamma(3);
+    const FF beta_sqr = beta.sqr();
+    const FF beta_quartic = beta_sqr * beta_sqr;
+    const FF tag = beta_quartic;
+    FF delta = (gamma + tag) * (gamma + beta_sqr + tag) * (gamma + beta_sqr + beta_sqr + tag) *
+               (gamma + beta_sqr + beta_sqr + beta_sqr + tag);
+    RelationParameters<FF> params{
+        .eta = 0,
+        .beta = beta,
+        .gamma = gamma,
+        .public_input_delta = 0,
+        .beta_sqr = beta_sqr,
+        .beta_cube = beta_sqr * beta,
+        .beta_quartic = beta_quartic,
+        .eccvm_set_permutation_delta = delta.invert(),
+    };
+    compute_logderivative_inverse<FF, ECCVMLookupRelation<FF>>(polys, params, ECCVMFlavor::TRACE_OFFSET);
+    compute_grand_product<ECCVMFlavor, ECCVMSetRelation<FF>>(polys, params);
+    polys.z_perm_shift = ECCVMFlavor::Polynomial(polys.z_perm.shifted());
+
+    const size_t num_rows = polys.row_skip_active_prefix_end + 2;
+    std::vector<uint8_t> buf;
+    for (int shift = 24; shift >= 0; shift -= 8) {
+        buf.push_back(static_cast<uint8_t>((num_rows >> shift) & 0xff));
+    }
+    for (const auto& poly : polys.get_all()) {
+        for (size_t r = 0; r < num_rows; ++r) {
+            auto b = to_buffer(poly.get(r));
+            buf.insert(buf.end(), b.begin(), b.end());
+        }
+    }
+    write_file(out / "eccvm_columns.bin", buf);
 }

@@ -13,3 +13,7 @@ gen batch 5 56 batch_5_of_max
 ipa() { BBREF_LOG_N=$1 BBREF_OUT=$F/data/$(cut -c1-7 "$F/PIN")/instance/ipa/log_$1 "$BIN" --gtest_filter='BbRefDump.TripleIpa'; }
 ipa 4
 ipa 15
+# M8: ECCVM columns
+vm() { BBREF_CASE=$1 BBREF_OUT=$F/data/$(cut -c1-7 "$F/PIN")/instance/eccvm/$1 "$BIN" --gtest_filter='BbRefDump.Eccvm'; }
+vm base
+vm msm9
