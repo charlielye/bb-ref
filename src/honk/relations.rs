@@ -103,6 +103,25 @@ fn permutation<T: FieldLike>(acc: &mut [T], r: &Row<T>, p: &RelationParams<T>, s
     acc[2] += &((r.e(lagrange_first).clone() * r.e(z_perm)) * scaling);
 }
 
+/// `table_1 + γ + table_2 β + table_3 β² + table_4 β³`
+pub fn table_term<T: FieldLike>(r: &Row<T>, p: &RelationParams<T>) -> T {
+    let mut t = (r.e(table_2).clone() * &p.beta) + &(r.e(table_3).clone() * &p.beta_sqr) + &(r.e(table_4).clone() * &p.beta_cube);
+    t += r.e(table_1);
+    t += &p.gamma;
+    t
+}
+
+/// `(w_1 + γ + q_r w_1') + β(w_2 + q_m w_2') + β²(w_3 + q_c w_3') + β³ q_o`
+pub fn lookup_term<T: FieldLike>(r: &Row<T>, p: &RelationParams<T>) -> T {
+    let d1 = (r.e(q_r).clone() * r.s(w_l)) + &(r.e(w_l).clone() + &p.gamma);
+    let d2 = (r.e(q_m).clone() * r.s(w_r)) + r.e(w_r);
+    let d3 = (r.e(q_c).clone() * r.s(w_o)) + r.e(w_o);
+    let table_index_entry = r.e(q_o).clone() * &p.beta_cube;
+    let mut t = d2 * &p.beta + &(d3 * &p.beta_sqr);
+    t += &(d1 + &table_index_entry);
+    t
+}
+
 // relations/logderiv_lookup_relation.hpp
 fn logderiv_lookup<T: FieldLike>(acc: &mut [T], r: &Row<T>, p: &RelationParams<T>, scaling: &T) {
     let inverses = r.e(lookup_inverses);
@@ -111,17 +130,8 @@ fn logderiv_lookup<T: FieldLike>(acc: &mut [T], r: &Row<T>, p: &RelationParams<T
     let read_tags = r.e(lookup_read_tags);
     // 1 - (1 - read_tag)(1 - q_lookup)
     let inverse_exists = -(read_tags.clone() * read_selector) + read_tags + read_selector;
-    // table_1 + gamma + table_2*beta + table_3*beta^2 + table_4*beta^3
-    let mut table_term = (r.e(table_2).clone() * &p.beta) + &(r.e(table_3).clone() * &p.beta_sqr) + &(r.e(table_4).clone() * &p.beta_cube);
-    table_term += r.e(table_1);
-    table_term += &p.gamma;
-    // (w_1 + γ + q_r*w_1') + β(w_2 + q_m*w_2') + β²(w_3 + q_c*w_3') + β³*q_o
-    let d1 = (r.e(q_r).clone() * r.s(w_l)) + &(r.e(w_l).clone() + &p.gamma);
-    let d2 = (r.e(q_m).clone() * r.s(w_r)) + r.e(w_r);
-    let d3 = (r.e(q_c).clone() * r.s(w_o)) + r.e(w_o);
-    let table_index_entry = r.e(q_o).clone() * &p.beta_cube;
-    let mut lookup_term = d2 * &p.beta + &(d3 * &p.beta_sqr);
-    lookup_term += &(d1 + &table_index_entry);
+    let table_term = table_term(r, p);
+    let lookup_term = lookup_term(r, p);
 
     acc[0] += &((lookup_term.clone() * &table_term * inverses - &inverse_exists) * scaling);
     let mut tmp = read_selector.clone() * &table_term;

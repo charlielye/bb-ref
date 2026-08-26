@@ -22,19 +22,21 @@ fn check(prog: &str, mode: &str) {
     assert!(!verify_ultra(flavor, &vk, &public_inputs, &bad, &g2), "{prog}/{mode}: tampered proof accepted");
 }
 
-#[test]
-fn a_1_mul_nozk() {
-    check("a_1_mul", "nozk");
+macro_rules! fixture_tests {
+    ($($name:ident: $prog:literal),* $(,)?) => { $(
+        mod $name {
+            #[test] fn nozk() { super::check($prog, "nozk"); }
+            #[test] fn zk() { super::check($prog, "zk"); }
+        }
+    )* };
 }
-#[test]
-fn a_1_mul_zk() {
-    check("a_1_mul", "zk");
-}
-#[test]
-fn array_dynamic_nozk() {
-    check("array_dynamic", "nozk");
-}
-#[test]
-fn array_dynamic_zk() {
-    check("array_dynamic", "zk");
+
+fixture_tests! {
+    a_1_mul: "a_1_mul",
+    array_dynamic: "array_dynamic",
+    poseidon: "no_predicates_numeric_generic_poseidon",
+    embedded_curve_ops: "embedded_curve_ops",
+    ecdsa_secp256k1: "ecdsa_secp256k1",
+    unsafe_range_constraint: "unsafe_range_constraint",
+    uhashmap: "uhashmap",
 }

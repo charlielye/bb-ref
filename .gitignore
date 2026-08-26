@@ -1,3 +1,4 @@
 /target
 /fixtures/data/**/proof
 /fixtures/data/**/proof.json
+/fixtures/data/**/instance/

@@ -125,6 +125,16 @@ impl<TF: FieldLike, H: Hasher<TF>> Transcript<TF, H> {
         self.proof_data.extend(fields);
     }
 
+    /// Prover: send `elements` as one labelled object (arrays, univariates).
+    pub fn send_vec<T: Transcriptable<TF>>(&mut self, label: &str, elements: &[T]) {
+        self.begin_data_phase();
+        let fields: Vec<TF> = elements.iter().flat_map(|e| e.to_fields()).collect();
+        self.record(ManifestKind::Entry, label, fields.len());
+        self.num_written += fields.len();
+        self.round_data.extend_from_slice(&fields);
+        self.proof_data.extend(fields);
+    }
+
     /// Verifier: read the next element from the proof and add it to the hash buffer.
     pub fn receive<T: Transcriptable<TF>>(&mut self, label: &str) -> T {
         let fields = self.receive_fields(label, T::num_fields());

@@ -2,6 +2,8 @@
 //! used by IPA.
 
 use super::group::{G1Affine, G2Affine, G2Points, GrumpkinAffine};
+use super::poly::Poly;
+use ark_ec::{CurveGroup, VariableBaseMSM};
 use super::field::{from_bytes_be, Fq, Fr};
 use ark_ec::AffineRepr;
 use std::io::Read;
@@ -60,12 +62,31 @@ mod tests {
 
     #[test]
     fn g2_is_valid() {
-        bn254_g2();
+        let _ = bn254_g2();
     }
 
     #[test]
     fn g1_prefix_loads() {
         let pts = load_bn254_g1(4);
         assert!(pts.iter().all(|p| p.is_on_curve()));
+    }
+}
+
+/// KZG commitment key: the first `n` (rounded up to even, as bb does) SRS points.
+pub struct CommitmentKey {
+    pub points: Vec<G1Affine>,
+}
+
+impl CommitmentKey {
+    pub fn new(num_points: usize) -> Self {
+        let n = (num_points + 1) & !1usize;
+        Self { points: load_bn254_g1(n) }
+    }
+
+    /// `sum_i coeffs[i] * [tau^i]_1`.
+    pub fn commit(&self, p: &Poly) -> G1Affine {
+        let k = p.end_index();
+        assert!(k <= self.points.len(), "polynomial needs {k} SRS points, key has {}", self.points.len());
+        ark_bn254::G1Projective::msm_unchecked(&self.points[..k], &p.coeffs[..k]).into_affine()
     }
 }
