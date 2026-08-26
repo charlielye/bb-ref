@@ -13,10 +13,10 @@ pub mod vk;
 
 pub use codec::{ChallengeField, FromChallenge, Transcriptable};
 pub use field::{FieldLike, Fq, Fr, U256};
-pub use group::{Bn254, Curve, G1Affine, G2Affine, GroupLike, GrumpkinAffine, PairingPoints};
+pub use group::{Bn254, Curve, G1Affine, G2Affine, GroupLike, Grumpkin, GrumpkinAffine, PairingPoints};
 pub use poly::Poly;
 pub use poseidon2::{Hasher, Poseidon2};
 pub use rng::{OsRng, Rng};
-pub use srs::CommitmentKey;
+pub use srs::{CommitmentKey, GrumpkinKey};
 pub use transcript::{NativeTranscript, Transcript};
 pub use vk::Vk;

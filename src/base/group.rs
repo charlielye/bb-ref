@@ -2,7 +2,7 @@
 //! and the native BN254 instantiation including the final pairing check.
 
 use super::codec::{FromChallenge, Transcriptable};
-use super::field::{FieldLike, Fr};
+use super::field::{FieldLike, Fq, Fr};
 use super::poseidon2::{Hasher, Poseidon2};
 use ark_ec::pairing::Pairing;
 use ark_ec::short_weierstrass::{Affine, Projective, SWCurveConfig};
@@ -95,6 +95,24 @@ impl Curve for Bn254 {
         super::field::from_hex("0x204bd3277422fad364751ad938e2b5e6a54cf8c68712848a692c553d0329f5d6")
     }
     const LIBRA_UNIVARIATES_LENGTH: usize = 9;
+}
+
+/// Grumpkin: the ECCVM's curve. Its scalar field is bn254 Fq; the transcript stays over bn254 Fr.
+pub struct Grumpkin;
+impl Curve for Grumpkin {
+    type TF = Fr;
+    type Fr = Fq;
+    type G = GrumpkinAffine;
+    type Hash = Poseidon2;
+    const SUBGROUP_SIZE: usize = 87;
+    // Of order 3 * 29 = 87 (ecc/curves/grumpkin/grumpkin.hpp).
+    fn subgroup_generator() -> Fq {
+        super::field::from_hex("0x147c647c09fb639514909e9f0513f31ec1a523bf8a0880bc7c24fbc962a9586b")
+    }
+    fn subgroup_generator_inverse() -> Fq {
+        super::field::from_hex("0x0c68e27477b5e78cfab790bd3b59806fa871771f71ec7452cde5384f6e3a1988")
+    }
+    const LIBRA_UNIVARIATES_LENGTH: usize = 4;
 }
 
 /// The two points `{P0, P1}` of a deferred pairing check `e(P0, [1]_2) * e(P1, [x]_2) == 1`

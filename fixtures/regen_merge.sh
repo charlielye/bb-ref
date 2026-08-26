@@ -9,3 +9,7 @@ gen() { BBREF_MODE=$1 BBREF_NUM_SUBTABLES=$2 BBREF_MAX=$3 BBREF_OUT=$OUT/$4 "$BI
 gen merge 3 9 merge_3
 gen batch 3 9 batch_3_of_9
 gen batch 5 56 batch_5_of_max
+# M7: TripleIPA over Grumpkin
+ipa() { BBREF_LOG_N=$1 BBREF_OUT=$F/data/$(cut -c1-7 "$F/PIN")/instance/ipa/log_$1 "$BIN" --gtest_filter='BbRefDump.TripleIpa'; }
+ipa 4
+ipa 15

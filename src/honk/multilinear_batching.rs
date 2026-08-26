@@ -3,6 +3,7 @@
 //! `Σ_i γ^i (P_i(x) + α S_i(x)) eq(x, r_i)`, then merge the outputs with powers of `ρ`.
 //! The width is a runtime value (bb instantiates one flavor per width).
 
+use crate::base::poly::eq_table;
 use super::hypernova::{ProverClaim, VerifierClaim};
 use crate::base::codec::FromChallenge;
 use crate::base::field::FieldLike;
@@ -35,26 +36,6 @@ pub fn eq_eval<F: FieldLike>(r: &[F], u: &[F]) -> F {
         acc *= &(b + &(ui.clone() * &a));
     }
     acc
-}
-
-/// The table of `eq(x, r[..log_n]) · ∏_{j ≥ log_n} (1 - r_j)` over the hypercube (bb `ProverEqPolynomial::construct`).
-fn eq_table(r: &[Fr], log_n: usize) -> Vec<Fr> {
-    let mut tail = Fr::one();
-    for rj in &r[log_n..] {
-        tail *= Fr::one() - rj;
-    }
-    let mut table = vec![tail];
-    for rj in r.iter().take(log_n) {
-        let mut next = Vec::with_capacity(table.len() * 2);
-        for t in &table {
-            next.push(*t * (Fr::one() - rj));
-        }
-        for t in &table {
-            next.push(*t * rj);
-        }
-        table = next;
-    }
-    table
 }
 
 /// bb `MultilinearBatchingProver::construct_proof` + `compute_new_claim`; the proof is left in `t`.

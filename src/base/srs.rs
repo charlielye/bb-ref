@@ -2,7 +2,8 @@
 //! used by IPA.
 
 use super::group::{G1Affine, G2Affine, G2Points, GrumpkinAffine};
-use super::poly::Poly;
+use super::field::FieldLike;
+use super::poly::Polynomial;
 use ark_ec::{CurveGroup, VariableBaseMSM};
 use super::field::{from_bytes_be, Fq, Fr};
 use ark_ec::AffineRepr;
@@ -32,9 +33,9 @@ pub fn load_bn254_g1(n: usize) -> Vec<G1Affine> {
     points
 }
 
-/// The Grumpkin SRS from `grumpkin_g1.flat.dat` (same raw 64-byte layout, coordinates in bn254 Fr).
+/// The Grumpkin SRS from `grumpkin_g1_v2.flat.dat` (same raw 64-byte layout, coordinates in bn254 Fr).
 pub fn load_grumpkin_g1(n: usize) -> Vec<GrumpkinAffine> {
-    let path = crs_dir().join("grumpkin_g1.flat.dat");
+    let path = crs_dir().join("grumpkin_g1_v2.flat.dat");
     let mut f = std::fs::File::open(&path).unwrap_or_else(|e| panic!("cannot open {}: {e}", path.display()));
     let mut buf = vec![0u8; n * 64];
     f.read_exact(&mut buf).unwrap_or_else(|e| panic!("CRS file too small for {n} points: {e}"));
@@ -73,20 +74,35 @@ mod tests {
 }
 
 /// KZG commitment key: the first `n` (rounded up to even, as bb does) SRS points.
-pub struct CommitmentKey {
-    pub points: Vec<G1Affine>,
+/// Monomial commitment key `[tau^i]` over either curve (bb `CommitmentKey<Curve>`).
+pub struct Ck<G: AffineRepr> {
+    pub points: Vec<G>,
 }
 
+impl<G: AffineRepr> Ck<G>
+where
+    G::ScalarField: FieldLike,
+{
+    /// `sum_i coeffs[i] * [tau^i]`.
+    pub fn commit(&self, p: &Polynomial<G::ScalarField>) -> G {
+        let k = p.end_index();
+        assert!(k <= self.points.len(), "polynomial needs {k} SRS points, key has {}", self.points.len());
+        G::Group::msm_unchecked(&self.points[..k], &p.coeffs[..k]).into_affine()
+    }
+}
+
+pub type CommitmentKey = Ck<G1Affine>;
 impl CommitmentKey {
     pub fn new(num_points: usize) -> Self {
         let n = (num_points + 1) & !1usize;
         Self { points: load_bn254_g1(n) }
     }
+}
 
-    /// `sum_i coeffs[i] * [tau^i]_1`.
-    pub fn commit(&self, p: &Poly) -> G1Affine {
-        let k = p.end_index();
-        assert!(k <= self.points.len(), "polynomial needs {k} SRS points, key has {}", self.points.len());
-        ark_bn254::G1Projective::msm_unchecked(&self.points[..k], &p.coeffs[..k]).into_affine()
+/// The Grumpkin key used by the ECCVM's IPA.
+pub type GrumpkinKey = Ck<GrumpkinAffine>;
+impl GrumpkinKey {
+    pub fn new(num_points: usize) -> Self {
+        Self { points: load_grumpkin_g1(num_points) }
     }
 }

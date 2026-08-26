@@ -12,6 +12,7 @@
 #include "barretenberg/flavor/mega_app_flavor.hpp"
 #include "barretenberg/flavor/mega_kernel_flavor.hpp"
 #include "barretenberg/flavor/mega_zk_flavor.hpp"
+#include "barretenberg/commitment_schemes/triple_ipa/triple_ipa.hpp"
 #include "barretenberg/goblin/batch_merge_prover.hpp"
 #include "barretenberg/goblin/batch_merge_verifier.hpp"
 #include "barretenberg/goblin/merge_prover.hpp"
@@ -541,5 +542,82 @@ TEST(BbRefDump, Merge)
     } else {
         ASSERT_EQ(max_subtables, CHONK_MAX_NUM_CIRCUITS);
         check.template operator()<CHONK_MAX_NUM_CIRCUITS>();
+    }
+}
+
+// --- M7: TripleIPA over Grumpkin ------------------------------------------------------------------------
+// BBREF_LOG_N=4|15 BBREF_OUT=<dir> ./bin/dsl_tests --gtest_filter='BbRefDump.TripleIpa'
+// Deterministic inputs (mirrored in bb-ref tests/m7_ipa.rs); dumps the proof and cross-checks natively.
+namespace {
+template <size_t LOG_N> void dump_triple_ipa(const std::filesystem::path& out)
+{
+    using Curve = curve::Grumpkin;
+    using Fq = Curve::ScalarField;
+    using PCS = TripleIPA<Curve, LOG_N>;
+    constexpr size_t N = 1UL << LOG_N;
+    CommitmentKey<Curve> ck(N);
+
+    typename PCS::TripleIpaInput input;
+    std::vector<Fq> u;
+    for (size_t i = 0; i < LOG_N; ++i) {
+        u.emplace_back(7 + i);
+    }
+    input.claim_data.unshifted.multilinear_challenge = u;
+    const auto eq = ProverEqPolynomial<Fq>::construct(std::span<const Fq>(u), LOG_N);
+    for (size_t k = 0; k < 5; ++k) {
+        Polynomial<Fq> p(N);
+        for (size_t i = 0; i < N; ++i) {
+            p.at(i) = Fq((k + 1) * 1000 + i + 1);
+        }
+        input.claim_data.unshifted.evaluations.emplace_back(p.evaluate_mle(std::span<const Fq>(u)));
+        input.claim_data.unshifted.commitments.emplace_back(ck.commit(p));
+        input.unshifted_polynomials.emplace_back(std::move(p));
+    }
+    input.claim_data.unshifted.rho_powers = PCS::TripleIpaClaimData::rho_powers(Fq(11), 5);
+    input.claim_data.shifted.rho_powers = PCS::TripleIpaClaimData::rho_powers(Fq(13), 2);
+    for (const size_t source_idx : std::array<size_t, 2>{ 1, 3 }) {
+        input.claim_data.shifted.commitments.emplace_back(input.claim_data.unshifted.commitments[source_idx]);
+        input.claim_data.shifted.source_unshifted_evaluations.emplace_back(
+            input.claim_data.unshifted.evaluations[source_idx]);
+        input.claim_data.shifted.shifted_evaluations.emplace_back(
+            ShiftedEqPolynomial<Curve, LOG_N>::evaluate_from_eq(eq, input.unshifted_polynomials[source_idx]));
+        input.shifted_polynomials.emplace_back(input.unshifted_polynomials[source_idx].share());
+    }
+    Polynomial<Fq> q(N);
+    for (size_t i = 0; i < N; ++i) {
+        q.at(i) = Fq(500 + i);
+    }
+    input.claim_data.univariate.opening_pair.challenge = Fq(17);
+    input.claim_data.univariate.opening_pair.evaluation = q.evaluate(Fq(17));
+    input.claim_data.univariate.commitment = ck.commit(q);
+    input.univariate_polynomial = std::move(q);
+
+    auto prover_transcript = std::make_shared<NativeTranscript>();
+    PCS::compute_opening_proof(ck, input, prover_transcript);
+    auto proof = prover_transcript->export_proof();
+    write_proof(out / "triple_ipa_proof.bin", proof);
+
+    VerifierCommitmentKey<Curve> vk(N, srs::get_grumpkin_crs_factory());
+    auto verifier_transcript = std::make_shared<NativeTranscript>(proof);
+    ASSERT_TRUE(PCS::reduce_verify(vk, input.claim_data.batch(), verifier_transcript));
+}
+} // namespace
+
+TEST(BbRefDump, TripleIpa)
+{
+    const char* log_n_env = std::getenv("BBREF_LOG_N");
+    const char* out_env = std::getenv("BBREF_OUT");
+    if (log_n_env == nullptr || out_env == nullptr) {
+        GTEST_SKIP() << "set BBREF_LOG_N, BBREF_OUT";
+    }
+    srs::init_grumpkin_file_crs_factory(srs::bb_crs_path());
+    std::filesystem::path out(out_env);
+    std::filesystem::create_directories(out);
+    const size_t log_n = std::stoul(log_n_env);
+    if (log_n == 4) {
+        dump_triple_ipa<4>(out);
+    } else {
+        ASSERT_EQ(log_n, 15UL);
+        dump_triple_ipa<15>(out);
     }
 }
