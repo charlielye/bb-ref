@@ -4,8 +4,10 @@
 mod common;
 use bb_ref::base::field::Fr;
 use bb_ref::base::io::decode_fields;
+use bb_ref::base::rng::{Rng, TapeRng};
 use bb_ref::base::srs::bn254_g2;
 use bb_ref::base::{Bn254, CommitmentKey, OsRng, Vk};
+use bb_ref::honk::flavor::Ent;
 use bb_ref::honk::prover_instance::ProverInstance;
 use bb_ref::honk::ultra_prover::prove_ultra;
 use bb_ref::honk::ultra_verifier::verify_ultra;
@@ -48,6 +50,49 @@ fn check_zk(prog: &str) {
     assert_eq!(proof.len(), expected.len(), "{prog}: proof length");
     let (pis, rest): (&[Fr], &[Fr]) = proof.split_at(num_pi - 8);
     assert!(verify_ultra(&ULTRA_ZK, &vk, pis, rest, &bn254_g2()), "{prog}: Rust ZK proof rejected by Rust verifier");
+}
+
+/// With bb's CSPRNG tape replayed, the Rust UltraZK proof is byte-identical to bb's. The dumped
+/// instance already carries bb's masking values; they must be the tape's first draws.
+fn check_zk_tape(prog: &str) {
+    let dir = instance_dir(&format!("{prog}_tape"), "zk");
+    if !dir.join("../rng_tape.bin").exists() {
+        eprintln!("skipping {prog} tape: no dump");
+        return;
+    }
+    let mut tape = TapeRng::from_bytes(std::fs::read(dir.join("../rng_tape.bin")).unwrap());
+    let mut inst = ProverInstance::load_dump(&ULTRA_ZK, &dir);
+    for e in [
+        Ent::w_l,
+        Ent::w_r,
+        Ent::w_o,
+        Ent::w_4,
+        Ent::z_perm,
+        Ent::lookup_read_counts,
+        Ent::lookup_read_tags,
+        Ent::lookup_inverses,
+    ] {
+        for row in 1..4 {
+            assert_eq!(inst.poly(e).coeffs[row], tape.fr(), "{prog}: masking of {} row {row}", e.name());
+        }
+    }
+    let ck = CommitmentKey::new(inst.max_end_index);
+    let vk: Vk<Bn254> = inst.compute_vk(&ck);
+    let proof = prove_ultra(&mut inst, &vk, &mut tape);
+    let expected = decode_fields(&std::fs::read(dir.join("proof.bin")).unwrap());
+    let first_diff = proof.iter().zip(&expected).position(|(a, b)| a != b);
+    assert!(first_diff.is_none(), "{prog}: ZK proof differs from bb at field {}", first_diff.unwrap());
+    assert_eq!(proof.len(), expected.len(), "{prog}: proof length");
+    assert_eq!(tape.remaining(), 0, "{prog}: unconsumed tape bytes");
+}
+
+#[test]
+fn zk_tape_array_dynamic() {
+    check_zk_tape("array_dynamic");
+}
+#[test]
+fn zk_tape_a_1_mul() {
+    check_zk_tape("a_1_mul");
 }
 
 macro_rules! prove_tests {

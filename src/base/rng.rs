@@ -35,25 +35,25 @@ impl Rng for OsRng {
     }
 }
 
-/// Replays a recorded sequence of u256 draws (32-byte big-endian each), panicking when exhausted.
+/// Replays bb's CSPRNG byte stream (`BB_RNG_TAPE_OUT` in the patched `numeric/random/engine.cpp`):
+/// each u256 draw is 32 little-endian bytes. Panics when exhausted.
 pub struct TapeRng {
-    draws: Vec<U256>,
+    bytes: Vec<u8>,
     pos: usize,
 }
 impl TapeRng {
-    pub fn from_bytes(bytes: &[u8]) -> Self {
-        assert_eq!(bytes.len() % 32, 0);
-        let draws = bytes
-            .chunks(32)
-            .map(|c| U256::new(std::array::from_fn(|i| u64::from_be_bytes(c[24 - 8 * i..32 - 8 * i].try_into().unwrap()))))
-            .collect();
-        Self { draws, pos: 0 }
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        Self { bytes, pos: 0 }
+    }
+    pub fn remaining(&self) -> usize {
+        self.bytes.len() - self.pos
     }
 }
 impl Rng for TapeRng {
     fn next_u256(&mut self) -> U256 {
-        let v = self.draws[self.pos];
-        self.pos += 1;
-        v
+        assert!(self.pos + 32 <= self.bytes.len(), "RNG tape exhausted");
+        let c = &self.bytes[self.pos..self.pos + 32];
+        self.pos += 32;
+        U256::new(std::array::from_fn(|i| u64::from_le_bytes(c[8 * i..8 * i + 8].try_into().unwrap())))
     }
 }

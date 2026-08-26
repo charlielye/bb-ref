@@ -47,11 +47,32 @@ pub fn run_script(ctx: &Ctx, text: &str) {
                 b.add_public_variable(f(1));
             }
             "add_gate" => b.create_big_add_gate(
-                AddQuad { a: u(1), b: u(2), c: u(3), d: u(4), a_scaling: f(5), b_scaling: f(6), c_scaling: f(7), d_scaling: f(8), const_scaling: f(9) },
+                AddQuad {
+                    a: u(1),
+                    b: u(2),
+                    c: u(3),
+                    d: u(4),
+                    a_scaling: f(5),
+                    b_scaling: f(6),
+                    c_scaling: f(7),
+                    d_scaling: f(8),
+                    const_scaling: f(9),
+                },
                 t.get(10) == Some(&"1"),
             ),
             "mul_gate" => b.create_big_mul_add_gate(
-                &MulQuad { a: u(1), b: u(2), c: u(3), d: u(4), mul_scaling: f(5), a_scaling: f(6), b_scaling: f(7), c_scaling: f(8), d_scaling: f(9), const_scaling: f(10) },
+                &MulQuad {
+                    a: u(1),
+                    b: u(2),
+                    c: u(3),
+                    d: u(4),
+                    mul_scaling: f(5),
+                    a_scaling: f(6),
+                    b_scaling: f(7),
+                    c_scaling: f(8),
+                    d_scaling: f(9),
+                    const_scaling: f(10),
+                },
                 false,
             ),
             "bool" => b.create_bool_gate(u(1)),

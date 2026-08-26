@@ -115,7 +115,18 @@ fn compute_logderivative_inverses(inst: &mut ProverInstance, p: &RelationParams<
             inv.coeffs[i] = (lookup_term(&row, p) * table_term(&row, p)).invert();
         }
     }
+    invert_masked_head(&mut inv, inst.flavor.trace_offset);
     *inst.poly_mut(Ent::lookup_inverses) = inv;
+}
+
+/// bb batch-inverts the whole inverse polynomial, so the ZK masking values on the disabled head
+/// rows end up inverted too.
+fn invert_masked_head(inv: &mut Poly, trace_offset: usize) {
+    for c in inv.coeffs[..trace_offset].iter_mut() {
+        if !c.is_zero() {
+            *c = c.invert();
+        }
+    }
 }
 
 /// bb `SingleBusLookupRelation::compute_logderivative_inverse`: `1 / (L · T)` on read rows and
@@ -133,6 +144,7 @@ fn compute_databus_inverses(inst: &mut ProverInstance, bus: usize, p: &RelationP
             inv.coeffs[i] = (lookup * table).invert();
         }
     }
+    invert_masked_head(&mut inv, inst.flavor.trace_offset);
     *inst.poly_mut(spec.inverses) = inv;
 }
 

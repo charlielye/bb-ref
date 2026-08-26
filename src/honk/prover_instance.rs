@@ -13,7 +13,7 @@ use std::path::Path;
 const NUM_WIRES: usize = 4;
 const NUM_MASKED_ROWS: usize = 3;
 /// bb `NUM_DISABLED_ROWS_IN_SUMCHECK`: databus data starts here regardless of the flavor's trace offset.
-const DATABUS_OFFSET: usize = 4;
+pub const DATABUS_OFFSET: usize = 4;
 
 pub struct ProverInstance {
     pub flavor: &'static FlavorDesc,

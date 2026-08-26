@@ -6,6 +6,7 @@ use bb_ref::base::codec::Transcriptable;
 use bb_ref::base::field::to_bytes_be;
 use bb_ref::base::io::decode_fields;
 use bb_ref::base::poseidon2::Hasher;
+use bb_ref::base::rng::TapeRng;
 use bb_ref::base::{Fr, GrumpkinKey, NativeTranscript, OsRng, Poseidon2};
 use bb_ref::goblin::eccvm::prover::eccvm_prove;
 use bb_ref::goblin::eccvm::verifier::eccvm_verify;
@@ -76,4 +77,26 @@ fn verify_bb_eccvm_proof() {
     };
     let ck = GrumpkinKey::new(FIXED_SIZE);
     assert!(verify(&proof, &ipa_proof, &ck), "bb's ECCVM proof verifies in Rust");
+}
+
+/// With bb's CSPRNG tape replayed, the Rust ECCVM proof is byte-identical to bb's.
+#[test]
+fn eccvm_proof_byte_exact_with_tape() {
+    let dir = common::fixture_dir("instance/eccvm_proof/base_tape");
+    if !dir.join("rng_tape.bin").exists() {
+        eprintln!("skipping eccvm tape: no dump");
+        return;
+    }
+    let mut tape = TapeRng::from_bytes(std::fs::read(dir.join("rng_tape.bin")).unwrap());
+    let ck = GrumpkinKey::new(FIXED_SIZE);
+    let q = build_ops("base");
+    let mut t = NativeTranscript::new();
+    let out = eccvm_prove(&q, &ck, &mut t, &mut tape);
+    let proof = t.export_proof();
+    let expected = decode_fields(&std::fs::read(dir.join("eccvm_proof.bin")).unwrap());
+    let first_diff = proof.iter().zip(&expected).position(|(a, b)| a != b);
+    assert_eq!(first_diff, None, "ECCVM proof differs from bb's (first differing field index)");
+    assert_eq!(proof.len(), expected.len(), "ECCVM proof length");
+    assert_eq!(out.ipa_proof, decode_fields(&std::fs::read(dir.join("ipa_proof.bin")).unwrap()), "IPA proof");
+    assert_eq!(tape.remaining(), 0, "unconsumed tape bytes");
 }

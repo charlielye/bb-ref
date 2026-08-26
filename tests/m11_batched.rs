@@ -4,6 +4,7 @@
 mod common;
 use bb_ref::base::field::{from_bytes_be, to_bytes_be, FieldLike};
 use bb_ref::base::io::{decode_fields, encode_fields};
+use bb_ref::base::rng::TapeRng;
 use bb_ref::base::srs::bn254_g2;
 use bb_ref::base::{CommitmentKey, Fq, Fr, G1Affine, NativeTranscript, OsRng};
 use bb_ref::chonk::batched::{joint_prove, joint_verify, mega_zk_oink_length_without_public_inputs, JointVerifierInputs, JOINT_LOG_N};
@@ -108,4 +109,46 @@ fn batched_matches_bb() {
         ..inputs
     };
     assert!(!verify(&vk, &rust_oink, &rust_joint, &bad_inputs), "wrong accumulated result accepted");
+}
+
+/// With bb's CSPRNG tape replayed (instance masking, ZK prefix, random ops, translator masking,
+/// sparse Gemini mask, Libra), the Rust Oink and joint proofs are byte-identical to bb's.
+#[test]
+fn batched_byte_exact_with_tape() {
+    let dump = common::fixture_dir("instance/batched_tape");
+    if !dump.join("rng_tape.bin").exists() {
+        eprintln!("skipping batched tape: no dump");
+        return;
+    }
+    let mut tape = TapeRng::from_bytes(std::fs::read(dump.join("rng_tape.bin")).unwrap());
+    let ck = CommitmentKey::new(1 << JOINT_LOG_N);
+    let text = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/scripts/mega_zk.txt")).unwrap();
+    let ctx = Rc::new(RefCell::new(Builder::new_mega(Rc::new(RefCell::new(EccOpQueue::new())))));
+    common::script::run_script(&ctx, &text);
+    let mut builder = Rc::try_unwrap(ctx).ok().unwrap().into_inner();
+    let mut inst = ProverInstance::from_builder(&MEGA_ZK, &mut builder, &mut tape);
+    let vk = inst.compute_vk(&ck);
+    let q = common::translator_fixture::build_translator_queue_from_rng(&mut tape);
+    let v = Fq::from(11u64).invert();
+    let x = Fq::from(13u64).invert();
+    let circuit = TranslatorCircuit::new(v, x, &q);
+    let masking = TranslatorPolys::random_masking(&mut tape);
+    assert_eq!(masking, common::translator_fixture::read_masking(&dump), "translator masking values");
+    let mut polys = TranslatorPolys::from_circuit(&circuit, &masking);
+
+    let mut t = NativeTranscript::new();
+    let oink = prove_oink(&mut inst, &vk, &ck, &mut t, &mut tape, false);
+    let rust_oink = t.export_proof();
+    let bb_oink = decode_fields(&std::fs::read(dump.join("oink_proof.bin")).unwrap());
+    assert_eq!(rust_oink.iter().zip(&bb_oink).position(|(a, b)| a != b), None, "Oink proof differs from bb's (first differing field)");
+    joint_prove(&inst, &oink.params, &mut polys, &v, &x, &ck, &mut t, &mut tape);
+    let rust_joint = t.export_proof();
+    let bb_joint = decode_fields(&std::fs::read(dump.join("joint_proof.bin")).unwrap());
+    assert_eq!(
+        rust_joint.iter().zip(&bb_joint).position(|(a, b)| a != b),
+        None,
+        "joint proof differs from bb's (first differing field)"
+    );
+    assert_eq!(rust_joint.len(), bb_joint.len());
+    assert_eq!(tape.remaining(), 0, "unconsumed tape bytes");
 }

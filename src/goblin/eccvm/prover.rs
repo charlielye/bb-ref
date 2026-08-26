@@ -43,10 +43,26 @@ pub struct EccvmProverOutput {
     pub batching_challenge_v: Fq,
 }
 
+/// The witnesses in the order bb's proving key allocates (and masks) them: transcript, precompute
+/// and MSM wires, lookup read counts, the to-be-shifted wires by group, the accumulators, `z_perm`,
+/// `lookup_inverses` (bb `ECCVMFlavor::ProverPolynomials` constructor).
+const MASKING_ORDER: [usize; 88] = [
+    5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 50, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, // transcript wires
+    17, 18, 19, 20, 21, 22, 23, 24, 25, // precompute wires
+    26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 65, // msm wires
+    51, 52, // lookup read counts
+    66, 67, 85, // shifted transcript wires
+    68, 69, 70, 71, 72, 73, 84, 86, 87, // shifted precompute wires
+    74, 75, 76, 77, 78, 79, 80, 81, 82, 83, // shifted msm wires
+    88, 89, 90, // accumulators
+    91, 92, // z_perm, lookup_inverses
+];
+
 impl EccvmPolys {
-    /// bb `Polynomial::add_masking`: random values on the sumcheck-disabled rows 1..3 of every witness.
+    /// bb `Polynomial::add_masking`: random values on the sumcheck-disabled rows 1..3 of every witness,
+    /// drawn in bb's allocation order.
     pub fn add_masking(&mut self, rng: &mut dyn Rng) {
-        for e in NUM_PRECOMPUTED + 1..FIRST_SHIFTED {
+        for e in MASKING_ORDER {
             for r in 1..TRACE_OFFSET {
                 self.cols[e].coeffs[r] = random_field(rng);
             }

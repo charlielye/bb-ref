@@ -18,6 +18,9 @@
 #include "barretenberg/eccvm/eccvm_trace_checker.hpp"
 #include "barretenberg/eccvm/eccvm_verifier.hpp"
 #include "barretenberg/chonk/batched_honk_translator/batched_honk_translator_prover.hpp"
+#include "barretenberg/chonk/chonk.hpp"
+#include "barretenberg/chonk/chonk_verifier.hpp"
+#include "barretenberg/chonk/mock_circuit_producer.hpp"
 #include "barretenberg/chonk/batched_honk_translator/batched_honk_translator_verifier.hpp"
 #include "barretenberg/circuit_checker/translator_circuit_checker.hpp"
 #include "barretenberg/translator_vm/translator_circuit_builder.hpp"
@@ -972,6 +975,18 @@ TEST(BbRefDump, Batched)
     auto transcript = std::make_shared<NativeTranscript>();
     BatchedHonkTranslatorProver prover(inst, vk, transcript);
     auto oink = prover.prove_mega_zk_oink();
+    {
+        // the masked head rows of the derived MegaZK witnesses (for RNG tape debugging)
+        std::vector<fr> head;
+        for (const auto* poly : { &inst->polynomials.kernel_calldata_read_counts(),
+                                  &inst->polynomials.kernel_calldata_inverses(),
+                                  &inst->polynomials.z_perm() }) {
+            for (size_t i = 0; i < 8; ++i) {
+                head.push_back((*poly)[i]);
+            }
+        }
+        write_proof(out / "oink_head_rows.bin", head);
+    }
     auto joint = prover.prove(key);
     write_proof(out / "oink_proof.bin", oink);
     write_proof(out / "joint_proof.bin", joint);
@@ -990,4 +1005,50 @@ TEST(BbRefDump, Batched)
     }
     write_file(out / "op_queue_wires.bin", opq_bytes);
     verify(oink, joint, acc, opq);
+}
+
+// --- M12: Chonk end-to-end --------------------------------------------------------------------------------
+// Dump:   BBREF_NUM_APPS=<n> BBREF_OUT=<dir> ./bin/dsl_tests --gtest_filter='BbRefDump.Chonk'
+//         (bb's mock IVC with real recursive kernels at log2_num_gates=5; writes proof_fields.bin,
+//         proof.msgpack and the hiding kernel vk)
+// Verify: BBREF_IN=<dir with proof_fields.bin [+ proof.msgpack] and vk> ./bin/dsl_tests --gtest_filter='BbRefDump.Chonk'
+TEST(BbRefDump, Chonk)
+{
+    const char* in_env = std::getenv("BBREF_IN");
+    const char* out_env = std::getenv("BBREF_OUT");
+    const char* n_env = std::getenv("BBREF_NUM_APPS");
+    if (in_env == nullptr && (out_env == nullptr || n_env == nullptr)) {
+        GTEST_SKIP() << "set BBREF_IN, or BBREF_NUM_APPS and BBREF_OUT";
+    }
+    bb::srs::init_file_crs_factory(bb::srs::bb_crs_path());
+    bb::srs::init_grumpkin_file_crs_factory(bb::srs::bb_crs_path());
+    auto verify = [](const ChonkProof& proof, const std::shared_ptr<MegaZKFlavor::VerificationKey>& vk) {
+        ChonkNativeVerifier verifier(std::make_shared<MegaZKFlavor::VKAndHash>(vk));
+        return verifier.verify(proof);
+    };
+    if (in_env != nullptr) {
+        std::filesystem::path in(in_env);
+        std::ifstream f(in / "vk", std::ios::binary);
+        std::vector<uint8_t> vk_bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        auto vk = std::make_shared<MegaZKFlavor::VerificationKey>(from_buffer<MegaZKFlavor::VerificationKey>(vk_bytes));
+        auto proof = ChonkProof::from_field_elements(read_proof(in / "proof_fields.bin"));
+        if (std::filesystem::exists(in / "proof.msgpack")) {
+            EXPECT_TRUE(ChonkProof::from_file_msgpack((in / "proof.msgpack").string()) == proof) << "msgpack proof differs from the field proof";
+        }
+        EXPECT_TRUE(verify(proof, vk));
+        return;
+    }
+    std::filesystem::path out(out_env);
+    std::filesystem::create_directories(out);
+    PrivateFunctionExecutionMockCircuitProducer producer(static_cast<size_t>(std::stoul(n_env)));
+    Chonk ivc{ producer.circuit_kinds() };
+    for (size_t idx = 0; idx < producer.total_num_circuits; ++idx) {
+        producer.construct_and_accumulate_next_circuit(ivc, TestSettings{ .log2_num_gates = 5 });
+    }
+    auto proof = ivc.prove();
+    auto vk = ivc.get_hiding_kernel_vk_and_hash()->vk;
+    write_proof(out / "proof_fields.bin", proof.to_field_elements());
+    proof.to_file_msgpack((out / "proof.msgpack").string());
+    write_file(out / "vk", to_buffer(*vk));
+    EXPECT_TRUE(verify(proof, vk));
 }

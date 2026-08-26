@@ -2,6 +2,7 @@
 //! subtables, bb's dumped ZK prefix, a fixed-append subtable ending in bb's dumped random ops.
 use super::eccvm_ops::populate_subtable;
 use bb_ref::base::io::decode_fields;
+use bb_ref::base::rng::Rng;
 use bb_ref::base::Fr;
 use bb_ref::circuit::op_queue::{EccOpCode, EccOpQueue, UltraOp, NUM_ROWS_PER_OP, ZK_ULTRA_OPS};
 use bb_ref::goblin::translator::{NUM_MASKED_ROWS_END, NUM_MINICIRCUIT_WIRES};
@@ -79,4 +80,25 @@ pub fn build_translator_queue(dump: &Path) -> EccOpQueue {
 pub fn read_masking(dump: &Path) -> Vec<[Fr; NUM_MASKED_ROWS_END]> {
     let frs = decode_fields(&std::fs::read(dump.join("masking.bin")).unwrap());
     (0..NUM_MINICIRCUIT_WIRES).map(|w| std::array::from_fn(|k| frs[w * NUM_MASKED_ROWS_END + k])).collect()
+}
+
+/// The same recipe with the ZK prefix and random ops drawn from `rng` (bb's draw order).
+pub fn build_translator_queue_from_rng(rng: &mut dyn Rng) -> EccOpQueue {
+    let mut q = EccOpQueue::new();
+    for i in 0..2 {
+        if i > 0 {
+            q.initialize_new_subtable();
+        }
+        populate_subtable(&mut q, i);
+        q.merge();
+    }
+    q.construct_zk_columns(rng);
+    q.initialize_new_subtable();
+    populate_subtable(&mut q, 2);
+    for _ in 0..2 {
+        let op = UltraOp::random(rng);
+        q.ultra_ops.current.push(op);
+    }
+    q.merge_fixed_append(q.append_offset_for_prover());
+    q
 }

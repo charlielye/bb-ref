@@ -65,7 +65,6 @@ pub fn build_ops(kind: &str) -> EccOpQueue {
     q
 }
 
-
 pub fn g1_times(k: u64) -> G1Affine {
     (G1Affine::generator() * Fr::from(k)).into_affine()
 }

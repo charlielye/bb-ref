@@ -1,3 +1,6 @@
-//! Chonk: the client IVC driver and its proof (bb `chonk/`).
+//! Chonk: the client IVC driver, its proof and its native verifier (bb `chonk/`).
 
 pub mod batched;
+pub mod ivc;
+pub mod proof;
+pub mod verifier;

@@ -2,3 +2,4 @@
 /fixtures/data/**/proof
 /fixtures/data/**/proof.json
 /fixtures/data/**/instance/
+!/fixtures/data/**/chonk_flows/**/proof
