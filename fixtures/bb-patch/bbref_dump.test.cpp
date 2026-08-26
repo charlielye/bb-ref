@@ -17,6 +17,9 @@
 #include "barretenberg/eccvm/eccvm_prover.hpp"
 #include "barretenberg/eccvm/eccvm_trace_checker.hpp"
 #include "barretenberg/eccvm/eccvm_verifier.hpp"
+#include "barretenberg/circuit_checker/translator_circuit_checker.hpp"
+#include "barretenberg/translator_vm/translator_circuit_builder.hpp"
+#include "barretenberg/translator_vm/translator_proving_key.hpp"
 #include "barretenberg/honk/library/grand_product_library.hpp"
 #include "barretenberg/honk/proof_system/logderivative_library.hpp"
 #include "barretenberg/goblin/batch_merge_prover.hpp"
@@ -796,4 +799,105 @@ TEST(BbRefDump, EccvmProof)
     write_proof(out / "eccvm_proof.bin", proof);
     write_proof(out / "ipa_proof.bin", prover.ipa_proof);
     verify(proof, prover.ipa_proof);
+}
+
+// --- M10: Translator circuit + proving key ----------------------------------------------------------------
+// BBREF_OUT=<dir> ./bin/dsl_tests --gtest_filter='BbRefDump.Translator'
+// Deterministic op queue (two merged subtables, the ZK prefix, a fixed-append subtable ending in two random
+// ops); dumps the ZK prefix and random ops for injection, the circuit wires, the key's masking values, and
+// the key's precomputed / ordered / concatenated / z_perm columns at beta = 2, gamma = 3.
+TEST(BbRefDump, Translator)
+{
+    const char* out_env = std::getenv("BBREF_OUT");
+    if (out_env == nullptr) {
+        GTEST_SKIP() << "set BBREF_OUT";
+    }
+    std::filesystem::path out(out_env);
+    std::filesystem::create_directories(out);
+    using Fq = curve::BN254::BaseField;
+
+    auto op_queue = std::make_shared<ECCOpQueue>();
+    for (size_t i = 0; i < 2; ++i) {
+        if (i > 0) {
+            op_queue->initialize_new_subtable();
+        }
+        populate_subtable_deterministic(*op_queue, i);
+        op_queue->merge();
+    }
+    write_columns(out / "zk_columns.bin", op_queue->construct_zk_columns());
+    op_queue->initialize_new_subtable();
+    populate_subtable_deterministic(*op_queue, 2);
+    std::vector<fr> random_values;
+    for (size_t i = 0; i < 2; ++i) {
+        auto op = op_queue->random_op_ultra_only();
+        for (const auto& v : { op.op_code.random_value_1, op.op_code.random_value_2, op.x_lo, op.x_hi, op.y_lo, op.y_hi, op.z_1, op.z_2 }) {
+            random_values.push_back(v);
+        }
+    }
+    write_proof(out / "random_ops.bin", random_values);
+    op_queue->merge_fixed_append(op_queue->get_append_offset_for_prover());
+
+    const Fq v = Fq(11).invert();
+    const Fq x = Fq(13).invert();
+    TranslatorCircuitBuilder circuit(v, x, op_queue);
+    ASSERT_TRUE(TranslatorCircuitChecker::check(circuit));
+    {
+        std::vector<fr> wires;
+        wires.push_back(fr(circuit.num_gates()));
+        for (const auto& wire : circuit.wires) {
+            for (size_t i = 0; i < circuit.num_gates(); ++i) {
+                wires.push_back(circuit.get_variable(wire[i]));
+            }
+        }
+        write_proof(out / "wires.bin", wires);
+    }
+
+    TranslatorProvingKey key(circuit);
+    auto& polys = key.proving_key->polynomials;
+    {
+        std::vector<fr> masking;
+        auto wire_polys = polys.get_wires();
+        for (size_t w = TranslatorFlavor::NUM_OP_QUEUE_WIRES; w < wire_polys.size(); ++w) {
+            for (size_t i = TranslatorFlavor::MINI_CIRCUIT_SIZE - TranslatorFlavor::NUM_MASKED_ROWS_END;
+                 i < TranslatorFlavor::MINI_CIRCUIT_SIZE;
+                 ++i) {
+                masking.push_back(wire_polys[w][i]);
+            }
+        }
+        write_proof(out / "masking.bin", masking);
+    }
+    using Builder = TranslatorCircuitBuilder;
+    RelationParameters<fr> params;
+    {
+        const Fq v2 = v * v;
+        const Fq v3 = v2 * v;
+        const Fq v4 = v3 * v;
+        auto with_native = [](const Fq& f) {
+            auto l = Builder::split_fq_into_limbs(f);
+            return std::array<fr, 5>{ l[0], l[1], l[2], l[3], fr(uint256_t(f)) };
+        };
+        params.beta = fr(2);
+        params.gamma = fr(3);
+        params.evaluation_input_x = with_native(x);
+        params.batching_challenge_v = { with_native(v), with_native(v2), with_native(v3), with_native(v4) };
+        params.accumulated_result = {
+            circuit.get_variable(circuit.wires[Builder::WireIds::ACCUMULATORS_BINARY_LIMBS_0][Builder::RESULT_ROW]),
+            circuit.get_variable(circuit.wires[Builder::WireIds::ACCUMULATORS_BINARY_LIMBS_1][Builder::RESULT_ROW]),
+            circuit.get_variable(circuit.wires[Builder::WireIds::ACCUMULATORS_BINARY_LIMBS_2][Builder::RESULT_ROW]),
+            circuit.get_variable(circuit.wires[Builder::WireIds::ACCUMULATORS_BINARY_LIMBS_3][Builder::RESULT_ROW]),
+        };
+    }
+    compute_grand_product<TranslatorFlavor, TranslatorPermutationRelation<fr>>(polys, params);
+    {
+        std::vector<uint8_t> buf;
+        auto all = polys.get_all();
+        const std::vector<size_t> entities = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103 };
+        for (size_t e : entities) {
+            for (size_t r = 0; r < TranslatorFlavor::ProverPolynomials::get_polynomial_size(); ++r) {
+                auto b = to_buffer(all[e].get(r));
+                buf.insert(buf.end(), b.begin(), b.end());
+            }
+        }
+        write_file(out / "columns.bin", buf);
+    }
 }

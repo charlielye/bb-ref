@@ -65,3 +65,18 @@ pub fn build_ops(kind: &str) -> EccOpQueue {
     q
 }
 
+
+pub fn g1_times(k: u64) -> G1Affine {
+    (G1Affine::generator() * Fr::from(k)).into_affine()
+}
+
+/// Subtable `i` of the M6/M10 fixtures: `((1 + i) % 10) + 1` triples of add / mul (with a >128-bit
+/// scalar) / eq_and_reset (bb `populate_subtable_deterministic`).
+pub fn populate_subtable(q: &mut EccOpQueue, i: usize) {
+    for j in 0..((1 + i) % 10) + 1 {
+        let k = (1 + 100 * i + j) as u64;
+        q.add_accumulate(g1_times(k));
+        q.mul_accumulate(g1_times(k + 1), Fr::from(k + 2).invert());
+        q.eq_and_reset();
+    }
+}

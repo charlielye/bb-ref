@@ -26,6 +26,12 @@ pub struct RelationParams<T> {
     pub beta_quartic: T,
     /// ECCVM set relation: the inverse of the product the four inactive-row wNAF terms contribute.
     pub eccvm_set_permutation_delta: T,
+    /// Translator: `x` as four 68-bit limbs plus the native value.
+    pub evaluation_input_x: [T; 5],
+    /// Translator: `v, v², v³, v⁴`, each as four 68-bit limbs plus the native value.
+    pub batching_challenge_v: [[T; 5]; 4],
+    /// Translator: the claimed accumulation result as four 68-bit limbs.
+    pub accumulated_result: [T; 4],
 }
 
 impl<T: FieldLike> Default for RelationParams<T> {
@@ -43,6 +49,9 @@ impl<T: FieldLike> Default for RelationParams<T> {
             beta_cube: z(),
             beta_quartic: z(),
             eccvm_set_permutation_delta: z(),
+            evaluation_input_x: std::array::from_fn(|_| z()),
+            batching_challenge_v: std::array::from_fn(|_| std::array::from_fn(|_| z())),
+            accumulated_result: std::array::from_fn(|_| z()),
         }
     }
 }

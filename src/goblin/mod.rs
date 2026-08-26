@@ -2,4 +2,5 @@
 pub mod batch_merge;
 pub mod eccvm;
 pub mod ipa;
+pub mod translator;
 pub mod merge;

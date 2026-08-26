@@ -2,28 +2,14 @@
 //! queue (`BbRefDump.Merge` fixtures; the random ZK prefix is injected from the dump), and the Rust
 //! verifiers accept them.
 mod common;
-use ark_ec::{AffineRepr, CurveGroup};
 use bb_ref::base::io::decode_fields;
 use bb_ref::base::srs::bn254_g2;
 use bb_ref::base::{Bn254, CommitmentKey, FieldLike, Fr, G1Affine, NativeTranscript};
 use bb_ref::circuit::op_queue::{EccOpCode, EccOpQueue, UltraOp, HIDING_KERNEL_ULTRA_OPS, NUM_ROWS_PER_OP, ZK_ULTRA_OPS};
 use bb_ref::goblin::batch_merge::{batch_merge_prove, batch_merge_verify, ecc_op_hash_step, CHONK_MAX_NUM_CIRCUITS};
 use bb_ref::goblin::merge::{merge_prove, merge_verify, MergeInputs, MERGE_PROOF_SIZE};
+use common::eccvm_ops::{g1_times, populate_subtable};
 use std::path::Path;
-
-fn g1_times(k: u64) -> G1Affine {
-    (G1Affine::generator() * Fr::from(k)).into_affine()
-}
-
-/// Subtable `i`: `((1 + i) % 10) + 1` triples of add / mul (with a >128-bit scalar) / eq_and_reset.
-fn populate_subtable(q: &mut EccOpQueue, i: usize) {
-    for j in 0..((1 + i) % 10) + 1 {
-        let k = (1 + 100 * i + j) as u64;
-        q.add_accumulate(g1_times(k));
-        q.mul_accumulate(g1_times(k + 1), Fr::from(k + 2).invert());
-        q.eq_and_reset();
-    }
-}
 
 fn op_queue_with(n: usize) -> EccOpQueue {
     let mut q = EccOpQueue::new();

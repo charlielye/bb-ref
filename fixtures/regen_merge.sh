@@ -20,3 +20,5 @@ vm msm9
 # M9: ECCVM proof (bb dump; then `cargo test --test m9_eccvm_proof` writes rust_base/, verified by the last line)
 BBREF_CASE=base BBREF_OUT=$F/data/$(cut -c1-7 "$F/PIN")/instance/eccvm_proof/base "$BIN" --gtest_filter='BbRefDump.EccvmProof'
 [ -f "$F/data/$(cut -c1-7 "$F/PIN")/instance/eccvm_proof/rust_base/eccvm_proof.bin" ] && BBREF_IN=$F/data/$(cut -c1-7 "$F/PIN")/instance/eccvm_proof/rust_base "$BIN" --gtest_filter='BbRefDump.EccvmProof'
+# M10: Translator circuit + key columns (~90MB)
+BBREF_OUT=$F/data/$(cut -c1-7 "$F/PIN")/instance/translator "$BIN" --gtest_filter='BbRefDump.Translator'

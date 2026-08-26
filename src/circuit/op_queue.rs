@@ -251,6 +251,26 @@ impl EccOpQueue {
         self.ultra_ops.tables[..self.num_subtables() - 1].iter().map(|t| t.len() * NUM_ROWS_PER_OP).sum()
     }
 
+    /// bb `get_zk_reconstructed_ultra_ops`: the ZK prefix, every merged subtable, and — under a
+    /// fixed-location append — no-op padding up to the fixed slot (plus the preamble) before the
+    /// last subtable.
+    pub fn get_zk_reconstructed_ultra_ops(&self) -> Vec<UltraOp> {
+        assert!(self.ultra_ops.current.is_empty() && !self.zk_ops.is_empty());
+        let mut ops = self.zk_ops.clone();
+        match self.fixed_append_offset {
+            None => ops.extend(self.ultra_ops.tables.iter().flatten().cloned()),
+            Some(offset) => {
+                let n = self.num_subtables();
+                ops.extend(self.ultra_ops.tables[..n - 1].iter().flatten().cloned());
+                let target = offset + self.zk_ops.len() + APPEND_TRACE_OFFSET / NUM_ROWS_PER_OP;
+                assert!(ops.len() <= target);
+                ops.resize(target, UltraOp::default());
+                ops.extend(self.ultra_ops.tables[n - 1].iter().cloned());
+            }
+        }
+        ops
+    }
+
     /// Build the ZK prefix (1 no-op, 3 random ops, 1 hiding op) and return its columns.
     pub fn construct_zk_columns(&mut self, rng: &mut dyn Rng) -> Columns {
         assert!(self.zk_ops.is_empty(), "ZK ops are constructed once");
