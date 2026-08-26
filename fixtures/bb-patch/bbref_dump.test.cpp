@@ -17,6 +17,8 @@
 #include "barretenberg/eccvm/eccvm_prover.hpp"
 #include "barretenberg/eccvm/eccvm_trace_checker.hpp"
 #include "barretenberg/eccvm/eccvm_verifier.hpp"
+#include "barretenberg/chonk/batched_honk_translator/batched_honk_translator_prover.hpp"
+#include "barretenberg/chonk/batched_honk_translator/batched_honk_translator_verifier.hpp"
 #include "barretenberg/circuit_checker/translator_circuit_checker.hpp"
 #include "barretenberg/translator_vm/translator_circuit_builder.hpp"
 #include "barretenberg/translator_vm/translator_proving_key.hpp"
@@ -802,20 +804,10 @@ TEST(BbRefDump, EccvmProof)
 }
 
 // --- M10: Translator circuit + proving key ----------------------------------------------------------------
-// BBREF_OUT=<dir> ./bin/dsl_tests --gtest_filter='BbRefDump.Translator'
-// Deterministic op queue (two merged subtables, the ZK prefix, a fixed-append subtable ending in two random
-// ops); dumps the ZK prefix and random ops for injection, the circuit wires, the key's masking values, and
-// the key's precomputed / ordered / concatenated / z_perm columns at beta = 2, gamma = 3.
-TEST(BbRefDump, Translator)
+// Deterministic op queue for the translator fixtures: two merged subtables, the ZK prefix, a fixed-append
+// subtable ending in two random ops. The ZK prefix and random ops are dumped for injection into Rust.
+std::shared_ptr<ECCOpQueue> build_translator_queue(const std::filesystem::path& out)
 {
-    const char* out_env = std::getenv("BBREF_OUT");
-    if (out_env == nullptr) {
-        GTEST_SKIP() << "set BBREF_OUT";
-    }
-    std::filesystem::path out(out_env);
-    std::filesystem::create_directories(out);
-    using Fq = curve::BN254::BaseField;
-
     auto op_queue = std::make_shared<ECCOpQueue>();
     for (size_t i = 0; i < 2; ++i) {
         if (i > 0) {
@@ -836,6 +828,37 @@ TEST(BbRefDump, Translator)
     }
     write_proof(out / "random_ops.bin", random_values);
     op_queue->merge_fixed_append(op_queue->get_append_offset_for_prover());
+    return op_queue;
+}
+
+// Masking values of the key's non-op-queue wires (bb draws them at random; Rust injects them).
+void write_translator_masking(const std::filesystem::path& path, TranslatorProvingKey& key)
+{
+    std::vector<fr> masking;
+    auto wire_polys = key.proving_key->polynomials.get_wires();
+    for (size_t w = TranslatorFlavor::NUM_OP_QUEUE_WIRES; w < wire_polys.size(); ++w) {
+        for (size_t i = TranslatorFlavor::MINI_CIRCUIT_SIZE - TranslatorFlavor::NUM_MASKED_ROWS_END; i < TranslatorFlavor::MINI_CIRCUIT_SIZE; ++i) {
+            masking.push_back(wire_polys[w][i]);
+        }
+    }
+    write_proof(path, masking);
+}
+
+// BBREF_OUT=<dir> ./bin/dsl_tests --gtest_filter='BbRefDump.Translator'
+// Deterministic op queue (two merged subtables, the ZK prefix, a fixed-append subtable ending in two random
+// ops); dumps the ZK prefix and random ops for injection, the circuit wires, the key's masking values, and
+// the key's precomputed / ordered / concatenated / z_perm columns at beta = 2, gamma = 3.
+TEST(BbRefDump, Translator)
+{
+    const char* out_env = std::getenv("BBREF_OUT");
+    if (out_env == nullptr) {
+        GTEST_SKIP() << "set BBREF_OUT";
+    }
+    std::filesystem::path out(out_env);
+    std::filesystem::create_directories(out);
+    using Fq = curve::BN254::BaseField;
+
+    auto op_queue = build_translator_queue(out);
 
     const Fq v = Fq(11).invert();
     const Fq x = Fq(13).invert();
@@ -854,18 +877,7 @@ TEST(BbRefDump, Translator)
 
     TranslatorProvingKey key(circuit);
     auto& polys = key.proving_key->polynomials;
-    {
-        std::vector<fr> masking;
-        auto wire_polys = polys.get_wires();
-        for (size_t w = TranslatorFlavor::NUM_OP_QUEUE_WIRES; w < wire_polys.size(); ++w) {
-            for (size_t i = TranslatorFlavor::MINI_CIRCUIT_SIZE - TranslatorFlavor::NUM_MASKED_ROWS_END;
-                 i < TranslatorFlavor::MINI_CIRCUIT_SIZE;
-                 ++i) {
-                masking.push_back(wire_polys[w][i]);
-            }
-        }
-        write_proof(out / "masking.bin", masking);
-    }
+    write_translator_masking(out / "masking.bin", key);
     using Builder = TranslatorCircuitBuilder;
     RelationParameters<fr> params;
     {
@@ -900,4 +912,82 @@ TEST(BbRefDump, Translator)
         }
         write_file(out / "columns.bin", buf);
     }
+}
+
+// --- M11: BatchedHonkTranslator joint proof ----------------------------------------------------------------
+// Dump:   BBREF_SCRIPT=<mega_zk script> BBREF_OUT=<dir> ./bin/dsl_tests --gtest_filter='BbRefDump.Batched'
+// Verify: BBREF_SCRIPT=<mega_zk script> BBREF_IN=<dir with oink_proof.bin, joint_proof.bin, accumulated_result.bin,
+//         op_queue_wires.bin> ./bin/dsl_tests --gtest_filter='BbRefDump.Batched'
+// The MegaZK circuit comes from the script; the translator key from the deterministic op queue above.
+TEST(BbRefDump, Batched)
+{
+    const char* script = std::getenv("BBREF_SCRIPT");
+    const char* in_env = std::getenv("BBREF_IN");
+    const char* out_env = std::getenv("BBREF_OUT");
+    if (script == nullptr || (in_env == nullptr && out_env == nullptr)) {
+        GTEST_SKIP() << "set BBREF_SCRIPT and BBREF_IN or BBREF_OUT";
+    }
+    bb::srs::init_file_crs_factory(bb::srs::bb_crs_path());
+    using Fq = curve::BN254::BaseField;
+    using G1 = curve::BN254::AffineElement;
+    MegaCircuitBuilder builder{ std::make_shared<ECCOpQueue>() };
+    run_script(builder, script);
+    auto inst = std::make_shared<ProverInstance_<MegaZKFlavor>>(builder);
+    auto vk = std::make_shared<MegaZKFlavor::VerificationKey>(inst->get_precomputed());
+    auto vk_and_hash = std::make_shared<MegaZKFlavor::VKAndHash>(vk);
+    const Fq v = Fq(11).invert();
+    const Fq x = Fq(13).invert();
+    auto verify = [&](const HonkProof& oink, const HonkProof& joint, const Fq& acc, const std::array<G1, 4>& opq) {
+        auto transcript = std::make_shared<NativeTranscript>();
+        BatchedHonkTranslatorVerifier verifier(vk_and_hash, transcript);
+        verifier.verify_mega_zk_oink(oink);
+        auto result = verifier.verify(joint, x, v, acc, opq);
+        EXPECT_TRUE(result.reduction_succeeded);
+        EXPECT_TRUE(result.pairing_points.check());
+    };
+    if (in_env != nullptr) {
+        std::filesystem::path in(in_env);
+        auto read_bytes = [](const std::filesystem::path& path) {
+            std::ifstream f(path, std::ios::binary);
+            return std::vector<uint8_t>((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        };
+        auto acc_bytes = read_bytes(in / "accumulated_result.bin");
+        const Fq acc = from_buffer<Fq>(acc_bytes.data());
+        auto opq_bytes = read_bytes(in / "op_queue_wires.bin");
+        std::array<G1, 4> opq;
+        for (size_t i = 0; i < 4; ++i) {
+            opq[i] = from_buffer<G1>(opq_bytes.data() + 64 * i);
+        }
+        verify(read_proof(in / "oink_proof.bin"), read_proof(in / "joint_proof.bin"), acc, opq);
+        return;
+    }
+    std::filesystem::path out(out_env);
+    std::filesystem::create_directories(out);
+    auto op_queue = build_translator_queue(out);
+    TranslatorCircuitBuilder circuit(v, x, op_queue);
+    auto key = std::make_shared<TranslatorProvingKey>(circuit);
+    write_translator_masking(out / "masking.bin", *key);
+    write_file(out / "vk", to_buffer(*vk));
+
+    auto transcript = std::make_shared<NativeTranscript>();
+    BatchedHonkTranslatorProver prover(inst, vk, transcript);
+    auto oink = prover.prove_mega_zk_oink();
+    auto joint = prover.prove(key);
+    write_proof(out / "oink_proof.bin", oink);
+    write_proof(out / "joint_proof.bin", joint);
+
+    auto& polys = key->proving_key->polynomials;
+    const size_t RESULT_ROW = TranslatorFlavor::RESULT_ROW;
+    const Fq acc(uint256_t(polys.accumulators_binary_limbs_0[RESULT_ROW]) + (uint256_t(polys.accumulators_binary_limbs_1[RESULT_ROW]) << 68) +
+                 (uint256_t(polys.accumulators_binary_limbs_2[RESULT_ROW]) << 136) + (uint256_t(polys.accumulators_binary_limbs_3[RESULT_ROW]) << 204));
+    write_file(out / "accumulated_result.bin", to_buffer(acc));
+    auto& ck = key->proving_key->commitment_key;
+    const std::array<G1, 4> opq = { ck.commit(polys.op), ck.commit(polys.x_lo_y_hi), ck.commit(polys.x_hi_z_1), ck.commit(polys.y_lo_z_2) };
+    std::vector<uint8_t> opq_bytes;
+    for (const auto& c : opq) {
+        auto b = to_buffer(c);
+        opq_bytes.insert(opq_bytes.end(), b.begin(), b.end());
+    }
+    write_file(out / "op_queue_wires.bin", opq_bytes);
+    verify(oink, joint, acc, opq);
 }

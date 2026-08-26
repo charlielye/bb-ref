@@ -53,7 +53,11 @@ pub fn small_ipa_verifier_claims<C: Curve>(commitments: &[C::G; NUM_SMALL_IPA_CO
         .enumerate()
         .map(|(i, (comm_idx, _, transmitted, suffix))| {
             let evaluation = if *transmitted { t.receive(&format!("{prefix}{suffix}")) } else { C::Fr::zero() };
-            VerifierOpeningClaim { commitment: commitments[*comm_idx].clone(), challenge: points[i].clone(), evaluation }
+            VerifierOpeningClaim {
+                commitment: commitments[*comm_idx].clone(),
+                challenge: points[i].clone(),
+                evaluation,
+            }
         })
         .collect()
 }
@@ -174,10 +178,15 @@ pub fn shplemini_verify<C: Curve>(
     repeated: &[(usize, usize)],
     libra_commitments: &[C::G],
     libra_univariate_evaluation: &C::Fr,
+    // Committed sumcheck only: the round univariate commitments and their values at 0, 1, u_i.
+    sumcheck_round_commitments: &[C::G],
+    sumcheck_round_evaluations: &[[C::Fr; 3]],
 ) -> ShpleminiOutput<C> {
     type F<C> = <C as Curve>::Fr;
     let virtual_log_n = multivariate_challenge.len();
     assert!(virtual_log_n > 0);
+    let committed_sumcheck = !sumcheck_round_evaluations.is_empty();
+    assert!(!committed_sumcheck || has_zk, "committed sumcheck requires ZK for the nu power indexing");
 
     let rho: F<C> = t.challenge("rho");
     let fold_commitments: Vec<C::G> = (1..virtual_log_n).map(|i| t.receive(&format!("Gemini:FOLD_{i}"))).collect();
@@ -201,7 +210,7 @@ pub fn shplemini_verify<C: Curve>(
     }
 
     let nu: F<C> = t.challenge("Shplonk:nu");
-    let num_nu_powers = 2 * virtual_log_n + if has_zk { NUM_SMALL_IPA_OPENING_CLAIMS } else { 0 };
+    let num_nu_powers = 2 * virtual_log_n + if has_zk { NUM_SMALL_IPA_OPENING_CLAIMS } else { 0 } + if committed_sumcheck { 3 * virtual_log_n } else { 0 };
     let nu_powers = powers(&nu, num_nu_powers);
     let q_commitment: C::G = t.receive("Shplonk:Q");
     let z: F<C> = t.challenge("Shplonk:z");
@@ -310,9 +319,35 @@ pub fn shplemini_verify<C: Curve>(
         consistency_checked = check_libra_evaluations_consistency::<C>(&libra_evaluations, &gemini_r, multivariate_challenge, libra_univariate_evaluation);
     }
 
+    if committed_sumcheck {
+        // batch_sumcheck_round_claims: each round univariate is opened at 0, 1 and u_i.
+        let inv_z = z.invert();
+        let inv_z_minus_one = (z.clone() - &F::<C>::one()).invert();
+        let mut power = 2 * virtual_log_n + NUM_SMALL_IPA_OPENING_CLAIMS;
+        for (i, (comm, evals)) in sumcheck_round_commitments.iter().zip(sumcheck_round_evaluations).enumerate() {
+            commitments.push(comm.clone());
+            let inv_z_minus_u = (z.clone() - &multivariate_challenge[i]).invert();
+            let mut batched_scalar = F::<C>::zero();
+            for (denominator, eval) in [(&inv_z, &evals[0]), (&inv_z_minus_one, &evals[1]), (&inv_z_minus_u, &evals[2])] {
+                let scaling_factor = denominator.clone() * &nu_powers[power];
+                power += 1;
+                batched_scalar -= &scaling_factor;
+                constant_term_accumulator += &(scaling_factor * eval);
+            }
+            scalars.push(batched_scalar);
+        }
+    }
+
     commitments.push(g1_identity.clone());
     scalars.push(constant_term_accumulator);
-    ShpleminiOutput { claim: BatchOpeningClaim { commitments, scalars, evaluation_point: z }, consistency_checked }
+    ShpleminiOutput {
+        claim: BatchOpeningClaim {
+            commitments,
+            scalars,
+            evaluation_point: z,
+        },
+        consistency_checked,
+    }
 }
 
 /// bb `SmallSubgroupIPAVerifier::check_libra_evaluations_consistency`.
@@ -352,14 +387,14 @@ pub fn shplonk_batch_claim<C: Curve>(claims: &[VerifierOpeningClaim<C>], q: C::G
     }
     commitments.push(g1_identity);
     scalars.push(identity_scalar);
-    BatchOpeningClaim { commitments, scalars, evaluation_point: z.clone() }
+    BatchOpeningClaim {
+        commitments,
+        scalars,
+        evaluation_point: z.clone(),
+    }
 }
 
-pub fn kzg_reduce_verify_batch_opening_claim<C: Curve>(
-    mut claim: BatchOpeningClaim<C>,
-    t: &mut Transcript<C::TF, C::Hash>,
-    expected_final_msm_size: usize,
-) -> PairingPoints<C> {
+pub fn kzg_reduce_verify_batch_opening_claim<C: Curve>(mut claim: BatchOpeningClaim<C>, t: &mut Transcript<C::TF, C::Hash>, expected_final_msm_size: usize) -> PairingPoints<C> {
     let w: C::G = t.receive("KZG:W");
     claim.commitments.push(w.clone());
     claim.scalars.push(claim.evaluation_point.clone());
@@ -408,7 +443,12 @@ where
             } else {
                 C::Fr::zero()
             };
-            ProverClaim { poly: polys.0[*comm_idx].clone(), challenge: points[i], evaluation, gemini_fold: false }
+            ProverClaim {
+                poly: polys.0[*comm_idx].clone(),
+                challenge: points[i],
+                evaluation,
+                gemini_fold: false,
+            }
         })
         .collect()
 }
@@ -431,10 +471,12 @@ pub fn shplemini_prove(
     ck: &CommitmentKey,
     t: &mut NativeTranscript,
     libra: Option<&LibraPolys>,
+    sumcheck_round_claims: &[ProverClaim],
 ) -> ProverClaim {
     use crate::base::group::Curve;
     let virtual_log_n = u.len();
-    let n = unshifted[0].len();
+    // Shorter polynomials (a smaller circuit batched with a larger one) are zero-extended.
+    let n = unshifted.iter().chain(to_be_shifted).map(|p| p.len()).max().unwrap();
     let log_n = n.trailing_zeros() as usize;
 
     // --- Gemini ---
@@ -464,13 +506,15 @@ pub fn shplemini_prove(
         current = next;
     }
     // constant folds for the virtual rounds
-    let last = &folds[folds.len() - 1];
-    let final_eval = last.coeffs[0] + u[log_n - 1] * (last.coeffs[1] - last.coeffs[0]);
-    folds.push(Poly::from_coeffs(vec![final_eval]));
-    let mut tail = Fr::one();
-    for k in log_n..virtual_log_n - 1 {
-        tail *= Fr::one() - u[k];
-        folds.push(Poly::from_coeffs(vec![final_eval * tail]));
+    if log_n < virtual_log_n {
+        let last = &folds[folds.len() - 1];
+        let final_eval = last.coeffs[0] + u[log_n - 1] * (last.coeffs[1] - last.coeffs[0]);
+        folds.push(Poly::from_coeffs(vec![final_eval]));
+        let mut tail = Fr::one();
+        for k in log_n..virtual_log_n - 1 {
+            tail *= Fr::one() - u[k];
+            folds.push(Poly::from_coeffs(vec![final_eval * tail]));
+        }
     }
     for (l, f) in folds.iter().enumerate() {
         t.send(&format!("Gemini:FOLD_{}", l + 1), &ck.commit(f));
@@ -488,14 +532,29 @@ pub fn shplemini_prove(
 
     let mut claims = Vec::with_capacity(virtual_log_n + 1);
     let a_0_pos_eval = a_0_pos.evaluate(&r);
-    claims.push(ProverClaim { poly: a_0_pos, challenge: r, evaluation: a_0_pos_eval, gemini_fold: false });
+    claims.push(ProverClaim {
+        poly: a_0_pos,
+        challenge: r,
+        evaluation: a_0_pos_eval,
+        gemini_fold: false,
+    });
     let a_0_neg_eval = a_0_neg.evaluate(&(-r));
-    claims.push(ProverClaim { poly: a_0_neg, challenge: -r, evaluation: a_0_neg_eval, gemini_fold: false });
+    claims.push(ProverClaim {
+        poly: a_0_neg,
+        challenge: -r,
+        evaluation: a_0_neg_eval,
+        gemini_fold: false,
+    });
     let mut r_pow = r;
     for f in folds {
         r_pow = r_pow.sqr();
         let evaluation = f.evaluate(&(-r_pow));
-        claims.push(ProverClaim { poly: f, challenge: -r_pow, evaluation, gemini_fold: true });
+        claims.push(ProverClaim {
+            poly: f,
+            challenge: -r_pow,
+            evaluation,
+            gemini_fold: true,
+        });
     }
     for (l, c) in claims.iter().enumerate().skip(1) {
         t.send(&format!("Gemini:a_{l}"), &c.evaluation);
@@ -505,12 +564,36 @@ pub fn shplemini_prove(
     let libra_claims = libra.map_or(Vec::new(), |polys| small_ipa_prover_claims::<Bn254>(polys, &r, "Libra:", t));
 
     // --- Shplonk ---
-    shplonk_prove::<Bn254>(virtual_log_n, &claims, &libra_claims, ck, t).claim
+    shplonk_prove::<Bn254>(virtual_log_n, &claims, &libra_claims, sumcheck_round_claims, ck, t).claim
+}
+
+/// bb `ShpleminiProver_::compute_sumcheck_round_claims`: each committed round univariate opened at
+/// `0`, `1` and `u_i`.
+pub fn sumcheck_round_claims(univariates: &[Poly], evaluations: &[[Fr; 3]], u: &[Fr]) -> Vec<ProverClaim> {
+    let mut claims = Vec::with_capacity(3 * univariates.len());
+    for (i, poly) in univariates.iter().enumerate() {
+        for (k, point) in [Fr::from(0u64), Fr::from(1u64), u[i]].into_iter().enumerate() {
+            claims.push(ProverClaim {
+                poly: poly.clone(),
+                challenge: point,
+                evaluation: evaluations[i][k],
+                gemini_fold: false,
+            });
+        }
+    }
+    claims
 }
 
 /// bb `ShplonkProver_::prove`: batched quotient `Q`, then `G = Q - Q_z` opened at `z` with value 0.
 /// `virtual_log_n` only matters when `libra_claims` is non-empty.
-pub fn shplonk_prove<C: Curve<TF = Fr>>(virtual_log_n: usize, claims: &[ProverClaim<C::Fr>], libra_claims: &[ProverClaim<C::Fr>], ck: &Ck<C::G>, t: &mut NativeTranscript) -> ShplonkProverOutput<C>
+pub fn shplonk_prove<C: Curve<TF = Fr>>(
+    virtual_log_n: usize,
+    claims: &[ProverClaim<C::Fr>],
+    libra_claims: &[ProverClaim<C::Fr>],
+    sumcheck_claims: &[ProverClaim<C::Fr>],
+    ck: &Ck<C::G>,
+    t: &mut NativeTranscript,
+) -> ShplonkProverOutput<C>
 where
     C::Fr: Copy,
     C::G: AffineRepr<ScalarField = C::Fr>,
@@ -518,7 +601,7 @@ where
     type F<C> = <C as Curve>::Fr;
     let nu: F<C> = t.challenge("Shplonk:nu");
     let fold_pos_evals: Vec<F<C>> = claims.iter().filter(|c| c.gemini_fold).map(|c| c.poly.evaluate(&(-c.challenge))).collect();
-    let max_size = claims.iter().chain(libra_claims).map(|c| c.poly.len()).max().unwrap();
+    let max_size = claims.iter().chain(libra_claims).chain(sumcheck_claims).map(|c| c.poly.len()).max().unwrap();
 
     // Q = sum_j nu^j (f_j - v_j) / (X - x_j)
     let mut q = Polynomial::<F<C>>::zero(max_size);
@@ -540,9 +623,9 @@ where
         add_quotient(&mut q, &c.poly, &c.challenge, &c.evaluation, &current_nu);
         current_nu *= nu;
     }
-    if !libra_claims.is_empty() {
+    if !libra_claims.is_empty() || !sumcheck_claims.is_empty() {
         current_nu = nu.pow_u64(2 * virtual_log_n as u64);
-        for c in libra_claims {
+        for c in libra_claims.iter().chain(sumcheck_claims) {
             add_quotient(&mut q, &c.poly, &c.challenge, &c.evaluation, &current_nu);
             current_nu *= nu;
         }
@@ -569,14 +652,24 @@ where
         subtract(&mut g, &c.poly, &c.challenge, &c.evaluation, &current_nu);
         current_nu *= nu;
     }
-    if !libra_claims.is_empty() {
+    if !libra_claims.is_empty() || !sumcheck_claims.is_empty() {
         current_nu = nu.pow_u64(2 * virtual_log_n as u64);
-        for c in libra_claims {
+        for c in libra_claims.iter().chain(sumcheck_claims) {
             subtract(&mut g, &c.poly, &c.challenge, &c.evaluation, &current_nu);
             current_nu *= nu;
         }
     }
-    ShplonkProverOutput { claim: ProverClaim { poly: g, challenge: z, evaluation: F::<C>::zero(), gemini_fold: false }, quotient_commitment, nu, z }
+    ShplonkProverOutput {
+        claim: ProverClaim {
+            poly: g,
+            challenge: z,
+            evaluation: F::<C>::zero(),
+            gemini_fold: false,
+        },
+        quotient_commitment,
+        nu,
+        z,
+    }
 }
 
 /// bb `KZG::compute_opening_proof`: commit to `(p - v) / (X - r)` and send it as `KZG:W`.
@@ -595,7 +688,16 @@ where
     C::G: AffineRepr<ScalarField = C::Fr>,
 {
     let challenge_lagrange = libra_challenge_coeffs::<C>(u);
-    small_subgroup_ipa_prove_core::<C>(&zk.libra_concatenated_monomial, &zk.libra_concatenated_lagrange, &challenge_lagrange, claimed_inner_product, "Libra:", ck, t, rng)
+    small_subgroup_ipa_prove_core::<C>(
+        &zk.libra_concatenated_monomial,
+        &zk.libra_concatenated_lagrange,
+        &challenge_lagrange,
+        claimed_inner_product,
+        "Libra:",
+        ck,
+        t,
+        rng,
+    )
 }
 
 /// The SmallSubgroupIPA prover proper (bb `SmallSubgroupIPAProver::prove`) for a concatenated

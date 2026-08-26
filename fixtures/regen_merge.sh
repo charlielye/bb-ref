@@ -22,3 +22,6 @@ BBREF_CASE=base BBREF_OUT=$F/data/$(cut -c1-7 "$F/PIN")/instance/eccvm_proof/bas
 [ -f "$F/data/$(cut -c1-7 "$F/PIN")/instance/eccvm_proof/rust_base/eccvm_proof.bin" ] && BBREF_IN=$F/data/$(cut -c1-7 "$F/PIN")/instance/eccvm_proof/rust_base "$BIN" --gtest_filter='BbRefDump.EccvmProof'
 # M10: Translator circuit + key columns (~90MB)
 BBREF_OUT=$F/data/$(cut -c1-7 "$F/PIN")/instance/translator "$BIN" --gtest_filter='BbRefDump.Translator'
+# M11: BatchedHonkTranslator joint proof (bb dump; then `cargo test --test m11_batched` writes rust/, verified by the last line)
+BBREF_SCRIPT=$F/scripts/mega_zk.txt BBREF_OUT=$F/data/$(cut -c1-7 "$F/PIN")/instance/batched "$BIN" --gtest_filter='BbRefDump.Batched'
+[ -f "$F/data/$(cut -c1-7 "$F/PIN")/instance/batched/rust/joint_proof.bin" ] && BBREF_SCRIPT=$F/scripts/mega_zk.txt BBREF_IN=$F/data/$(cut -c1-7 "$F/PIN")/instance/batched/rust "$BIN" --gtest_filter='BbRefDump.Batched'

@@ -90,13 +90,28 @@ pub fn batch_merge_prove(q: &EccOpQueue, max_subtables: usize, ck: &CommitmentKe
         // Padding slots (and empty columns) open the zero polynomial.
         let poly = flattened.next().filter(|p| !p.is_empty()).unwrap_or_else(|| Poly::zero(1));
         let evaluation = if poly.len() == 1 && poly.coeffs[0].is_zero() { Fr::zero() } else { evals[idx] };
-        claims.push(ProverClaim { poly, challenge: kappa, evaluation, gemini_fold: false });
+        claims.push(ProverClaim {
+            poly,
+            challenge: kappa,
+            evaluation,
+            gemini_fold: false,
+        });
     }
     for (col, poly) in merged.into_iter().enumerate() {
-        claims.push(ProverClaim { poly, challenge: kappa, evaluation: evals[(m + 1) * NUM_WIRES + col], gemini_fold: false });
+        claims.push(ProverClaim {
+            poly,
+            challenge: kappa,
+            evaluation: evals[(m + 1) * NUM_WIRES + col],
+            gemini_fold: false,
+        });
     }
-    claims.push(ProverClaim { poly: g, challenge: kappa_inv, evaluation: *evals.last().unwrap(), gemini_fold: false });
-    let opening = shplonk_prove::<Bn254>(0, &claims, &[], ck, &mut t).claim;
+    claims.push(ProverClaim {
+        poly: g,
+        challenge: kappa_inv,
+        evaluation: *evals.last().unwrap(),
+        gemini_fold: false,
+    });
+    let opening = shplonk_prove::<Bn254>(0, &claims, &[], &[], ck, &mut t).claim;
     kzg_open(opening, ck, &mut t);
     t.export_proof()
 }
@@ -200,14 +215,30 @@ pub fn batch_merge_verify<C: Curve>(proof: &[C::TF], hash: &C::Fr, max_subtables
     let mut claims: Vec<VerifierOpeningClaim<C>> = flattened
         .into_iter()
         .zip(&evals)
-        .map(|(commitment, e)| VerifierOpeningClaim { commitment, challenge: kappa.clone(), evaluation: e.clone() })
+        .map(|(commitment, e)| VerifierOpeningClaim {
+            commitment,
+            challenge: kappa.clone(),
+            evaluation: e.clone(),
+        })
         .collect();
     for (col, commitment) in merged_commitments.iter().enumerate() {
-        claims.push(VerifierOpeningClaim { commitment: commitment.clone(), challenge: kappa.clone(), evaluation: evals[num_column_evals + col].clone() });
+        claims.push(VerifierOpeningClaim {
+            commitment: commitment.clone(),
+            challenge: kappa.clone(),
+            evaluation: evals[num_column_evals + col].clone(),
+        });
     }
-    claims.push(VerifierOpeningClaim { commitment: g_commitment, challenge: kappa_inv, evaluation: evals.last().unwrap().clone() });
+    claims.push(VerifierOpeningClaim {
+        commitment: g_commitment,
+        challenge: kappa_inv,
+        evaluation: evals.last().unwrap().clone(),
+    });
     let num_claims = claims.len();
     let batch = shplonk_verify(&claims, C::G::one(ctx), &mut t);
     let pairing_points = kzg_reduce_verify_batch_opening_claim(batch, &mut t, num_claims + 3);
-    BatchMergeOutput { pairing_points, merged_commitments, ok }
+    BatchMergeOutput {
+        pairing_points,
+        merged_commitments,
+        ok,
+    }
 }

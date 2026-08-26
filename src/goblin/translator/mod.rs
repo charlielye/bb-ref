@@ -8,7 +8,7 @@ pub mod check;
 pub mod key;
 pub mod relations;
 
-use crate::base::field::from_hex;
+use crate::base::field::{from_hex, FieldLike};
 use crate::base::poly::Polynomial;
 use crate::base::{Fr, G1Affine};
 
@@ -269,7 +269,10 @@ pub fn shift_of(e: usize) -> usize {
 /// The fixed Translator verification key: the commitment to `ordered_extra_range_constraints_numerator`
 /// (bb `TranslatorHardcodedVKAndHash`), and its hash.
 pub fn fixed_vk() -> G1Affine {
-    G1Affine::new_unchecked(from_hex("0x1ddbff0e1f0999f88ffa959e9505e5f489b57d6a7937c17a4d69fc871d5e9221"), from_hex("0x14149055853422bf016065386e8ea0ffb9425b454048e1cd14cfdca457aa7e17"))
+    G1Affine::new_unchecked(
+        from_hex("0x1ddbff0e1f0999f88ffa959e9505e5f489b57d6a7937c17a4d69fc871d5e9221"),
+        from_hex("0x14149055853422bf016065386e8ea0ffb9425b454048e1cd14cfdca457aa7e17"),
+    )
 }
 pub fn fixed_vk_hash() -> Fr {
     from_hex("0x281228e56fbfb62a424c94bda780104c9b5e758b8a02f148ce5e98c2867fdfc1")
@@ -282,7 +285,9 @@ pub struct TranslatorPolys {
 
 impl TranslatorPolys {
     pub fn zero() -> Self {
-        Self { cols: (0..NUM_ALL_ENTITIES).map(|_| Polynomial::zero(CIRCUIT_SIZE)).collect() }
+        Self {
+            cols: (0..NUM_ALL_ENTITIES).map(|_| Polynomial::zero(CIRCUIT_SIZE)).collect(),
+        }
     }
     pub fn col(&self, e: Ent) -> &Polynomial<Fr> {
         &self.cols[e as usize]
@@ -297,4 +302,135 @@ impl TranslatorPolys {
             self.cols[s] = self.cols[e].shifted();
         }
     }
+}
+
+/// Wires of concatenation group `g` (bb `partition_minicircuit_wires_into_groups`): the four groups
+/// of 16 range-constraint wires, then the 13 limb wires padded with zeros.
+pub fn concatenation_group_wires(g: usize) -> Vec<Option<usize>> {
+    if g < 4 {
+        (0..CONCATENATION_GROUP_SIZE).map(|j| Some(NUM_OP_QUEUE_WIRES + 13 + g * CONCATENATION_GROUP_SIZE + j)).collect()
+    } else {
+        (0..CONCATENATION_GROUP_SIZE).map(|j| (j < 13).then_some(NUM_OP_QUEUE_WIRES + j)).collect()
+    }
+}
+
+/// bb `get_pcs_unshifted`: the 17 polynomials opened unshifted in the PCS.
+pub const PCS_UNSHIFTED: [usize; 17] = [0, 1, 12, 13, 14, 15, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103];
+/// bb `get_pcs_to_be_shifted`: the 14 polynomials opened at the shifted point.
+pub const PCS_TO_BE_SHIFTED: [usize; 14] = [13, 14, 15, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103];
+/// bb `get_pcs_shifted`: the shifted entities whose evaluations are sent (the concatenated shifts are
+/// reconstructed from the minicircuit wire shifts instead).
+pub const PCS_SHIFTED: [usize; 9] = [104, 105, 106, 184, 185, 186, 187, 188, 189];
+/// bb `get_full_circuit_entities`: the 21 evaluations sent as `Sumcheck:evaluations_translator`.
+pub const FULL_CIRCUIT_ENTITIES: [usize; 21] = [0, 1, 12, 13, 14, 15, 93, 94, 95, 96, 97, 98, 104, 105, 106, 184, 185, 186, 187, 188, 189];
+pub const NUM_MINICIRCUIT_EVALUATIONS: usize = 2 * NUM_MINICIRCUIT_WIRES;
+
+/// bb `get_minicircuit_wires` then `get_minicircuit_wires_shifted`: the 154 entities whose values are
+/// sent after the mini-circuit rounds of sumcheck.
+pub fn minicircuit_entities() -> impl Iterator<Item = usize> {
+    (FIRST_WIRE + NUM_OP_QUEUE_WIRES..=92).chain(shift_of(FIRST_WIRE + NUM_OP_QUEUE_WIRES)..=shift_of(92))
+}
+
+/// The entities of concatenation group `g` (`None` = zero padding), unshifted or shifted.
+pub fn concatenation_group_entities(g: usize, shifted: bool) -> Vec<Option<usize>> {
+    concatenation_group_wires(g)
+        .into_iter()
+        .map(|w| w.map(|w| if shifted { shift_of(FIRST_WIRE + w) } else { FIRST_WIRE + w }))
+        .collect()
+}
+
+/// bb `TranslatorSelectorEvaluations::compute`: the ten Lagrange-type selectors evaluated at the
+/// sumcheck challenge, in entity order (`lagrange_first` .. `lagrange_ordered_masking`).
+pub fn selector_evaluations<T: FieldLike>(u: &[T]) -> [T; 10] {
+    const D: usize = CONST_TRANSLATOR_LOG_N;
+    const M: usize = LOG_MINI_CIRCUIT_SIZE;
+    const LOG_NUM_MASKED: usize = 2;
+    const LOG_RESULT_ROW: usize = 3;
+    const LOG_RANDOMNESS_START: usize = 1;
+    const LOG_MAX_RANDOM: usize = 6;
+    assert_eq!(u.len(), D);
+    let c: Vec<T> = u.iter().map(|x| T::one() - x).collect();
+    let prod = |v: &[T], range: std::ops::Range<usize>| range.fold(T::one(), |acc, k| acc * &v[k]);
+    let u_mp1_m1 = prod(u, LOG_NUM_MASKED + 1..M);
+    let u_m_m1 = u[LOG_NUM_MASKED].clone() * &u_mp1_m1;
+    let u_rp1_d1 = prod(u, LOG_MAX_RANDOM + 1..D);
+    let u_r_d1 = u[LOG_MAX_RANDOM].clone() * &u_rp1_d1;
+    let u_0_r1 = prod(u, 0..LOG_MAX_RANDOM);
+    let u_0_m1 = prod(u, 0..LOG_NUM_MASKED);
+    let c_rp1_m1 = prod(&c, LOG_RESULT_ROW + 1..M);
+    let c_r_m1 = c[LOG_RESULT_ROW].clone() * &c_rp1_m1;
+    let c_m_d1 = prod(&c, M..D);
+    let c_r_d1 = c_r_m1.clone() * &c_m_d1;
+    let c_0_r1 = prod(&c, 0..LOG_RESULT_ROW);
+    let c_s_r1 = prod(&c, LOG_RANDOMNESS_START..LOG_RESULT_ROW);
+    let lagrange_first = c_0_r1.clone() * &c_r_d1;
+    let lagrange_last = u_0_r1.clone() * &u_r_d1;
+    let lagrange_result_row = c_0_r1 * &u[LOG_RESULT_ROW] * &c_rp1_m1 * &c_m_d1;
+    let lagrange_last_in_minicircuit = u_0_m1 * &c[LOG_NUM_MASKED] * &u_mp1_m1 * &c_m_d1;
+    let lagrange_real_last = u_0_r1 * &c[LOG_MAX_RANDOM] * &u_rp1_d1;
+    let lagrange_ordered_masking = u_r_d1;
+    let lagrange_masking = u_m_m1.clone();
+    let lagrange_mini_masking = c_r_d1 * &(T::one() - &c_s_r1) + &(u_m_m1.clone() * &c_m_d1);
+    let inner_even_odd = T::one() - &c_r_m1 - &u_m_m1;
+    let lagrange_even_in_minicircuit = c[0].clone() * &c_m_d1 * &inner_even_odd;
+    let lagrange_odd_in_minicircuit = u[0].clone() * &c_m_d1 * &inner_even_odd;
+    [
+        lagrange_first,
+        lagrange_last,
+        lagrange_odd_in_minicircuit,
+        lagrange_even_in_minicircuit,
+        lagrange_result_row,
+        lagrange_last_in_minicircuit,
+        lagrange_masking,
+        lagrange_mini_masking,
+        lagrange_real_last,
+        lagrange_ordered_masking,
+    ]
+}
+
+/// bb `reconstruct_concatenated_evaluations`: `F(u) = Σ_j L_j(u_top) f_j(u) / L_0(u_top)` over the
+/// 16-point Lagrange basis on the top four challenges.
+pub fn reconstruct_concatenated_evaluations<T: FieldLike>(groups: &[Vec<T>], u: &[T]) -> [T; NUM_CONCATENATED_POLYS] {
+    const NUM_TOP_BITS: usize = 4;
+    let basis: Vec<T> = (0..CONCATENATION_GROUP_SIZE)
+        .map(|j| {
+            (0..NUM_TOP_BITS).fold(T::one(), |acc, bit| {
+                let uk = &u[CONST_TRANSLATOR_LOG_N - NUM_TOP_BITS + bit];
+                acc * &(if (j >> bit) & 1 == 1 { uk.clone() } else { T::one() - uk })
+            })
+        })
+        .collect();
+    let padding_inv = basis[0].invert();
+    std::array::from_fn(|g| groups[g].iter().zip(&basis).fold(T::zero(), |acc, (f, l)| acc + &(l.clone() * f)) * &padding_inv)
+}
+
+/// bb `set_minicircuit_evaluations` + `complete_full_circuit_evaluations`: assemble the verifier's
+/// claimed evaluations of all 190 entities from the transmitted values and the challenge; returns
+/// the reconstructed evaluations of the shifted concatenated polynomials (needed by the PCS only).
+pub fn complete_evaluations<T: FieldLike>(full_circuit: &[T], minicircuit: &[T], u: &[T]) -> (Vec<T>, [T; NUM_CONCATENATED_POLYS]) {
+    assert_eq!(full_circuit.len(), FULL_CIRCUIT_ENTITIES.len());
+    assert_eq!(minicircuit.len(), NUM_MINICIRCUIT_EVALUATIONS);
+    let mut evals: Vec<T> = (0..NUM_ALL_ENTITIES).map(|_| T::zero()).collect();
+    for (e, v) in FULL_CIRCUIT_ENTITIES.iter().zip(full_circuit) {
+        evals[*e] = v.clone();
+    }
+    // the mini-circuit values were taken after LOG_MINI rounds; scale by L_0 of the remaining rounds
+    let l0 = u[LOG_MINI_CIRCUIT_SIZE..].iter().fold(T::one(), |acc, uk| acc * &(T::one() - uk));
+    for (e, v) in minicircuit_entities().zip(minicircuit) {
+        evals[e] = v.clone() * &l0;
+    }
+    for (k, v) in selector_evaluations(u).into_iter().enumerate() {
+        evals[2 + k] = v;
+    }
+    let group_evals = |evals: &[T], shifted: bool| -> Vec<Vec<T>> {
+        (0..NUM_CONCATENATED_POLYS)
+            .map(|g| concatenation_group_entities(g, shifted).into_iter().map(|e| e.map_or_else(T::zero, |e| evals[e].clone())).collect())
+            .collect()
+    };
+    let concat = reconstruct_concatenated_evaluations(&group_evals(&evals, false), u);
+    let concat_shift = reconstruct_concatenated_evaluations(&group_evals(&evals, true), u);
+    for (g, v) in concat.into_iter().enumerate() {
+        evals[FIRST_CONCATENATED + g] = v;
+    }
+    (evals, concat_shift)
 }

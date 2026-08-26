@@ -22,7 +22,7 @@ fn commit_and_send(inst: &ProverInstance, ck: &CommitmentKey, t: &mut NativeTran
     t.send(e.name(), &c);
 }
 
-pub fn prove_oink(inst: &mut ProverInstance, vk: &Vk<Bn254>, ck: &CommitmentKey, t: &mut NativeTranscript, rng: &mut dyn Rng) -> OinkProverOutput {
+pub fn prove_oink(inst: &mut ProverInstance, vk: &Vk<Bn254>, ck: &CommitmentKey, t: &mut NativeTranscript, rng: &mut dyn Rng, emit_alpha: bool) -> OinkProverOutput {
     let flavor = inst.flavor;
     t.add_to_hash_buffer("vk_hash", &vk.hash());
     for (i, pi) in inst.public_inputs.iter().enumerate() {
@@ -81,7 +81,7 @@ pub fn prove_oink(inst: &mut ProverInstance, vk: &Vk<Bn254>, ck: &CommitmentKey,
     compute_grand_product(inst, &params);
     commit_and_send(inst, ck, t, Ent::z_perm);
 
-    let alpha: Fr = t.challenge("alpha");
+    let alpha: Fr = if emit_alpha { t.challenge("alpha") } else { Fr::from(0u64) };
     OinkProverOutput { params, alpha }
 }
 

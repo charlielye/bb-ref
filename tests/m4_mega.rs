@@ -16,9 +16,9 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 fn acir_tests_dir() -> PathBuf {
-    std::env::var("ACIR_TESTS_DIR").map(PathBuf::from).unwrap_or_else(|_| {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../aztec-packages2/barretenberg/acir_tests/acir_tests")
-    })
+    std::env::var("ACIR_TESTS_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../aztec-packages2/barretenberg/acir_tests/acir_tests"))
 }
 
 fn mega_app_instance(prog: &str, with_witness: bool) -> ProverInstance {
@@ -73,7 +73,7 @@ fn check_mega_app_dump(prog: &str) {
     let vk = inst.compute_vk(&ck);
     assert_eq!(vk.to_bytes(), std::fs::read(dump.join("vk")).unwrap(), "{prog}: VK");
     let mut t = NativeTranscript::new();
-    let out = prove_oink(&mut inst, &vk, &ck, &mut t, &mut OsRng);
+    let out = prove_oink(&mut inst, &vk, &ck, &mut t, &mut OsRng, true);
     let expected_proof = decode_fields(&std::fs::read(dump.join("proof.bin")).unwrap());
     assert_eq!(t.export_proof(), expected_proof, "{prog}: Oink proof");
     assert_eq!(check_circuit(&inst, &out.params), None, "{prog}: relation failure");
@@ -129,7 +129,7 @@ fn check_script(script: &str, flavor: &'static FlavorDesc, flavor_dir: &str) {
     let vk = inst.compute_vk(&ck);
     assert_eq!(vk.to_bytes(), std::fs::read(dump.join("vk")).unwrap(), "{script}/{flavor_dir}: VK");
     let mut t = NativeTranscript::new();
-    let out = prove_oink(&mut inst, &vk, &ck, &mut t, &mut OsRng);
+    let out = prove_oink(&mut inst, &vk, &ck, &mut t, &mut OsRng, true);
     if !flavor.has_zk {
         let expected_proof = decode_fields(&std::fs::read(dump.join("proof.bin")).unwrap());
         assert_eq!(t.export_proof(), expected_proof, "{script}/{flavor_dir}: Oink proof");

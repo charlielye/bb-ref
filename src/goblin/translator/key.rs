@@ -13,16 +13,6 @@ pub fn sorted_steps() -> Vec<u64> {
     (0..SORTED_STEPS_COUNT as u64).map(|i| max - SORT_STEP * i).collect()
 }
 
-/// Wires of concatenation group `g` (bb `partition_minicircuit_wires_into_groups`): the four groups
-/// of 16 range-constraint wires, then the 13 limb wires padded with zeros.
-fn concatenation_group(g: usize) -> Vec<Option<usize>> {
-    if g < 4 {
-        (0..CONCATENATION_GROUP_SIZE).map(|j| Some(NUM_OP_QUEUE_WIRES + 13 + g * CONCATENATION_GROUP_SIZE + j)).collect()
-    } else {
-        (0..CONCATENATION_GROUP_SIZE).map(|j| (j < 13).then_some(NUM_OP_QUEUE_WIRES + j)).collect()
-    }
-}
-
 impl TranslatorPolys {
     /// Random masking for the last `NUM_MASKED_ROWS_END` rows of the mini-circuit wires.
     pub fn random_masking(rng: &mut dyn Rng) -> Vec<[Fr; NUM_MASKED_ROWS_END]> {
@@ -97,7 +87,7 @@ impl TranslatorPolys {
 
     fn compute_concatenated_polynomials(&mut self) {
         for g in 0..NUM_CONCATENATED_POLYS {
-            for (j, wire) in concatenation_group(g).into_iter().enumerate() {
+            for (j, wire) in concatenation_group_wires(g).into_iter().enumerate() {
                 let Some(w) = wire else { continue };
                 for k in 1..MINI_CIRCUIT_SIZE {
                     let v = self.cols[FIRST_WIRE + w].coeffs[k];
@@ -119,7 +109,7 @@ impl TranslatorPolys {
         for g in 0..NUM_CONCATENATED_POLYS - 1 {
             let mut ordered = vec![0u32; size_without_masking];
             let mut extra_offset = g * steps.len();
-            for (j, wire) in concatenation_group(g).into_iter().enumerate() {
+            for (j, wire) in concatenation_group_wires(g).into_iter().enumerate() {
                 let w = wire.unwrap();
                 for k in 1..MINI_CIRCUIT_SIZE - NUM_MASKED_ROWS_END {
                     let idx = j * values_per_lane + (k - 1);

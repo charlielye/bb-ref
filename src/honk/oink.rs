@@ -37,13 +37,7 @@ pub fn compute_public_input_delta<F: FieldLike>(public_inputs: &[F], beta: &F, g
     numerator * &denominator.invert()
 }
 
-pub fn verify_oink<C: Curve>(
-    flavor: &FlavorDesc,
-    layout: &Layout,
-    vk: &Vk<C>,
-    t: &mut Transcript<C::TF, C::Hash>,
-    num_public_inputs: usize,
-) -> OinkOutput<C> {
+pub fn verify_oink<C: Curve>(flavor: &FlavorDesc, layout: &Layout, vk: &Vk<C>, t: &mut Transcript<C::TF, C::Hash>, num_public_inputs: usize, emit_alpha: bool) -> OinkOutput<C> {
     let vk_hash = vk.hash();
     t.add_to_hash_buffer("vk_hash", &vk_hash);
     assert_eq!(vk.comms.len(), layout.num_precomputed, "VK commitment count does not match flavor");
@@ -107,12 +101,17 @@ pub fn verify_oink<C: Curve>(
     params.public_input_delta = compute_public_input_delta(&public_inputs, &params.beta, &params.gamma, &vk.pub_inputs_offset);
     recv(t, &mut comms, Ent::z_perm);
 
-    let alpha: C::Fr = t.challenge("alpha");
+    let alpha: C::Fr = if emit_alpha { t.challenge("alpha") } else { C::Fr::zero() };
 
     let commitments = comms
         .into_iter()
         .zip(&layout.unshifted)
         .map(|(c, e)| c.unwrap_or_else(|| panic!("no commitment received for {}", e.name())))
         .collect();
-    OinkOutput { public_inputs, commitments, params, alpha }
+    OinkOutput {
+        public_inputs,
+        commitments,
+        params,
+        alpha,
+    }
 }

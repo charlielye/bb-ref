@@ -110,10 +110,20 @@ pub fn instance_proof_length_without_pis<C: Curve>(flavor: &FlavorDesc) -> usize
 /// (bb `HypernovaFoldingProver::instance_to_accumulator`).
 pub fn instance_to_accumulator(inst: &mut ProverInstance, vk: &Vk<Bn254>, ck: &CommitmentKey, t: &mut NativeTranscript, rng: &mut dyn Rng) -> ProverClaim {
     let flavor = inst.flavor;
-    let oink = prove_oink(inst, vk, ck, t, rng);
+    let oink = prove_oink(inst, vk, ck, t, rng, true);
     let betas: Vec<Fr> = t.dyadic_powers("HypernovaFoldingProver:gate_challenge", flavor.virtual_log_n);
     let polys = inst.all_polys();
-    let sc = prove_sumcheck::<Bn254>(&HonkRelations { flavor, layout: &inst.layout }, &SumcheckSpec::honk(flavor, &inst.layout), &polys, t, &oink.alpha, &betas, &oink.params, None, None);
+    let sc = prove_sumcheck::<Bn254>(
+        &HonkRelations { flavor, layout: &inst.layout },
+        &SumcheckSpec::honk(flavor, &inst.layout),
+        &polys,
+        t,
+        &oink.alpha,
+        &betas,
+        &oink.params,
+        None,
+        None,
+    );
 
     let layout = &inst.layout;
     let (uc, sh) = batching_challenges::<Bn254>(t, layout.num_unshifted(), layout.num_shifted());
@@ -148,7 +158,7 @@ where
     C::TF: ChallengeField,
 {
     let layout = flavor.layout();
-    let oink = verify_oink::<C>(flavor, &layout, vk, t, num_public_inputs);
+    let oink = verify_oink::<C>(flavor, &layout, vk, t, num_public_inputs, true);
     let betas: Vec<C::Fr> = t.dyadic_powers("HypernovaFoldingProver:gate_challenge", flavor.virtual_log_n);
     let sc = verify_sumcheck::<C>(&HonkRelations { flavor, layout: &layout }, &SumcheckSpec::honk(flavor, &layout), t, &oink.alpha, &oink.params, &betas);
     let (uc, sh) = batching_challenges::<C>(t, layout.num_unshifted(), layout.num_shifted());
@@ -180,7 +190,10 @@ pub struct FoldingProver {
 
 impl FoldingProver {
     pub fn new() -> Self {
-        Self { transcript: NativeTranscript::new(), cached: vec![] }
+        Self {
+            transcript: NativeTranscript::new(),
+            cached: vec![],
+        }
     }
     /// Returns the instance's proof slice (Oink + sumcheck).
     pub fn accumulate_instance(&mut self, inst: &mut ProverInstance, vk: &Vk<Bn254>, ck: &CommitmentKey, rng: &mut dyn Rng) -> Vec<Fr> {
@@ -218,7 +231,10 @@ where
     C::TF: ChallengeField,
 {
     pub fn new() -> Self {
-        Self { transcript: Transcript::new(), cached: vec![] }
+        Self {
+            transcript: Transcript::new(),
+            cached: vec![],
+        }
     }
     pub fn accumulate_instance(&mut self, flavor: &FlavorDesc, vk: &Vk<C>, proof: &[C::TF]) -> bool {
         let num_public_inputs = proof.len() - instance_proof_length_without_pis::<C>(flavor);

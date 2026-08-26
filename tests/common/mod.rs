@@ -16,3 +16,4 @@ pub fn read(rel: &str) -> Vec<u8> {
 
 pub mod eccvm_ops;
 pub mod script;
+pub mod translator_fixture;

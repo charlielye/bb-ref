@@ -236,7 +236,14 @@ pub fn verify_sumcheck<C: Curve>(
         full_value.assert_equal(&target_sum);
     }
 
-    SumcheckOutput { challenge, evals, verified, libra_evaluation, round_commitments, round_evaluations }
+    SumcheckOutput {
+        challenge,
+        evals,
+        verified,
+        libra_evaluation,
+        round_commitments,
+        round_evaluations,
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -476,6 +483,154 @@ fn pow_tail<F: FieldLike + Copy>(betas: &[F], round: usize, e: usize) -> F {
     f
 }
 
+/// Per-round prover state for one relation set (bb `SumcheckProverRound` +
+/// `PartiallyEvaluatedMultivariates`): the table being folded and the row-disabling bookkeeping.
+/// Rounds past `log_n` are virtual (zero-extension) rounds.
+pub struct RoundProver<F> {
+    table: Vec<Vec<F>>,
+    log_n: usize,
+    row_disabling: bool,
+    excluded_head: usize,
+    rd0: F,
+    rd1: F,
+    round: usize,
+}
+
+impl<F: FieldLike + Copy> RoundProver<F> {
+    pub fn new(polys: &[Polynomial<F>], row_disabling: bool, trace_offset: usize) -> Self {
+        let n = polys[0].len();
+        Self {
+            table: polys.iter().map(|p| p.coeffs.clone()).collect(),
+            log_n: n.trailing_zeros() as usize,
+            row_disabling,
+            excluded_head: if row_disabling { trace_offset } else { 0 },
+            rd0: F::one(),
+            rd1: F::one(),
+            round: 0,
+        }
+    }
+    pub fn log_n(&self) -> usize {
+        self.log_n
+    }
+    /// Current value of column `i` (its evaluation once all real rounds are done).
+    pub fn current(&self, i: usize) -> F {
+        self.table[i][0]
+    }
+    pub fn evals(&self) -> Vec<F> {
+        self.table.iter().map(|c| c[0]).collect()
+    }
+
+    /// The round univariate of the relations (bb `compute_univariate` + `compute_offset_area_contribution`,
+    /// or `compute_virtual_contribution` for a virtual round), without any Libra term.
+    pub fn univariate(&self, rels: &impl RelationSet<F>, params: &RelationParams<F>, betas: &[F], partial_eval: &F, alphas: &[F], d: usize) -> Vec<F> {
+        let round = self.round;
+        if round < self.log_n {
+            let round_size = 1 << (self.log_n - round);
+            let mut acc = new_accumulators(rels, d);
+            for e in self.excluded_head / 2..round_size / 2 {
+                accumulate_edge(rels, &self.table, e, params, &pow_tail(betas, round, e), &mut acc, d);
+            }
+            let mut univariate = batch_over_relations(rels, &acc, alphas, &betas[round], partial_eval, None, d);
+            if self.row_disabling {
+                let mut head = new_accumulators(rels, d);
+                for e in 0..self.excluded_head / 2 {
+                    accumulate_edge(rels, &self.table, e, params, &pow_tail(betas, round, e), &mut head, d);
+                }
+                let head_uni = batch_over_relations(rels, &head, alphas, &betas[round], partial_eval, Some((self.rd0, self.rd1)), d);
+                for (k, v) in head_uni.into_iter().enumerate() {
+                    univariate[k] += v;
+                }
+            }
+            univariate
+        } else {
+            // virtual round: the table has one row and the edge is (P(u), 0)
+            let mut acc = new_accumulators(rels, d);
+            let edge_table: Vec<Vec<F>> = self.table.iter().map(|c| vec![c[0], F::zero()]).collect();
+            accumulate_edge(rels, &edge_table, 0, params, &F::one(), &mut acc, d);
+            let rd = if self.row_disabling { Some((self.rd0, self.rd1)) } else { None };
+            batch_over_relations(rels, &acc, alphas, &betas[round], partial_eval, rd, d)
+        }
+    }
+
+    /// bb `partially_evaluate` / `fold_for_zero_extension` plus the row-disabling updates.
+    pub fn partially_evaluate(&mut self, u: &F) {
+        let round = self.round;
+        if round < self.log_n {
+            for col in self.table.iter_mut() {
+                let half = col.len() / 2;
+                for k in 0..half {
+                    col[k] = col[2 * k] + *u * (col[2 * k + 1] - col[2 * k]);
+                }
+                col.truncate(half);
+            }
+        } else {
+            for col in self.table.iter_mut() {
+                col[0] *= F::one() - *u;
+            }
+        }
+        if round == 1 {
+            self.rd1 = F::zero();
+        }
+        if round >= 2 {
+            self.rd0 *= F::one() - *u;
+        }
+        if self.row_disabling {
+            self.excluded_head = 2;
+        }
+        self.round += 1;
+    }
+}
+
+/// Committed-sumcheck bookkeeping (bb `RoundUnivariateHandler<Flavor, true>`).
+pub struct CommittedRounds<C: Curve> {
+    pub univariates: Vec<Polynomial<C::Fr>>,
+    pub commitments: Vec<C::G>,
+    pub evaluations: Vec<[C::Fr; 3]>,
+}
+
+impl<C: Curve<TF = Fr>> CommittedRounds<C>
+where
+    C::Fr: Copy,
+    C::G: AffineRepr<ScalarField = C::Fr>,
+{
+    pub fn new() -> Self {
+        Self {
+            univariates: Vec::new(),
+            commitments: Vec::new(),
+            evaluations: Vec::new(),
+        }
+    }
+    /// Commit to the round univariate and send its values at 0 and 1.
+    pub fn process(&mut self, round: usize, univariate: &[C::Fr], ck: &Ck<C::G>, t: &mut NativeTranscript) {
+        let domain: Vec<C::Fr> = (0..univariate.len()).map(|k| C::Fr::from_u64(k as u64)).collect();
+        let monomial = Polynomial::interpolate(&domain, univariate);
+        let commitment = ck.commit(&monomial);
+        t.send(&format!("Sumcheck:univariate_comm_{round}"), &commitment);
+        self.commitments.push(commitment);
+        self.univariates.push(monomial);
+        t.send(&format!("Sumcheck:univariate_{round}_eval_0"), &univariate[0]);
+        t.send(&format!("Sumcheck:univariate_{round}_eval_1"), &univariate[1]);
+        self.evaluations.push([univariate[0], univariate[1], C::Fr::zero()]);
+        if round > 0 {
+            self.evaluations[round - 1][2] = univariate[0] + univariate[1];
+        }
+    }
+    pub fn finalize(&mut self, last_univariate: &[C::Fr], last_challenge: &C::Fr) {
+        let last = self.evaluations.len() - 1;
+        self.evaluations[last][2] = evaluate_univariate(last_univariate, last_challenge);
+    }
+}
+
+impl<C: Curve<TF = Fr>> Default for CommittedRounds<C>
+where
+    C::Fr: Copy,
+    C::G: AffineRepr<ScalarField = C::Fr>,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct SumcheckProverOutput<C: Curve> {
     pub challenge: Vec<C::Fr>,
     pub evals: Vec<C::Fr>,
@@ -505,134 +660,50 @@ where
     C::G: AffineRepr<ScalarField = C::Fr>,
 {
     type F<C> = <C as Curve>::Fr;
-    let n = polys[0].len();
-    let log_n = n.trailing_zeros() as usize;
-    let virtual_log_n = spec.virtual_log_n;
     let d = spec.batched_len;
     let alphas = alpha_powers(alpha, rels.total_subrelations() - 1);
-    let has_zk = zk.is_some();
-
-    let mut table: Vec<Vec<F<C>>> = polys.iter().map(|p| p.coeffs.clone()).collect();
-    let mut challenge = Vec::with_capacity(virtual_log_n);
+    let mut state = RoundProver::new(polys, spec.row_disabling, spec.trace_offset);
+    let mut committed = CommittedRounds::<C>::new();
+    let mut challenge = Vec::with_capacity(spec.virtual_log_n);
     let mut partial_eval = F::<C>::one();
-    // RowDisablingPolynomial: values of L^{(i)} at 0 and 1
-    let (mut rd0, mut rd1) = (F::<C>::one(), F::<C>::one());
-    let mut excluded_head = if spec.row_disabling { spec.trace_offset } else { 0 };
-    let mut round_univariates = Vec::new();
-    let mut round_commitments = Vec::new();
-    let mut round_evaluations: Vec<[F<C>; 3]> = Vec::new();
-    let domain: Vec<F<C>> = (0..d).map(|k| F::<C>::from_u64(k as u64)).collect();
-
-    let mut send_round = |round: usize, univariate: &[F<C>], t: &mut NativeTranscript| {
-        if spec.committed {
-            let monomial = Polynomial::interpolate(&domain, univariate);
-            let commitment = ck.expect("committed sumcheck needs a commitment key").commit(&monomial);
-            t.send(&format!("Sumcheck:univariate_comm_{round}"), &commitment);
-            round_commitments.push(commitment);
-            round_univariates.push(monomial);
-            t.send(&format!("Sumcheck:univariate_{round}_eval_0"), &univariate[0]);
-            t.send(&format!("Sumcheck:univariate_{round}_eval_1"), &univariate[1]);
-            round_evaluations.push([univariate[0], univariate[1], F::<C>::zero()]);
-            if round > 0 {
-                round_evaluations[round - 1][2] = univariate[0] + univariate[1];
-            }
-        } else {
-            t.send_vec(&format!("Sumcheck:univariate_{round}"), univariate);
-        }
-    };
-
     let mut last_univariate = Vec::new();
-    for round in 0..log_n {
-        let round_size = n >> round;
-        let mut acc = new_accumulators(rels, d);
-        for e in excluded_head / 2..round_size / 2 {
-            accumulate_edge(rels, &table, e, params, &pow_tail(betas, round, e), &mut acc, d);
-        }
-        let mut univariate = batch_over_relations(rels, &acc, &alphas, &betas[round], &partial_eval, None, d);
+    for round in 0..spec.virtual_log_n {
+        let mut univariate = state.univariate(rels, params, betas, &partial_eval, &alphas, d);
         if let Some(zk) = zk.as_deref_mut() {
             for (k, v) in zk.round_univariate(round, d).into_iter().enumerate() {
                 univariate[k] += v;
             }
         }
-        if spec.row_disabling {
-            // head rows, scaled by the row-disabling factors
-            let mut head = new_accumulators(rels, d);
-            for e in 0..excluded_head / 2 {
-                accumulate_edge(rels, &table, e, params, &pow_tail(betas, round, e), &mut head, d);
-            }
-            let head_uni = batch_over_relations(rels, &head, &alphas, &betas[round], &partial_eval, Some((rd0, rd1)), d);
-            for (k, v) in head_uni.into_iter().enumerate() {
-                univariate[k] += v;
-            }
+        if spec.committed {
+            committed.process(round, &univariate, ck.expect("committed sumcheck needs a commitment key"), t);
+        } else {
+            t.send_vec(&format!("Sumcheck:univariate_{round}"), &univariate);
         }
-        send_round(round, &univariate, t);
         let u: F<C> = t.challenge(&format!("Sumcheck:u_{round}"));
-        for col in table.iter_mut() {
-            let half = col.len() / 2;
-            for k in 0..half {
-                col[k] = col[2 * k] + u * (col[2 * k + 1] - col[2 * k]);
-            }
-            col.truncate(half);
-        }
+        state.partially_evaluate(&u);
         if let Some(zk) = zk.as_deref_mut() {
             zk.update(&u, round);
-        }
-        if round == 1 {
-            rd1 = F::<C>::zero();
-        }
-        if round >= 2 {
-            rd0 *= F::<C>::one() - u;
-        }
-        partial_eval *= gate_separator_factor(&u, &betas[round]);
-        challenge.push(u);
-        if spec.row_disabling {
-            excluded_head = 2;
-        }
-        last_univariate = univariate;
-    }
-
-    // virtual (zero-extension) rounds: the table has one row; the edge is (P(u), 0)
-    for round in log_n..virtual_log_n {
-        let mut acc = new_accumulators(rels, d);
-        let edge_table: Vec<Vec<F<C>>> = table.iter().map(|c| vec![c[0], F::<C>::zero()]).collect();
-        accumulate_edge(rels, &edge_table, 0, params, &F::<C>::one(), &mut acc, d);
-        let rd = if spec.row_disabling { Some((rd0, rd1)) } else { None };
-        let mut univariate = batch_over_relations(rels, &acc, &alphas, &betas[round], &partial_eval, rd, d);
-        if let Some(zk) = zk.as_deref_mut() {
-            for (k, v) in zk.round_univariate(round, d).into_iter().enumerate() {
-                univariate[k] += v;
-            }
-        }
-        send_round(round, &univariate, t);
-        let u: F<C> = t.challenge(&format!("Sumcheck:u_{round}"));
-        for col in table.iter_mut() {
-            col[0] *= F::<C>::one() - u;
-        }
-        if let Some(zk) = zk.as_deref_mut() {
-            zk.update(&u, round);
-        }
-        if round == 1 {
-            rd1 = F::<C>::zero();
-        }
-        if round >= 2 {
-            rd0 *= F::<C>::one() - u;
         }
         partial_eval *= gate_separator_factor(&u, &betas[round]);
         challenge.push(u);
         last_univariate = univariate;
     }
     if spec.committed {
-        let last = round_evaluations.len() - 1;
-        round_evaluations[last][2] = evaluate_univariate(&last_univariate, &challenge[last]);
+        committed.finalize(&last_univariate, challenge.last().unwrap());
     }
-
-    let evals: Vec<F<C>> = table.iter().map(|c| c[0]).collect();
+    let evals = state.evals();
     t.send_vec("Sumcheck:evaluations", &evals);
     let mut libra_evaluation = F::<C>::zero();
     if let Some(zk) = zk {
         libra_evaluation = zk.claimed_evaluation();
         t.send("Libra:claimed_evaluation", &libra_evaluation);
     }
-    let _ = has_zk;
-    SumcheckProverOutput { challenge, evals, libra_evaluation, round_univariates, round_commitments, round_evaluations }
+    SumcheckProverOutput {
+        challenge,
+        evals,
+        libra_evaluation,
+        round_univariates: committed.univariates,
+        round_commitments: committed.commitments,
+        round_evaluations: committed.evaluations,
+    }
 }

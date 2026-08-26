@@ -16,9 +16,9 @@ use bb_ref::honk::{FlavorDesc, ULTRA, ULTRA_ZK};
 use std::path::PathBuf;
 
 fn acir_tests_dir() -> PathBuf {
-    std::env::var("ACIR_TESTS_DIR").map(PathBuf::from).unwrap_or_else(|_| {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../aztec-packages2/barretenberg/acir_tests/acir_tests")
-    })
+    std::env::var("ACIR_TESTS_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../aztec-packages2/barretenberg/acir_tests/acir_tests"))
 }
 
 fn build(prog: &str, flavor: &'static FlavorDesc) -> ProverInstance {
@@ -60,7 +60,7 @@ fn check_nozk(prog: &str) {
     assert_eq!(proof, expected_proof, "{prog}: proof");
     // Every relation vanishes on the (Oink-completed) instance.
     let mut inst = build(prog, &ULTRA);
-    let out = prove_oink(&mut inst, &vk, &ck, &mut NativeTranscript::new(), &mut OsRng);
+    let out = prove_oink(&mut inst, &vk, &ck, &mut NativeTranscript::new(), &mut OsRng, true);
     assert_eq!(check_circuit(&inst, &out.params), None, "{prog}: relation failure");
 }
 

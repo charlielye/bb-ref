@@ -48,14 +48,21 @@ pub fn reduce_to_pairing_check<C: Curve>(flavor: &FlavorDesc, vk: &Vk<C>, proof:
     let log_n = flavor.virtual_log_n;
 
     let mut t = Transcript::<C::TF, C::Hash>::from_proof(proof);
-    let oink = verify_oink::<C>(flavor, &layout, vk, &mut t, num_public_inputs);
+    let oink = verify_oink::<C>(flavor, &layout, vk, &mut t, num_public_inputs, true);
     let gate_challenges: Vec<C::Fr> = t.dyadic_powers("Sumcheck:gate_challenge", log_n);
 
     let mut libra_commitments: Vec<C::G> = Vec::new();
     if flavor.has_zk {
         libra_commitments.push(t.receive("Libra:concatenation_commitment"));
     }
-    let sc = verify_sumcheck::<C>(&HonkRelations { flavor, layout: &layout }, &SumcheckSpec::honk(flavor, &layout), &mut t, &oink.alpha, &oink.params, &gate_challenges);
+    let sc = verify_sumcheck::<C>(
+        &HonkRelations { flavor, layout: &layout },
+        &SumcheckSpec::honk(flavor, &layout),
+        &mut t,
+        &oink.alpha,
+        &oink.params,
+        &gate_challenges,
+    );
     if flavor.has_zk {
         libra_commitments.push(t.receive("Libra:grand_sum_commitment"));
         libra_commitments.push(t.receive("Libra:quotient_commitment"));
@@ -80,9 +87,15 @@ pub fn reduce_to_pairing_check<C: Curve>(flavor: &FlavorDesc, vk: &Vk<C>, proof:
         &repeated,
         &libra_commitments,
         &sc.libra_evaluation,
+        &[],
+        &[],
     );
     let pcs_pairing_points = kzg_reduce_verify_batch_opening_claim::<C>(shplemini.claim, &mut t, final_pcs_msm_size(flavor, &layout));
-    Reduction { public_inputs: oink.public_inputs, pcs_pairing_points, succeeded: sc.verified && shplemini.consistency_checked }
+    Reduction {
+        public_inputs: oink.public_inputs,
+        pcs_pairing_points,
+        succeeded: sc.verified && shplemini.consistency_checked,
+    }
 }
 
 /// The pairing-point accumulator carried in the last 8 public inputs (bb `DefaultIO`).

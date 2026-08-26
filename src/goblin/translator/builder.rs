@@ -83,7 +83,13 @@ fn fq_modulus() -> U256 {
 /// `2^272 - q` in 68-bit limbs, and `-q` in the scalar field (bb `NEGATIVE_MODULUS_LIMBS`).
 pub fn negative_modulus_limbs() -> [Fr; 5] {
     let h = |s: &str| crate::base::field::from_hex::<Fr>(s);
-    [h("0x2c3df73e9278302b9"), h("0xa2687e956e978e357"), h("0xfd647afba497e7ea7"), h("0xffffcf9bb18d1ece5"), -Fr::from_le_bytes_mod_order(&fq_modulus().to_bytes_le())]
+    [
+        h("0x2c3df73e9278302b9"),
+        h("0xa2687e956e978e357"),
+        h("0xfd647afba497e7ea7"),
+        h("0xffffcf9bb18d1ece5"),
+        -Fr::from_le_bytes_mod_order(&fq_modulus().to_bytes_le()),
+    ]
 }
 
 fn mul_wrapping(a: &U256, b: &U256) -> U256 {
@@ -191,11 +197,62 @@ pub fn generate_witness_values(op: &UltraOp, previous_accumulator: &Fq, v: &Fq, 
 
     let low_part_1 = pa[0] * xw[0] + Fr::from(op_code) + px[0] * vw[0] + py[0] * v2[0] + z1[0] * v3[0] + z2[0] * v4[0] + qt[0] * neg_mod[0] - rm[0];
     let low_wide = low_part_1
-        + (pa[1] * xw[0] + pa[0] * xw[1] + px[0] * vw[1] + px[1] * vw[0] + py[0] * v2[1] + py[1] * v2[0] + z1[0] * v3[1] + z1[1] * v3[0] + z2[0] * v4[1] + z2[1] * v4[0] + qt[0] * neg_mod[1] + qt[1] * neg_mod[0] - rm[1]) * shift_1;
+        + (pa[1] * xw[0]
+            + pa[0] * xw[1]
+            + px[0] * vw[1]
+            + px[1] * vw[0]
+            + py[0] * v2[1]
+            + py[1] * v2[0]
+            + z1[0] * v3[1]
+            + z1[1] * v3[0]
+            + z2[0] * v4[1]
+            + z2[1] * v4[0]
+            + qt[0] * neg_mod[1]
+            + qt[1] * neg_mod[0]
+            - rm[1])
+            * shift_1;
     let low_wide_divided = low_wide * shift_2_inverse;
-    let high_part_1 = low_wide_divided + pa[2] * xw[0] + pa[1] * xw[1] + pa[0] * xw[2] + px[0] * vw[2] + px[1] * vw[1] + px[2] * vw[0] + py[0] * v2[2] + py[1] * v2[1] + py[2] * v2[0] + z1[0] * v3[2] + z1[1] * v3[1] + z2[0] * v4[2] + z2[1] * v4[1] + qt[2] * neg_mod[0] + qt[1] * neg_mod[1] + qt[0] * neg_mod[2] - rm[2];
+    let high_part_1 = low_wide_divided
+        + pa[2] * xw[0]
+        + pa[1] * xw[1]
+        + pa[0] * xw[2]
+        + px[0] * vw[2]
+        + px[1] * vw[1]
+        + px[2] * vw[0]
+        + py[0] * v2[2]
+        + py[1] * v2[1]
+        + py[2] * v2[0]
+        + z1[0] * v3[2]
+        + z1[1] * v3[1]
+        + z2[0] * v4[2]
+        + z2[1] * v4[1]
+        + qt[2] * neg_mod[0]
+        + qt[1] * neg_mod[1]
+        + qt[0] * neg_mod[2]
+        - rm[2];
     let high_wide = high_part_1
-        + (pa[3] * xw[0] + pa[2] * xw[1] + pa[1] * xw[2] + pa[0] * xw[3] + px[0] * vw[3] + px[1] * vw[2] + px[2] * vw[1] + px[3] * vw[0] + py[0] * v2[3] + py[1] * v2[2] + py[2] * v2[1] + py[3] * v2[0] + z1[0] * v3[3] + z1[1] * v3[2] + z2[0] * v4[3] + z2[1] * v4[2] + qt[3] * neg_mod[0] + qt[2] * neg_mod[1] + qt[1] * neg_mod[2] + qt[0] * neg_mod[3] - rm[3]) * shift_1;
+        + (pa[3] * xw[0]
+            + pa[2] * xw[1]
+            + pa[1] * xw[2]
+            + pa[0] * xw[3]
+            + px[0] * vw[3]
+            + px[1] * vw[2]
+            + px[2] * vw[1]
+            + px[3] * vw[0]
+            + py[0] * v2[3]
+            + py[1] * v2[2]
+            + py[2] * v2[1]
+            + py[3] * v2[0]
+            + z1[0] * v3[3]
+            + z1[1] * v3[2]
+            + z2[0] * v4[3]
+            + z2[1] * v4[2]
+            + qt[3] * neg_mod[0]
+            + qt[2] * neg_mod[1]
+            + qt[1] * neg_mod[2]
+            + qt[0] * neg_mod[3]
+            - rm[3])
+            * shift_1;
     let high_wide_divided = high_wide * shift_2_inverse;
 
     let micro4 = |limbs: &[Fr; 4], last_bits: u32| -> [[Fr; 6]; 4] { std::array::from_fn(|i| split_limb_into_microlimbs(&limbs[i], if i == 3 { last_bits } else { NUM_LIMB_BITS })) };
@@ -215,14 +272,22 @@ pub fn generate_witness_values(op: &UltraOp, previous_accumulator: &Fq, v: &Fq, 
         quotient_binary_limbs: quotient_limbs,
         quotient_microlimbs: micro4(&quotient_limbs, NUM_LAST_QUOTIENT_LIMB_BITS),
         relation_wide_limbs: [low_wide_divided, high_wide_divided],
-        relation_wide_microlimbs: [split_limb_into_microlimbs(&low_wide_divided, RELATION_WIDE_LIMB_BITS), split_limb_into_microlimbs(&high_wide_divided, RELATION_WIDE_LIMB_BITS)],
+        relation_wide_microlimbs: [
+            split_limb_into_microlimbs(&low_wide_divided, RELATION_WIDE_LIMB_BITS),
+            split_limb_into_microlimbs(&high_wide_divided, RELATION_WIDE_LIMB_BITS),
+        ],
     }
 }
 
 impl TranslatorCircuit {
     /// bb `TranslatorCircuitBuilder(v, x, op_queue)`: feeds the ZK-reconstructed ultra ops.
     pub fn new(batching_challenge_v: Fq, evaluation_input_x: Fq, q: &EccOpQueue) -> Self {
-        let mut c = Self { wires: vec![Vec::new(); NUM_WIRES], num_gates: 0, batching_challenge_v, evaluation_input_x };
+        let mut c = Self {
+            wires: vec![Vec::new(); NUM_WIRES],
+            num_gates: 0,
+            batching_challenge_v,
+            evaluation_input_x,
+        };
         c.feed(&q.get_zk_reconstructed_ultra_ops());
         c
     }
@@ -376,5 +441,12 @@ impl TranslatorCircuit {
     /// The accumulation result read from the result row (bb `get_computation_result`).
     pub fn accumulated_result_limbs(&self) -> [Fr; 4] {
         std::array::from_fn(|i| self.wires[ACCUMULATORS_BINARY_LIMBS_0 + i][RESULT_ROW])
+    }
+    /// The accumulated result as a base field element (bb test helper `get_accumulated_result`).
+    pub fn accumulated_result(&self) -> Fq {
+        let limbs = self.accumulated_result_limbs();
+        let shift = Fr::from(2u64).pow_u64(NUM_LIMB_BITS as u64);
+        let v = limbs[0] + limbs[1] * shift + limbs[2] * shift.sqr() + limbs[3] * shift.sqr() * shift;
+        from_u256(u256(&v))
     }
 }

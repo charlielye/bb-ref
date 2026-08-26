@@ -4,6 +4,7 @@
 //! `base` <- `circuit` <- `stdlib` <- `honk` <- `goblin` <- `chonk` <- `acir`
 pub mod acir;
 pub mod base;
+pub mod chonk;
 pub mod circuit;
 pub mod goblin;
 pub mod honk;
