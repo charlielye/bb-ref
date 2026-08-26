@@ -9,3 +9,11 @@ fixtures under `../data/<pin>/`.
   writes `<dir>/{nozk,zk}/` consumed by `tests/m2_ultra_prove.rs` and `tests/m3_builder.rs`
   (the dumps are large and gitignored; regenerate them locally).
 - `../regen_vk_hashes.sh` needs only the stock `bb` binary.
+
+The same file also provides `BbRefDump.MegaScript`, which runs a circuit script (one builder call
+per line, see `../scripts/*.txt` and `tests/common/script.rs` for the grammar) on a
+`MegaCircuitBuilder` and dumps the proving instance for the chosen flavor, together with its VK
+and Oink proof:
+`BBREF_SCRIPT=<script.txt> BBREF_FLAVOR=app|kernel|zk BBREF_OUT=<dir> ./bin/dsl_tests --gtest_filter='BbRefDump.MegaScript'`
+(`tests/m4_mega.rs` reads `data/<pin>/instance/scripts/<script>/<flavor>/`). `BbRefDump.UltraInstance`
+now also writes `<dir>/mega_app/` (MegaAppFlavor instance + Oink proof of the same ACIR program).

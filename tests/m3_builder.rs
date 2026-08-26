@@ -6,7 +6,9 @@ use bb_ref::acir::{build_circuit, decode_program, decode_witness};
 use bb_ref::base::field::{from_bytes_be, Fr};
 use bb_ref::base::io::decode_fields;
 use bb_ref::base::srs::bn254_g2;
-use bb_ref::base::{CommitmentKey, OsRng};
+use bb_ref::base::{CommitmentKey, NativeTranscript, OsRng};
+use bb_ref::honk::circuit_checker::check_circuit;
+use bb_ref::honk::oink_prover::prove_oink;
 use bb_ref::honk::prover_instance::ProverInstance;
 use bb_ref::honk::ultra_prover::prove_ultra;
 use bb_ref::honk::ultra_verifier::verify_ultra;
@@ -56,6 +58,10 @@ fn check_nozk(prog: &str) {
     let proof = prove_ultra(&mut inst, &vk, &mut OsRng);
     let expected_proof = decode_fields(&std::fs::read(dump.join("proof.bin")).unwrap());
     assert_eq!(proof, expected_proof, "{prog}: proof");
+    // Every relation vanishes on the (Oink-completed) instance.
+    let mut inst = build(prog, &ULTRA);
+    let out = prove_oink(&mut inst, &vk, &ck, &mut NativeTranscript::new(), &mut OsRng);
+    assert_eq!(check_circuit(&inst, &out.params), None, "{prog}: relation failure");
 }
 
 fn check_zk(prog: &str) {

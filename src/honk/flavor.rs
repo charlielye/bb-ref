@@ -25,11 +25,46 @@ entities! {
     q_lookup, table_1, table_2, table_3, table_4,
     q_m, q_l, q_r, q_o, q_4, q_c, q_arith, q_delta_range, q_elliptic, q_memory, q_nnf,
     q_poseidon2_external, q_poseidon2_internal,
+    q_bilinear_batched_eq, lagrange_ecc_op, q_busread, databus_id, q_5,
+    q_poseidon2_external_initial, q_poseidon2_quad_internal, q_poseidon2_quad_internal_terminal,
+    q_poseidon2_transition_entry,
+    kernel_calldata_indicator, first_app_calldata_indicator, second_app_calldata_indicator,
+    third_app_calldata_indicator, fourth_app_calldata_indicator, fifth_app_calldata_indicator,
+    return_data_indicator,
     // witness
     w_l, w_r, w_o, w_4, z_perm, lookup_inverses, lookup_read_counts, lookup_read_tags,
+    ecc_op_wire_1, ecc_op_wire_2, ecc_op_wire_3, ecc_op_wire_4,
+    kernel_calldata, kernel_calldata_read_counts, kernel_calldata_inverses,
+    first_app_calldata, first_app_calldata_read_counts, first_app_calldata_inverses,
+    second_app_calldata, second_app_calldata_read_counts, second_app_calldata_inverses,
+    third_app_calldata, third_app_calldata_read_counts, third_app_calldata_inverses,
+    fourth_app_calldata, fourth_app_calldata_read_counts, fourth_app_calldata_inverses,
+    fifth_app_calldata, fifth_app_calldata_read_counts, fifth_app_calldata_inverses,
+    return_data, return_data_read_counts, return_data_inverses,
     // masking (ZK)
     gemini_masking_poly,
 }
+
+/// One databus column: its entities and the wire selector that marks reads from it. Index = the
+/// builder's bus slot (kernel calldata, five app calldatas, return data).
+pub struct BusSpec {
+    pub value: Ent,
+    pub read_counts: Ent,
+    pub inverses: Ent,
+    pub indicator: Ent,
+    pub selector: Ent,
+}
+
+pub const NUM_BUS_COLUMNS: usize = 7;
+pub const BUS_SPECS: [BusSpec; NUM_BUS_COLUMNS] = [
+    BusSpec { value: Ent::kernel_calldata, read_counts: Ent::kernel_calldata_read_counts, inverses: Ent::kernel_calldata_inverses, indicator: Ent::kernel_calldata_indicator, selector: Ent::q_l },
+    BusSpec { value: Ent::first_app_calldata, read_counts: Ent::first_app_calldata_read_counts, inverses: Ent::first_app_calldata_inverses, indicator: Ent::first_app_calldata_indicator, selector: Ent::q_r },
+    BusSpec { value: Ent::second_app_calldata, read_counts: Ent::second_app_calldata_read_counts, inverses: Ent::second_app_calldata_inverses, indicator: Ent::second_app_calldata_indicator, selector: Ent::q_o },
+    BusSpec { value: Ent::third_app_calldata, read_counts: Ent::third_app_calldata_read_counts, inverses: Ent::third_app_calldata_inverses, indicator: Ent::third_app_calldata_indicator, selector: Ent::q_4 },
+    BusSpec { value: Ent::fourth_app_calldata, read_counts: Ent::fourth_app_calldata_read_counts, inverses: Ent::fourth_app_calldata_inverses, indicator: Ent::fourth_app_calldata_indicator, selector: Ent::q_5 },
+    BusSpec { value: Ent::fifth_app_calldata, read_counts: Ent::fifth_app_calldata_read_counts, inverses: Ent::fifth_app_calldata_inverses, indicator: Ent::fifth_app_calldata_indicator, selector: Ent::q_c },
+    BusSpec { value: Ent::return_data, read_counts: Ent::return_data_read_counts, inverses: Ent::return_data_inverses, indicator: Ent::return_data_indicator, selector: Ent::q_m },
+];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
@@ -66,6 +101,15 @@ pub enum Rel {
     Poseidon2External,
     Poseidon2Internal,
     Masking,
+    BilinearBatchedEq,
+    EccOpQueue,
+    MegaEccOpBoundary,
+    /// Log-derivative lookup on one databus column (builder bus slot).
+    Bus(usize),
+    Poseidon2InitialExternal,
+    Poseidon2QuadInternal,
+    Poseidon2QuadInternalTerminal,
+    Poseidon2TransitionEntry,
 }
 
 use Ent::*;
@@ -165,6 +209,129 @@ impl Rel {
                 partial_lengths: &[],
                 structural: true,
             },
+            Rel::BilinearBatchedEq => spec! {
+                entities: &[(w_l, Witness), (w_r, Witness), (w_o, Witness), (w_4, Witness), (q_m, Precomputed),
+                    (q_l, Precomputed), (q_r, Precomputed), (q_o, Precomputed), (q_4, Precomputed), (q_c, Precomputed),
+                    (q_bilinear_batched_eq, Precomputed)],
+                subsets: &[("gate_selectors", &[q_bilinear_batched_eq] as &[Ent])],
+                partial_lengths: &[6, 5],
+                gate_block: Some("arithmetic"),
+            },
+            Rel::EccOpQueue => spec! {
+                entities: &[(w_l, Witness), (w_r, Witness), (w_o, Witness), (w_4, Witness), (ecc_op_wire_1, Witness),
+                    (ecc_op_wire_2, Witness), (ecc_op_wire_3, Witness), (ecc_op_wire_4, Witness), (lagrange_ecc_op, Precomputed)],
+                shifted: ALL_SHIFTS,
+                subsets: &[("ecc_op_wires", &[ecc_op_wire_1, ecc_op_wire_2, ecc_op_wire_3, ecc_op_wire_4] as &[Ent])],
+                partial_lengths: &[3, 3, 3, 3, 3, 3, 3, 3],
+            },
+            Rel::MegaEccOpBoundary => spec! {
+                entities: &[(ecc_op_wire_1, Witness), (ecc_op_wire_2, Witness), (ecc_op_wire_3, Witness), (ecc_op_wire_4, Witness)],
+                partial_lengths: &[2, 2, 2, 2],
+                offset_only: true,
+            },
+            Rel::Bus(0) => spec! {
+                entities: &[(w_l, Witness), (w_r, Witness), (q_busread, Precomputed), (databus_id, Precomputed),
+                    (kernel_calldata, Witness), (kernel_calldata_read_counts, Witness), (kernel_calldata_inverses, Witness), (kernel_calldata_indicator, Precomputed), (q_l, Precomputed)],
+                subsets: &[("gate_selectors", &[q_busread] as &[Ent]), ("databus_entities", &[kernel_calldata, kernel_calldata_read_counts] as &[Ent]),
+                    ("databus_inverses", &[kernel_calldata_inverses] as &[Ent]), ("databus_indicators", &[kernel_calldata_indicator] as &[Ent]),
+                    ("databus_selectors", &[q_l] as &[Ent])],
+                partial_lengths: &[6, 6, 6, 3],
+                lin_indep: &[true, true, false, true],
+                gate_block: Some("busread"),
+            },
+            Rel::Bus(1) => spec! {
+                entities: &[(w_l, Witness), (w_r, Witness), (q_busread, Precomputed), (databus_id, Precomputed),
+                    (first_app_calldata, Witness), (first_app_calldata_read_counts, Witness), (first_app_calldata_inverses, Witness), (first_app_calldata_indicator, Precomputed), (q_r, Precomputed)],
+                subsets: &[("gate_selectors", &[q_busread] as &[Ent]), ("databus_entities", &[first_app_calldata, first_app_calldata_read_counts] as &[Ent]),
+                    ("databus_inverses", &[first_app_calldata_inverses] as &[Ent]), ("databus_indicators", &[first_app_calldata_indicator] as &[Ent]),
+                    ("databus_selectors", &[q_r] as &[Ent])],
+                partial_lengths: &[6, 6, 6, 3],
+                lin_indep: &[true, true, false, true],
+                gate_block: Some("busread"),
+            },
+            Rel::Bus(2) => spec! {
+                entities: &[(w_l, Witness), (w_r, Witness), (q_busread, Precomputed), (databus_id, Precomputed),
+                    (second_app_calldata, Witness), (second_app_calldata_read_counts, Witness), (second_app_calldata_inverses, Witness), (second_app_calldata_indicator, Precomputed), (q_o, Precomputed)],
+                subsets: &[("gate_selectors", &[q_busread] as &[Ent]), ("databus_entities", &[second_app_calldata, second_app_calldata_read_counts] as &[Ent]),
+                    ("databus_inverses", &[second_app_calldata_inverses] as &[Ent]), ("databus_indicators", &[second_app_calldata_indicator] as &[Ent]),
+                    ("databus_selectors", &[q_o] as &[Ent])],
+                partial_lengths: &[6, 6, 6, 3],
+                lin_indep: &[true, true, false, true],
+                gate_block: Some("busread"),
+            },
+            Rel::Bus(3) => spec! {
+                entities: &[(w_l, Witness), (w_r, Witness), (q_busread, Precomputed), (databus_id, Precomputed),
+                    (third_app_calldata, Witness), (third_app_calldata_read_counts, Witness), (third_app_calldata_inverses, Witness), (third_app_calldata_indicator, Precomputed), (q_4, Precomputed)],
+                subsets: &[("gate_selectors", &[q_busread] as &[Ent]), ("databus_entities", &[third_app_calldata, third_app_calldata_read_counts] as &[Ent]),
+                    ("databus_inverses", &[third_app_calldata_inverses] as &[Ent]), ("databus_indicators", &[third_app_calldata_indicator] as &[Ent]),
+                    ("databus_selectors", &[q_4] as &[Ent])],
+                partial_lengths: &[6, 6, 6, 3],
+                lin_indep: &[true, true, false, true],
+                gate_block: Some("busread"),
+            },
+            Rel::Bus(4) => spec! {
+                entities: &[(w_l, Witness), (w_r, Witness), (q_busread, Precomputed), (databus_id, Precomputed),
+                    (fourth_app_calldata, Witness), (fourth_app_calldata_read_counts, Witness), (fourth_app_calldata_inverses, Witness), (fourth_app_calldata_indicator, Precomputed), (q_5, Precomputed)],
+                subsets: &[("gate_selectors", &[q_busread] as &[Ent]), ("databus_entities", &[fourth_app_calldata, fourth_app_calldata_read_counts] as &[Ent]),
+                    ("databus_inverses", &[fourth_app_calldata_inverses] as &[Ent]), ("databus_indicators", &[fourth_app_calldata_indicator] as &[Ent]),
+                    ("databus_selectors", &[q_5] as &[Ent])],
+                partial_lengths: &[6, 6, 6, 3],
+                lin_indep: &[true, true, false, true],
+                gate_block: Some("busread"),
+            },
+            Rel::Bus(5) => spec! {
+                entities: &[(w_l, Witness), (w_r, Witness), (q_busread, Precomputed), (databus_id, Precomputed),
+                    (fifth_app_calldata, Witness), (fifth_app_calldata_read_counts, Witness), (fifth_app_calldata_inverses, Witness), (fifth_app_calldata_indicator, Precomputed), (q_c, Precomputed)],
+                subsets: &[("gate_selectors", &[q_busread] as &[Ent]), ("databus_entities", &[fifth_app_calldata, fifth_app_calldata_read_counts] as &[Ent]),
+                    ("databus_inverses", &[fifth_app_calldata_inverses] as &[Ent]), ("databus_indicators", &[fifth_app_calldata_indicator] as &[Ent]),
+                    ("databus_selectors", &[q_c] as &[Ent])],
+                partial_lengths: &[6, 6, 6, 3],
+                lin_indep: &[true, true, false, true],
+                gate_block: Some("busread"),
+            },
+            Rel::Bus(6) => spec! {
+                entities: &[(w_l, Witness), (w_r, Witness), (q_busread, Precomputed), (databus_id, Precomputed),
+                    (return_data, Witness), (return_data_read_counts, Witness), (return_data_inverses, Witness), (return_data_indicator, Precomputed), (q_m, Precomputed)],
+                subsets: &[("gate_selectors", &[q_busread] as &[Ent]), ("databus_entities", &[return_data, return_data_read_counts] as &[Ent]),
+                    ("databus_inverses", &[return_data_inverses] as &[Ent]), ("databus_indicators", &[return_data_indicator] as &[Ent]),
+                    ("databus_selectors", &[q_m] as &[Ent])],
+                partial_lengths: &[6, 6, 6, 3],
+                lin_indep: &[true, true, false, true],
+                gate_block: Some("busread"),
+            },
+            Rel::Bus(_) => unreachable!("only {NUM_BUS_COLUMNS} bus columns exist"),
+            Rel::Poseidon2InitialExternal => spec! {
+                entities: &[(w_l, Witness), (w_r, Witness), (w_o, Witness), (w_4, Witness), (q_poseidon2_external_initial, Precomputed)],
+                shifted: ALL_SHIFTS,
+                subsets: &[("gate_selectors", &[q_poseidon2_external_initial] as &[Ent])],
+                partial_lengths: &[3, 3, 3, 3],
+                gate_block: Some("poseidon2"),
+            },
+            Rel::Poseidon2QuadInternal => spec! {
+                entities: &[(w_l, Witness), (w_r, Witness), (w_o, Witness), (w_4, Witness), (q_m, Precomputed),
+                    (q_c, Precomputed), (q_l, Precomputed), (q_r, Precomputed), (q_o, Precomputed), (q_4, Precomputed),
+                    (q_5, Precomputed), (q_poseidon2_quad_internal, Precomputed)],
+                shifted: ALL_SHIFTS,
+                subsets: &[("gate_selectors", &[q_poseidon2_quad_internal] as &[Ent]), ("non_gate_selectors", &[q_5] as &[Ent])],
+                partial_lengths: &[7, 7, 7, 7],
+                gate_block: Some("poseidon2"),
+            },
+            Rel::Poseidon2QuadInternalTerminal => spec! {
+                entities: &[(w_l, Witness), (w_r, Witness), (w_o, Witness), (w_4, Witness), (q_l, Precomputed),
+                    (q_r, Precomputed), (q_o, Precomputed), (q_4, Precomputed), (q_poseidon2_quad_internal_terminal, Precomputed)],
+                shifted: ALL_SHIFTS,
+                subsets: &[("gate_selectors", &[q_poseidon2_quad_internal_terminal] as &[Ent])],
+                partial_lengths: &[7, 7, 7, 7],
+                gate_block: Some("poseidon2"),
+            },
+            Rel::Poseidon2TransitionEntry => spec! {
+                entities: &[(w_l, Witness), (w_r, Witness), (w_o, Witness), (w_4, Witness), (q_l, Precomputed),
+                    (q_r, Precomputed), (q_o, Precomputed), (q_poseidon2_transition_entry, Precomputed)],
+                shifted: &[w_r, w_o, w_4],
+                subsets: &[("gate_selectors", &[q_poseidon2_transition_entry] as &[Ent])],
+                partial_lengths: &[7, 7, 7],
+                gate_block: Some("poseidon2"),
+            },
         }
     }
 
@@ -211,6 +378,52 @@ pub static ULTRA_ZK: FlavorDesc = FlavorDesc {
     batched_len_extra: 2,
 };
 
+const MEGA_POSEIDON2: [Rel; 5] = [Rel::Poseidon2External, Rel::Poseidon2InitialExternal, Rel::Poseidon2QuadInternal, Rel::Poseidon2QuadInternalTerminal, Rel::Poseidon2TransitionEntry];
+
+/// Chonk app circuits: Mega minus the calldata buses (bb `mega_app.ts`).
+pub static MEGA_APP: FlavorDesc = FlavorDesc {
+    name: "MegaAppFlavor",
+    relations: &[Rel::Permutation, Rel::LogDerivLookup, Rel::Arithmetic, Rel::BilinearBatchedEq, Rel::DeltaRange, Rel::Elliptic,
+        Rel::Memory, Rel::NonNativeField, Rel::EccOpQueue, Rel::Bus(6),
+        MEGA_POSEIDON2[0], MEGA_POSEIDON2[1], MEGA_POSEIDON2[2], MEGA_POSEIDON2[3], MEGA_POSEIDON2[4]],
+    has_zk: false,
+    has_gemini_masking: false,
+    virtual_log_n: CONST_FOLDING_LOG_N,
+    trace_offset: 0,
+    batched_len_extra: 1,
+};
+
+/// Chonk kernel circuits: no lookups or non-native-field gates, all seven buses (bb `mega_kernel.ts`).
+pub static MEGA_KERNEL: FlavorDesc = FlavorDesc {
+    name: "MegaKernelFlavor",
+    relations: &[Rel::Arithmetic, Rel::BilinearBatchedEq, Rel::Permutation, Rel::DeltaRange, Rel::Elliptic, Rel::Memory,
+        Rel::EccOpQueue, Rel::Bus(0), Rel::Bus(1), Rel::Bus(2), Rel::Bus(3), Rel::Bus(4), Rel::Bus(5), Rel::Bus(6),
+        MEGA_POSEIDON2[0], MEGA_POSEIDON2[1], MEGA_POSEIDON2[2], MEGA_POSEIDON2[3], MEGA_POSEIDON2[4]],
+    has_zk: false,
+    has_gemini_masking: false,
+    virtual_log_n: CONST_FOLDING_LOG_N,
+    trace_offset: 0,
+    batched_len_extra: 1,
+};
+
+/// The Chonk hiding kernel: ZK sumcheck, only the kernel calldata bus (bb `mega_zk.ts`).
+pub static MEGA_ZK: FlavorDesc = FlavorDesc {
+    name: "MegaZKFlavor",
+    relations: &[Rel::Arithmetic, Rel::BilinearBatchedEq, Rel::Permutation, Rel::DeltaRange, Rel::EccOpQueue,
+        Rel::MegaEccOpBoundary, Rel::Bus(0),
+        MEGA_POSEIDON2[0], MEGA_POSEIDON2[1], MEGA_POSEIDON2[2], MEGA_POSEIDON2[3], MEGA_POSEIDON2[4]],
+    has_zk: true,
+    has_gemini_masking: false,
+    virtual_log_n: HIDING_KERNEL_LOG_N,
+    trace_offset: 4,
+    batched_len_extra: 2,
+};
+
+/// bb `CONST_FOLDING_LOG_N`: the padded sumcheck size of every folded (Mega) circuit.
+pub const CONST_FOLDING_LOG_N: usize = 24;
+/// bb `HIDING_KERNEL_LOG_N`: the padded size of the hiding kernel.
+pub const HIDING_KERNEL_LOG_N: usize = 16;
+
 /// The derived entity layout: `[masking | precomputed | witness]` followed by the shifted suffix.
 pub struct Layout {
     pub unshifted: Vec<Ent>,
@@ -250,6 +463,10 @@ impl Layout {
     }
     pub fn has(&self, e: Ent) -> bool {
         self.index[e as usize] != usize::MAX
+    }
+    /// The builder bus slots this flavor's databus relations cover, in relation order.
+    pub fn buses(&self) -> Vec<usize> {
+        (0..NUM_BUS_COLUMNS).filter(|b| self.has(BUS_SPECS[*b].value)).collect()
     }
     pub fn subset(&self, name: &str) -> &[Ent] {
         self.subsets.iter().find(|(n, _)| *n == name).map(|(_, v)| v.as_slice()).unwrap_or(&[])
@@ -362,6 +579,39 @@ mod tests {
         assert_eq!((l.num_precomputed, l.num_witness, l.num_masking, l.num_all()), (28, 8, 0, 41));
         assert_eq!((l.num_subrelations, l.max_partial_len, l.batched_len), (31, 7, 8));
         assert_eq!(l.shift_idx(Ent::w_l), 36);
+    }
+
+    /// Pinned against `mega_app_flavor_generated.hpp`.
+    #[test]
+    fn mega_app_layout_matches_bb() {
+        let l = MEGA_APP.layout();
+        let expected: Vec<&str> = "sigma_1 sigma_2 sigma_3 sigma_4 id_1 id_2 id_3 id_4 lagrange_first lagrange_last q_lookup table_1 table_2 table_3 table_4 q_m q_r q_o q_c q_l q_4 q_arith q_bilinear_batched_eq q_delta_range q_elliptic q_memory q_nnf lagrange_ecc_op q_busread return_data_indicator databus_id q_poseidon2_external q_poseidon2_external_initial q_poseidon2_quad_internal q_5 q_poseidon2_quad_internal_terminal q_poseidon2_transition_entry w_l w_r w_o w_4 z_perm lookup_inverses lookup_read_counts lookup_read_tags ecc_op_wire_1 ecc_op_wire_2 ecc_op_wire_3 ecc_op_wire_4 return_data return_data_read_counts return_data_inverses".split(' ').collect();
+        assert_eq!(names(&l.unshifted), expected);
+        assert_eq!((l.num_precomputed, l.num_witness, l.num_all()), (37, 15, 57));
+        assert_eq!(l.shift_idx(Ent::w_l), 52);
+        assert_eq!(names(l.subset("databus_selectors")), ["q_m"]);
+    }
+
+    /// Pinned against `mega_kernel_flavor_generated.hpp`.
+    #[test]
+    fn mega_kernel_layout_matches_bb() {
+        let l = MEGA_KERNEL.layout();
+        let expected: Vec<&str> = "q_m q_l q_r q_o q_4 q_c q_arith q_bilinear_batched_eq sigma_1 sigma_2 sigma_3 sigma_4 id_1 id_2 id_3 id_4 lagrange_first lagrange_last q_delta_range q_elliptic q_memory lagrange_ecc_op q_busread kernel_calldata_indicator databus_id first_app_calldata_indicator second_app_calldata_indicator third_app_calldata_indicator fourth_app_calldata_indicator q_5 fifth_app_calldata_indicator return_data_indicator q_poseidon2_external q_poseidon2_external_initial q_poseidon2_quad_internal q_poseidon2_quad_internal_terminal q_poseidon2_transition_entry w_l w_r w_o w_4 z_perm ecc_op_wire_1 ecc_op_wire_2 ecc_op_wire_3 ecc_op_wire_4 kernel_calldata kernel_calldata_read_counts kernel_calldata_inverses first_app_calldata first_app_calldata_read_counts first_app_calldata_inverses second_app_calldata second_app_calldata_read_counts second_app_calldata_inverses third_app_calldata third_app_calldata_read_counts third_app_calldata_inverses fourth_app_calldata fourth_app_calldata_read_counts fourth_app_calldata_inverses fifth_app_calldata fifth_app_calldata_read_counts fifth_app_calldata_inverses return_data return_data_read_counts return_data_inverses".split(' ').collect();
+        assert_eq!(names(&l.unshifted), expected);
+        assert_eq!((l.num_precomputed, l.num_witness, l.num_all()), (37, 30, 72));
+        assert_eq!(l.shift_idx(Ent::z_perm), 71);
+        assert_eq!(names(l.subset("databus_selectors")), ["q_l", "q_r", "q_o", "q_4", "q_5", "q_c", "q_m"]);
+    }
+
+    /// Pinned against `mega_zk_flavor_generated.hpp`.
+    #[test]
+    fn mega_zk_layout_matches_bb() {
+        let l = MEGA_ZK.layout();
+        let expected: Vec<&str> = "q_m q_l q_r q_o q_4 q_c q_arith q_bilinear_batched_eq sigma_1 sigma_2 sigma_3 sigma_4 id_1 id_2 id_3 id_4 lagrange_first lagrange_last q_delta_range lagrange_ecc_op q_busread kernel_calldata_indicator databus_id q_poseidon2_external q_poseidon2_external_initial q_poseidon2_quad_internal q_5 q_poseidon2_quad_internal_terminal q_poseidon2_transition_entry w_l w_r w_o w_4 z_perm ecc_op_wire_1 ecc_op_wire_2 ecc_op_wire_3 ecc_op_wire_4 kernel_calldata kernel_calldata_read_counts kernel_calldata_inverses".split(' ').collect();
+        assert_eq!(names(&l.unshifted), expected);
+        assert_eq!((l.num_precomputed, l.num_witness, l.num_masking, l.num_all()), (29, 12, 0, 46));
+        assert_eq!(l.batched_len, l.max_partial_len + 2);
+        assert_eq!(l.shift_idx(Ent::w_l), 41);
     }
 
     /// Pinned against `ultra_zk_flavor_generated.hpp`.

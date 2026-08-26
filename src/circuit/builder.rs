@@ -3,7 +3,11 @@
 //! trace blocks. A line-by-line port of bb's `CircuitBuilderBase` + `UltraCircuitBuilder_` restricted
 //! to what the client-side circuits use (no non-native-field gates).
 
-use super::trace::{BlockId, Blocks, GateRow, Kind};
+use super::mega::MegaState;
+use super::op_queue::EccOpQueue;
+use super::trace::{BlockId, Blocks, GateRow, Kind, MEGA_BLOCKS, ULTRA_BLOCKS};
+use std::cell::RefCell;
+use std::rc::Rc;
 use crate::base::field::{u256, u256_num_bits, u256_shr, FieldLike};
 use crate::base::poseidon2::round_constants;
 use crate::base::Fr;
@@ -115,10 +119,12 @@ pub struct Builder {
     pub range_lists: BTreeMap<u64, RangeList>,
     pub failed: Option<String>,
     pub is_write_vk_mode: bool,
+    /// Present for Mega circuits: the op queue, databus and op-code constants.
+    pub mega: Option<MegaState>,
 }
 
 impl Builder {
-    fn empty(is_write_vk_mode: bool) -> Self {
+    fn empty(is_write_vk_mode: bool, mega: bool) -> Self {
         Self {
             variables: vec![],
             real_variable_index: vec![],
@@ -133,7 +139,7 @@ impl Builder {
             num_gates: 0,
             circuit_finalized: false,
             constant_variable_indices: HashMap::new(),
-            blocks: Blocks::ultra(),
+            blocks: Blocks::new(if mega { MEGA_BLOCKS } else { ULTRA_BLOCKS }),
             memory: Default::default(),
             memory_read_records: vec![],
             memory_write_records: vec![],
@@ -141,13 +147,23 @@ impl Builder {
             range_lists: BTreeMap::new(),
             failed: None,
             is_write_vk_mode,
+            mega: None,
         }
     }
 
     pub fn new() -> Self {
-        let mut b = Self::empty(false);
+        let mut b = Self::empty(false, false);
         b.zero_idx = b.put_constant_variable(Fr::zero());
         b.set_tau_at_index(DEFAULT_TAG, DEFAULT_TAG);
+        b
+    }
+
+    /// A Mega circuit sharing the IVC's op queue (bb `MegaCircuitBuilder_`).
+    pub fn new_mega(op_queue: Rc<RefCell<EccOpQueue>>) -> Self {
+        let mut b = Self::empty(false, true);
+        b.zero_idx = b.put_constant_variable(Fr::zero());
+        b.set_tau_at_index(DEFAULT_TAG, DEFAULT_TAG);
+        b.init_mega(op_queue);
         b
     }
 
@@ -155,13 +171,25 @@ impl Builder {
     /// zero is added after the witnesses, so its fixing gate references ACIR witness 0 in its
     /// unused wires (bb's `_zero_idx` default), which matters for copy cycles.
     pub fn from_acir(witness: &[Fr], public_inputs: Vec<u32>, is_write_vk_mode: bool) -> Self {
-        let mut b = Self::empty(is_write_vk_mode);
+        let mut b = Self::empty(is_write_vk_mode, false);
         for v in witness {
             b.add_variable(*v);
         }
         b.public_inputs = public_inputs;
         b.zero_idx = b.put_constant_variable(Fr::zero());
         b.set_tau_at_index(DEFAULT_TAG, DEFAULT_TAG);
+        b
+    }
+
+    pub fn from_acir_mega(op_queue: Rc<RefCell<EccOpQueue>>, witness: &[Fr], public_inputs: Vec<u32>, is_write_vk_mode: bool) -> Self {
+        let mut b = Self::empty(is_write_vk_mode, true);
+        for v in witness {
+            b.add_variable(*v);
+        }
+        b.public_inputs = public_inputs;
+        b.zero_idx = b.put_constant_variable(Fr::zero());
+        b.set_tau_at_index(DEFAULT_TAG, DEFAULT_TAG);
+        b.init_mega(op_queue);
         b
     }
 
@@ -303,9 +331,16 @@ impl Builder {
 
     // ---- gates ----
 
-    fn append(&mut self, block: BlockId, row: GateRow) {
+    pub(super) fn append_row(&mut self, block: BlockId, row: GateRow) {
         self.blocks.get_mut(block).rows.push(row);
         self.increment_num_gates();
+    }
+    fn append(&mut self, block: BlockId, row: GateRow) {
+        self.append_row(block, row);
+    }
+    /// Ultra keeps external rounds in their own block; Mega puts every Poseidon2 gate in one block.
+    fn poseidon2_external_block(&self) -> BlockId {
+        if self.is_mega() { BlockId::Poseidon2 } else { BlockId::Poseidon2External }
     }
     pub fn create_add_gate(&mut self, g: AddTriple) {
         self.create_big_add_gate(
@@ -448,10 +483,8 @@ impl Builder {
     }
     pub fn create_poseidon2_external_gate(&mut self, wires: [u32; 4], round_idx: usize) {
         let rc = &round_constants()[round_idx];
-        self.append(
-            BlockId::Poseidon2External,
-            GateRow { wires, q_1: rc[0], q_2: rc[1], q_3: rc[2], q_4: rc[3], kind: Kind::Poseidon2Ext, gate_value: Fr::one(), ..Default::default() },
-        );
+        let block = self.poseidon2_external_block();
+        self.append(block, GateRow { wires, q_1: rc[0], q_2: rc[1], q_3: rc[2], q_4: rc[3], kind: Kind::Poseidon2Ext, gate_value: Fr::one(), ..Default::default() });
     }
     pub fn create_poseidon2_internal_gate(&mut self, wires: [u32; 4], round_idx: usize) {
         let rc = &round_constants()[round_idx];

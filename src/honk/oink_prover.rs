@@ -1,7 +1,7 @@
 //! Oink prover (bb `ultra_honk/oink_prover.cpp`): commits to the witness, samples the
 //! relation-parameter challenges, and derives the witness polynomials that depend on them.
 
-use super::flavor::{Ent, Rel};
+use super::flavor::{Ent, Rel, BUS_SPECS};
 use super::oink::compute_public_input_delta;
 use super::prover_instance::ProverInstance;
 use super::relations::{lookup_term, table_term, RelationParams, Row};
@@ -11,9 +11,6 @@ use crate::base::rng::Rng;
 use crate::base::transcript::NativeTranscript;
 use crate::base::vk::Vk;
 use crate::base::{Bn254, CommitmentKey};
-
-/// bb `NUM_DISABLED_ROWS_IN_SUMCHECK`: the head rows excluded from the relation checks.
-pub const TRACE_OFFSET: usize = 4;
 
 pub struct OinkProverOutput {
     pub params: RelationParams<Fr>,
@@ -40,6 +37,15 @@ pub fn prove_oink(inst: &mut ProverInstance, vk: &Vk<Bn254>, ck: &CommitmentKey,
     commit_and_send(inst, ck, t, Ent::w_l);
     commit_and_send(inst, ck, t, Ent::w_r);
     commit_and_send(inst, ck, t, Ent::w_o);
+    if inst.layout.has(Ent::ecc_op_wire_1) {
+        for e in [Ent::ecc_op_wire_1, Ent::ecc_op_wire_2, Ent::ecc_op_wire_3, Ent::ecc_op_wire_4] {
+            commit_and_send(inst, ck, t, e);
+        }
+    }
+    for b in inst.layout.buses() {
+        commit_and_send(inst, ck, t, BUS_SPECS[b].value);
+        commit_and_send(inst, ck, t, BUS_SPECS[b].read_counts);
+    }
 
     let mut params = RelationParams::<Fr>::default();
     if flavor.has(Rel::Memory) {
@@ -65,6 +71,10 @@ pub fn prove_oink(inst: &mut ProverInstance, vk: &Vk<Bn254>, ck: &CommitmentKey,
         params.beta_cube = params.beta_sqr * c[0];
         compute_logderivative_inverses(inst, &params);
         commit_and_send(inst, ck, t, Ent::lookup_inverses);
+    }
+    for b in inst.layout.buses() {
+        compute_databus_inverses(inst, b, &params);
+        commit_and_send(inst, ck, t, BUS_SPECS[b].inverses);
     }
 
     params.public_input_delta = compute_public_input_delta(&inst.public_inputs, &params.beta, &params.gamma, &Fr::from(inst.pub_inputs_offset as u64));
@@ -96,21 +106,39 @@ fn add_rom_logup_inverses_to_wire_4(inst: &mut ProverInstance, p: &RelationParam
 
 /// `lookup_inverses[i] = 1 / (lookup_term_i * table_term_i)` on rows with a lookup gate or a read table entry.
 fn compute_logderivative_inverses(inst: &mut ProverInstance, p: &RelationParams<Fr>) {
-    let mut inv = vec![Fr::from(0u64); inst.dyadic_size];
-    for i in TRACE_OFFSET..inst.dyadic_size {
+    let mut inv = inst.poly(Ent::lookup_inverses).clone();
+    for i in inst.flavor.trace_offset..inst.dyadic_size {
         let active = inst.poly(Ent::q_lookup).coeffs[i] == Fr::from(1u64) || inst.poly(Ent::lookup_read_tags).coeffs[i] == Fr::from(1u64);
         if active {
             let vals = inst.row(i);
             let row = Row { vals: &vals, layout: &inst.layout };
-            inv[i] = (lookup_term(&row, p) * table_term(&row, p)).invert();
+            inv.coeffs[i] = (lookup_term(&row, p) * table_term(&row, p)).invert();
         }
     }
-    *inst.poly_mut(Ent::lookup_inverses) = Poly::from_coeffs(inv);
+    *inst.poly_mut(Ent::lookup_inverses) = inv;
+}
+
+/// bb `SingleBusLookupRelation::compute_logderivative_inverse`: `1 / (L · T)` on read rows and
+/// rows with a non-zero read count.
+fn compute_databus_inverses(inst: &mut ProverInstance, bus: usize, p: &RelationParams<Fr>) {
+    let spec = &BUS_SPECS[bus];
+    let one = Fr::from(1u64);
+    let mut inv = inst.poly(spec.inverses).clone();
+    for i in inst.flavor.trace_offset..inst.dyadic_size {
+        let is_read = inst.poly(Ent::q_busread).coeffs[i] == one && inst.poly(spec.selector).coeffs[i] == one;
+        let nonzero_count = !inst.poly(spec.read_counts).coeffs[i].is_zero();
+        if is_read || nonzero_count {
+            let lookup = inst.poly(Ent::w_r).coeffs[i] * p.beta + inst.poly(Ent::w_l).coeffs[i] + p.gamma;
+            let table = inst.poly(Ent::databus_id).coeffs[i] * p.beta + inst.poly(spec.value).coeffs[i] + p.gamma;
+            inv.coeffs[i] = (lookup * table).invert();
+        }
+    }
+    *inst.poly_mut(spec.inverses) = inv;
 }
 
 /// The permutation grand product `z_perm` (bb `compute_grand_product` for `UltraPermutationRelation`).
 fn compute_grand_product(inst: &mut ProverInstance, p: &RelationParams<Fr>) {
-    let gp_start = TRACE_OFFSET;
+    let gp_start = inst.flavor.trace_offset;
     let domain_size = inst.final_active_wire_idx + 1;
     let active_size = domain_size - gp_start;
     let wires = [Ent::w_l, Ent::w_r, Ent::w_o, Ent::w_4];

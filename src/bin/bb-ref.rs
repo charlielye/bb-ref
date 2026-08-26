@@ -3,9 +3,11 @@
 //!   bb-ref prove    --scheme ultra_honk [--disable_zk] -b <program.json> -w <witness.gz> -o <out_dir> [--write_vk]
 //!   bb-ref prove    --scheme ultra_honk [--disable_zk] --instance <bb dump dir> -o <out_dir>
 //!   bb-ref write_vk --scheme ultra_honk [--disable_zk] -b <program.json> -o <out_dir>
+//!   bb-ref write_vk --scheme chonk --circuit_kind app -b <program.json> -o <out_dir>
 //!   bb-ref verify   --scheme ultra_honk [--disable_zk] -k <vk> -p <proof> -i <public_inputs>
 
-use bb_ref::acir::{build_circuit, decode_program, decode_witness};
+use bb_ref::acir::{build_circuit, build_circuit_mega, decode_program, decode_witness};
+use bb_ref::circuit::EccOpQueue;
 use bb_ref::base::field::{to_bytes_be, Fr};
 use bb_ref::base::io::{decode_fields, encode_fields};
 use bb_ref::base::srs::bn254_g2;
@@ -13,8 +15,10 @@ use bb_ref::base::{Bn254, CommitmentKey, OsRng, Vk};
 use bb_ref::honk::prover_instance::ProverInstance;
 use bb_ref::honk::ultra_prover::prove_ultra;
 use bb_ref::honk::ultra_verifier::verify_ultra;
-use bb_ref::honk::{FlavorDesc, ULTRA, ULTRA_ZK};
+use bb_ref::honk::{FlavorDesc, MEGA_APP, ULTRA, ULTRA_ZK};
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::path::{Path, PathBuf};
 
 fn instance_from_acir(flavor: &'static FlavorDesc, program: &str, witness: Option<&str>) -> ProverInstance {
@@ -53,8 +57,22 @@ fn main() {
     }
     let get = |k: &str| flags.get(k).cloned().unwrap_or_else(|| panic!("missing {k}"));
     let scheme = flags.get("--scheme").cloned().unwrap_or_else(|| "ultra_honk".into());
-    assert_eq!(scheme, "ultra_honk", "only ultra_honk is supported");
     let flavor = if flags.contains_key("--disable_zk") { &ULTRA } else { &ULTRA_ZK };
+
+    if scheme == "chonk" {
+        assert_eq!(cmd, "write_vk", "only write_vk is supported for the chonk scheme");
+        assert_eq!(flags.get("--circuit_kind").map(String::as_str), Some("app"), "only --circuit_kind app is supported");
+        let circuit = decode_program(&std::fs::read(get("-b")).expect("program.json"));
+        let mut builder = build_circuit_mega(&circuit, None, Rc::new(RefCell::new(EccOpQueue::new())));
+        let inst = ProverInstance::from_builder(&MEGA_APP, &mut builder, &mut OsRng);
+        let ck = CommitmentKey::new(inst.max_end_index);
+        let out = PathBuf::from(get("-o"));
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(out.join("vk"), inst.compute_vk(&ck).to_bytes()).unwrap();
+        println!("VK saved to {}", out.display());
+        return;
+    }
+    assert_eq!(scheme, "ultra_honk", "unsupported scheme {scheme}");
 
     match cmd {
         "verify" => {

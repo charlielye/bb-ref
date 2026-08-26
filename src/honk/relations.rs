@@ -4,7 +4,8 @@
 //! Gate-exactness rule: bodies follow bb's *verifier* operation order (the non-`IsProverAccumulator`
 //! branches), since in-circuit every operation is a gate. Sources: `relations/*.hpp`.
 
-use super::flavor::{Ent, Layout, Rel};
+use super::flavor::{Ent, Layout, Rel, BUS_SPECS};
+use super::quad_params::quad_params;
 use crate::base::field::{from_hex, FieldLike};
 use crate::base::poseidon2_params::INTERNAL_MATRIX_DIAGONAL_MINUS_ONE;
 use ark_ff::Field;
@@ -61,6 +62,14 @@ impl Rel {
             Rel::Poseidon2External => poseidon2_external(acc, r, scaling),
             Rel::Poseidon2Internal => poseidon2_internal(acc, r, scaling),
             Rel::Masking => {}
+            Rel::BilinearBatchedEq => bilinear_batched_eq(acc, r, scaling),
+            Rel::EccOpQueue => ecc_op_queue(acc, r, scaling),
+            Rel::MegaEccOpBoundary => mega_ecc_op_boundary(acc, r, scaling),
+            Rel::Bus(b) => bus_lookup(b, acc, r, p, scaling),
+            Rel::Poseidon2InitialExternal => poseidon2_initial_external(acc, r, scaling),
+            Rel::Poseidon2QuadInternal => poseidon2_quad_internal(acc, r, scaling),
+            Rel::Poseidon2QuadInternalTerminal => poseidon2_quad_internal_terminal(acc, r, scaling),
+            Rel::Poseidon2TransitionEntry => poseidon2_transition_entry(acc, r, scaling),
         }
     }
 }
@@ -401,4 +410,173 @@ fn poseidon2_internal<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: &T) {
     acc[2] += &(v3 * &q_pos_by_scaling + &scaled_u1);
     let v4 = r.e(w_4).clone() * &d_minus_1[3] + &partial_sum - r.s(w_4);
     acc[3] += &(v4 * &q_pos_by_scaling + &scaled_u1);
+}
+
+/// A bn254 scalar constant lifted into the relation's field type.
+fn k<T: FieldLike>(v: crate::base::Fr) -> T {
+    T::constant(crate::base::field::from_u256(crate::base::field::u256(&v)))
+}
+
+/// bb `bilinear_or_batched_eq_check_relation.hpp`: `q_bilinear_batched_eq` selects the bilinear
+/// gate (1) or two independent linear equalities (2).
+fn bilinear_batched_eq<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: &T) {
+    let q_cp = r.e(q_bilinear_batched_eq);
+    let (w1, w2, w3, w4) = (r.e(w_l), r.e(w_r), r.e(w_o), r.e(w_4));
+    let two_minus_q_cp = -q_cp.clone() + c::<T>(2);
+    let q_cp_minus_1 = q_cp.clone() - c::<T>(1);
+    let bilinear_gate = q_cp.clone() * &two_minus_q_cp;
+    let batched_eq_gate = q_cp.clone() * &q_cp_minus_1 * &k::<T>(crate::base::Fr::from(2u64).invert());
+    let scaled_bilinear_gate = bilinear_gate * scaling;
+    let scaled_batched_eq_gate = batched_eq_gate * scaling;
+    let products = r.e(q_m).clone() * w1 * w2 + r.e(q_5).clone() * w1 * w3;
+    let linears = r.e(q_l).clone() * w1 + r.e(q_r).clone() * w2 + r.e(q_o).clone() * w3 + r.e(q_4).clone() * w4 + r.e(q_c);
+    let bilinear = products + &linears;
+    let batched_eq_half_1 = r.e(q_l).clone() * w1 + r.e(q_r).clone() * w2 + r.e(q_c);
+    acc[0] += scaled_bilinear_gate * &bilinear + scaled_batched_eq_gate.clone() * &batched_eq_half_1;
+    let batched_eq_half_2 = r.e(q_o).clone() * w3 + r.e(q_4).clone() * w4 + r.e(q_m);
+    acc[1] += scaled_batched_eq_gate * &batched_eq_half_2;
+}
+
+/// bb `ecc_op_queue_relation.hpp`: the op wires copy the shifted wires on the ecc-op rows and
+/// vanish elsewhere.
+fn ecc_op_queue<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: &T) {
+    let lagrange_by_scaling = r.e(lagrange_ecc_op).clone() * scaling;
+    let complement_by_scaling = -lagrange_by_scaling.clone() + scaling;
+    let op = [ecc_op_wire_1, ecc_op_wire_2, ecc_op_wire_3, ecc_op_wire_4];
+    let wires = [w_l, w_r, w_o, w_4];
+    for i in 0..4 {
+        let mut tmp = r.e(op[i]).clone() - r.s(wires[i]);
+        tmp *= &lagrange_by_scaling;
+        acc[i] += tmp;
+    }
+    for i in 0..4 {
+        acc[4 + i] += r.e(op[i]).clone() * &complement_by_scaling;
+    }
+}
+
+/// bb `MegaEccOpBoundaryRelation`: the op wires vanish on the offset rows (applied with the `L` factor).
+fn mega_ecc_op_boundary<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: &T) {
+    for (i, e) in [ecc_op_wire_1, ecc_op_wire_2, ecc_op_wire_3, ecc_op_wire_4].iter().enumerate() {
+        acc[i] += r.e(*e).clone() * scaling;
+    }
+}
+
+/// bb `databus_lookup_relation.hpp` for one bus column.
+fn bus_lookup<T: FieldLike>(bus: usize, acc: &mut [T], r: &Row<T>, p: &RelationParams<T>, scaling: &T) {
+    let b = &BUS_SPECS[bus];
+    let inverses = r.e(b.inverses);
+    let read_counts = r.e(b.read_counts);
+    let lookup_term = r.e(w_r).clone() * &p.beta + r.e(w_l) + &p.gamma;
+    let table_term = r.e(databus_id).clone() * &p.beta + r.e(b.value) + &p.gamma;
+    let read_selector = r.e(q_busread).clone() * r.e(b.selector);
+    let common = lookup_term.clone() * &table_term * inverses - c::<T>(1);
+    acc[0] += (common.clone() * &read_selector) * scaling;
+    acc[1] += (common * read_counts) * scaling;
+    let mut tmp = read_selector * &table_term;
+    tmp -= read_counts.clone() * &lookup_term;
+    tmp *= inverses;
+    acc[2] += tmp;
+    let indicator = r.e(b.indicator);
+    acc[3] += (read_counts.clone() - indicator.clone() * read_counts) * scaling;
+}
+
+/// bb `poseidon2_initial_external_relation.hpp`: the next row holds `M_E · (w_l, w_r, w_o, w_4)`.
+fn poseidon2_initial_external<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: &T) {
+    let (x0, x1, x2, x3) = (r.e(w_l), r.e(w_r), r.e(w_o), r.e(w_4));
+    let q_by_scaling = r.e(q_poseidon2_external_initial).clone() * scaling;
+    let t0 = x0.clone() + x1;
+    let t1 = x2.clone() + x3;
+    let t2 = x1.clone() + x1 + &t1;
+    let t3 = x3.clone() + x3 + &t0;
+    let mut y3 = t1.clone() + &t1;
+    y3 = y3.clone() + &y3 + &t3;
+    let mut y1 = t0.clone() + &t0;
+    y1 = y1.clone() + &y1 + &t2;
+    let y0 = t3 + &y1;
+    let y2 = t2 + &y3;
+    acc[0] += q_by_scaling.clone() * (y0 - r.s(w_l));
+    acc[1] += q_by_scaling.clone() * (y1 - r.s(w_r));
+    acc[2] += q_by_scaling.clone() * (y2 - r.s(w_o));
+    acc[3] += q_by_scaling * (y3 - r.s(w_4));
+}
+
+fn pow5<T: FieldLike>(x: T) -> T {
+    let sq = x.sqr();
+    sq.sqr() * &x
+}
+
+/// bb `poseidon2_quad_internal_relation.hpp`: four internal rounds per row, linked to the next
+/// compressed row through the forward Vandermonde encoding of the hidden lanes.
+fn poseidon2_quad_internal<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: &T) {
+    let qp = quad_params();
+    let (wl, wr, wo, w4) = (r.e(w_l), r.e(w_r), r.e(w_o), r.e(w_4));
+    let (wl_s, wr_s, wo_s, w4_s) = (r.s(w_l), r.s(w_r), r.s(w_o), r.s(w_4));
+    let d1 = k::<T>(qp.d1);
+    let u_0 = pow5(wl.clone() + r.e(q_l));
+    let u_1 = pow5(wr.clone() + r.e(q_r));
+    let u_2 = pow5(wo.clone() + r.e(q_o));
+    let u_3 = pow5(w4.clone() + r.e(q_4));
+    let u_0_next = pow5(wl_s.clone() + r.e(q_m));
+    let u_1_next = pow5(wr_s.clone() + r.e(q_c));
+    let u_2_next = pow5(wo_s.clone() + r.e(q_5));
+    let u_0_next_d1 = u_0_next.clone() * &d1;
+    let cf0 = &qp.closed_form[0];
+    let [l0, l1, l2] = &qp.forward_vandermonde_lhs;
+    let wires = |row: &[crate::base::Fr; 7]| wr.clone() * &k::<T>(row[0]) + wo.clone() * &k::<T>(row[1]) + w4.clone() * &k::<T>(row[2]);
+    let us = |row: &[crate::base::Fr; 7]| u_0.clone() * &k::<T>(row[3]) + u_1.clone() * &k::<T>(row[4]) + u_2.clone() * &k::<T>(row[5]) + u_3.clone() * &k::<T>(row[6]);
+    let wp0_full = wires(cf0) - wl_s;
+    let wp1_full = wires(l0) - wr_s;
+    let wp2_full = wires(l1) - wo_s + wr_s + wr_s;
+    let wp3_full = wires(l2) - w4_s + wo_s + wr_s.clone() * &k::<T>(qp.sigma_plus_2);
+    let q_times_scaling = r.e(q_poseidon2_quad_internal).clone() * scaling;
+    let a0_body = us(cf0) + &wp0_full;
+    acc[0] += q_times_scaling.clone() * &a0_body;
+    let a1_body = us(l0) + &u_0_next_d1 + &wp1_full;
+    acc[1] += q_times_scaling.clone() * &a1_body;
+    let a2_body = us(l1) - (u_0_next_d1.clone() + &u_0_next_d1) + (u_0_next.clone() + &u_0_next + &u_0_next) + u_1_next.clone() * &d1 + &wp2_full;
+    acc[2] += q_times_scaling.clone() * &a2_body;
+    let a3_body = us(l2) - u_0_next * &k::<T>(qp.b3_u0_coef) - u_1_next * &k::<T>(qp.d1_minus_3) + u_2_next * &d1 + &wp3_full;
+    acc[3] += q_times_scaling * &a3_body;
+}
+
+/// bb `poseidon2_quad_internal_terminal_relation.hpp`: the last compressed row; the successor is
+/// standard-encoded.
+fn poseidon2_quad_internal_terminal<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: &T) {
+    let qp = quad_params();
+    let (wl, wr, wo, w4) = (r.e(w_l), r.e(w_r), r.e(w_o), r.e(w_4));
+    let u_0 = pow5(wl.clone() + r.e(q_l));
+    let u_1 = pow5(wr.clone() + r.e(q_r));
+    let u_2 = pow5(wo.clone() + r.e(q_o));
+    let u_3 = pow5(w4.clone() + r.e(q_4));
+    let cf = &qp.closed_form;
+    let shifts = [r.s(w_l), r.s(w_r), r.s(w_o), r.s(w_4)];
+    let q_by_scaling = r.e(q_poseidon2_quad_internal_terminal).clone() * scaling;
+    for j in 0..4 {
+        let wp = wr.clone() * &k::<T>(cf[j][0]) + wo.clone() * &k::<T>(cf[j][1]) + w4.clone() * &k::<T>(cf[j][2]) - shifts[j];
+        let u3_term = if j == 0 { u_3.clone() * &k::<T>(cf[0][6]) } else { u_3.clone() };
+        let body = u_0.clone() * &k::<T>(cf[j][3]) + u_1.clone() * &k::<T>(cf[j][4]) + u_2.clone() * &k::<T>(cf[j][5]) + u3_term + &wp;
+        acc[j] += q_by_scaling.clone() * &body;
+    }
+}
+
+/// bb `poseidon2_transition_entry_relation.hpp`: standard-encoded row followed by the first
+/// compressed row.
+fn poseidon2_transition_entry<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: &T) {
+    let qp = quad_params();
+    let (wl, wr, wo, w4) = (r.e(w_l), r.e(w_r), r.e(w_o), r.e(w_4));
+    let (wr_s, wo_s, w4_s) = (r.s(w_r), r.s(w_o), r.s(w_4));
+    let d1 = k::<T>(qp.d1);
+    let u_0 = pow5(wl.clone() + r.e(q_l));
+    let u_1 = pow5(wr_s.clone() + r.e(q_r));
+    let u_2 = pow5(wo_s.clone() + r.e(q_o));
+    let q_by_scaling = r.e(q_poseidon2_transition_entry).clone() * scaling;
+    let wp_0 = wr.clone() + wo + w4 - wr_s;
+    let wp_1 = wr.clone() * &k::<T>(qp.a_one[0]) + wo.clone() * &k::<T>(qp.a_one[1]) + w4.clone() * &k::<T>(qp.a_one[2]) - wo_s;
+    let wp_2 = wr.clone() * &k::<T>(qp.a2_one[0]) + wo.clone() * &k::<T>(qp.a2_one[1]) + w4.clone() * &k::<T>(qp.a2_one[2]) - w4_s;
+    let a0_body = u_0.clone() * &d1 + &wp_0;
+    acc[0] += q_by_scaling.clone() * &a0_body;
+    let a1_body = u_1.clone() * &d1 + u_0.clone() * &c::<T>(3) + &wp_1;
+    acc[1] += q_by_scaling.clone() * &a1_body;
+    let a2_body = u_2 * &d1 + u_1 * &c::<T>(3) + u_0 * &k::<T>(qp.sum_a_one) + &wp_2;
+    acc[2] += q_by_scaling * &a2_body;
 }

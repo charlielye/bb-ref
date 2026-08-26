@@ -1,7 +1,7 @@
 //! Oink verifier (bb `ultra_honk/oink_verifier.cpp`): binds the VK, reads public inputs and witness
 //! commitments, samples the relation-parameter challenges.
 
-use super::flavor::{Ent, FlavorDesc, Layout, Rel};
+use super::flavor::{Ent, FlavorDesc, Layout, Rel, BUS_SPECS};
 use super::relations::RelationParams;
 use crate::base::field::FieldLike;
 use crate::base::group::Curve;
@@ -68,6 +68,15 @@ pub fn verify_oink<C: Curve>(
     recv(t, &mut comms, Ent::w_l);
     recv(t, &mut comms, Ent::w_r);
     recv(t, &mut comms, Ent::w_o);
+    if layout.has(Ent::ecc_op_wire_1) {
+        for e in [Ent::ecc_op_wire_1, Ent::ecc_op_wire_2, Ent::ecc_op_wire_3, Ent::ecc_op_wire_4] {
+            recv(t, &mut comms, e);
+        }
+    }
+    for b in layout.buses() {
+        recv(t, &mut comms, BUS_SPECS[b].value);
+        recv(t, &mut comms, BUS_SPECS[b].read_counts);
+    }
 
     let mut params = RelationParams::<C::Fr>::default();
     if flavor.has(Rel::Memory) {
@@ -90,6 +99,9 @@ pub fn verify_oink<C: Curve>(
         params.beta_sqr = params.beta.clone() * &params.beta;
         params.beta_cube = params.beta_sqr.clone() * &params.beta;
         recv(t, &mut comms, Ent::lookup_inverses);
+    }
+    for b in layout.buses() {
+        recv(t, &mut comms, BUS_SPECS[b].inverses);
     }
 
     params.public_input_delta = compute_public_input_delta(&public_inputs, &params.beta, &params.gamma, &vk.pub_inputs_offset);

@@ -52,27 +52,84 @@ fn external_rounds(ctx: &Ctx, state: &mut State, n: &mut [Fr; 4], rounds: std::o
     }
 }
 
+/// Mega's initial linear layer: one custom gate whose successor row holds `M_E · state`.
+fn initial_layer_mega(ctx: &Ctx, state: &mut State) {
+    let mut n = native(state);
+    matrix_multiplication_external(&mut n);
+    for s in state.iter_mut() {
+        if s.is_constant() {
+            let idx = ctx.borrow_mut().put_constant_variable(s.get_value());
+            *s = FieldT::from_witness_index(ctx, idx);
+        }
+    }
+    let w = witness_indices(state);
+    ctx.borrow_mut().create_poseidon2_initial_external_gate(w);
+    *state = to_witnesses(ctx, &n);
+}
+
+fn advance_internal_round(n: &mut [Fr; 4], rc: Fr) {
+    n[0] += rc;
+    sbox(&mut n[0]);
+    matrix_multiplication_internal(n);
+}
+
+/// Mega's K=4 compressed internal rounds: an entry row in standard encoding, then one row per
+/// four rounds holding state[0] at each round (bb `apply_mega_internal_rounds`).
+fn internal_rounds_mega(ctx: &Ctx, state: &mut State, n: &mut [Fr; 4], rounds_f_beginning: usize) {
+    let num_quad_rows = ROUNDS_P / 4;
+    let w = witness_indices(state);
+    ctx.borrow_mut().create_poseidon2_transition_entry_gate(w, rounds_f_beginning);
+    let rc = round_constants();
+    for q in 0..num_quad_rows {
+        let is_terminal = q == num_quad_rows - 1;
+        let start = rounds_f_beginning + 4 * q;
+        let mut after = *n;
+        advance_internal_round(&mut after, rc[start][0]);
+        let s0_at_1 = FieldT::from_witness(ctx, after[0]);
+        advance_internal_round(&mut after, rc[start + 1][0]);
+        let s0_at_2 = FieldT::from_witness(ctx, after[0]);
+        advance_internal_round(&mut after, rc[start + 2][0]);
+        let s0_at_3 = FieldT::from_witness(ctx, after[0]);
+        let wires = [state[0].get_witness_index(), s0_at_1.witness_index, s0_at_2.witness_index, s0_at_3.witness_index];
+        ctx.borrow_mut().create_poseidon2_quad_internal_gate(wires, start, start + 4, is_terminal);
+        advance_internal_round(&mut after, rc[start + 3][0]);
+        *n = after;
+        state[0] = FieldT::from_witness(ctx, n[0]);
+        if is_terminal {
+            for j in 1..4 {
+                state[j] = FieldT::from_witness(ctx, n[j]);
+            }
+        }
+    }
+}
+
 pub fn permutation(ctx: &Ctx, input: &State) -> State {
+    let is_mega = ctx.borrow().is_mega();
     let mut state = input.clone();
-    matrix_multiplication_external_circuit(&mut state);
+    if is_mega {
+        initial_layer_mega(ctx, &mut state);
+    } else {
+        matrix_multiplication_external_circuit(&mut state);
+    }
     let mut n = native(&state);
 
     let rounds_f_beginning = ROUNDS_F / 2;
     external_rounds(ctx, &mut state, &mut n, 0..rounds_f_beginning);
-    propagate_to_next_row(ctx, &state, BlockId::Poseidon2External);
-
     let p_end = rounds_f_beginning + ROUNDS_P;
-    for i in rounds_f_beginning..p_end {
-        let w = witness_indices(&state);
-        ctx.borrow_mut().create_poseidon2_internal_gate(w, i);
-        n[0] += round_constants()[i][0];
-        sbox(&mut n[0]);
-        matrix_multiplication_internal(&mut n);
-        state = to_witnesses(ctx, &n);
+    if is_mega {
+        internal_rounds_mega(ctx, &mut state, &mut n, rounds_f_beginning);
+    } else {
+        propagate_to_next_row(ctx, &state, BlockId::Poseidon2External);
+        for i in rounds_f_beginning..p_end {
+            let w = witness_indices(&state);
+            ctx.borrow_mut().create_poseidon2_internal_gate(w, i);
+            advance_internal_round(&mut n, round_constants()[i][0]);
+            state = to_witnesses(ctx, &n);
+        }
+        propagate_to_next_row(ctx, &state, BlockId::Poseidon2Internal);
     }
-    propagate_to_next_row(ctx, &state, BlockId::Poseidon2Internal);
 
     external_rounds(ctx, &mut state, &mut n, p_end..ROUNDS_F + ROUNDS_P);
-    propagate_to_next_row(ctx, &state, BlockId::Poseidon2External);
+    propagate_to_next_row(ctx, &state, if is_mega { BlockId::Poseidon2 } else { BlockId::Poseidon2External });
     state
 }

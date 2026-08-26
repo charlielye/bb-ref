@@ -4,4 +4,4 @@ pub mod format;
 pub mod lower;
 
 pub use format::{decode_program, decode_witness, Circuit};
-pub use lower::build_circuit;
+pub use lower::{build_circuit, build_circuit_mega};

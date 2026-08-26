@@ -1,5 +1,5 @@
-//! Execution trace blocks (bb `ExecutionTraceBlock` / `UltraTraceBlockData`): gates are rows of
-//! wire indices plus selector values, grouped by gate type; blocks are laid out sequentially in
+//! Execution trace blocks (bb `ExecutionTraceBlock` / `{Ultra,Mega}TraceBlockData`): gates are rows
+//! of wire indices plus selector values, grouped by gate type; blocks are laid out sequentially in
 //! the trace after the disabled rows.
 
 use crate::base::field::FieldLike;
@@ -9,14 +9,20 @@ use crate::base::Fr;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
     None,
+    BusRead,
     Lookup,
     Arith,
+    BilinearBatchedEq,
     DeltaRange,
     Elliptic,
     Memory,
     Nnf,
     Poseidon2Ext,
     Poseidon2Int,
+    Poseidon2ExtInitial,
+    Poseidon2QuadInt,
+    Poseidon2QuadIntTerminal,
+    Poseidon2TransitionEntry,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -56,6 +62,7 @@ impl Default for GateRow {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BlockId {
+    EccOp,
     PubInputs,
     Lookup,
     Arithmetic,
@@ -63,21 +70,52 @@ pub enum BlockId {
     Elliptic,
     Memory,
     Nnf,
+    Busread,
     Poseidon2External,
     Poseidon2Internal,
+    Poseidon2,
 }
 
-/// Ultra block order and the gate kind each block owns (bb `ultra_execution_trace_generated.hpp`).
-pub const ULTRA_BLOCKS: [(BlockId, Kind); 9] = [
-    (BlockId::PubInputs, Kind::None),
-    (BlockId::Lookup, Kind::Lookup),
-    (BlockId::Arithmetic, Kind::Arith),
-    (BlockId::DeltaRange, Kind::DeltaRange),
-    (BlockId::Elliptic, Kind::Elliptic),
-    (BlockId::Memory, Kind::Memory),
-    (BlockId::Nnf, Kind::Nnf),
-    (BlockId::Poseidon2External, Kind::Poseidon2Ext),
-    (BlockId::Poseidon2Internal, Kind::Poseidon2Int),
+/// A trace block and the gate kinds whose selector it owns.
+#[derive(Debug)]
+pub struct BlockDesc {
+    pub id: BlockId,
+    pub kinds: &'static [Kind],
+}
+
+const fn b(id: BlockId, kinds: &'static [Kind]) -> BlockDesc {
+    BlockDesc { id, kinds }
+}
+
+/// Ultra block order (bb `ultra_execution_trace_generated.hpp`).
+pub const ULTRA_BLOCKS: &[BlockDesc] = &[
+    b(BlockId::PubInputs, &[]),
+    b(BlockId::Lookup, &[Kind::Lookup]),
+    b(BlockId::Arithmetic, &[Kind::Arith]),
+    b(BlockId::DeltaRange, &[Kind::DeltaRange]),
+    b(BlockId::Elliptic, &[Kind::Elliptic]),
+    b(BlockId::Memory, &[Kind::Memory]),
+    b(BlockId::Nnf, &[Kind::Nnf]),
+    b(BlockId::Poseidon2External, &[Kind::Poseidon2Ext]),
+    b(BlockId::Poseidon2Internal, &[Kind::Poseidon2Int]),
+];
+
+/// Mega block order (bb `mega_execution_trace_generated.hpp`); `ecc_op` must come first so that
+/// `ecc_op_wire[r] == w_shift[r]`.
+pub const MEGA_BLOCKS: &[BlockDesc] = &[
+    b(BlockId::EccOp, &[]),
+    b(BlockId::PubInputs, &[]),
+    b(BlockId::Lookup, &[Kind::Lookup]),
+    b(BlockId::Arithmetic, &[Kind::Arith, Kind::BilinearBatchedEq]),
+    b(BlockId::DeltaRange, &[Kind::DeltaRange]),
+    b(BlockId::Elliptic, &[Kind::Elliptic]),
+    b(BlockId::Memory, &[Kind::Memory]),
+    b(BlockId::Nnf, &[Kind::Nnf]),
+    b(BlockId::Busread, &[Kind::BusRead]),
+    b(
+        BlockId::Poseidon2,
+        &[Kind::Poseidon2Ext, Kind::Poseidon2ExtInitial, Kind::Poseidon2QuadInt, Kind::Poseidon2QuadIntTerminal, Kind::Poseidon2TransitionEntry],
+    ),
 ];
 
 #[derive(Clone, Debug, Default)]
@@ -101,25 +139,30 @@ impl Block {
 
 #[derive(Clone, Debug)]
 pub struct Blocks {
+    pub descs: &'static [BlockDesc],
     pub blocks: Vec<Block>,
 }
 
 impl Blocks {
-    pub fn ultra() -> Self {
-        Self { blocks: (0..ULTRA_BLOCKS.len()).map(|_| Block::default()).collect() }
+    pub fn new(descs: &'static [BlockDesc]) -> Self {
+        Self { descs, blocks: descs.iter().map(|_| Block::default()).collect() }
+    }
+    fn position(&self, id: BlockId) -> usize {
+        self.descs.iter().position(|d| d.id == id).unwrap_or_else(|| panic!("block {id:?} not in this trace"))
+    }
+    pub fn has(&self, id: BlockId) -> bool {
+        self.descs.iter().any(|d| d.id == id)
     }
     pub fn get(&self, id: BlockId) -> &Block {
-        &self.blocks[Self::position(id)]
+        &self.blocks[self.position(id)]
     }
     pub fn get_mut(&mut self, id: BlockId) -> &mut Block {
-        &mut self.blocks[Self::position(id)]
+        let i = self.position(id);
+        &mut self.blocks[i]
     }
-    fn position(id: BlockId) -> usize {
-        ULTRA_BLOCKS.iter().position(|(b, _)| *b == id).expect("block not in trace")
-    }
-    /// The block owning a gate kind, if any.
-    pub fn owner(&self, kind: Kind) -> Option<&Block> {
-        ULTRA_BLOCKS.iter().position(|(_, k)| *k == kind).map(|i| &self.blocks[i])
+    /// Blocks and their descriptors, in trace order.
+    pub fn iter(&self) -> impl Iterator<Item = (&BlockDesc, &Block)> {
+        self.descs.iter().zip(&self.blocks)
     }
     /// Blocks are placed one after another starting right after the zero row that follows the
     /// disabled rows.

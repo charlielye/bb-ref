@@ -6,7 +6,8 @@ use super::format::{field, BlackBoxFuncCall, Circuit, FunctionInput, Opcode, Wit
 use crate::base::field::FieldLike;
 use crate::base::Fr;
 use crate::circuit::builder::MulQuad;
-use crate::circuit::{Builder, IS_CONSTANT};
+use crate::circuit::mega::BilinearBatchedEqGate;
+use crate::circuit::{Builder, EccOpQueue, IS_CONSTANT};
 use crate::stdlib::memory::{RamTable, RomTable};
 use crate::stdlib::{poseidon2, Ctx, FieldT};
 use std::cell::RefCell;
@@ -32,11 +33,22 @@ struct Poseidon2Constraint {
     result: Vec<u32>,
 }
 
+/// One linear AssertZero with at most two witnesses (half of a batched-eq row).
+struct BatchedEqEntry {
+    w1: u32,
+    w2: u32,
+    c1: Fr,
+    c2: Fr,
+    q_c: Fr,
+}
+
 #[derive(Default)]
 struct Constraints {
     max_witness_index: u32,
     quad: Vec<MulQuad>,
     big_quad: Vec<Vec<MulQuad>>,
+    bilinear: Vec<BilinearBatchedEqGate>,
+    batched_eq: Vec<BilinearBatchedEqGate>,
     range: Vec<(u32, u32)>,
     poseidon2: Vec<Poseidon2Constraint>,
     blocks: BTreeMap<u32, BlockConstraint>,
@@ -139,8 +151,98 @@ fn split_into_mul_quad_gates(e: &super::format::Expression, lin: &mut BTreeMap<u
     result
 }
 
-fn classify(circuit: &Circuit) -> (Constraints, Vec<u32>) {
+/// Two products sharing exactly one wire: `(shared, other of the first, other of the second)`.
+fn resolve_shared_wire_products(e: &super::format::Expression) -> Option<(u32, u32, u32)> {
+    let (a, b) = (e.mul_terms[0].1 .0, e.mul_terms[0].2 .0);
+    let (c, d) = (e.mul_terms[1].1 .0, e.mul_terms[1].2 .0);
+    let mut shared = vec![];
+    for w in if a != b { vec![a, b] } else { vec![a] } {
+        if w == c || w == d {
+            shared.push(w);
+        }
+    }
+    if shared.len() != 1 {
+        return None;
+    }
+    let s = shared[0];
+    Some((s, if a == s { b } else { a }, if c == s { d } else { c }))
+}
+
+fn is_bilinear(e: &super::format::Expression, lin: &BTreeMap<u32, Fr>) -> bool {
+    if e.mul_terms.len() != 2 {
+        return false;
+    }
+    let Some((w_l, w_r, w_o)) = resolve_shared_wire_products(e) else { return false };
+    lin.keys().filter(|w| **w != w_l && **w != w_r && **w != w_o).count() <= 1
+}
+
+fn build_bilinear(e: &super::format::Expression, lin: &BTreeMap<u32, Fr>) -> BilinearBatchedEqGate {
+    let (w_l, w_r, w_o) = resolve_shared_wire_products(e).unwrap();
+    let mut g = BilinearBatchedEqGate {
+        bilinear: true,
+        a: w_l,
+        b: w_r,
+        c: w_o,
+        d: IS_CONSTANT,
+        q_l: Fr::zero(),
+        q_r: Fr::zero(),
+        q_o: Fr::zero(),
+        q_4: Fr::zero(),
+        q_c: field(&e.q_c),
+        q_m: field(&e.mul_terms[0].0),
+        q_5: field(&e.mul_terms[1].0),
+    };
+    for (w, c) in lin {
+        if *w == w_l {
+            g.q_l = *c;
+        } else if *w == w_r {
+            g.q_r = *c;
+        } else if *w == w_o {
+            g.q_o = *c;
+        } else {
+            assert_eq!(g.d, IS_CONSTANT);
+            g.d = *w;
+            g.q_4 = *c;
+        }
+    }
+    g
+}
+
+fn batched_eq_entry(e: &super::format::Expression, lin: &BTreeMap<u32, Fr>) -> BatchedEqEntry {
+    let mut it = lin.iter();
+    let (w1, c1) = it.next().unwrap();
+    let (w2, c2) = it.next().map(|(w, c)| (*w, *c)).unwrap_or((IS_CONSTANT, Fr::zero()));
+    BatchedEqEntry { w1: *w1, w2, c1: *c1, c2, q_c: field(&e.q_c) }
+}
+
+/// Pair consecutive batched-eq entries into rows; an odd last entry gets an empty second half.
+fn pair_batched_eq(entries: &[BatchedEqEntry]) -> Vec<BilinearBatchedEqGate> {
+    entries
+        .chunks(2)
+        .map(|pair| {
+            let e1 = &pair[0];
+            let e2 = pair.get(1);
+            BilinearBatchedEqGate {
+                bilinear: false,
+                a: e1.w1,
+                b: e1.w2,
+                c: e2.map_or(IS_CONSTANT, |e| e.w1),
+                d: e2.map_or(IS_CONSTANT, |e| e.w2),
+                q_l: e1.c1,
+                q_r: e1.c2,
+                q_o: e2.map_or(Fr::zero(), |e| e.c1),
+                q_4: e2.map_or(Fr::zero(), |e| e.c2),
+                q_c: e1.q_c,
+                q_m: e2.map_or(Fr::zero(), |e| e.q_c),
+                q_5: Fr::zero(),
+            }
+        })
+        .collect()
+}
+
+fn classify(circuit: &Circuit, is_mega: bool) -> (Constraints, Vec<u32>) {
     let mut c = Constraints::default();
+    let mut batched_eq_entries = vec![];
     let public_inputs: Vec<u32> = circuit.public_parameters.iter().chain(&circuit.return_values).map(|w| c.note(*w)).collect();
     for op in &circuit.opcodes {
         match op {
@@ -155,6 +257,14 @@ fn classify(circuit: &Circuit) -> (Constraints, Vec<u32>) {
                 let mut lin = linear_terms(e);
                 if e.mul_terms.is_empty() && lin.is_empty() {
                     assert!(field(&e.q_c).is_zero(), "unsatisfiable constant AssertZero");
+                }
+                if is_mega && is_bilinear(e, &lin) {
+                    c.bilinear.push(build_bilinear(e, &lin));
+                    continue;
+                }
+                if is_mega && e.mul_terms.is_empty() && !lin.is_empty() && lin.len() <= 2 {
+                    batched_eq_entries.push(batched_eq_entry(e, &lin));
+                    continue;
                 }
                 let single = is_single_arithmetic_gate(e, &lin);
                 let quads = split_into_mul_quad_gates(e, &mut lin);
@@ -193,6 +303,7 @@ fn classify(circuit: &Circuit) -> (Constraints, Vec<u32>) {
             Opcode::Call(_) => panic!("Call opcode is not supported"),
         }
     }
+    c.batched_eq = pair_batched_eq(&batched_eq_entries);
     (c, public_inputs)
 }
 
@@ -264,7 +375,17 @@ pub fn add_default_pairing_points(b: &mut Builder) {
 /// Build the (unfinalized) Ultra circuit of an ACIR program. Without a witness the circuit is built
 /// over zero witnesses (bb's write-VK mode); the structure, and hence the VK, is the same.
 pub fn build_circuit(circuit: &Circuit, witness: Option<&[Fr]>) -> Builder {
-    let (c, public_inputs) = classify(circuit);
+    build(circuit, witness, None)
+}
+
+/// The Mega circuit of an ACIR program (bb `create_circuit<MegaCircuitBuilder>`): AssertZero
+/// opcodes that fit the bilinear / batched-eq gate use it, and the op queue is shared with the IVC.
+pub fn build_circuit_mega(circuit: &Circuit, witness: Option<&[Fr]>, op_queue: Rc<RefCell<EccOpQueue>>) -> Builder {
+    build(circuit, witness, Some(op_queue))
+}
+
+fn build(circuit: &Circuit, witness: Option<&[Fr]>, op_queue: Option<Rc<RefCell<EccOpQueue>>>) -> Builder {
+    let (c, public_inputs) = classify(circuit, op_queue.is_some());
     let zeros;
     let witness = match witness {
         Some(w) => {
@@ -276,7 +397,11 @@ pub fn build_circuit(circuit: &Circuit, witness: Option<&[Fr]>) -> Builder {
             &zeros
         }
     };
-    let ctx: Ctx = Rc::new(RefCell::new(Builder::from_acir(witness, public_inputs, false)));
+    let builder = match op_queue {
+        Some(q) => Builder::from_acir_mega(q, witness, public_inputs, false),
+        None => Builder::from_acir(witness, public_inputs, false),
+    };
+    let ctx: Ctx = Rc::new(RefCell::new(builder));
     {
         let mut b = ctx.borrow_mut();
         for mut q in c.quad {
@@ -285,6 +410,23 @@ pub fn build_circuit(circuit: &Circuit, witness: Option<&[Fr]>) -> Builder {
         }
         for gates in c.big_quad {
             create_big_quad_constraint(&mut b, gates);
+        }
+        let z = b.zero_idx();
+        for mut g in c.bilinear {
+            assert!(g.a != IS_CONSTANT && g.b != IS_CONSTANT && g.c != IS_CONSTANT);
+            if g.d == IS_CONSTANT {
+                g.d = z;
+            }
+            b.create_bilinear_batched_eq_gate(&g);
+        }
+        for mut g in c.batched_eq {
+            assert_ne!(g.a, IS_CONSTANT);
+            for w in [&mut g.b, &mut g.c, &mut g.d] {
+                if *w == IS_CONSTANT {
+                    *w = z;
+                }
+            }
+            b.create_bilinear_batched_eq_gate(&g);
         }
         for (w, num_bits) in c.range {
             b.create_dyadic_range_constraint(w, num_bits as u64);
