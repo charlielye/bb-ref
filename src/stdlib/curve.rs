@@ -7,6 +7,7 @@ use super::hash::StdPoseidon2;
 use crate::base::group::{Bn254, Curve};
 use crate::base::Fr;
 
+#[derive(Clone, Copy, Debug)]
 pub struct StdBn254;
 
 impl Curve for StdBn254 {

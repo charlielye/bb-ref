@@ -24,9 +24,8 @@ fn acir_tests_dir() -> PathBuf {
 fn mega_app_instance(prog: &str, with_witness: bool) -> ProverInstance {
     let dir = acir_tests_dir().join(prog).join("target");
     let circuit = decode_program(&std::fs::read(dir.join("program.json")).expect("program.json"));
-    let witness = with_witness.then(|| decode_witness(&std::fs::read(dir.join("witness.gz")).expect("witness.gz")));
-    let op_queue = Rc::new(RefCell::new(EccOpQueue::new()));
-    let mut builder = build_circuit_mega(&circuit, witness.as_deref(), op_queue);
+    let witness = with_witness.then(|| decode_witness(&std::fs::read(dir.join("witness.gz")).expect("witness.gz"), &mut OsRng));
+    let mut builder = build_circuit_mega(&circuit, witness.as_deref(), None, &mut OsRng);
     ProverInstance::from_builder(&MEGA_APP, &mut builder, &mut OsRng)
 }
 

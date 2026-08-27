@@ -1,0 +1,102 @@
+//! bb `PrivateExecutionSteps`: the `ivc-inputs.msgpack` a Chonk proof is made from — one
+//! `{bytecode, witness, vk, functionName, kind}` per circuit, bytecode and witness gzipped.
+
+use super::format::{decode_program_gz, decode_witness, Circuit};
+use super::lower::build_circuit_mega;
+use crate::base::rng::Rng;
+use crate::base::vk::Vk;
+use crate::base::{Bn254, CommitmentKey, Fr};
+use crate::chonk::ivc::{Chonk, CircuitKind};
+use crate::chonk::proof::ChonkProof;
+use serde::de::{Deserializer, SeqAccess, Visitor};
+use serde::Deserialize;
+
+/// msgpack `bin` as bytes (serde's `Vec<u8>` only accepts sequences).
+struct Bytes(Vec<u8>);
+
+impl<'de> Deserialize<'de> for Bytes {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = Bytes;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("bytes")
+            }
+            fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> Result<Bytes, E> {
+                Ok(Bytes(v.to_vec()))
+            }
+            fn visit_byte_buf<E: serde::de::Error>(self, v: Vec<u8>) -> Result<Bytes, E> {
+                Ok(Bytes(v))
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Bytes, A::Error> {
+                let mut v = vec![];
+                while let Some(b) = seq.next_element()? {
+                    v.push(b);
+                }
+                Ok(Bytes(v))
+            }
+        }
+        d.deserialize_any(V)
+    }
+}
+
+#[derive(Deserialize)]
+struct StepRaw {
+    bytecode: Bytes,
+    witness: Bytes,
+    vk: Bytes,
+    #[serde(rename = "functionName")]
+    function_name: String,
+    kind: u8,
+}
+
+pub struct PrivateExecutionStep {
+    pub name: String,
+    pub circuit: Circuit,
+    pub witness: Vec<Fr>,
+    pub kind: CircuitKind,
+    /// The VK pinned alongside the circuit; proving checks the circuit still has it.
+    pub vk: Vk<Bn254>,
+}
+
+/// bb `PrivateExecutionSteps::parse`: every step's witness is decoded (and its gaps filled) before
+/// any proving.
+pub fn decode_steps(bytes: &[u8], rng: &mut dyn Rng) -> Vec<PrivateExecutionStep> {
+    let raw: Vec<StepRaw> = rmp_serde::from_slice(bytes).expect("ivc-inputs msgpack");
+    raw.into_iter()
+        .map(|s| {
+            let kind = match s.kind {
+                0 => CircuitKind::App,
+                1 => CircuitKind::Kernel,
+                2 => CircuitKind::HidingKernel,
+                k => panic!("unknown circuit kind {k}"),
+            };
+            PrivateExecutionStep {
+                name: s.function_name,
+                circuit: decode_program_gz(&s.bytecode.0),
+                witness: decode_witness(&s.witness.0, rng),
+                kind,
+                vk: Vk::from_bytes(&s.vk.0, kind.flavor().layout().num_precomputed),
+            }
+        })
+        .collect()
+}
+
+/// bb `ChonkAPI::prove` (with `--vk_policy check`): accumulate every step, then prove. Returns the
+/// proof and the hiding kernel's VK.
+pub fn prove_steps(steps: &[PrivateExecutionStep], ck: CommitmentKey, rng: &mut dyn Rng) -> (ChonkProof, Vk<Bn254>) {
+    let mut ivc = Chonk::new(steps.iter().map(|s| s.kind).collect(), ck);
+    for step in steps {
+        let mut circuit = build_circuit_mega(&step.circuit, Some(&step.witness), Some(&mut ivc), rng);
+        assert!(circuit.failed.is_none(), "{}: circuit not satisfied: {:?}", step.name, circuit.failed);
+        ivc.accumulate(&mut circuit, rng);
+        let computed = match step.kind {
+            CircuitKind::HidingKernel => ivc.hiding_vk(),
+            _ => &ivc.verification_queue.last().unwrap().vk,
+        };
+        assert_eq!(computed.to_bytes(), step.vk.to_bytes(), "{}: the pinned VK does not match the circuit", step.name);
+    }
+    let proof = ivc.prove(rng);
+    let vk = ivc.hiding_vk().clone();
+    (proof, vk)
+}

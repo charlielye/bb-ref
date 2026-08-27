@@ -24,7 +24,7 @@ fn acir_tests_dir() -> PathBuf {
 fn build(prog: &str, flavor: &'static FlavorDesc) -> ProverInstance {
     let dir = acir_tests_dir().join(prog).join("target");
     let circuit = decode_program(&std::fs::read(dir.join("program.json")).expect("program.json"));
-    let witness = decode_witness(&std::fs::read(dir.join("witness.gz")).expect("witness.gz"));
+    let witness = decode_witness(&std::fs::read(dir.join("witness.gz")).expect("witness.gz"), &mut OsRng);
     let mut builder = build_circuit(&circuit, Some(&witness));
     assert!(builder.failed.is_none(), "{prog}: builder failure {:?}", builder.failed);
     ProverInstance::from_builder(flavor, &mut builder, &mut OsRng)

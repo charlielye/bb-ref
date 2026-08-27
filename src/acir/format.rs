@@ -3,6 +3,7 @@
 //! variant name). Only the opcodes bb-ref lowers are modelled; everything else is skipped.
 
 use crate::base::field::from_bytes_be;
+use crate::base::rng::Rng;
 use crate::base::Fr;
 use base64::Engine;
 use serde::de::IgnoredAny;
@@ -39,9 +40,20 @@ pub enum BlackBoxFuncCall {
     MultiScalarMul(IgnoredAny),
     EmbeddedCurveAdd(IgnoredAny),
     Keccakf1600(IgnoredAny),
-    RecursiveAggregation(IgnoredAny),
+    RecursiveAggregation(RecursiveAggregation),
     Poseidon2Permutation { inputs: Vec<FunctionInput>, outputs: Vec<Witness> },
     Sha256Compression(IgnoredAny),
+}
+
+/// `std::verify_proof_with_type`: a proof of `proof_type` under the key held in `verification_key`.
+#[derive(Deserialize, Debug, Clone)]
+pub struct RecursiveAggregation {
+    pub verification_key: Vec<FunctionInput>,
+    pub proof: Vec<FunctionInput>,
+    pub public_inputs: Vec<FunctionInput>,
+    pub key_hash: FunctionInput,
+    pub proof_type: u32,
+    pub predicate: FunctionInput,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -119,22 +131,30 @@ fn decode_msgpack<T: for<'a> Deserialize<'a>>(buf: &[u8]) -> T {
 pub fn decode_program(program_json: &[u8]) -> Circuit {
     let json: serde_json::Value = serde_json::from_slice(program_json).expect("program.json");
     let b64 = json["bytecode"].as_str().expect("bytecode field");
-    let raw = gunzip(&base64::engine::general_purpose::STANDARD.decode(b64).expect("base64"));
-    let mut program: Program = decode_msgpack(&raw);
+    decode_program_gz(&base64::engine::general_purpose::STANDARD.decode(b64).expect("base64"))
+}
+
+/// The single circuit of gzipped ACIR bytecode.
+pub fn decode_program_gz(bytecode_gz: &[u8]) -> Circuit {
+    let mut program: Program = decode_msgpack(&gunzip(bytecode_gz));
     assert_eq!(program.functions.len(), 1, "expected a single ACIR function");
     program.functions.remove(0)
 }
 
-/// The witness vector of a `witness.gz` artifact; indices absent from the map are zero.
-pub fn decode_witness(witness_gz: &[u8]) -> Vec<Fr> {
+/// The witness vector of a `witness.gz` artifact. Indices absent from the (sparse) map are
+/// unconstrained; like bb, they get random values so an accidental use shows up (and the prover's
+/// randomness is consumed the same way).
+pub fn decode_witness(witness_gz: &[u8], rng: &mut dyn Rng) -> Vec<Fr> {
     let raw = gunzip(witness_gz);
     let mut stack: WitnessStack = decode_msgpack(&raw);
     assert_eq!(stack.stack.len(), 1, "expected a single witness map");
     let map = std::mem::take(&mut stack.stack[0].witness);
-    let len = map.keys().next_back().map_or(0, |k| *k as usize + 1);
-    let mut v = vec![Fr::from(0u64); len];
+    let mut v = Vec::with_capacity(map.keys().next_back().map_or(0, |k| *k as usize + 1));
     for (k, bytes) in map {
-        v[k as usize] = field(&bytes);
+        while v.len() < k as usize {
+            v.push(rng.fr());
+        }
+        v.push(field(&bytes));
     }
     v
 }

@@ -80,6 +80,7 @@ pub trait Curve: 'static {
     const LIBRA_UNIVARIATES_LENGTH: usize;
 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct Bn254;
 impl Curve for Bn254 {
     type TF = Fr;
@@ -98,6 +99,7 @@ impl Curve for Bn254 {
 }
 
 /// Grumpkin: the ECCVM's curve. Its scalar field is bn254 Fq; the transcript stays over bn254 Fr.
+#[derive(Clone, Copy, Debug)]
 pub struct Grumpkin;
 impl Curve for Grumpkin {
     type TF = Fr;

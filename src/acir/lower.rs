@@ -1,15 +1,22 @@
 //! ACIR → builder (bb `acir_to_constraint_buf` + `acir_format::build_constraints`). Opcodes are first
 //! classified into constraint lists, then lowered in bb's fixed order: quads, big quads, ranges,
-//! Poseidon2, memory blocks, and finally the default (infinity) pairing points as public inputs.
+//! Poseidon2, memory and databus blocks, HyperNova recursion (the kernel logic), and finally the
+//! default (infinity) pairing points as public inputs for circuits that verify nothing.
 
-use super::format::{field, BlackBoxFuncCall, Circuit, FunctionInput, Opcode, Witness};
+use super::format::{field, BlackBoxFuncCall, BlockType, Circuit, FunctionInput, Opcode, Witness};
+use super::mock::mock_chonk_from_constraints;
 use crate::base::field::FieldLike;
+use crate::base::rng::Rng;
+use crate::base::vk::Vk;
 use crate::base::Fr;
+use crate::chonk::ivc::{Chonk, CircuitKind};
+use crate::chonk::kernel::{complete_kernel_circuit_logic, VkWitnesses};
 use crate::circuit::builder::MulQuad;
 use crate::circuit::mega::BilinearBatchedEqGate;
 use crate::circuit::{Builder, EccOpQueue, IS_CONSTANT};
+use crate::stdlib::io::{AppIo, KernelIo, MAX_APPS_PER_KERNEL};
 use crate::stdlib::memory::{RamTable, RomTable};
-use crate::stdlib::{poseidon2, Ctx, FieldT};
+use crate::stdlib::{poseidon2, Ctx, FieldT, StdBn254};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -18,15 +25,34 @@ const NUM_WIRES: usize = 4;
 /// Pairing points occupy this many trailing public inputs (two bn254 points as four 136-bit limbs).
 pub const PAIRING_POINTS_SIZE: usize = 8;
 
+/// bb `PROOF_TYPE`: the HyperNova variants a kernel verifies.
+pub const OINK: u32 = 1;
+pub const HN: u32 = 2;
+pub const HN_FINAL: u32 = 7;
+
+/// bb `RecursionConstraint` (HyperNova subset): the witnesses holding the verification key of a
+/// queued proof and its hash; the proof itself comes from the IVC state.
+pub struct RecursionConstraint {
+    pub key: Vec<u32>,
+    pub key_hash: u32,
+    pub proof_type: u32,
+}
+
 struct MemOp {
     write: bool,
     index: u32,
     value: u32,
 }
+enum BlockKind {
+    Rom,
+    Ram,
+    CallData(usize),
+    ReturnData,
+}
 struct BlockConstraint {
     init: Vec<u32>,
     trace: Vec<MemOp>,
-    is_ram: bool,
+    kind: BlockKind,
 }
 struct Poseidon2Constraint {
     state: Vec<u32>,
@@ -52,6 +78,7 @@ struct Constraints {
     range: Vec<(u32, u32)>,
     poseidon2: Vec<Poseidon2Constraint>,
     blocks: BTreeMap<u32, BlockConstraint>,
+    hn_recursion: Vec<RecursionConstraint>,
 }
 
 impl Constraints {
@@ -286,17 +313,41 @@ fn classify(circuit: &Circuit, is_mega: bool) -> (Constraints, Vec<u32>) {
                     let result = outputs.iter().map(|w| c.note(*w)).collect();
                     c.poseidon2.push(Poseidon2Constraint { state, result });
                 }
+                BlackBoxFuncCall::RecursiveAggregation(r) => {
+                    match &r.predicate {
+                        FunctionInput::Constant(p) if field(p).is_zero() => continue,
+                        FunctionInput::Constant(_) => {}
+                        FunctionInput::Witness(w) => {
+                            c.note(*w);
+                        }
+                    }
+                    assert!(r.proof.is_empty() && r.public_inputs.is_empty(), "HyperNova recursion constraints carry no proof or public inputs");
+                    assert!(matches!(r.proof_type, OINK | HN | HN_FINAL), "unsupported proof type {}", r.proof_type);
+                    let key = r.verification_key.iter().map(|i| c.input(i)).collect();
+                    let key_hash = c.input(&r.key_hash);
+                    c.hn_recursion.push(RecursionConstraint { key, key_hash, proof_type: r.proof_type });
+                }
                 other => panic!("unsupported black box function: {other:?}"),
             },
             Opcode::MemoryInit { block_id, init, block_type } => {
-                assert!(matches!(block_type, super::format::BlockType::Memory), "databus blocks need a Mega circuit");
+                let kind = match block_type {
+                    BlockType::Memory => BlockKind::Rom,
+                    BlockType::CallData(id) => BlockKind::CallData(*id as usize),
+                    BlockType::ReturnData => BlockKind::ReturnData,
+                };
+                assert!(is_mega || matches!(kind, BlockKind::Rom), "databus blocks need a Mega circuit");
                 let init = init.iter().map(|w| c.note(*w)).collect();
-                c.blocks.insert(*block_id, BlockConstraint { init, trace: vec![], is_ram: false });
+                c.blocks.insert(*block_id, BlockConstraint { init, trace: vec![], kind });
             }
             Opcode::MemoryOp { block_id, op } => {
                 let (index, value) = (c.note(op.index), c.note(op.value));
                 let block = c.blocks.get_mut(block_id).expect("MemoryOp on uninitialized block");
-                block.is_ram |= op.read;
+                match block.kind {
+                    BlockKind::Rom if op.read => block.kind = BlockKind::Ram,
+                    BlockKind::CallData(_) => assert!(!op.read, "calldata is read-only"),
+                    BlockKind::ReturnData => panic!("return data has no operations"),
+                    _ => {}
+                }
                 block.trace.push(MemOp { write: op.read, index, value });
             }
             Opcode::BrilligCall(_) => {}
@@ -339,28 +390,94 @@ fn create_big_quad_constraint(b: &mut Builder, mut gates: Vec<MulQuad>) {
     b.create_big_mul_add_gate(&gates[last], false);
 }
 
+/// bb `create_block_constraints`: ROM/RAM tables, or (Mega only) a databus column initialized
+/// with the block's entries and read through databus read gates.
 fn create_block_constraints(ctx: &Ctx, block: &BlockConstraint) {
     let init: Vec<FieldT> = block.init.iter().map(|w| FieldT::from_witness_index(ctx, *w)).collect();
-    if block.is_ram {
-        let mut table = RamTable::new(ctx, init);
-        for op in &block.trace {
-            let value = FieldT::from_witness_index(ctx, op.value);
-            let index = FieldT::from_witness_index(ctx, op.index);
-            if op.write {
-                table.write(&index, &value);
-            } else {
+    match block.kind {
+        BlockKind::Ram => {
+            let mut table = RamTable::new(ctx, init);
+            for op in &block.trace {
+                let value = FieldT::from_witness_index(ctx, op.value);
+                let index = FieldT::from_witness_index(ctx, op.index);
+                if op.write {
+                    table.write(&index, &value);
+                } else {
+                    value.assert_equal(&table.read(&index));
+                }
+            }
+        }
+        BlockKind::Rom => {
+            let mut table = RomTable::new(ctx, init);
+            for op in &block.trace {
+                let value = FieldT::from_witness_index(ctx, op.value);
+                let index = FieldT::from_witness_index(ctx, op.index);
                 value.assert_equal(&table.read(&index));
             }
         }
-    } else {
-        let mut table = RomTable::new(ctx, init);
-        for op in &block.trace {
-            assert!(!op.write);
-            let value = FieldT::from_witness_index(ctx, op.value);
-            let index = FieldT::from_witness_index(ctx, op.index);
-            value.assert_equal(&table.read(&index));
+        BlockKind::CallData(bus) => {
+            assert!(bus <= MAX_APPS_PER_KERNEL, "databus app calldata index out of bounds");
+            for w in &block.init {
+                ctx.borrow_mut().add_public_calldata(bus, *w);
+            }
+            for op in &block.trace {
+                let value = FieldT::from_witness_index(ctx, op.value);
+                let read = ctx.borrow_mut().read_calldata(bus, op.index);
+                value.assert_equal(&FieldT::from_witness_index(ctx, read));
+            }
+        }
+        BlockKind::ReturnData => {
+            for w in &block.init {
+                ctx.borrow_mut().add_public_return_data(*w);
+            }
         }
     }
+}
+
+pub(super) fn io_public_inputs_size(kind: CircuitKind) -> usize {
+    match kind {
+        CircuitKind::App => AppIo::PUBLIC_INPUTS_SIZE,
+        CircuitKind::Kernel => KernelIo::PUBLIC_INPUTS_SIZE,
+        CircuitKind::HidingKernel => unreachable!("the hiding kernel is never verified recursively"),
+    }
+}
+
+/// bb `process_hn_recursion_constraints`: hand the queued proofs' VKs, already witnesses of the
+/// circuit, to the kernel logic. Without a witness (write-VK mode) those witnesses are set to the
+/// queued VKs first so the circuit is satisfiable.
+fn process_hn_recursion_constraints(ctx: &Ctx, constraints: &[RecursionConstraint], ivc: &mut Chonk, rng: &mut dyn Rng) {
+    let queue = &ivc.verification_queue;
+    assert_eq!(constraints.len(), queue.len(), "mismatch in number of recursive verifications during kernel creation");
+    if ctx.borrow().is_write_vk_mode {
+        let mut b = ctx.borrow_mut();
+        for (c, e) in constraints.iter().zip(queue) {
+            for (w, v) in c.key.iter().zip(e.vk.to_fields()) {
+                b.set_variable(*w, v);
+            }
+            b.set_variable(c.key_hash, e.vk.hash());
+        }
+    }
+    let is_init = queue[0].kind == CircuitKind::App;
+    let is_hiding = ivc.current_kind() == CircuitKind::HidingKernel;
+    let mut keys: Vec<VkWitnesses> = Vec::with_capacity(constraints.len());
+    for (i, (c, e)) in constraints.iter().zip(queue).enumerate() {
+        let expected_type = if is_hiding {
+            HN_FINAL
+        } else if is_init && i == 0 {
+            OINK
+        } else {
+            HN
+        };
+        assert_eq!(c.proof_type, expected_type, "ACIR proof_type disagrees with the IVC state");
+        let expected_kind = if i == 0 && !is_init { CircuitKind::Kernel } else { CircuitKind::App };
+        assert_eq!(e.kind, expected_kind, "queued circuit kind disagrees with its position in the group");
+        assert_eq!(e.vk.num_public_inputs_usize(), io_public_inputs_size(e.kind), "IO size mismatch with VK num_public_inputs");
+        let num_comms = e.kind.flavor().layout().num_precomputed;
+        assert_eq!(c.key.len(), Vk::<StdBn254>::num_fields(num_comms), "verification key has the wrong number of fields");
+        let fields: Vec<FieldT> = c.key.iter().map(|w| FieldT::from_witness_index(ctx, *w)).collect();
+        keys.push((Vk::from_fields(&fields, num_comms), FieldT::from_witness_index(ctx, c.key_hash)));
+    }
+    complete_kernel_circuit_logic(ivc, ctx, rng, Some(keys));
 }
 
 /// bb `DefaultIO::add_default`: two points at infinity as eight zero public inputs, fixed by gates.
@@ -375,32 +492,57 @@ pub fn add_default_pairing_points(b: &mut Builder) {
 /// Build the (unfinalized) Ultra circuit of an ACIR program. Without a witness the circuit is built
 /// over zero witnesses (bb's write-VK mode); the structure, and hence the VK, is the same.
 pub fn build_circuit(circuit: &Circuit, witness: Option<&[Fr]>) -> Builder {
-    build(circuit, witness, None)
+    let (c, public_inputs) = classify(circuit, false);
+    assert!(c.hn_recursion.is_empty(), "recursion constraints need a Mega circuit");
+    let builder = Builder::from_acir(&witness_or_zeros(witness, &c), public_inputs, witness.is_none());
+    let ctx = lower(builder, c);
+    add_default_pairing_points(&mut ctx.borrow_mut());
+    into_builder(ctx)
 }
 
 /// The Mega circuit of an ACIR program (bb `create_circuit<MegaCircuitBuilder>`): AssertZero
-/// opcodes that fit the bilinear / batched-eq gate use it, and the op queue is shared with the IVC.
-pub fn build_circuit_mega(circuit: &Circuit, witness: Option<&[Fr]>, op_queue: Rc<RefCell<EccOpQueue>>) -> Builder {
-    build(circuit, witness, Some(op_queue))
+/// opcodes that fit the bilinear / batched-eq gate use it, the op queue is the IVC's, and a
+/// kernel's recursion constraints run the kernel logic against the IVC state. Without an IVC a
+/// kernel is built against bb's mocked state (write-VK mode), which yields the same circuit.
+pub fn build_circuit_mega(circuit: &Circuit, witness: Option<&[Fr]>, ivc: Option<&mut Chonk>, rng: &mut dyn Rng) -> Builder {
+    let (mut c, public_inputs) = classify(circuit, true);
+    let hn_recursion = std::mem::take(&mut c.hn_recursion);
+    let mut mock;
+    let ivc = match ivc {
+        Some(ivc) => Some(ivc),
+        None if hn_recursion.is_empty() => None,
+        None => {
+            mock = mock_chonk_from_constraints(&hn_recursion, rng);
+            Some(&mut mock)
+        }
+    };
+    let op_queue = ivc.as_ref().map_or_else(|| Rc::new(RefCell::new(EccOpQueue::new())), |ivc| ivc.op_queue.clone());
+    let builder = Builder::from_acir_mega(op_queue, &witness_or_zeros(witness, &c), public_inputs, witness.is_none());
+    let ctx = lower(builder, c);
+    if hn_recursion.is_empty() {
+        add_default_pairing_points(&mut ctx.borrow_mut());
+    } else {
+        process_hn_recursion_constraints(&ctx, &hn_recursion, ivc.unwrap(), rng);
+    }
+    into_builder(ctx)
 }
 
-fn build(circuit: &Circuit, witness: Option<&[Fr]>, op_queue: Option<Rc<RefCell<EccOpQueue>>>) -> Builder {
-    let (c, public_inputs) = classify(circuit, op_queue.is_some());
-    let zeros;
-    let witness = match witness {
+fn witness_or_zeros(witness: Option<&[Fr]>, c: &Constraints) -> Vec<Fr> {
+    match witness {
         Some(w) => {
             assert!(w.len() > c.max_witness_index as usize, "witness vector shorter than the circuit's witnesses");
-            w
+            w.to_vec()
         }
-        None => {
-            zeros = vec![Fr::zero(); c.max_witness_index as usize + 1];
-            &zeros
-        }
-    };
-    let builder = match op_queue {
-        Some(q) => Builder::from_acir_mega(q, witness, public_inputs, false),
-        None => Builder::from_acir(witness, public_inputs, false),
-    };
+        None => vec![Fr::zero(); c.max_witness_index as usize + 1],
+    }
+}
+
+fn into_builder(ctx: Ctx) -> Builder {
+    Rc::try_unwrap(ctx).ok().expect("builder still shared").into_inner()
+}
+
+/// bb `build_constraints` up to the block constraints.
+fn lower(builder: Builder, c: Constraints) -> Ctx {
     let ctx: Ctx = Rc::new(RefCell::new(builder));
     {
         let mut b = ctx.borrow_mut();
@@ -443,6 +585,5 @@ fn build(circuit: &Circuit, witness: Option<&[Fr]>, op_queue: Option<Rc<RefCell<
     for block in c.blocks.values() {
         create_block_constraints(&ctx, block);
     }
-    add_default_pairing_points(&mut ctx.borrow_mut());
-    Rc::try_unwrap(ctx).ok().expect("builder still shared").into_inner()
+    ctx
 }

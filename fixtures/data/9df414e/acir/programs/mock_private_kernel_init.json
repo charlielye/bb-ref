@@ -1,0 +1,782 @@
+{
+  "noir_version": "1.0.0-beta.22+c57152f91260ecdb9faad4efc20abb14b6d2ece7",
+  "hash": "15412808320500511306",
+  "abi": {
+    "parameters": [
+      {
+        "name": "tx",
+        "type": {
+          "kind": "struct",
+          "path": "mock_types::TxRequest",
+          "fields": [
+            {
+              "name": "number_of_calls",
+              "type": {
+                "kind": "integer",
+                "sign": "unsigned",
+                "width": 32
+              }
+            }
+          ]
+        },
+        "visibility": "private"
+      },
+      {
+        "name": "app_inputs",
+        "type": {
+          "kind": "struct",
+          "path": "mock_types::AppPublicInputs",
+          "fields": [
+            {
+              "name": "commitments",
+              "type": {
+                "kind": "array",
+                "length": 2,
+                "type": {
+                  "kind": "field"
+                }
+              }
+            },
+            {
+              "name": "read_requests",
+              "type": {
+                "kind": "array",
+                "length": 2,
+                "type": {
+                  "kind": "field"
+                }
+              }
+            }
+          ]
+        },
+        "visibility": "databus"
+      },
+      {
+        "name": "app_vk",
+        "type": {
+          "kind": "struct",
+          "path": "mock_types::protocol_types::proof::verification_key::VerificationKey",
+          "fields": [
+            {
+              "name": "key",
+              "type": {
+                "kind": "array",
+                "length": 151,
+                "type": {
+                  "kind": "field"
+                }
+              }
+            },
+            {
+              "name": "hash",
+              "type": {
+                "kind": "field"
+              }
+            }
+          ]
+        },
+        "visibility": "private"
+      }
+    ],
+    "return_type": {
+      "abi_type": {
+        "kind": "struct",
+        "path": "mock_types::PrivateKernelPublicInputs",
+        "fields": [
+          {
+            "name": "remaining_calls",
+            "type": {
+              "kind": "integer",
+              "sign": "unsigned",
+              "width": 32
+            }
+          },
+          {
+            "name": "commitments",
+            "type": {
+              "kind": "array",
+              "length": 4,
+              "type": {
+                "kind": "field"
+              }
+            }
+          },
+          {
+            "name": "read_requests",
+            "type": {
+              "kind": "array",
+              "length": 4,
+              "type": {
+                "kind": "field"
+              }
+            }
+          }
+        ]
+      },
+      "visibility": "databus"
+    },
+    "error_types": {
+      "1998584279744703196": {
+        "error_kind": "string",
+        "string": "attempt to subtract with overflow"
+      },
+      "12913276134398371456": {
+        "error_kind": "string",
+        "string": "push out of bounds"
+      }
+    }
+  },
+  "bytecode": "H4sIAAAAAAAA/7XZ11cTSxwH8BSwgL13sfeC2DtVUQEFC1aMsOJqSEJIUOyxd1MQxa70AIqCKIIN0KffOd4/gBff7rlPvtzHe7wb0O9AVDKLLJzD+ZzN7MxvfjO78ztE63Tk5KfpREOTapmtIkyvSz4QZjwUZTUkh+v0eltBfGjsqkinrWiLaDEIGRmqoF80qooXkq3mDDFTCE1NNQupOotoNOQ0qW7iNn+oC9QV6gZ1hwKgQKgH1BPqBfWG+kB9oX5Qf2gANBAaBA2GhkBDoWHQcGgENBIaBY2GgqAx0FhoHDQemgBNhCZBk6Ep0FRoGjQdmgHNhGZBs6FgaA4UAs2F5kHzoQXQQmgRtBhaAi2FlkHLoRXQSigUCoPCoQgoEoqCVkGroWhoDbQWWgfFQLFQHLQe2gDFQwnQRmgTtBnaAiVCW6Ft0HZoB7QT2gUlQbshHbQHSoZSIAHaC6VC+yAR2g8dgPRQGmSAjJAJSofMUAZkgaxQJnQQOgRlQYehI9BR6Bh0HDoB0UlGG+MpxtOMZxjPMp5jPM94gfEi4yXGy4xXGK8yXmO8zmhndDCytzq5GLMZbzDmMLK3Ot1izGW8zXjH3mrou2pbcbjRkGHRGSyNQar2f9S20jCzqNeLqZ4jJlvlsBUmiIZUveCyO5y+71b7bNLSY5pJL1Chy27nCMgdKj0IZss2wWx0OVwcMVAhT6hU1Bg0OyXW/CX44ZRX6yOrbbbEnZND/l6dVWNyhH/51/VVatSBsYt8T0n1ZznWyMlxsTI51lAxV45LFMixhkpk51jtbJtjX0F5Nkd7vX/79u0/1mP74ag9f5xYETdUyrc2vqtDcnO1Kg1qk2u7iysR7TdyfvUss5unp1KOlMrdC1RCbq71dHPsGO/BfXUqPexOnnciT3xlMuPj28XlPL3GCGlGc1a0QbS4tNlURuWe38KWq/IXpIhKOmNftTQq4Wn0hOMZKm6ZTpzJqXXV0xN62mZiTo7Flt46fPvxKc+e0PBMrIJj9VpPrEGaWIXXVMvpWQf2zXPZKX1OlR0Yp8rnOBqvcaroRQfGqfY5jtZrnGp6+WentFbOKf1KmVNaS6+4TukaBU5pLdUoXgn5ycnxa2Vy7EevuXJcq0CO/ahW+UqoRrFKqA5602mVUB1XqzcdqYRqeCqhOp6e3ihRCdVSHdd61ilQCUkPO8+pp+WJ763MmsU/m97+Yc1SQ7WdsQNaGtXyNHon64D1lw6kd/Reds0ivR/4ds57ntXz45nYB1k1i79Us7yjD15TLad6ryvPqcHrShU1el2ppo9tH2qeOal45vSJ49XN8dL5FCQ/PrrHGaDKV9Ll7h2pki3jK3ifcU3kPs9EnnXg3eRz5BKq5IrwAU+ElcpE+IIrwoc8Eb5QJsKXXBE+4onwpRLbtZbe8r3r6rkm8phnIvVKpLqWGrgizOOJsEGZCBu5IsznibBRmQg/ckVYwBPhR5kFSZdcukf36QE9pEf0mPIonwrc8YLFajZE6Cy6Nm39stUarZ/0/3npxPB8qG5S3VN5Lvl36dqte0Bgj569evfp26//gIGDBg8ZOmz4iJGjRgeNGTtu/ISJkyZPmTpt+oyZs2YHzwmZO2/+goWLFi9Zumz5ipWhYeERkVGrVkevWbsuJjZu/Yb4hI2bNm9J3Lpt+46du5J26/Ykpwh7U/eJ+w/o0wxGU7o5w2LNPHgo6/CRo8eOn6CTZKNTdJrO0Fk6R+fpAl2kS3SZrtBVukbXyU4OcpKLsukG5dBNukW5dJvu0F27VEjb8kOTRXMP5+fKedMX90yceNL+/dKEny8FOz8PrxP+WtH0T5N0GlakiGYh2SJ9nZ0kGjKl9c61FTR/b+GyFUY0fyR9XRxtsAipgjlvU8gcjhLK6/4B8u5X2co865IirUu40ZSFblQsHnTsNZKmIEoU9CkcQ5SHiQadOau5eZwp+0cH2sLIdKtOn/HTmBpb4Rprmil6rxNNu3mPruYcXf270VV5EWImemMx5CdYjCaHk037RyKcr1svXnOKk9KtRosoGCy3vMMLkLcMGu/7Azt5GQNYx7/Jh8b9fcBWaVGx/PzmLnVejFXfat18Nk+w7vlF73kxxkznL/aB12IEYjr/Ay7Wx3BcIgAA",
+  "debug_symbols": "pZTNroIwEEbfpWsWnekPxVe5uTGI1ZAQIAgmN8Z3v0OngC4gRDc9Sp2Tjxnbhzj703A9lvWluYnDz0OcurKqyuuxaoq8L5uanj6eiZi+HvvOe3okXvapqs07X/fiUA9VlYh7Xg3hR7c2rwP7vKNdmQhfn4kkvJSVHz89k6Varpcqa2Kx1jiXG3irh436RaC0drMBYW8CozAKTAprCdRGAlDplABsuhhwv8HZyYBy1WDWDVY7iAars6ULdr8g1ZPAIHwgWNpojdErgq0m0CSnJijrPmmjcvMgNMg1A8hv+7ht2NPITcPXnaTkcx+ybK0PW0fCZVMCSN+OxC99y4uye7tGBNB5SwTSGU6ECqsOqwmrDWsaVkfKRGRhBckABpXT+IDqKT1ohmFYRspwjCwAZRAjMDgEcgrkGMg5kIMgWej10DGyACUZwEAGWYD+D0pHmkgbSSagF1ekAhqIyphaRkIkRqpIHfTaMCyDY+nRNTZwdI3Dv+ddmZ8qH+/ry1AXL9d3/9dOO9MF33ZN4c9D58cZhT2a2j8=",
+  "file_map": {
+    "6": {
+      "source": "use crate::{cmp::Eq, convert::From, runtime::is_unconstrained, static_assert};\n\n/// A `BoundedVec<T, MaxLen>` is a growable storage similar to a built-in vector except that it\n/// is bounded with a maximum possible length. `BoundedVec` is also not\n/// subject to the same restrictions vectors are (notably, nested vectors are disallowed).\n///\n/// Since a BoundedVec is backed by a normal array under the hood, growing the BoundedVec by\n/// pushing an additional element is also more efficient - the length only needs to be increased\n/// by one.\n///\n/// For these reasons `BoundedVec<T, N>` should generally be preferred over vectors when there\n/// is a reasonable maximum bound that can be placed on the vector.\n///\n/// Example:\n///\n/// ```noir\n/// let mut vector: BoundedVec<Field, 10> = BoundedVec::new();\n/// for i in 0..5 {\n///     vector.push(i);\n/// }\n/// assert(vector.len() == 5);\n/// assert(vector.max_len() == 10);\n/// ```\npub struct BoundedVec<T, let MaxLen: u32> {\n    storage: [T; MaxLen],\n    len: u32,\n}\n\nimpl<T, let MaxLen: u32> BoundedVec<T, MaxLen> {\n    /// Creates a new, empty vector of length zero.\n    ///\n    /// Since this container is backed by an array internally, it still needs an initial value\n    /// to give each element. To resolve this, each element is zeroed internally. This value\n    /// is guaranteed to be inaccessible unless `get_unchecked` is used.\n    ///\n    /// Example:\n    ///\n    /// ```noir\n    /// let empty_vector: BoundedVec<Field, 10> = BoundedVec::new();\n    /// assert(empty_vector.len() == 0);\n    /// ```\n    ///\n    /// Note that whenever calling `new` the maximum length of the vector should generally be specified\n    /// via a type signature:\n    ///\n    /// ```noir\n    /// fn good() -> BoundedVec<Field, 10> {\n    ///     // Ok! MaxLen is specified with a type annotation\n    ///     let v1: BoundedVec<Field, 3> = BoundedVec::new();\n    ///     let v2 = BoundedVec::new();\n    ///\n    ///     // Ok! MaxLen is known from the type of `good`'s return value\n    ///     v2\n    /// }\n    ///\n    /// fn bad() {\n    ///     // Error: Type annotation needed\n    ///     // The compiler can't infer `MaxLen` from the following code:\n    ///     let mut v3 = BoundedVec::new();\n    ///     v3.push(5);\n    /// }\n    /// ```\n    pub fn new() -> Self {\n        let zeroed = crate::mem::zeroed();\n        BoundedVec { storage: [zeroed; MaxLen], len: 0 }\n    }\n\n    /// Retrieves an element from the vector at the given index, starting from zero.\n    ///\n    /// If the given index is equal to or greater than the length of the vector, this\n    /// will issue a constraint failure.\n    ///\n    /// Example:\n    ///\n    /// ```noir\n    /// fn foo<let N: u32>(v: BoundedVec<u32, N>) {\n    ///     let first = v.get(0);\n    ///     let last = v.get(v.len() - 1);\n    ///     assert(first != last);\n    /// }\n    /// ```\n    pub fn get(&self, index: u32) -> T {\n        assert(index < self.len, \"Attempted to read past end of BoundedVec\");\n        self.get_unchecked(index)\n    }\n\n    /// Retrieves an element from the vector at the given index, starting from zero, without\n    /// performing a bounds check.\n    ///\n    /// Since this function does not perform a bounds check on length before accessing the element,\n    /// it is unsafe! Use at your own risk!\n    ///\n    /// Example:\n    ///\n    /// ```noir\n    /// fn sum_of_first_three<let N: u32>(v: BoundedVec<u32, N>) -> u32 {\n    ///     // Always ensure the length is larger than the largest\n    ///     // index passed to get_unchecked\n    ///     assert(v.len() > 2);\n    ///     let first = v.get_unchecked(0);\n    ///     let second = v.get_unchecked(1);\n    ///     let third = v.get_unchecked(2);\n    ///     first + second + third\n    /// }\n    /// ```\n    pub fn get_unchecked(&self, index: u32) -> T {\n        self.storage[index]\n    }\n\n    /// Writes an element to the vector at the given index, starting from zero.\n    ///\n    /// If the given index is equal to or greater than the length of the vector, this will issue a constraint failure.\n    ///\n    /// Example:\n    ///\n    /// ```noir\n    /// fn foo<let N: u32>(v: BoundedVec<u32, N>) {\n    ///     let first = v.get(0);\n    ///     assert(first != 42);\n    ///     v.set(0, 42);\n    ///     let new_first = v.get(0);\n    ///     assert(new_first == 42);\n    /// }\n    /// ```\n    pub fn set(&mut self, index: u32, value: T) {\n        assert(index < self.len, \"Attempted to write past end of BoundedVec\");\n        self.set_unchecked(index, value)\n    }\n\n    /// Writes an element to the vector at the given index, starting from zero, without performing a bounds check.\n    ///\n    /// Since this function does not perform a bounds check on length before accessing the element, it is unsafe! Use at your own risk!\n    ///\n    /// Example:\n    ///\n    /// ```noir\n    /// fn set_unchecked_example() {\n    ///     let mut vec: BoundedVec<u32, 5> = BoundedVec::new();\n    ///     vec.extend_from_array([1, 2]);\n    ///\n    ///     // Here we're safely writing within the valid range of `vec`\n    ///     // `vec` now has the value [42, 2]\n    ///     vec.set_unchecked(0, 42);\n    ///\n    ///     // We can then safely read this value back out of `vec`.\n    ///     // Notice that we use the checked version of `get` which would prevent reading unsafe values.\n    ///     assert_eq(vec.get(0), 42);\n    ///\n    ///     // We've now written past the end of `vec`.\n    ///     // As this index is still within the maximum potential length of `v`,\n    ///     // it won't cause a constraint failure.\n    ///     vec.set_unchecked(2, 42);\n    ///     println(vec);\n    ///\n    ///     // This will write past the end of the maximum potential length of `vec`,\n    ///     // it will then trigger a constraint failure.\n    ///     vec.set_unchecked(5, 42);\n    ///     println(vec);\n    /// }\n    /// ```\n    pub fn set_unchecked(&mut self, index: u32, value: T) {\n        self.storage[index] = value;\n    }\n\n    /// Pushes an element to the end of the vector. This increases the length\n    /// of the vector by one.\n    ///\n    /// Panics if the new length of the vector will be greater than the max length.\n    ///\n    /// Example:\n    ///\n    /// ```noir\n    /// let mut v: BoundedVec<Field, 2> = BoundedVec::new();\n    ///\n    /// v.push(1);\n    /// v.push(2);\n    ///\n    /// // Panics with failed assertion \"push out of bounds\"\n    /// v.push(3);\n    /// ```\n    pub fn push(&mut self, elem: T) {\n        assert(self.len < MaxLen, \"push out of bounds\");\n\n        self.storage[self.len] = elem;\n        self.len += 1;\n    }\n\n    /// Returns the current length of this vector\n    ///\n    /// Example:\n    ///\n    /// ```noir\n    /// let mut v: BoundedVec<Field, 4> = BoundedVec::new();\n    /// assert(v.len() == 0);\n    ///\n    /// v.push(100);\n    /// assert(v.len() == 1);\n    ///\n    /// v.push(200);\n    /// v.push(300);\n    /// v.push(400);\n    /// assert(v.len() == 4);\n    ///\n    /// let _ = v.pop();\n    /// let _ = v.pop();\n    /// assert(v.len() == 2);\n    /// ```\n    pub fn len(&self) -> u32 {\n        self.len\n    }\n\n    /// Returns the maximum length of this vector. This is always\n    /// equal to the `MaxLen` parameter this vector was initialized with.\n    ///\n    /// Example:\n    ///\n    /// ```noir\n    /// let mut v: BoundedVec<Field, 5> = BoundedVec::new();\n    ///\n    /// assert(v.max_len() == 5);\n    /// v.push(10);\n    /// assert(v.max_len() == 5);\n    /// ```\n    pub fn max_len(_self: &BoundedVec<T, MaxLen>) -> u32 {\n        MaxLen\n    }\n\n    /// Returns the internal array within this vector.\n    ///\n    /// Since arrays in Noir are immutable, mutating the returned storage array will not mutate\n    /// the storage held internally by this vector.\n    ///\n    /// Note that uninitialized elements may be zeroed out!\n    ///\n    /// Example:\n    ///\n    /// ```noir\n    /// let mut v: BoundedVec<Field, 5> = BoundedVec::new();\n    ///\n    /// assert(v.storage() == [0, 0, 0, 0, 0]);\n    ///\n    /// v.push(57);\n    /// assert(v.storage() == [57, 0, 0, 0, 0]);\n    /// ```\n    pub fn storage(self) -> [T; MaxLen] {\n        self.storage\n    }\n\n    /// Pushes each element from the given array to this vector.\n    ///\n    /// Panics if pushing each element would cause the length of this vector\n    /// to exceed the maximum length.\n    ///\n    /// Example:\n    ///\n    /// ```noir\n    /// let mut vec: BoundedVec<Field, 3> = BoundedVec::new();\n    /// vec.extend_from_array([2, 4]);\n    ///\n    /// assert(vec.len == 2);\n    /// assert(vec.get(0) == 2);\n    /// assert(vec.get(1) == 4);\n    /// ```\n    pub fn extend_from_array<let Len: u32>(&mut self, array: [T; Len]) {\n        let new_len = self.len + array.len();\n        assert(new_len <= MaxLen, \"extend_from_array out of bounds\");\n        for i in 0..array.len() {\n            self.storage[self.len + i] = array[i];\n        }\n        self.len = new_len;\n    }\n\n    /// Pushes each element from the given vector to this vector.\n    ///\n    /// Panics if pushing each element would cause the length of this vector\n    /// to exceed the maximum length.\n    ///\n    /// Example:\n    ///\n    /// ```noir\n    /// let mut vec: BoundedVec<Field, 3> = BoundedVec::new();\n    /// vec.extend_from_vector([2, 4].as_vector());\n    ///\n    /// assert(vec.len == 2);\n    /// assert(vec.get(0) == 2);\n    /// assert(vec.get(1) == 4);\n    /// ```\n    pub fn extend_from_vector(&mut self, vector: [T]) {\n        let new_len = self.len + vector.len();\n        assert(new_len <= MaxLen, \"extend_from_vector out of bounds\");\n        for i in 0..vector.len() {\n            self.storage[self.len + i] = vector[i];\n        }\n        self.len = new_len;\n    }\n\n    /// Pushes each element from the other vector to this vector. The length of\n    /// the other vector is left unchanged.\n    ///\n    /// Panics if pushing each element would cause the length of this vector\n    /// to exceed the maximum length.\n    ///\n    /// ```noir\n    /// let mut v1: BoundedVec<Field, 5> = BoundedVec::new();\n    /// let mut v2: BoundedVec<Field, 7> = BoundedVec::new();\n    ///\n    /// v2.extend_from_array([1, 2, 3]);\n    /// v1.extend_from_bounded_vec(v2);\n    ///\n    /// assert(v1.storage() == [1, 2, 3, 0, 0]);\n    /// assert(v2.storage() == [1, 2, 3, 0, 0, 0, 0]);\n    /// ```\n    pub fn extend_from_bounded_vec<let Len: u32>(&mut self, vec: BoundedVec<T, Len>) {\n        let append_len = vec.len();\n        let new_len = self.len + append_len;\n        assert(new_len <= MaxLen, \"extend_from_bounded_vec out of bounds\");\n\n        if is_unconstrained() {\n            for i in 0..append_len {\n                self.storage[self.len + i] = vec.get_unchecked(i);\n            }\n        } else {\n            // The source vector can be longer than the destination, or vice versa;\n            // regardless we will only ever be able to read or write whichever is\n            // the shorter max length of the two. We asserted that the actual content fits,\n            // but the capacity of the source vector could be higher.\n            let max = crate::cmp::min(Len, MaxLen);\n\n            // Save the last item in case we have to do a fixup on an already full array.\n            let last = if MaxLen > 0 {\n                self.storage[MaxLen - 1]\n            } else {\n                crate::mem::zeroed()\n            };\n\n            for src in 0..max {\n                // Since we are iterating to the static capacity of the arrays,\n                // the destination could be out of bounds. If that's the case,\n                // overwrite the last item, which we'll fixup in the end.\n                // NB using cmp::min resulted in more opcodes here.\n                let mut dst = self.len + src;\n                if dst >= MaxLen { dst = MaxLen - 1; };\n                // Assigning the source or zeroed to avoid having to merge arrays in SSA.\n                self.storage[dst] = if src < append_len {\n                    vec.get_unchecked(src)\n                } else {\n                    last\n                }\n            }\n\n            // Fixup the last item if we have to.\n            if MaxLen > 0 {\n                self.storage[MaxLen - 1] = if (self.len + append_len == MaxLen) & (append_len > 0) {\n                    vec.get_unchecked(append_len - 1)\n                } else {\n                    last\n                }\n            }\n        }\n        self.len = new_len;\n    }\n\n    /// Creates a new vector, populating it with values derived from an array input.\n    /// The maximum length of the vector is determined based on the type signature.\n    ///\n    /// Example:\n    ///\n    /// ```noir\n    /// let bounded_vec: BoundedVec<Field, 10> = BoundedVec::from_array([1, 2, 3])\n    /// ```\n    pub fn from_array<let Len: u32>(array: [T; Len]) -> Self {\n        static_assert(Len <= MaxLen, \"from array out of bounds\");\n        let mut vec: BoundedVec<T, MaxLen> = BoundedVec::new();\n        vec.extend_from_array(array);\n        vec\n    }\n\n    /// Pops the element at the end of the vector. This will decrease the length\n    /// of the vector by one.\n    ///\n    /// Panics if the vector is empty.\n    ///\n    /// Example:\n    ///\n    /// ```noir\n    /// let mut v: BoundedVec<Field, 2> = BoundedVec::new();\n    /// v.push(1);\n    /// v.push(2);\n    ///\n    /// let two = v.pop();\n    /// let one = v.pop();\n    ///\n    /// assert(two == 2);\n    /// assert(one == 1);\n    ///\n    /// // error: cannot pop from an empty vector\n    /// let _ = v.pop();\n    /// ```\n    pub fn pop(&mut self) -> T {\n        assert(self.len > 0, \"cannot pop from an empty vector\");\n        self.len -= 1;\n        self.storage[self.len]\n    }\n\n    /// Returns true if the given predicate returns true for any element\n    /// in this vector.\n    ///\n    /// Example:\n    ///\n    /// ```noir\n    /// let mut v: BoundedVec<u32, 3> = BoundedVec::new();\n    /// v.extend_from_array([2, 4, 6]);\n    ///\n    /// let all_even = !v.any(|elem: u32| elem % 2 != 0);\n    /// assert(all_even);\n    /// ```\n    pub fn any<Env>(self, predicate: fn[Env](T) -> bool) -> bool {\n        let mut ret = false;\n        if is_unconstrained() {\n            for i in 0..self.len {\n                ret |= predicate(self.storage[i]);\n            }\n        } else {\n            let mut exceeded_len = false;\n            for i in 0..MaxLen {\n                exceeded_len |= i == self.len;\n                if !exceeded_len {\n                    ret |= predicate(self.storage[i]);\n                }\n            }\n        }\n        ret\n    }\n\n    /// Creates a new vector of equal size by calling a closure on each element in this vector.\n    ///\n    /// Example:\n    ///\n    /// ```noir\n    /// let vec: BoundedVec<u32, 4> = BoundedVec::from_array([1, 2, 3, 4]);\n    /// let result = vec.map(|value| value * 2);\n    ///\n    /// let expected = BoundedVec::from_array([2, 4, 6, 8]);\n    /// assert_eq(result, expected);\n    /// ```\n    pub fn map<U, Env>(&self, f: fn[Env](T) -> U) -> BoundedVec<U, MaxLen> {\n        let mut ret = BoundedVec::new();\n        ret.len = self.len();\n\n        if is_unconstrained() {\n            for i in 0..self.len() {\n                ret.storage[i] = f(self.get_unchecked(i));\n            }\n        } else {\n            for i in 0..MaxLen {\n                ret.storage[i] = if i < self.len() {\n                    f(self.get_unchecked(i))\n                } else {\n                    crate::mem::zeroed()\n                }\n            }\n        }\n\n        ret\n    }\n\n    /// Creates a new vector of equal size by calling a closure on each element\n    /// in this vector, along with its index.\n    ///\n    /// Example:\n    ///\n    /// ```noir\n    /// let vec: BoundedVec<u32, 4> = BoundedVec::from_array([1, 2, 3, 4]);\n    /// let result = vec.mapi(|i, value| i + value * 2);\n    ///\n    /// let expected = BoundedVec::from_array([2, 5, 8, 11]);\n    /// assert_eq(result, expected);\n    /// ```\n    pub fn mapi<U, Env>(&self, f: fn[Env](u32, T) -> U) -> BoundedVec<U, MaxLen> {\n        let mut ret = BoundedVec::new();\n        ret.len = self.len();\n\n        if is_unconstrained() {\n            for i in 0..self.len() {\n                ret.storage[i] = f(i, self.get_unchecked(i));\n            }\n        } else {\n            for i in 0..MaxLen {\n                ret.storage[i] = if i < self.len() {\n                    f(i, self.get_unchecked(i))\n                } else {\n                    crate::mem::zeroed()\n                }\n            }\n        }\n\n        ret\n    }\n\n    /// Calls a closure on each element in this vector.\n    ///\n    /// Example:\n    ///\n    /// ```noir\n    /// let vec: BoundedVec<u32, 4> = BoundedVec::from_array([1, 2, 3, 4]);\n    /// let mut result = BoundedVec::<u32, 4>::new();\n    /// vec.for_each(|value| result.push(value * 2));\n    ///\n    /// let expected = BoundedVec::from_array([2, 4, 6, 8]);\n    /// assert_eq(result, expected);\n    /// ```\n    pub fn for_each<Env>(&self, f: fn[Env](T) -> ()) {\n        if is_unconstrained() {\n            for i in 0..self.len() {\n                f(self.get_unchecked(i));\n            }\n        } else {\n            for i in 0..MaxLen {\n                if i < self.len() {\n                    f(self.get_unchecked(i));\n                }\n            }\n        }\n    }\n\n    /// Calls a closure on each element in this vector, along with its index.\n    ///\n    /// Example:\n    ///\n    /// ```noir\n    /// let vec: BoundedVec<u32, 4> = BoundedVec::from_array([1, 2, 3, 4]);\n    /// let mut result = BoundedVec::<u32, 4>::new();\n    /// vec.for_eachi(|i, value| result.push(i + value * 2));\n    ///\n    /// let expected = BoundedVec::from_array([2, 5, 8, 11]);\n    /// assert_eq(result, expected);\n    /// ```\n    pub fn for_eachi<Env>(&self, f: fn[Env](u32, T) -> ()) {\n        if is_unconstrained() {\n            for i in 0..self.len() {\n                f(i, self.get_unchecked(i));\n            }\n        } else {\n            for i in 0..MaxLen {\n                if i < self.len() {\n                    f(i, self.get_unchecked(i));\n                }\n            }\n        }\n    }\n\n    /// Creates a new BoundedVec from the given array and length.\n    /// The given length must be less than or equal to the length of the array.\n    ///\n    /// Example:\n    ///\n    /// ```noir\n    /// let vec: BoundedVec<u32, 4> = BoundedVec::from_parts([1, 2, 3, 0], 3);\n    /// assert_eq(vec.len(), 3);\n    /// ```\n    pub fn from_parts(mut array: [T; MaxLen], len: u32) -> Self {\n        assert(len <= MaxLen);\n        BoundedVec { storage: array, len }\n    }\n\n    /// Creates a new BoundedVec from the given array and length.\n    /// The given length must be less than or equal to the length of the array.\n    ///\n    /// This function is unsafe because it expects all elements past the `len` index\n    /// of `array` to be zeroed, but does not check for this internally. Use `from_parts`\n    /// for a safe version of this function which does zero out any indices past the\n    /// given length. Invalidating this assumption can notably cause `BoundedVec::eq`\n    /// to give incorrect results since it will check even elements past `len`.\n    ///\n    /// Example:\n    ///\n    /// ```noir\n    /// let vec: BoundedVec<u32, 4> = BoundedVec::from_parts_unchecked([1, 2, 3, 0], 3);\n    /// assert_eq(vec.len(), 3);\n    ///\n    /// // invalid use!\n    /// let vec1: BoundedVec<u32, 4> = BoundedVec::from_parts_unchecked([1, 2, 3, 1], 3);\n    /// let vec2: BoundedVec<u32, 4> = BoundedVec::from_parts_unchecked([1, 2, 3, 2], 3);\n    ///\n    /// // both vecs have length 3 so we'd expect them to be equal, but this\n    /// // fails because elements past the length are still checked in eq\n    /// assert_eq(vec1, vec2); // fails\n    /// ```\n    #[deprecated(\"`BoundedVec::from_parts` no longer requires an extra loop, `BoundedVec::from_parts_unchecked` is no longer required\")]\n    pub fn from_parts_unchecked(array: [T; MaxLen], len: u32) -> Self {\n        assert(len <= MaxLen);\n        BoundedVec { storage: array, len }\n    }\n}\n\nimpl<T, let MaxLen: u32> Eq for BoundedVec<T, MaxLen>\nwhere\n    T: Eq,\n{\n    fn eq(self, other: BoundedVec<T, MaxLen>) -> bool {\n        if self.len == other.len {\n            if is_unconstrained() {\n                // safety: we are already in an unconstrained context\n                unsafe {\n                    unconstrained_eq(self, other)\n                }\n            } else {\n                let mut eq = true;\n                for i in 0..MaxLen {\n                    if i < self.len {\n                        eq &= self.storage[i] == other.storage[i];\n                    }\n                }\n                eq\n            }\n        } else {\n            false\n        }\n    }\n}\n\n/// Returns true if both BoundedVecs are equal.\n/// Note: This assumes the lengths of both Vecs are already equal!\n/// This function is broken out of `impl Eq for BoundedVec` to make use of `break` in unconstrained code.\nunconstrained fn unconstrained_eq<T, let MaxLen: u32>(\n    a: BoundedVec<T, MaxLen>,\n    b: BoundedVec<T, MaxLen>,\n) -> bool\nwhere\n    T: Eq,\n{\n    let mut eq = true;\n    for i in 0..a.len {\n        if a.storage[i] != b.storage[i] {\n            eq = false;\n            break;\n        }\n    }\n    eq\n}\n\nimpl<T, let MaxLen: u32, let Len: u32> From<[T; Len]> for BoundedVec<T, MaxLen> {\n    fn from(array: [T; Len]) -> BoundedVec<T, MaxLen> {\n        BoundedVec::from_array(array)\n    }\n}\n\nmod bounded_vec_tests {\n\n    mod get {\n        use crate::collections::bounded_vec::BoundedVec;\n\n        #[test(should_fail_with = \"Attempted to read past end of BoundedVec\")]\n        fn panics_when_reading_elements_past_end_of_vec() {\n            let vec: BoundedVec<Field, 5> = BoundedVec::new();\n\n            let _ = vec.get(0);\n        }\n\n        #[test(should_fail_with = \"Attempted to read past end of BoundedVec\")]\n        fn panics_when_reading_beyond_length() {\n            let vec: BoundedVec<u32, 5> = BoundedVec::from_array([1, 2, 3]);\n            let _ = vec.get(3);\n        }\n\n        #[test]\n        fn get_works_within_bounds() {\n            let vec: BoundedVec<u32, 5> = BoundedVec::from_array([1, 2, 3, 4, 5]);\n            assert_eq(vec.get(0), 1);\n            assert_eq(vec.get(2), 3);\n            assert_eq(vec.get(4), 5);\n        }\n\n        #[test]\n        fn get_unchecked_works() {\n            let vec: BoundedVec<u32, 5> = BoundedVec::from_array([1, 2, 3]);\n            assert_eq(vec.get_unchecked(0), 1);\n            assert_eq(vec.get_unchecked(2), 3);\n        }\n\n        #[test]\n        fn get_unchecked_works_past_len() {\n            let vec: BoundedVec<u32, 5> = BoundedVec::from_array([1, 2, 3]);\n            assert_eq(vec.get_unchecked(4), 0);\n        }\n    }\n\n    mod set {\n        use crate::collections::bounded_vec::BoundedVec;\n\n        #[test]\n        fn set_updates_values_properly() {\n            let mut vec = BoundedVec::from_array([0, 0, 0, 0, 0]);\n\n            vec.set(0, 42);\n            assert_eq(vec.storage, [42, 0, 0, 0, 0]);\n\n            vec.set(1, 43);\n            assert_eq(vec.storage, [42, 43, 0, 0, 0]);\n\n            vec.set(2, 44);\n            assert_eq(vec.storage, [42, 43, 44, 0, 0]);\n\n            vec.set(1, 10);\n            assert_eq(vec.storage, [42, 10, 44, 0, 0]);\n\n            vec.set(0, 0);\n            assert_eq(vec.storage, [0, 10, 44, 0, 0]);\n        }\n\n        #[test(should_fail_with = \"Attempted to write past end of BoundedVec\")]\n        fn panics_when_writing_elements_past_end_of_vec() {\n            let mut vec: BoundedVec<Field, 5> = BoundedVec::new();\n            vec.set(0, 42);\n        }\n\n        #[test(should_fail_with = \"Attempted to write past end of BoundedVec\")]\n        fn panics_when_setting_beyond_length() {\n            let mut vec: BoundedVec<u32, 5> = BoundedVec::from_array([1, 2, 3]);\n            vec.set(3, 4);\n        }\n\n        #[test]\n        fn set_unchecked_operations() {\n            let mut vec: BoundedVec<u32, 5> = BoundedVec::new();\n            vec.push(1);\n            vec.push(2);\n\n            vec.set_unchecked(0, 10);\n            assert_eq(vec.get(0), 10);\n        }\n\n        #[test(should_fail_with = \"Attempted to read past end of BoundedVec\")]\n        fn set_unchecked_operations_past_len() {\n            let mut vec: BoundedVec<u32, 5> = BoundedVec::new();\n            vec.push(1);\n            vec.push(2);\n\n            vec.set_unchecked(3, 40);\n            assert_eq(vec.get(3), 40);\n        }\n\n        #[test]\n        fn set_preserves_other_elements() {\n            let mut vec: BoundedVec<u32, 5> = BoundedVec::from_array([1, 2, 3, 4, 5]);\n\n            vec.set(2, 30);\n            assert_eq(vec.get(0), 1);\n            assert_eq(vec.get(1), 2);\n            assert_eq(vec.get(2), 30);\n            assert_eq(vec.get(3), 4);\n            assert_eq(vec.get(4), 5);\n        }\n    }\n\n    mod any {\n        use crate::collections::bounded_vec::BoundedVec;\n        use crate::internal::test_unconstrained;\n\n        #[test]\n        #[test_unconstrained]\n        fn returns_false_if_predicate_not_satisfied() {\n            let vec: BoundedVec<bool, 4> = BoundedVec::from_array([false, false, false, false]);\n            let result = vec.any(|value| value);\n\n            assert(!result);\n        }\n\n        #[test]\n        #[test_unconstrained]\n        fn returns_true_if_predicate_satisfied() {\n            let vec: BoundedVec<bool, 4> = BoundedVec::from_array([false, false, true, true]);\n            let result = vec.any(|value| value);\n\n            assert(result);\n        }\n\n        #[test]\n        fn returns_false_on_empty_boundedvec() {\n            let vec: BoundedVec<bool, 0> = BoundedVec::new();\n            let result = vec.any(|value| value);\n\n            assert(!result);\n        }\n\n        #[test]\n        #[test_unconstrained]\n        fn any_with_complex_predicates() {\n            let vec: BoundedVec<u32, 5> = BoundedVec::from_array([1, 2, 3, 4, 5]);\n\n            assert(vec.any(|x| x > 3));\n            assert(!vec.any(|x| x > 10));\n            assert(vec.any(|x| x % 2 == 0)); // has a even number\n            assert(vec.any(|x| x == 3)); // has a specific value\n        }\n\n        #[test]\n        fn any_with_partial_vector() {\n            let mut vec: BoundedVec<u32, 5> = BoundedVec::new();\n            vec.push(1);\n            vec.push(2);\n\n            assert(vec.any(|x| x == 1));\n            assert(vec.any(|x| x == 2));\n            assert(!vec.any(|x| x == 3));\n        }\n    }\n\n    mod map {\n        use crate::collections::bounded_vec::BoundedVec;\n        use crate::internal::test_unconstrained;\n\n        #[test]\n        #[test_unconstrained]\n        fn applies_function_correctly() {\n            // docs:start:bounded-vec-map-example\n            let vec: BoundedVec<u32, 4> = BoundedVec::from_array([1, 2, 3, 4]);\n            let result = vec.map(|value| value * 2);\n            // docs:end:bounded-vec-map-example\n            let expected = BoundedVec::from_array([2, 4, 6, 8]);\n\n            assert_eq(result, expected);\n        }\n\n        #[test]\n        fn applies_function_that_changes_return_type() {\n            let vec: BoundedVec<u32, 4> = BoundedVec::from_array([1, 2, 3, 4]);\n            let result = vec.map(|value| (value * 2) as Field);\n            let expected: BoundedVec<Field, 4> = BoundedVec::from_array([2, 4, 6, 8]);\n\n            assert_eq(result, expected);\n        }\n\n        #[test]\n        fn does_not_apply_function_past_len() {\n            let vec: BoundedVec<u32, 3> = BoundedVec::from_array([0, 1]);\n            let result = vec.map(|value| if value == 0 { 5 } else { value });\n            let expected = BoundedVec::from_array([5, 1]);\n\n            assert_eq(result, expected);\n            assert_eq(result.get_unchecked(2), 0);\n        }\n\n        #[test]\n        fn map_with_conditional_logic() {\n            let vec: BoundedVec<u32, 4> = BoundedVec::from_array([1, 2, 3, 4]);\n\n            let result = vec.map(|x| if x % 2 == 0 { x * 2 } else { x });\n            let expected = BoundedVec::from_array([1, 4, 3, 8]);\n            assert_eq(result, expected);\n        }\n\n        #[test]\n        fn map_preserves_length() {\n            let vec: BoundedVec<u32, 4> = BoundedVec::from_array([1, 2, 3, 4]);\n            let result = vec.map(|x| x * 2);\n\n            assert_eq(result.len(), vec.len());\n            assert_eq(result.max_len(), vec.max_len());\n        }\n\n        #[test]\n        fn map_on_empty_vector() {\n            let vec: BoundedVec<u32, 5> = BoundedVec::new();\n            let result = vec.map(|x| x * 2);\n            assert_eq(result, vec);\n            assert_eq(result.len(), 0);\n            assert_eq(result.max_len(), 5);\n        }\n    }\n\n    mod mapi {\n        use crate::collections::bounded_vec::BoundedVec;\n        use crate::internal::test_unconstrained;\n\n        #[test]\n        #[test_unconstrained]\n        fn applies_function_correctly() {\n            // docs:start:bounded-vec-mapi-example\n            let vec: BoundedVec<u32, 4> = BoundedVec::from_array([1, 2, 3, 4]);\n            let result = vec.mapi(|i, value| i + value * 2);\n            // docs:end:bounded-vec-mapi-example\n            let expected = BoundedVec::from_array([2, 5, 8, 11]);\n\n            assert_eq(result, expected);\n        }\n\n        #[test]\n        fn applies_function_that_changes_return_type() {\n            let vec: BoundedVec<u32, 4> = BoundedVec::from_array([1, 2, 3, 4]);\n            let result = vec.mapi(|i, value| (i + value * 2) as Field);\n            let expected: BoundedVec<Field, 4> = BoundedVec::from_array([2, 5, 8, 11]);\n\n            assert_eq(result, expected);\n        }\n\n        #[test]\n        fn does_not_apply_function_past_len() {\n            let vec: BoundedVec<u32, 3> = BoundedVec::from_array([0, 1]);\n            let result = vec.mapi(|_, value| if value == 0 { 5 } else { value });\n            let expected = BoundedVec::from_array([5, 1]);\n\n            assert_eq(result, expected);\n            assert_eq(result.get_unchecked(2), 0);\n        }\n\n        #[test]\n        fn mapi_with_index_branching_logic() {\n            let vec: BoundedVec<u32, 4> = BoundedVec::from_array([1, 2, 3, 4]);\n\n            let result = vec.mapi(|i, x| if i % 2 == 0 { x * 2 } else { x });\n            let expected = BoundedVec::from_array([2, 2, 6, 4]);\n            assert_eq(result, expected);\n        }\n    }\n\n    mod for_each {\n        use crate::collections::bounded_vec::BoundedVec;\n        use crate::internal::test_unconstrained;\n\n        // map in terms of for_each\n        fn for_each_map<T, U, Env, let MaxLen: u32>(\n            input: BoundedVec<T, MaxLen>,\n            f: fn[Env](T) -> U,\n        ) -> BoundedVec<U, MaxLen> {\n            let mut output = BoundedVec::<U, MaxLen>::new();\n            let output_ref = &mut output;\n            input.for_each(|x| output_ref.push(f(x)));\n            output\n        }\n\n        #[test]\n        #[test_unconstrained]\n        fn smoke_test() {\n            let mut acc = 0;\n            let acc_ref = &mut acc;\n            // docs:start:bounded-vec-for-each-example\n            let vec: BoundedVec<u32, 3> = BoundedVec::from_array([1, 2, 3]);\n            vec.for_each(|value| { *acc_ref += value; });\n            // docs:end:bounded-vec-for-each-example\n            assert_eq(acc, 6);\n        }\n\n        #[test]\n        fn applies_function_correctly() {\n            let vec: BoundedVec<u32, 4> = BoundedVec::from_array([1, 2, 3, 4]);\n            let result = for_each_map(vec, |value| value * 2);\n            let expected = BoundedVec::from_array([2, 4, 6, 8]);\n\n            assert_eq(result, expected);\n        }\n\n        #[test]\n        fn applies_function_that_changes_return_type() {\n            let vec: BoundedVec<u32, 4> = BoundedVec::from_array([1, 2, 3, 4]);\n            let result = for_each_map(vec, |value| (value * 2) as Field);\n            let expected: BoundedVec<Field, 4> = BoundedVec::from_array([2, 4, 6, 8]);\n\n            assert_eq(result, expected);\n        }\n\n        #[test]\n        fn does_not_apply_function_past_len() {\n            let vec: BoundedVec<u32, 3> = BoundedVec::from_array([0, 1]);\n            let result = for_each_map(vec, |value| if value == 0 { 5 } else { value });\n            let expected = BoundedVec::from_array([5, 1]);\n\n            assert_eq(result, expected);\n            assert_eq(result.get_unchecked(2), 0);\n        }\n\n        #[test]\n        fn for_each_on_empty_vector() {\n            let vec: BoundedVec<u32, 5> = BoundedVec::new();\n            let mut count = 0;\n            let count_ref = &mut count;\n            vec.for_each(|_| { *count_ref += 1; });\n            assert_eq(count, 0);\n        }\n\n        #[test]\n        fn for_each_with_side_effects() {\n            let vec: BoundedVec<u32, 3> = BoundedVec::from_array([1, 2, 3]);\n            let mut seen = BoundedVec::<u32, 3>::new();\n            let seen_ref = &mut seen;\n            vec.for_each(|x| seen_ref.push(x));\n            assert_eq(seen, vec);\n        }\n    }\n\n    mod for_eachi {\n        use crate::collections::bounded_vec::BoundedVec;\n        use crate::internal::test_unconstrained;\n\n        // mapi in terms of for_eachi\n        fn for_eachi_mapi<T, U, Env, let MaxLen: u32>(\n            input: BoundedVec<T, MaxLen>,\n            f: fn[Env](u32, T) -> U,\n        ) -> BoundedVec<U, MaxLen> {\n            let mut output = BoundedVec::<U, MaxLen>::new();\n            let output_ref = &mut output;\n            input.for_eachi(|i, x| output_ref.push(f(i, x)));\n            output\n        }\n\n        #[test]\n        #[test_unconstrained]\n        fn smoke_test() {\n            let mut acc = 0;\n            let acc_ref = &mut acc;\n            // docs:start:bounded-vec-for-eachi-example\n            let vec: BoundedVec<u32, 3> = BoundedVec::from_array([1, 2, 3]);\n            vec.for_eachi(|i, value| { *acc_ref += i * value; });\n            // docs:end:bounded-vec-for-eachi-example\n\n            // 0 * 1 + 1 * 2 + 2 * 3\n            assert_eq(acc, 8);\n        }\n\n        #[test]\n        fn applies_function_correctly() {\n            let vec: BoundedVec<u32, 4> = BoundedVec::from_array([1, 2, 3, 4]);\n            let result = for_eachi_mapi(vec, |i, value| i + value * 2);\n            let expected = BoundedVec::from_array([2, 5, 8, 11]);\n\n            assert_eq(result, expected);\n        }\n\n        #[test]\n        fn applies_function_that_changes_return_type() {\n            let vec: BoundedVec<u32, 4> = BoundedVec::from_array([1, 2, 3, 4]);\n            let result = for_eachi_mapi(vec, |i, value| (i + value * 2) as Field);\n            let expected: BoundedVec<Field, 4> = BoundedVec::from_array([2, 5, 8, 11]);\n\n            assert_eq(result, expected);\n        }\n\n        #[test]\n        fn does_not_apply_function_past_len() {\n            let vec: BoundedVec<u32, 3> = BoundedVec::from_array([0, 1]);\n            let result = for_eachi_mapi(vec, |_, value| if value == 0 { 5 } else { value });\n            let expected = BoundedVec::from_array([5, 1]);\n\n            assert_eq(result, expected);\n            assert_eq(result.get_unchecked(2), 0);\n        }\n\n        #[test]\n        fn for_eachi_on_empty_vector() {\n            let vec: BoundedVec<u32, 5> = BoundedVec::new();\n            let mut count = 0;\n            let count_ref = &mut count;\n            vec.for_eachi(|_, _| { *count_ref += 1; });\n            assert_eq(count, 0);\n        }\n\n        #[test]\n        fn for_eachi_with_index_tracking() {\n            let vec: BoundedVec<u32, 3> = BoundedVec::from_array([10, 20, 30]);\n            let mut indices = BoundedVec::<u32, 3>::new();\n            let indices_ref = &mut indices;\n            vec.for_eachi(|i, _| indices_ref.push(i));\n\n            let expected = BoundedVec::from_array([0, 1, 2]);\n            assert_eq(indices, expected);\n        }\n\n    }\n\n    mod from_array {\n        use crate::collections::bounded_vec::BoundedVec;\n\n        #[test]\n        fn empty() {\n            let empty_array: [Field; 0] = [];\n            let bounded_vec = BoundedVec::from_array([]);\n\n            assert_eq(bounded_vec.max_len(), 0);\n            assert_eq(bounded_vec.len(), 0);\n            assert_eq(bounded_vec.storage(), empty_array);\n        }\n\n        #[test]\n        fn equal_len() {\n            let array = [1, 2, 3];\n            let bounded_vec = BoundedVec::from_array(array);\n\n            assert_eq(bounded_vec.max_len(), 3);\n            assert_eq(bounded_vec.len(), 3);\n            assert_eq(bounded_vec.storage(), array);\n        }\n\n        #[test]\n        fn max_len_greater_then_array_len() {\n            let array = [1, 2, 3];\n            let bounded_vec: BoundedVec<Field, 10> = BoundedVec::from_array(array);\n\n            assert_eq(bounded_vec.max_len(), 10);\n            assert_eq(bounded_vec.len(), 3);\n            assert_eq(bounded_vec.get(0), 1);\n            assert_eq(bounded_vec.get(1), 2);\n            assert_eq(bounded_vec.get(2), 3);\n        }\n\n        #[test(should_fail_with = \"from array out of bounds\")]\n        fn max_len_lower_then_array_len() {\n            let _: BoundedVec<Field, 2> = BoundedVec::from_array([0; 3]);\n        }\n\n        #[test]\n        fn from_array_preserves_order() {\n            let array = [5, 3, 1, 4, 2];\n            let vec: BoundedVec<u32, 5> = BoundedVec::from_array(array);\n            for i in 0..array.len() {\n                assert_eq(vec.get(i), array[i]);\n            }\n        }\n\n        #[test]\n        fn from_array_with_different_types() {\n            let bool_array = [true, false, true];\n            let bool_vec: BoundedVec<bool, 3> = BoundedVec::from_array(bool_array);\n            assert_eq(bool_vec.len(), 3);\n            assert_eq(bool_vec.get(0), true);\n            assert_eq(bool_vec.get(1), false);\n        }\n    }\n\n    mod trait_from {\n        use crate::collections::bounded_vec::BoundedVec;\n        use crate::convert::From;\n\n        #[test]\n        fn simple() {\n            let array = [1, 2];\n            let bounded_vec: BoundedVec<Field, 10> = BoundedVec::from(array);\n\n            assert_eq(bounded_vec.max_len(), 10);\n            assert_eq(bounded_vec.len(), 2);\n            assert_eq(bounded_vec.get(0), 1);\n            assert_eq(bounded_vec.get(1), 2);\n        }\n    }\n\n    mod trait_eq {\n        use crate::collections::bounded_vec::BoundedVec;\n\n        #[test]\n        fn empty_equality() {\n            let bounded_vec1: BoundedVec<Field, 3> = BoundedVec::new();\n            let bounded_vec2: BoundedVec<Field, 3> = BoundedVec::new();\n\n            assert_eq(bounded_vec1, bounded_vec2);\n        }\n\n        #[test]\n        fn equality() {\n            let mut bounded_vec1: BoundedVec<Field, 3> = BoundedVec::new();\n            let mut bounded_vec2: BoundedVec<Field, 3> = BoundedVec::new();\n\n            bounded_vec1.push(1);\n            bounded_vec2.push(1);\n            assert(bounded_vec1 == bounded_vec2);\n        }\n\n        #[test]\n        fn inequality() {\n            let mut bounded_vec1: BoundedVec<Field, 3> = BoundedVec::new();\n            let mut bounded_vec2: BoundedVec<Field, 3> = BoundedVec::new();\n\n            bounded_vec1.push(1);\n            assert(bounded_vec1 != bounded_vec2);\n\n            bounded_vec2.push(2);\n            assert(bounded_vec1 != bounded_vec2);\n        }\n    }\n\n    mod from_parts {\n        use crate::collections::bounded_vec::BoundedVec;\n        use crate::internal::test_unconstrained;\n\n        #[test]\n        #[test_unconstrained]\n        fn from_parts() {\n            // docs:start:from-parts\n            let vec: BoundedVec<u32, 4> = BoundedVec::from_parts([1, 2, 3, 0], 3);\n            assert_eq(vec.len(), 3);\n\n            // Any elements past the given length are ignored, so these\n            // two BoundedVecs will be completely equal\n            let vec1: BoundedVec<u32, 4> = BoundedVec::from_parts([1, 2, 3, 1], 3);\n            let vec2: BoundedVec<u32, 4> = BoundedVec::from_parts([1, 2, 3, 2], 3);\n            assert_eq(vec1, vec2);\n            // docs:end:from-parts\n        }\n    }\n\n    mod push_pop {\n        use crate::collections::bounded_vec::BoundedVec;\n\n        #[test]\n        fn push_and_pop_operations() {\n            let mut vec: BoundedVec<u32, 5> = BoundedVec::new();\n\n            assert_eq(vec.len(), 0);\n\n            vec.push(1);\n            assert_eq(vec.len(), 1);\n            assert_eq(vec.get(0), 1);\n\n            vec.push(2);\n            assert_eq(vec.len(), 2);\n            assert_eq(vec.get(1), 2);\n\n            let popped = vec.pop();\n            assert_eq(popped, 2);\n            assert_eq(vec.len(), 1);\n\n            let popped2 = vec.pop();\n            assert_eq(popped2, 1);\n            assert_eq(vec.len(), 0);\n        }\n\n        #[test(should_fail_with = \"push out of bounds\")]\n        fn push_to_full_vector() {\n            let mut vec: BoundedVec<u32, 2> = BoundedVec::new();\n            vec.push(1);\n            vec.push(2);\n            vec.push(3); // should panic\n        }\n\n        #[test(should_fail_with = \"cannot pop from an empty vector\")]\n        fn pop_from_empty_vector() {\n            let mut vec: BoundedVec<u32, 5> = BoundedVec::new();\n            let _ = vec.pop(); // should panic\n        }\n\n        #[test]\n        fn push_pop_cycle() {\n            let mut vec: BoundedVec<u32, 3> = BoundedVec::new();\n\n            // push to full\n            vec.push(1);\n            vec.push(2);\n            vec.push(3);\n            assert_eq(vec.len(), 3);\n\n            // pop all\n            assert_eq(vec.pop(), 3);\n            assert_eq(vec.pop(), 2);\n            assert_eq(vec.pop(), 1);\n            assert_eq(vec.len(), 0);\n\n            // push again\n            vec.push(4);\n            assert_eq(vec.len(), 1);\n            assert_eq(vec.get(0), 4);\n        }\n    }\n\n    mod extend {\n        use crate::collections::bounded_vec::BoundedVec;\n        use crate::internal::test_unconstrained;\n\n        #[test]\n        fn extend_from_array() {\n            let mut vec: BoundedVec<u32, 5> = BoundedVec::new();\n            vec.push(1);\n            vec.extend_from_array([2, 3]);\n\n            assert_eq(vec.len(), 3);\n            assert_eq(vec.get(0), 1);\n            assert_eq(vec.get(1), 2);\n            assert_eq(vec.get(2), 3);\n        }\n\n        #[test]\n        fn extend_from_vector() {\n            let mut vec: BoundedVec<u32, 5> = BoundedVec::new();\n            vec.push(1);\n            vec.extend_from_vector([2, 3].as_vector());\n\n            assert_eq(vec.len(), 3);\n            assert_eq(vec.get(0), 1);\n            assert_eq(vec.get(1), 2);\n            assert_eq(vec.get(2), 3);\n        }\n\n        #[test]\n        #[test_unconstrained]\n        fn extend_from_bounded_vec() {\n            // The source deliberately has a higher capacity,\n            // to make sure we are not trying to assign out-of-bounds.\n            let mut vec1: BoundedVec<u32, 5> = BoundedVec::new();\n            let mut vec2: BoundedVec<u32, 9> = BoundedVec::new();\n\n            vec1.push(1);\n            vec2.push(2);\n            vec2.push(3);\n\n            vec1.extend_from_bounded_vec(vec2);\n\n            assert_eq(vec1.len(), 3);\n            assert_eq(vec1.get(0), 1);\n            assert_eq(vec1.get(1), 2);\n            assert_eq(vec1.get(2), 3);\n        }\n\n        #[test]\n        fn extend_from_bounded_vec_limit() {\n            // Capacity and contents chosen so the last item must be assigned to.\n            let mut vec1: BoundedVec<u32, 2> = BoundedVec::new();\n            let mut vec2: BoundedVec<u32, 5> = BoundedVec::new();\n\n            vec1.push(1);\n            vec2.push(2);\n\n            vec1.extend_from_bounded_vec(vec2);\n\n            assert_eq(vec1.len(), 2);\n            assert_eq(vec1.get(0), 1);\n            assert_eq(vec1.get(1), 2);\n        }\n\n        #[test]\n        fn extend_from_bounded_vec_full_and_empty() {\n            // Capacity and contents chosen so the last item must be assigned to.\n            let mut vec1: BoundedVec<u32, 2> = BoundedVec::new();\n            let vec2: BoundedVec<u32, 5> = BoundedVec::new();\n\n            vec1.push(1);\n            vec1.push(2);\n\n            vec1.extend_from_bounded_vec(vec2);\n\n            assert_eq(vec1.len(), 2);\n            assert_eq(vec1.get(0), 1);\n            assert_eq(vec1.get(1), 2);\n        }\n\n        #[test]\n        fn extend_from_bounded_vec_zero_len() {\n            let mut vec1: BoundedVec<u32, 0> = BoundedVec::new();\n            let vec2: BoundedVec<u32, 0> = BoundedVec::new();\n\n            vec1.extend_from_bounded_vec(vec2);\n\n            assert_eq(vec1.len(), 0);\n        }\n\n        #[test]\n        fn extend_from_bounded_vec_last_zeroed() {\n            let mut vec1: BoundedVec<u32, 4> = BoundedVec::new();\n            let mut vec2: BoundedVec<u32, 4> = BoundedVec::new();\n\n            vec1.push(1);\n            vec1.push(2);\n            vec2.push(3);\n\n            vec1.extend_from_bounded_vec(vec2);\n\n            assert_eq(vec1.len(), 3);\n            assert_eq(vec1.get_unchecked(3), 0);\n        }\n\n        #[test]\n        fn extend_from_bounded_vec_empty_self() {\n            // self.len == 0 with Len > MaxLen: the loop doesn't reach\n            // the last storage slot, so the fixup must write it.\n            let mut vec1: BoundedVec<u32, 3> = BoundedVec::new();\n            let vec2: BoundedVec<u32, 5> = BoundedVec::from_array([1, 2, 3]);\n\n            vec1.extend_from_bounded_vec(vec2);\n\n            assert_eq(vec1.len(), 3);\n            assert_eq(vec1.get(0), 1);\n            assert_eq(vec1.get(1), 2);\n            assert_eq(vec1.get(2), 3);\n        }\n\n        #[test]\n        fn extend_from_bounded_vec_equal_capacity() {\n            // Len == MaxLen, fills to capacity.\n            let mut vec1: BoundedVec<u32, 4> = BoundedVec::new();\n            vec1.push(1);\n            let vec2: BoundedVec<u32, 4> = BoundedVec::from_array([2, 3, 4]);\n\n            vec1.extend_from_bounded_vec(vec2);\n\n            assert_eq(vec1.len(), 4);\n            assert_eq(vec1.get(0), 1);\n            assert_eq(vec1.get(1), 2);\n            assert_eq(vec1.get(2), 3);\n            assert_eq(vec1.get(3), 4);\n        }\n\n        #[test(should_fail_with = \"extend_from_array out of bounds\")]\n        fn extend_array_beyond_max_len() {\n            let mut vec: BoundedVec<u32, 3> = BoundedVec::new();\n            vec.push(1);\n            vec.extend_from_array([2, 3, 4]); // should panic\n        }\n\n        #[test(should_fail_with = \"extend_from_vector out of bounds\")]\n        fn extend_vector_beyond_max_len() {\n            let mut vec: BoundedVec<u32, 3> = BoundedVec::new();\n            vec.push(1);\n            vec.extend_from_vector([2, 3, 4].as_vector()); // S]should panic\n        }\n\n        #[test(should_fail_with = \"extend_from_bounded_vec out of bounds\")]\n        fn extend_bounded_vec_beyond_max_len() {\n            let mut vec: BoundedVec<u32, 3> = BoundedVec::new();\n            let other: BoundedVec<u32, 5> = BoundedVec::from_array([1, 2, 3, 4, 5]);\n            vec.extend_from_bounded_vec(other); // should panic\n        }\n\n        #[test]\n        fn extend_with_empty_collections() {\n            let mut vec: BoundedVec<u32, 5> = BoundedVec::new();\n            let original_len = vec.len();\n\n            vec.extend_from_array([]);\n            assert_eq(vec.len(), original_len);\n\n            vec.extend_from_vector([].as_vector());\n            assert_eq(vec.len(), original_len);\n\n            let empty: BoundedVec<u32, 3> = BoundedVec::new();\n            vec.extend_from_bounded_vec(empty);\n            assert_eq(vec.len(), original_len);\n        }\n    }\n\n    mod storage {\n        use crate::collections::bounded_vec::BoundedVec;\n\n        #[test]\n        fn storage_consistency() {\n            let mut vec: BoundedVec<u32, 5> = BoundedVec::new();\n\n            // test initial storage state\n            assert_eq(vec.storage(), [0, 0, 0, 0, 0]);\n\n            vec.push(1);\n            vec.push(2);\n\n            // test storage after modifications\n            assert_eq(vec.storage(), [1, 2, 0, 0, 0]);\n\n            // storage doesn't change length\n            assert_eq(vec.len(), 2);\n            assert_eq(vec.max_len(), 5);\n        }\n\n        #[test]\n        fn storage_after_pop() {\n            let mut vec: BoundedVec<u32, 3> = BoundedVec::from_array([1, 2, 3]);\n\n            let _ = vec.pop();\n            // after pop, the last element should be unmodified\n            assert_eq(vec.storage(), [1, 2, 3]);\n            assert_eq(vec.len(), 2);\n        }\n\n        #[test]\n        fn vector_immutable() {\n            let vec: BoundedVec<u32, 3> = BoundedVec::from_array([1, 2, 3]);\n            let storage = vec.storage();\n\n            assert_eq(storage, [1, 2, 3]);\n\n            // Verify that the original vector is unchanged\n            assert_eq(vec.len(), 3);\n            assert_eq(vec.get(0), 1);\n            assert_eq(vec.get(1), 2);\n            assert_eq(vec.get(2), 3);\n        }\n    }\n}\n",
+      "path": "std/collections/bounded_vec.nr",
+      "function_locations": [
+        {
+          "start": 2304,
+          "name": "BoundedVec<T, MaxLen>::new"
+        },
+        {
+          "start": 2907,
+          "name": "BoundedVec<T, MaxLen>::get"
+        },
+        {
+          "start": 3815,
+          "name": "BoundedVec<T, MaxLen>::get_unchecked"
+        },
+        {
+          "start": 4398,
+          "name": "BoundedVec<T, MaxLen>::set"
+        },
+        {
+          "start": 5926,
+          "name": "BoundedVec<T, MaxLen>::set_unchecked"
+        },
+        {
+          "start": 6464,
+          "name": "BoundedVec<T, MaxLen>::push"
+        },
+        {
+          "start": 7072,
+          "name": "BoundedVec<T, MaxLen>::len"
+        },
+        {
+          "start": 7513,
+          "name": "BoundedVec<T, MaxLen>::max_len"
+        },
+        {
+          "start": 8111,
+          "name": "BoundedVec<T, MaxLen>::storage"
+        },
+        {
+          "start": 8667,
+          "name": "BoundedVec<T, MaxLen>::extend_from_array"
+        },
+        {
+          "start": 9438,
+          "name": "BoundedVec<T, MaxLen>::extend_from_vector"
+        },
+        {
+          "start": 10383,
+          "name": "BoundedVec<T, MaxLen>::extend_from_bounded_vec"
+        },
+        {
+          "start": 12778,
+          "name": "BoundedVec<T, MaxLen>::from_array"
+        },
+        {
+          "start": 13521,
+          "name": "BoundedVec<T, MaxLen>::pop"
+        },
+        {
+          "start": 14063,
+          "name": "BoundedVec<T, MaxLen>::any"
+        },
+        {
+          "start": 14979,
+          "name": "BoundedVec<T, MaxLen>::map"
+        },
+        {
+          "start": 15979,
+          "name": "BoundedVec<T, MaxLen>::mapi"
+        },
+        {
+          "start": 16937,
+          "name": "BoundedVec<T, MaxLen>::for_each"
+        },
+        {
+          "start": 17742,
+          "name": "BoundedVec<T, MaxLen>::for_eachi"
+        },
+        {
+          "start": 18439,
+          "name": "BoundedVec<T, MaxLen>::from_parts"
+        },
+        {
+          "start": 19903,
+          "name": "BoundedVec<T, MaxLen>::from_parts_unchecked"
+        },
+        {
+          "start": 20115,
+          "name": "<impl Eq for BoundedVec<T, MaxLen>>::eq"
+        },
+        {
+          "start": 21039,
+          "name": "unconstrained_eq"
+        },
+        {
+          "start": 21335,
+          "name": "<impl From<[T; Len]> for BoundedVec<T, MaxLen>>::from"
+        },
+        {
+          "start": 21618,
+          "name": "bounded_vec_tests::get::panics_when_reading_elements_past_end_of_vec"
+        },
+        {
+          "start": 21853,
+          "name": "bounded_vec_tests::get::panics_when_reading_beyond_length"
+        },
+        {
+          "start": 22028,
+          "name": "bounded_vec_tests::get::get_works_within_bounds"
+        },
+        {
+          "start": 22287,
+          "name": "bounded_vec_tests::get::get_unchecked_works"
+        },
+        {
+          "start": 22531,
+          "name": "bounded_vec_tests::get::get_unchecked_works_past_len"
+        },
+        {
+          "start": 22804,
+          "name": "bounded_vec_tests::set::set_updates_values_properly"
+        },
+        {
+          "start": 23442,
+          "name": "bounded_vec_tests::set::panics_when_writing_elements_past_end_of_vec"
+        },
+        {
+          "start": 23677,
+          "name": "bounded_vec_tests::set::panics_when_setting_beyond_length"
+        },
+        {
+          "start": 23852,
+          "name": "bounded_vec_tests::set::set_unchecked_operations"
+        },
+        {
+          "start": 24184,
+          "name": "bounded_vec_tests::set::set_unchecked_operations_past_len"
+        },
+        {
+          "start": 24448,
+          "name": "bounded_vec_tests::set::set_preserves_other_elements"
+        },
+        {
+          "start": 24995,
+          "name": "bounded_vec_tests::any::returns_false_if_predicate_not_satisfied"
+        },
+        {
+          "start": 25279,
+          "name": "bounded_vec_tests::any::returns_true_if_predicate_satisfied"
+        },
+        {
+          "start": 25528,
+          "name": "bounded_vec_tests::any::returns_false_on_empty_boundedvec"
+        },
+        {
+          "start": 25769,
+          "name": "bounded_vec_tests::any::any_with_complex_predicates"
+        },
+        {
+          "start": 26132,
+          "name": "bounded_vec_tests::any::any_with_partial_vector"
+        },
+        {
+          "start": 26598,
+          "name": "bounded_vec_tests::map::applies_function_correctly"
+        },
+        {
+          "start": 27020,
+          "name": "bounded_vec_tests::map::applies_function_that_changes_return_type"
+        },
+        {
+          "start": 27368,
+          "name": "bounded_vec_tests::map::does_not_apply_function_past_len"
+        },
+        {
+          "start": 27741,
+          "name": "bounded_vec_tests::map::map_with_conditional_logic"
+        },
+        {
+          "start": 28065,
+          "name": "bounded_vec_tests::map::map_preserves_length"
+        },
+        {
+          "start": 28357,
+          "name": "bounded_vec_tests::map::map_on_empty_vector"
+        },
+        {
+          "start": 28810,
+          "name": "bounded_vec_tests::mapi::applies_function_correctly"
+        },
+        {
+          "start": 29243,
+          "name": "bounded_vec_tests::mapi::applies_function_that_changes_return_type"
+        },
+        {
+          "start": 29600,
+          "name": "bounded_vec_tests::mapi::does_not_apply_function_past_len"
+        },
+        {
+          "start": 29982,
+          "name": "bounded_vec_tests::mapi::mapi_with_index_branching_logic"
+        },
+        {
+          "start": 30590,
+          "name": "bounded_vec_tests::for_each::for_each_map"
+        },
+        {
+          "start": 30850,
+          "name": "bounded_vec_tests::for_each::smoke_test"
+        },
+        {
+          "start": 31258,
+          "name": "bounded_vec_tests::for_each::applies_function_correctly"
+        },
+        {
+          "start": 31592,
+          "name": "bounded_vec_tests::for_each::applies_function_that_changes_return_type"
+        },
+        {
+          "start": 31950,
+          "name": "bounded_vec_tests::for_each::does_not_apply_function_past_len"
+        },
+        {
+          "start": 32331,
+          "name": "bounded_vec_tests::for_each::for_each_on_empty_vector"
+        },
+        {
+          "start": 32617,
+          "name": "bounded_vec_tests::for_each::for_each_with_side_effects"
+        },
+        {
+          "start": 33223,
+          "name": "bounded_vec_tests::for_eachi::for_eachi_mapi"
+        },
+        {
+          "start": 33490,
+          "name": "bounded_vec_tests::for_eachi::smoke_test"
+        },
+        {
+          "start": 33946,
+          "name": "bounded_vec_tests::for_eachi::applies_function_correctly"
+        },
+        {
+          "start": 34290,
+          "name": "bounded_vec_tests::for_eachi::applies_function_that_changes_return_type"
+        },
+        {
+          "start": 34658,
+          "name": "bounded_vec_tests::for_eachi::does_not_apply_function_past_len"
+        },
+        {
+          "start": 35045,
+          "name": "bounded_vec_tests::for_eachi::for_eachi_on_empty_vector"
+        },
+        {
+          "start": 35338,
+          "name": "bounded_vec_tests::for_eachi::for_eachi_with_index_tracking"
+        },
+        {
+          "start": 35815,
+          "name": "bounded_vec_tests::from_array::empty"
+        },
+        {
+          "start": 36125,
+          "name": "bounded_vec_tests::from_array::equal_len"
+        },
+        {
+          "start": 36442,
+          "name": "bounded_vec_tests::from_array::max_len_greater_then_array_len"
+        },
+        {
+          "start": 36913,
+          "name": "bounded_vec_tests::from_array::max_len_lower_then_array_len"
+        },
+        {
+          "start": 37056,
+          "name": "bounded_vec_tests::from_array::from_array_preserves_order"
+        },
+        {
+          "start": 37345,
+          "name": "bounded_vec_tests::from_array::from_array_with_different_types"
+        },
+        {
+          "start": 37782,
+          "name": "bounded_vec_tests::trait_from::simple"
+        },
+        {
+          "start": 38220,
+          "name": "bounded_vec_tests::trait_eq::empty_equality"
+        },
+        {
+          "start": 38467,
+          "name": "bounded_vec_tests::trait_eq::equality"
+        },
+        {
+          "start": 38791,
+          "name": "bounded_vec_tests::trait_eq::inequality"
+        },
+        {
+          "start": 39330,
+          "name": "bounded_vec_tests::from_parts::from_parts"
+        },
+        {
+          "start": 40003,
+          "name": "bounded_vec_tests::push_pop::push_and_pop_operations"
+        },
+        {
+          "start": 40629,
+          "name": "bounded_vec_tests::push_pop::push_to_full_vector"
+        },
+        {
+          "start": 40903,
+          "name": "bounded_vec_tests::push_pop::pop_from_empty_vector"
+        },
+        {
+          "start": 41072,
+          "name": "bounded_vec_tests::push_pop::push_pop_cycle"
+        },
+        {
+          "start": 41767,
+          "name": "bounded_vec_tests::extend::extend_from_array"
+        },
+        {
+          "start": 42113,
+          "name": "bounded_vec_tests::extend::extend_from_vector"
+        },
+        {
+          "start": 42507,
+          "name": "bounded_vec_tests::extend::extend_from_bounded_vec"
+        },
+        {
+          "start": 43128,
+          "name": "bounded_vec_tests::extend::extend_from_bounded_vec_limit"
+        },
+        {
+          "start": 43642,
+          "name": "bounded_vec_tests::extend::extend_from_bounded_vec_full_and_empty"
+        },
+        {
+          "start": 44146,
+          "name": "bounded_vec_tests::extend::extend_from_bounded_vec_zero_len"
+        },
+        {
+          "start": 44440,
+          "name": "bounded_vec_tests::extend::extend_from_bounded_vec_last_zeroed"
+        },
+        {
+          "start": 44865,
+          "name": "bounded_vec_tests::extend::extend_from_bounded_vec_empty_self"
+        },
+        {
+          "start": 45432,
+          "name": "bounded_vec_tests::extend::extend_from_bounded_vec_equal_capacity"
+        },
+        {
+          "start": 46019,
+          "name": "bounded_vec_tests::extend::extend_array_beyond_max_len"
+        },
+        {
+          "start": 46297,
+          "name": "bounded_vec_tests::extend::extend_vector_beyond_max_len"
+        },
+        {
+          "start": 46600,
+          "name": "bounded_vec_tests::extend::extend_bounded_vec_beyond_max_len"
+        },
+        {
+          "start": 46886,
+          "name": "bounded_vec_tests::extend::extend_with_empty_collections"
+        },
+        {
+          "start": 47486,
+          "name": "bounded_vec_tests::storage::storage_consistency"
+        },
+        {
+          "start": 47988,
+          "name": "bounded_vec_tests::storage::storage_after_pop"
+        },
+        {
+          "start": 48310,
+          "name": "bounded_vec_tests::storage::vector_immutable"
+        }
+      ]
+    },
+    "21": {
+      "source": "pub mod hash;\npub mod aes128;\npub mod array;\npub mod vector;\npub mod ecdsa_secp256k1;\npub mod ecdsa_secp256r1;\npub mod embedded_curve_ops;\npub mod field;\npub mod collections;\npub mod compat;\npub mod convert;\npub mod option;\npub mod string;\npub mod test;\npub mod cmp;\npub mod ops;\npub mod default;\npub mod prelude;\npub mod runtime;\npub mod meta;\npub mod append;\npub mod mem;\npub mod panic;\npub mod hint;\n\nmod primitive_docs;\nmod internal;\n\n// Oracle calls are required to be wrapped in an unconstrained function\n// Thus, the only argument to the `println` oracle is expected to always be an ident\n#[oracle(print)]\nunconstrained fn print_oracle<T>(with_newline: bool, input: T) {}\n\nunconstrained fn print_unconstrained<T>(with_newline: bool, input: T) {\n    print_oracle(with_newline, input);\n}\n\n/// Print the given input to stdout followed by a newline\npub fn println<T>(input: T) {\n    // Safety: a print statement cannot be constrained\n    unsafe {\n        print_unconstrained(true, input);\n    }\n}\n\n/// Print the given input to stdout\npub fn print<T>(input: T) {\n    // Safety: a print statement cannot be constrained\n    unsafe {\n        print_unconstrained(false, input);\n    }\n}\n\n/// Asserts the validity of the provided proof and public inputs against the provided verification key and hash.\n///\n/// The ACVM cannot determine whether the provided proof is valid during execution as this requires knowledge of\n/// the backend against which the program is being proven. However if an invalid proof if submitted, the program may\n/// fail to prove or the backend may generate a proof which will subsequently fail to verify.\n///\n/// # Important Note\n///\n/// If you are not developing your own backend such as [Barretenberg](https://github.com/AztecProtocol/barretenberg)\n/// you probably shouldn't need to interact with this function directly. It's easier and safer to use a verification\n/// library which is published by the developers of the backend which will document or enforce any safety requirements.\n///\n/// If you use this directly, you're liable to introduce underconstrainedness bugs and *your circuit will be insecure*.\n///\n/// # Arguments\n/// - verification_key: The verification key of the circuit to be verified.\n/// - proof: The proof to be verified.\n/// - public_inputs: The public inputs associated with `proof`\n/// - key_hash: The hash of `verification_key` of the form expected by the backend.\n/// - proof_type: An identifier for the proving scheme used to generate the proof to be verified. This allows\n///               for a single backend to support verifying multiple proving schemes.\n///\n/// # Constraining `key_hash`\n///\n/// The Noir compiler does not by itself constrain that `key_hash` is a valid hash of `verification_key`.\n/// This is because different backends may differ in how they hash their verification keys.\n/// It is then the responsibility of either the noir developer (by explicitly hashing the verification key\n/// in the correct manner) or by the proving system itself internally asserting the correctness of `key_hash`.\npub fn verify_proof_with_type<let N: u32, let M: u32, let K: u32>(\n    verification_key: [Field; N],\n    proof: [Field; M],\n    public_inputs: [Field; K],\n    key_hash: Field,\n    proof_type: u32,\n) {\n    if !crate::runtime::is_unconstrained() {\n        crate::assert_constant(proof_type);\n    }\n    verify_proof_internal(verification_key, proof, public_inputs, key_hash, proof_type);\n}\n\n#[foreign(recursive_aggregation)]\nfn verify_proof_internal<let N: u32, let M: u32, let K: u32>(\n    verification_key: [Field; N],\n    proof: [Field; M],\n    public_inputs: [Field; K],\n    key_hash: Field,\n    proof_type: u32,\n) {}\n\n/// Asserts that the given value is known at compile-time.\n/// Useful for debugging for-loop bounds.\n#[builtin(assert_constant)]\npub fn assert_constant<T>(x: T) {}\n\n/// Asserts that the given value is both true and known at compile-time.\n/// The message can be a string, a format string, or any value, as long as it is known at compile-time\n#[builtin(static_assert)]\npub fn static_assert<T>(predicate: bool, message: T) {}\n\n/// Force a field value to be a witness instead of a constant in the compiled output.\n/// This is often only useful for debugging compiler optimizations.\n///\n/// This has no effect in unconstrained or comptime code.\n#[builtin(as_witness)]\npub fn as_witness(x: Field) {}\n",
+      "path": "std/lib.nr",
+      "function_locations": [
+        {
+          "start": 676,
+          "name": "print_oracle"
+        },
+        {
+          "start": 750,
+          "name": "print_unconstrained"
+        },
+        {
+          "start": 880,
+          "name": "println"
+        },
+        {
+          "start": 1063,
+          "name": "print"
+        },
+        {
+          "start": 3264,
+          "name": "verify_proof_with_type"
+        },
+        {
+          "start": 3681,
+          "name": "verify_proof_internal"
+        },
+        {
+          "start": 3846,
+          "name": "assert_constant"
+        },
+        {
+          "start": 4105,
+          "name": "static_assert"
+        },
+        {
+          "start": 4376,
+          "name": "as_witness"
+        }
+      ]
+    },
+    "51": {
+      "source": "use mock_types::{\n    AppPublicInputs, MEGA_APP_VK_LENGTH_IN_FIELDS, PrivateKernelPublicInputs,\n    PrivateKernelPublicInputsBuilder, PROOF_TYPE_OINK, TxRequest, VerificationKey,\n};\n\nfn main(\n    tx: TxRequest,\n    app_inputs: call_data(1) AppPublicInputs,\n    app_vk: VerificationKey<MEGA_APP_VK_LENGTH_IN_FIELDS>,\n) -> return_data PrivateKernelPublicInputs {\n    std::verify_proof_with_type(app_vk.key, [], [], app_vk.hash, PROOF_TYPE_OINK);\n\n    let mut private_kernel_inputs = PrivateKernelPublicInputsBuilder::from_tx(tx);\n    private_kernel_inputs.ingest_app_inputs(app_inputs);\n    private_kernel_inputs.finish()\n}\n",
+      "path": "/mnt/user-data/jean/private-aztec/noir-projects/mock-protocol-circuits/crates/mock-private-kernel-init/src/main.nr",
+      "function_locations": [
+        {
+          "start": 359,
+          "name": "main"
+        }
+      ]
+    },
+    "52": {
+      "source": "pub global MAX_COMMITMENTS_PER_CALL: u32 = 2;\npub global MAX_COMMITMENTS_PER_TX: u32 = 4;\npub global MAX_COMMITMENT_READ_REQUESTS_PER_CALL: u32 = 2;\npub global MAX_COMMITMENT_READ_REQUESTS_PER_TX: u32 = 4;\n\npub use protocol_types::{\n    abis::avm_circuit_public_inputs::AvmCircuitPublicInputs,\n    constants::{\n        AVM_V2_PROOF_LENGTH_IN_FIELDS, CHONK_PROOF_LENGTH, CHONK_VK_LENGTH_IN_FIELDS,\n        MEGA_APP_VK_LENGTH_IN_FIELDS, MEGA_KERNEL_VK_LENGTH_IN_FIELDS,\n        NESTED_RECURSIVE_ROLLUP_HONK_PROOF_LENGTH, PROOF_TYPE_AVM, PROOF_TYPE_CHONK, PROOF_TYPE_HN,\n        PROOF_TYPE_HN_FINAL, PROOF_TYPE_OINK, PROOF_TYPE_ROLLUP_HONK, PROOF_TYPE_ROOT_ROLLUP_HONK,\n    },\n    proof::{\n        traits::SerializeToColumns,\n        verification_key::{RollupHonkVerificationKey, VerificationKey},\n    },\n    traits::Serialize,\n};\n\npub struct TxRequest {\n    pub number_of_calls: u32,\n}\n\npub struct AppPublicInputs {\n    pub commitments: [Field; MAX_COMMITMENTS_PER_CALL],\n    pub read_requests: [Field; MAX_COMMITMENT_READ_REQUESTS_PER_CALL],\n}\n\nimpl Default for AppPublicInputs {\n    fn default() -> Self {\n        Self {\n            commitments: [0; MAX_COMMITMENTS_PER_CALL],\n            read_requests: [0; MAX_COMMITMENT_READ_REQUESTS_PER_CALL],\n        }\n    }\n}\n\npub struct PrivateKernelPublicInputs {\n    pub remaining_calls: u32,\n    pub commitments: [Field; MAX_COMMITMENTS_PER_TX],\n    pub read_requests: [Field; MAX_COMMITMENT_READ_REQUESTS_PER_TX],\n}\n\nimpl Default for PrivateKernelPublicInputs {\n    fn default() -> Self {\n        Self {\n            remaining_calls: 0,\n            commitments: [0; MAX_COMMITMENTS_PER_TX],\n            read_requests: [0; MAX_COMMITMENT_READ_REQUESTS_PER_TX],\n        }\n    }\n}\n\npub struct PrivateKernelPublicInputsBuilder {\n    pub remaining_calls: u32,\n    pub commitments: BoundedVec<Field, MAX_COMMITMENTS_PER_TX>,\n    pub read_requests: BoundedVec<Field, MAX_COMMITMENT_READ_REQUESTS_PER_TX>,\n}\n\nimpl PrivateKernelPublicInputsBuilder {\n    pub fn from_tx(tx: TxRequest) -> Self {\n        Self {\n            remaining_calls: tx.number_of_calls,\n            commitments: BoundedVec::new(),\n            read_requests: BoundedVec::new(),\n        }\n    }\n\n    pub fn from_previous_kernel(prev_kernel_public_inputs: PrivateKernelPublicInputs) -> Self {\n        let mut builder = PrivateKernelPublicInputsBuilder {\n            remaining_calls: prev_kernel_public_inputs.remaining_calls,\n            commitments: BoundedVec::new(),\n            read_requests: BoundedVec::new(),\n        };\n        for i in 0..MAX_COMMITMENTS_PER_TX {\n            if prev_kernel_public_inputs.commitments[i] != 0 {\n                builder.commitments.push(prev_kernel_public_inputs.commitments[i]);\n            }\n        }\n        for i in 0..MAX_COMMITMENT_READ_REQUESTS_PER_TX {\n            if prev_kernel_public_inputs.read_requests[i] != 0 {\n                builder.read_requests.push(prev_kernel_public_inputs.read_requests[i]);\n            }\n        }\n        builder\n    }\n\n    pub fn ingest_app_inputs(&mut self, app_inputs: AppPublicInputs) {\n        for i in 0..MAX_COMMITMENTS_PER_CALL {\n            if app_inputs.commitments[i] != 0 {\n                self.commitments.push(app_inputs.commitments[i]);\n            }\n        }\n\n        for i in 0..MAX_COMMITMENT_READ_REQUESTS_PER_CALL {\n            if app_inputs.read_requests[i] != 0 {\n                self.read_requests.push(app_inputs.read_requests[i]);\n            }\n        }\n\n        self.remaining_calls -= 1;\n    }\n\n    pub fn finish(self) -> PrivateKernelPublicInputs {\n        PrivateKernelPublicInputs {\n            remaining_calls: self.remaining_calls,\n            commitments: self.commitments.storage(),\n            read_requests: self.read_requests.storage(),\n        }\n    }\n}\n\n#[derive(Serialize)]\npub struct KernelPublicInputs {\n    pub commitments: [Field; MAX_COMMITMENTS_PER_TX],\n}\n\nimpl Default for KernelPublicInputs {\n    fn default() -> Self {\n        Self { commitments: [0; MAX_COMMITMENTS_PER_TX] }\n    }\n}\n\n#[derive(Serialize)]\npub struct RollupPublicInputs {\n    accumulated: u32,\n}\n\nimpl RollupPublicInputs {\n    pub fn new(accumulated: u32) -> Self {\n        Self { accumulated }\n    }\n\n    pub fn merge(self, other: Self) -> Self {\n        Self { accumulated: self.accumulated + other.accumulated }\n    }\n}\n\npub struct PreviousRollupData {\n    base_or_merge_public_inputs: RollupPublicInputs,\n    proof: [Field; NESTED_RECURSIVE_ROLLUP_HONK_PROOF_LENGTH],\n    vk: RollupHonkVerificationKey,\n}\n\nimpl PreviousRollupData {\n    pub fn verify(self, is_root: bool) {\n        let inputs = self.base_or_merge_public_inputs.serialize();\n\n        std::verify_proof_with_type(\n            self.vk.key,\n            self.proof,\n            inputs,\n            self.vk.hash,\n            if is_root {\n                PROOF_TYPE_ROOT_ROLLUP_HONK\n            } else {\n                PROOF_TYPE_ROLLUP_HONK\n            },\n        );\n    }\n\n    pub fn public_inputs(self) -> RollupPublicInputs {\n        self.base_or_merge_public_inputs\n    }\n}\n\n// CHONK: \"Client Honk\" - An UltraHonk variant with incremental folding and delayed non-native arithmetic.\npub struct ChonkProofData {\n    pub public_inputs: KernelPublicInputs,\n    pub proof: [Field; CHONK_PROOF_LENGTH],\n    pub vk_data: VerificationKey<CHONK_VK_LENGTH_IN_FIELDS>,\n}\n\nimpl ChonkProofData {\n    pub fn verify(self) {\n        let inputs = KernelPublicInputs::serialize(self.public_inputs);\n        std::verify_proof_with_type(\n            self.vk_data.key,\n            self.proof,\n            inputs,\n            self.vk_data.hash,\n            PROOF_TYPE_CHONK,\n        );\n    }\n}\n",
+      "path": "/mnt/user-data/jean/private-aztec/noir-projects/mock-protocol-circuits/crates/mock-types/src/lib.nr",
+      "function_locations": [
+        {
+          "start": 1104,
+          "name": "<impl Default for AppPublicInputs>::default"
+        },
+        {
+          "start": 1532,
+          "name": "<impl Default for PrivateKernelPublicInputs>::default"
+        },
+        {
+          "start": 2027,
+          "name": "PrivateKernelPublicInputsBuilder::from_tx"
+        },
+        {
+          "start": 2294,
+          "name": "PrivateKernelPublicInputsBuilder::from_previous_kernel"
+        },
+        {
+          "start": 3073,
+          "name": "PrivateKernelPublicInputsBuilder::ingest_app_inputs"
+        },
+        {
+          "start": 3561,
+          "name": "PrivateKernelPublicInputsBuilder::finish"
+        },
+        {
+          "start": 3952,
+          "name": "<impl Default for KernelPublicInputs>::default"
+        },
+        {
+          "start": 4166,
+          "name": "RollupPublicInputs::new"
+        },
+        {
+          "start": 4248,
+          "name": "RollupPublicInputs::merge"
+        },
+        {
+          "start": 4577,
+          "name": "PreviousRollupData::verify"
+        },
+        {
+          "start": 4994,
+          "name": "PreviousRollupData::public_inputs"
+        },
+        {
+          "start": 5378,
+          "name": "ChonkProofData::verify"
+        }
+      ]
+    }
+  },
+  "verificationKey": {
+    "bytes": "000000000000000000000000000000000000000000000000000000000000000e0000000000000000000000000000000000000000000000000000000000000022000000000000000000000000000000000000000000000000000000000000007900000000000000000000000000000034b424300f67ef2fa8594e326b6a9655210000000000000000000000000000000000228637d4239df5f965a96fd980a04c000000000000000000000000000000ae48c8389d4c94df0401746815ada4c60600000000000000000000000000000000001fad9f2d84a575aebef4f9f8fd4c0400000000000000000000000000000003ba0afab97bc797863b7e90235678fe430000000000000000000000000000000000197368986cfabc77daf78a4042efb0000000000000000000000000000000f7d30606ceced6422fb2ec86a7ec9bd093000000000000000000000000000000000011aefbc8c342939dcd1e6a7f9dba0500000000000000000000000000000039c552f9854c71d15b2b4cda8925d7b7cd00000000000000000000000000000000001f6cee40c4b7c2c29036d5dd4c1efb000000000000000000000000000000678ee7f8d2d6bd5e3e26ecf55d31525d7c00000000000000000000000000000000001d8b363f5587b2d747c1ef97166004000000000000000000000000000000d719db29c1712fc0098b59e104ad54bebd00000000000000000000000000000000002323378444c4ba3622c1288da47752000000000000000000000000000000bddd349075f97eeea73413885195fa2ff6000000000000000000000000000000000002fce681d76d5fe2377b697dccb3f3000000000000000000000000000000278cd423cf9b826cdbc464a6a1ab26abcf000000000000000000000000000000000025461d44e3769eb3660bf03bc8366f0000000000000000000000000000002fc66950476954e5ddd3ccbd28f96f005600000000000000000000000000000000002b259906f9925d184220daa10169460000000000000000000000000000007e93d92b9595e6c81f57b8a8fa235f9b15000000000000000000000000000000000030203fbd0358f132f5a38eb94847020000000000000000000000000000000eb5a88eb550784ece84a42b7590abe717000000000000000000000000000000000026d90e3ede429b4fcddbea3b64d85f000000000000000000000000000000eb8ced2d7463642d9a4d58d1635aa3e2ae00000000000000000000000000000000000d5c7398dba5ace2d20586d9c61fae000000000000000000000000000000ed27ca5d06af3bffdac4b94e0be2a3c0b400000000000000000000000000000000002bb80eccf082d1df1b9584b50a376900000000000000000000000000000011efbaa038ad4ae259778efde29cd375aa00000000000000000000000000000000000203d58c34f0626a6ae61934479e5f0000000000000000000000000000005a50db2e7346e7b2f28d1aabc45ce4ec320000000000000000000000000000000000016f536bc0f75a7fa34f7c22b96f3f0000000000000000000000000000007a2068fd22de97ba9a707e9ea4a2c30f9e00000000000000000000000000000000002ef98a8ce3ce614ed67fcfe3539d0e000000000000000000000000000000614e7aae951f29ead9099375dd971407c100000000000000000000000000000000002fcea18e0b1370b73af9f530e86f6a000000000000000000000000000000919bc03a3aedd159b8051728fc25272a2700000000000000000000000000000000001d32ebd618a8a998235260d6bae1a0000000000000000000000000000000a3162359cfdb79436224a0776058c5832100000000000000000000000000000000002b06d41dfb51ae352dc5bc3822bfdc00000000000000000000000000000080ce74b35e7ba6edf03a8b4495a5d46ec700000000000000000000000000000000001a11a69c0ada1acd0031537045e07500000000000000000000000000000030814987f32591fe1ab5c5f31cbb5997d500000000000000000000000000000000000b8753de50296254d6272c76ebb261000000000000000000000000000000d246823869cec3b0b33333811add9bd3be0000000000000000000000000000000000067ac2e6d516e5dae52badecf69186000000000000000000000000000000913bc886eec67932c577ec9ee648afb1e200000000000000000000000000000000002f81f77347a289f2a445efef32da5b000000000000000000000000000000c4f5933a01f7037abc73437726840f701300000000000000000000000000000000002a05fb671a00822cedce4a888baf760000000000000000000000000000006d4deb05fe17e2ea23862cd292831555b500000000000000000000000000000000002f5a2d63c623cd4ce6cad2cf9c1317000000000000000000000000000000444b58e021044799f01e52e9a7ca709d8700000000000000000000000000000000001ca711e5fb30494b86daefd4369518000000000000000000000000000000490f5d78b6b7ce8da3b404b62ca7051c3b00000000000000000000000000000000002ce9b29628a8cae2829441e837c11b00000000000000000000000000000063d2ea4c87d862f3bed122a32a43d88d900000000000000000000000000000000000054bfc10cae39d4a0f57b10e2747cf000000000000000000000000000000be5c1a34eafd47adb6b4c8f1fb180fc6f40000000000000000000000000000000000224efd7d9c21f22ce130c4069d9c030000000000000000000000000000003f15cbea928ffc433b5e418ca6a08c115f000000000000000000000000000000000027941bc09ed7d96f1844cb0ce35bbf0000000000000000000000000000005da73f9e1abd20685dd5c45e1f8c8387a9000000000000000000000000000000000011019006c7bf635114a0a6032611a50000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000b141e93f1c488288c1ed94b99e8c0b264500000000000000000000000000000000001c260af4d68b11cfa2b03c5fd677c9000000000000000000000000000000f8489e181225743a21c7e88162447648bd00000000000000000000000000000000002695c01bc818adfc5ea8372a9e87b3000000000000000000000000000000f0a6a33dd640e283e7d722d1d49d8cfcc000000000000000000000000000000000000b3a3db8c2a8c7af23f3cb4d5ed52d000000000000000000000000000000529b3e10745d323b4c7e3f59aab5103420000000000000000000000000000000000024ef064a1d059ef000485fa379dd4b00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000007afbad85ebd4272d5c535ec9119efdfa9700000000000000000000000000000000002825c4fa180ffbb47447feebf6b365000000000000000000000000000000dfc226642c0a173eff00035e4859d9230f00000000000000000000000000000000000c1cff615944be1bd4f917f61abfe30000000000000000000000000000003f2c08b0a3655e2bc8f99459a8bdd375f9000000000000000000000000000000000012f1d687e4839eddae3c48624e671b000000000000000000000000000000758ebaf16aa4ee86244b731c458494ec5600000000000000000000000000000000002cca236caa38c7a61dd3d68db7c2810000000000000000000000000000003e3289235551696a532dfbe81dcd28da3400000000000000000000000000000000001086a25f7ffa2f35989afa4bbae4d9000000000000000000000000000000064f0d70be27428151682eb4af82bc7bca00000000000000000000000000000000001cbe99d567100d290467092c256457000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000014f0863f2eef8c90fa2ecd91e1e10b572c000000000000000000000000000000000017bd913cb2426b7f89ca0e2dd4e73d000000000000000000000000000000bc2c6d52ed3523bb441f7674e48465fa98000000000000000000000000000000000017bd63ba535af74d8a9188e022f43200000000000000000000000000000028edd1a7e46c840d9c943fdf45521c64ce0000000000000000000000000000000000043d063b130adfb37342af45d0155a0000000000000000000000000000009330952ae74c573d1686d9cb4a007338540000000000000000000000000000000000261522c4089330646aff967361949400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000024adeaa5faf0131e02803eb47c2cdab88f00000000000000000000000000000000002b853365b2b7e182b02024a9e460a4000000000000000000000000000000949383463b34786b4e6db2797dd3f7c777000000000000000000000000000000000000287501f988930a889904d2100208000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000077aaf83a294a391c272a998b993b3fb72600000000000000000000000000000000001ef5fc7f99c80e746c5ebc02d079f50000000000000000000000000000006547e28fb2db0b99ed0531152efecc343100000000000000000000000000000000001068f5dcffbed813c829fe71235c260000000000000000000000000000001cafb13a91ae83d69b977c5c7094d59862000000000000000000000000000000000020f8bc8341c3a9dd980c52c6c88e5a000000000000000000000000000000af302c1b91203cb7530c98b0326fdc047100000000000000000000000000000000001199047b8bf1956968d07d88a3dba8000000000000000000000000000000b0d4148a8df5b95cd3f1844094b133ebdd00000000000000000000000000000000002be0fdf05bd1e787e8e5b54f1a90db000000000000000000000000000000265b3253bb9bfd9f56e73574e784ee9e64000000000000000000000000000000000001dd1e79c8756b3a9803ba541029f7000000000000000000000000000000abcf01ecbd6b0ab71fe6de0093375b1b0f00000000000000000000000000000000000e979db1fa5d218bedf951efbfa6a5000000000000000000000000000000e70210e46bcc26d0c5cff90ad05280a9be00000000000000000000000000000000002cff21b6b7e4b3bfb06a5340babeb5000000000000000000000000000000a20fd471ac6f3d33ce6cf7e9e3f9287aa60000000000000000000000000000000000149ec1635631483fcd6dc3e350084d00000000000000000000000000000062eb57a0422a7088083d495e121e71f38800000000000000000000000000000000001ecfc074e56b94d51f10011796ea33000000000000000000000000000000a6b6a269c21f964bf5bf5e265935ab71ce00000000000000000000000000000000000f0ddb7a0f7d3a717d34d2660623f20000000000000000000000000000000d0ceb1a38dd7e1f0bbeb570255b6d7b2600000000000000000000000000000000000febe049a3e03c427c86b28e6f51ee",
+    "fields": [
+      "0x000000000000000000000000000000000000000000000000000000000000000e",
+      "0x0000000000000000000000000000000000000000000000000000000000000022",
+      "0x0000000000000000000000000000000000000000000000000000000000000079",
+      "0x00000000000000000000000000000034b424300f67ef2fa8594e326b6a965521",
+      "0x0000000000000000000000000000000000228637d4239df5f965a96fd980a04c",
+      "0x000000000000000000000000000000ae48c8389d4c94df0401746815ada4c606",
+      "0x00000000000000000000000000000000001fad9f2d84a575aebef4f9f8fd4c04",
+      "0x00000000000000000000000000000003ba0afab97bc797863b7e90235678fe43",
+      "0x0000000000000000000000000000000000197368986cfabc77daf78a4042efb0",
+      "0x000000000000000000000000000000f7d30606ceced6422fb2ec86a7ec9bd093",
+      "0x000000000000000000000000000000000011aefbc8c342939dcd1e6a7f9dba05",
+      "0x00000000000000000000000000000039c552f9854c71d15b2b4cda8925d7b7cd",
+      "0x00000000000000000000000000000000001f6cee40c4b7c2c29036d5dd4c1efb",
+      "0x000000000000000000000000000000678ee7f8d2d6bd5e3e26ecf55d31525d7c",
+      "0x00000000000000000000000000000000001d8b363f5587b2d747c1ef97166004",
+      "0x000000000000000000000000000000d719db29c1712fc0098b59e104ad54bebd",
+      "0x00000000000000000000000000000000002323378444c4ba3622c1288da47752",
+      "0x000000000000000000000000000000bddd349075f97eeea73413885195fa2ff6",
+      "0x000000000000000000000000000000000002fce681d76d5fe2377b697dccb3f3",
+      "0x000000000000000000000000000000278cd423cf9b826cdbc464a6a1ab26abcf",
+      "0x000000000000000000000000000000000025461d44e3769eb3660bf03bc8366f",
+      "0x0000000000000000000000000000002fc66950476954e5ddd3ccbd28f96f0056",
+      "0x00000000000000000000000000000000002b259906f9925d184220daa1016946",
+      "0x0000000000000000000000000000007e93d92b9595e6c81f57b8a8fa235f9b15",
+      "0x000000000000000000000000000000000030203fbd0358f132f5a38eb9484702",
+      "0x0000000000000000000000000000000eb5a88eb550784ece84a42b7590abe717",
+      "0x000000000000000000000000000000000026d90e3ede429b4fcddbea3b64d85f",
+      "0x000000000000000000000000000000eb8ced2d7463642d9a4d58d1635aa3e2ae",
+      "0x00000000000000000000000000000000000d5c7398dba5ace2d20586d9c61fae",
+      "0x000000000000000000000000000000ed27ca5d06af3bffdac4b94e0be2a3c0b4",
+      "0x00000000000000000000000000000000002bb80eccf082d1df1b9584b50a3769",
+      "0x00000000000000000000000000000011efbaa038ad4ae259778efde29cd375aa",
+      "0x00000000000000000000000000000000000203d58c34f0626a6ae61934479e5f",
+      "0x0000000000000000000000000000005a50db2e7346e7b2f28d1aabc45ce4ec32",
+      "0x0000000000000000000000000000000000016f536bc0f75a7fa34f7c22b96f3f",
+      "0x0000000000000000000000000000007a2068fd22de97ba9a707e9ea4a2c30f9e",
+      "0x00000000000000000000000000000000002ef98a8ce3ce614ed67fcfe3539d0e",
+      "0x000000000000000000000000000000614e7aae951f29ead9099375dd971407c1",
+      "0x00000000000000000000000000000000002fcea18e0b1370b73af9f530e86f6a",
+      "0x000000000000000000000000000000919bc03a3aedd159b8051728fc25272a27",
+      "0x00000000000000000000000000000000001d32ebd618a8a998235260d6bae1a0",
+      "0x000000000000000000000000000000a3162359cfdb79436224a0776058c58321",
+      "0x00000000000000000000000000000000002b06d41dfb51ae352dc5bc3822bfdc",
+      "0x00000000000000000000000000000080ce74b35e7ba6edf03a8b4495a5d46ec7",
+      "0x00000000000000000000000000000000001a11a69c0ada1acd0031537045e075",
+      "0x00000000000000000000000000000030814987f32591fe1ab5c5f31cbb5997d5",
+      "0x00000000000000000000000000000000000b8753de50296254d6272c76ebb261",
+      "0x000000000000000000000000000000d246823869cec3b0b33333811add9bd3be",
+      "0x0000000000000000000000000000000000067ac2e6d516e5dae52badecf69186",
+      "0x000000000000000000000000000000913bc886eec67932c577ec9ee648afb1e2",
+      "0x00000000000000000000000000000000002f81f77347a289f2a445efef32da5b",
+      "0x000000000000000000000000000000c4f5933a01f7037abc73437726840f7013",
+      "0x00000000000000000000000000000000002a05fb671a00822cedce4a888baf76",
+      "0x0000000000000000000000000000006d4deb05fe17e2ea23862cd292831555b5",
+      "0x00000000000000000000000000000000002f5a2d63c623cd4ce6cad2cf9c1317",
+      "0x000000000000000000000000000000444b58e021044799f01e52e9a7ca709d87",
+      "0x00000000000000000000000000000000001ca711e5fb30494b86daefd4369518",
+      "0x000000000000000000000000000000490f5d78b6b7ce8da3b404b62ca7051c3b",
+      "0x00000000000000000000000000000000002ce9b29628a8cae2829441e837c11b",
+      "0x00000000000000000000000000000063d2ea4c87d862f3bed122a32a43d88d90",
+      "0x0000000000000000000000000000000000054bfc10cae39d4a0f57b10e2747cf",
+      "0x000000000000000000000000000000be5c1a34eafd47adb6b4c8f1fb180fc6f4",
+      "0x0000000000000000000000000000000000224efd7d9c21f22ce130c4069d9c03",
+      "0x0000000000000000000000000000003f15cbea928ffc433b5e418ca6a08c115f",
+      "0x000000000000000000000000000000000027941bc09ed7d96f1844cb0ce35bbf",
+      "0x0000000000000000000000000000005da73f9e1abd20685dd5c45e1f8c8387a9",
+      "0x000000000000000000000000000000000011019006c7bf635114a0a6032611a5",
+      "0x0000000000000000000000000000000000000000000000000000000000000001",
+      "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000000000000000000000000002",
+      "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "0x000000000000000000000000000000b141e93f1c488288c1ed94b99e8c0b2645",
+      "0x00000000000000000000000000000000001c260af4d68b11cfa2b03c5fd677c9",
+      "0x000000000000000000000000000000f8489e181225743a21c7e88162447648bd",
+      "0x00000000000000000000000000000000002695c01bc818adfc5ea8372a9e87b3",
+      "0x000000000000000000000000000000f0a6a33dd640e283e7d722d1d49d8cfcc0",
+      "0x00000000000000000000000000000000000b3a3db8c2a8c7af23f3cb4d5ed52d",
+      "0x000000000000000000000000000000529b3e10745d323b4c7e3f59aab5103420",
+      "0x000000000000000000000000000000000024ef064a1d059ef000485fa379dd4b",
+      "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000007afbad85ebd4272d5c535ec9119efdfa97",
+      "0x00000000000000000000000000000000002825c4fa180ffbb47447feebf6b365",
+      "0x000000000000000000000000000000dfc226642c0a173eff00035e4859d9230f",
+      "0x00000000000000000000000000000000000c1cff615944be1bd4f917f61abfe3",
+      "0x0000000000000000000000000000003f2c08b0a3655e2bc8f99459a8bdd375f9",
+      "0x000000000000000000000000000000000012f1d687e4839eddae3c48624e671b",
+      "0x000000000000000000000000000000758ebaf16aa4ee86244b731c458494ec56",
+      "0x00000000000000000000000000000000002cca236caa38c7a61dd3d68db7c281",
+      "0x0000000000000000000000000000003e3289235551696a532dfbe81dcd28da34",
+      "0x00000000000000000000000000000000001086a25f7ffa2f35989afa4bbae4d9",
+      "0x000000000000000000000000000000064f0d70be27428151682eb4af82bc7bca",
+      "0x00000000000000000000000000000000001cbe99d567100d290467092c256457",
+      "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "0x00000000000000000000000000000014f0863f2eef8c90fa2ecd91e1e10b572c",
+      "0x000000000000000000000000000000000017bd913cb2426b7f89ca0e2dd4e73d",
+      "0x000000000000000000000000000000bc2c6d52ed3523bb441f7674e48465fa98",
+      "0x000000000000000000000000000000000017bd63ba535af74d8a9188e022f432",
+      "0x00000000000000000000000000000028edd1a7e46c840d9c943fdf45521c64ce",
+      "0x0000000000000000000000000000000000043d063b130adfb37342af45d0155a",
+      "0x0000000000000000000000000000009330952ae74c573d1686d9cb4a00733854",
+      "0x0000000000000000000000000000000000261522c4089330646aff9673619494",
+      "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "0x00000000000000000000000000000024adeaa5faf0131e02803eb47c2cdab88f",
+      "0x00000000000000000000000000000000002b853365b2b7e182b02024a9e460a4",
+      "0x000000000000000000000000000000949383463b34786b4e6db2797dd3f7c777",
+      "0x000000000000000000000000000000000000287501f988930a889904d2100208",
+      "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "0x00000000000000000000000000000077aaf83a294a391c272a998b993b3fb726",
+      "0x00000000000000000000000000000000001ef5fc7f99c80e746c5ebc02d079f5",
+      "0x0000000000000000000000000000006547e28fb2db0b99ed0531152efecc3431",
+      "0x00000000000000000000000000000000001068f5dcffbed813c829fe71235c26",
+      "0x0000000000000000000000000000001cafb13a91ae83d69b977c5c7094d59862",
+      "0x000000000000000000000000000000000020f8bc8341c3a9dd980c52c6c88e5a",
+      "0x000000000000000000000000000000af302c1b91203cb7530c98b0326fdc0471",
+      "0x00000000000000000000000000000000001199047b8bf1956968d07d88a3dba8",
+      "0x000000000000000000000000000000b0d4148a8df5b95cd3f1844094b133ebdd",
+      "0x00000000000000000000000000000000002be0fdf05bd1e787e8e5b54f1a90db",
+      "0x000000000000000000000000000000265b3253bb9bfd9f56e73574e784ee9e64",
+      "0x000000000000000000000000000000000001dd1e79c8756b3a9803ba541029f7",
+      "0x000000000000000000000000000000abcf01ecbd6b0ab71fe6de0093375b1b0f",
+      "0x00000000000000000000000000000000000e979db1fa5d218bedf951efbfa6a5",
+      "0x000000000000000000000000000000e70210e46bcc26d0c5cff90ad05280a9be",
+      "0x00000000000000000000000000000000002cff21b6b7e4b3bfb06a5340babeb5",
+      "0x000000000000000000000000000000a20fd471ac6f3d33ce6cf7e9e3f9287aa6",
+      "0x0000000000000000000000000000000000149ec1635631483fcd6dc3e350084d",
+      "0x00000000000000000000000000000062eb57a0422a7088083d495e121e71f388",
+      "0x00000000000000000000000000000000001ecfc074e56b94d51f10011796ea33",
+      "0x000000000000000000000000000000a6b6a269c21f964bf5bf5e265935ab71ce",
+      "0x00000000000000000000000000000000000f0ddb7a0f7d3a717d34d2660623f2",
+      "0x0000000000000000000000000000000d0ceb1a38dd7e1f0bbeb570255b6d7b26",
+      "0x00000000000000000000000000000000000febe049a3e03c427c86b28e6f51ee"
+    ],
+    "hash": ""
+  }
+}

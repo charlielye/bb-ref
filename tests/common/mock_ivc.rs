@@ -221,7 +221,7 @@ impl MockIvcCircuits {
             }
             CircuitKind::Kernel | CircuitKind::HidingKernel => {
                 self.bus.populate_kernel(&mut ctx.borrow_mut());
-                complete_kernel_circuit_logic(ivc, &ctx, zk_rng);
+                complete_kernel_circuit_logic(ivc, &ctx, zk_rng, None);
             }
         }
         Rc::try_unwrap(ctx).ok().expect("builder still referenced").into_inner()

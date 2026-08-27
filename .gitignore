@@ -3,3 +3,6 @@
 /fixtures/data/**/proof.json
 /fixtures/data/**/instance/
 !/fixtures/data/**/chonk_flows/**/proof
+!/fixtures/data/**/acir/**/proof
+/fixtures/data/**/acir/mock_1_1_tape/
+/fixtures/data/**/acir/rust_1_1/

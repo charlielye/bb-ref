@@ -31,13 +31,22 @@ struct StdlibVerifierInputs {
     kind: CircuitKind,
 }
 
-fn instantiate_stdlib_verification_queue(ctx: &Ctx, queue: Vec<VerifierInputs>) -> Vec<StdlibVerifierInputs> {
+/// A verification key already in the circuit (an ACIR kernel receives it as witnesses) with its hash.
+pub type VkWitnesses = (Vk<StdBn254>, FieldT);
+
+fn instantiate_stdlib_verification_queue(ctx: &Ctx, queue: Vec<VerifierInputs>, keys: Option<Vec<VkWitnesses>>) -> Vec<StdlibVerifierInputs> {
+    let mut keys = keys.map(|k| {
+        assert_eq!(k.len(), queue.len(), "one verification key per queued proof");
+        k.into_iter()
+    });
     queue
         .into_iter()
         .map(|e| {
             let proof = proof_to_witnesses(ctx, &e.proof);
-            let vk = vk_to_witnesses(ctx, &e.vk);
-            let vk_hash = FieldT::from_witness(ctx, e.vk.hash());
+            let (vk, vk_hash) = match keys.as_mut() {
+                Some(keys) => keys.next().unwrap(),
+                None => (vk_to_witnesses(ctx, &e.vk), FieldT::from_witness(ctx, e.vk.hash())),
+            };
             StdlibVerifierInputs { proof, vk, vk_hash, kind: e.kind }
         })
         .collect()
@@ -57,8 +66,10 @@ fn claim_value(claim: &VerifierClaim<StdBn254>) -> VerifierClaim<Bn254> {
 /// Complete the kernel circuit under construction in `ctx`: verify every queued instance, batch
 /// their claims with the previous accumulator, and (for the hiding kernel) verify the decider and
 /// the batch merge. The circuit must already contain the kernel's own logic and databus contents.
-pub fn complete_kernel_circuit_logic(ivc: &mut Chonk, ctx: &Ctx, rng: &mut dyn Rng) {
-    let queue = instantiate_stdlib_verification_queue(ctx, ivc.take_verification_queue());
+/// `keys` are the queued proofs' VKs when the circuit already holds them as witnesses; otherwise
+/// they are added as fresh witnesses.
+pub fn complete_kernel_circuit_logic(ivc: &mut Chonk, ctx: &Ctx, rng: &mut dyn Rng, keys: Option<Vec<VkWitnesses>>) {
+    let queue = instantiate_stdlib_verification_queue(ctx, ivc.take_verification_queue(), keys);
     assert!(!queue.is_empty(), "kernel with nothing to verify");
     let is_init = queue[0].kind == CircuitKind::App;
     let is_hiding = ivc.current_kind() == CircuitKind::HidingKernel;

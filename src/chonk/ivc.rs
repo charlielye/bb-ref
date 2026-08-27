@@ -105,6 +105,12 @@ impl Chonk {
     pub fn num_accumulated(&self) -> usize {
         self.accumulated
     }
+    /// bb `set_num_circuits_accumulated_for_mocking`: position a mocked IVC at the circuit whose
+    /// kernel logic is about to be built (no circuits are actually accumulated).
+    pub fn set_num_circuits_accumulated_for_mocking(&mut self, n: usize) {
+        assert!(n < self.kinds.len(), "Chonk: mock position past the last circuit");
+        self.accumulated = n;
+    }
     /// The previous kernel's output accumulator (what the next kernel verifies against).
     pub fn prover_accumulator(&self) -> Option<&ProverClaim> {
         self.prover_accumulator.as_ref()

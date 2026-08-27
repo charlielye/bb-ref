@@ -97,6 +97,10 @@ impl CommitmentKey {
         let n = (num_points + 1) & !1usize;
         Self { points: load_bn254_g1(n) }
     }
+    /// A key that cannot commit (for IVC state that is only ever verified against, never proven).
+    pub fn empty() -> Self {
+        Self { points: vec![] }
+    }
 }
 
 /// The Grumpkin key used by the ECCVM's IPA.

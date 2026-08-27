@@ -15,7 +15,7 @@ use crate::base::{Fr, G1Affine, NativeTranscript, Poly};
 /// bb `CONST_FOLDING_LOG_N`: every batching sumcheck is padded to this many rounds.
 pub const VIRTUAL_LOG_N: usize = super::flavor::CONST_FOLDING_LOG_N;
 /// The relation has degree 2, so round univariates have three evaluations.
-const UNIVARIATE_LENGTH: usize = 3;
+pub const UNIVARIATE_LENGTH: usize = 3;
 
 fn powers<F: FieldLike>(base: &F, n: usize) -> Vec<F> {
     let mut out = vec![F::one()];
