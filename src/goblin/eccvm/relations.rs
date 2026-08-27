@@ -28,6 +28,17 @@ impl<T: FieldLike<Native = Fq>> RelationSet<T> for EccvmRelations {
     fn accumulate(&self, r: usize, acc: &mut [T], row: &[T], p: &RelationParams<T>, scaling: &T) {
         ECCVM_RELATIONS[r].accumulate(acc, row, p, scaling)
     }
+    fn partial_length(&self, r: usize) -> usize {
+        ECCVM_RELATIONS[r].partial_lengths().into_iter().max().unwrap()
+    }
+    fn skip(&self, r: usize, row0: &[T], row1: &[T]) -> bool {
+        let both = |f: &dyn Fn(&[T]) -> bool| f(row0) && f(row1);
+        match ECCVM_RELATIONS[r] {
+            EccvmRel::Set => both(&|r: &[T]| (r[z_perm as usize].clone() - &r[z_perm_shift as usize]).is_zero() && r[transcript_mul as usize].is_zero() && r[lagrange_last as usize].is_zero()),
+            EccvmRel::ShiftableInit => both(&|r: &[T]| r[lagrange_first as usize].is_zero()),
+            _ => false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

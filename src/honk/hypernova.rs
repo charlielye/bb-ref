@@ -139,6 +139,7 @@ pub fn instance_proof_length_without_pis<C: Curve>(flavor: &FlavorDesc) -> usize
 pub fn instance_to_accumulator(inst: &mut ProverInstance, vk: &Vk<Bn254>, ck: &CommitmentKey, t: &mut NativeTranscript, rng: &mut dyn Rng) -> ProverClaim {
     let flavor = inst.flavor;
     let oink = prove_oink(inst, vk, ck, t, rng, true);
+    crate::base::timing::phase("  fold: oink");
     let betas: Vec<Fr> = t.dyadic_powers("HypernovaFoldingProver:gate_challenge", flavor.virtual_log_n);
     let polys = inst.all_polys();
     let sc = prove_sumcheck::<Bn254>(
@@ -152,6 +153,7 @@ pub fn instance_to_accumulator(inst: &mut ProverInstance, vk: &Vk<Bn254>, ck: &C
         None,
         None,
     );
+    crate::base::timing::phase("  fold: sumcheck");
 
     let layout = &inst.layout;
     let (uc, sh) = batching_challenges::<Bn254>(t, layout.num_unshifted(), layout.num_shifted());

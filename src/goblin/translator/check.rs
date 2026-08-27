@@ -3,7 +3,8 @@
 use super::builder::split_fq_into_limbs;
 use super::relations::{permutation_denominator, permutation_numerator, TranslatorRel, TRANSLATOR_RELATIONS};
 use super::{Ent, TranslatorPolys, CIRCUIT_SIZE};
-use crate::base::field::{from_u256, u256, FieldLike};
+use rayon::prelude::*;
+use crate::base::field::{from_u256, grand_product, u256, FieldLike};
 use crate::base::{Fq, Fr};
 use crate::honk::relations::RelationParams;
 
@@ -31,12 +32,16 @@ pub fn translator_relation_params(v: &Fq, x: &Fq, accumulated_result: [Fr; 4], b
 impl TranslatorPolys {
     /// bb `compute_grand_product` for the permutation relation, then the shifts.
     pub fn compute_grand_product(&mut self, p: &RelationParams<Fr>) {
-        let mut running = Fr::one();
-        for i in 0..CIRCUIT_SIZE - 1 {
-            let row = self.row(i);
-            running *= permutation_numerator(&row, p) * permutation_denominator(&row, p).invert();
-            self.cols[Ent::z_perm as usize].coeffs[i + 1] = running;
-        }
+        let terms: Vec<(Fr, Fr)> = (0..CIRCUIT_SIZE - 1)
+            .into_par_iter()
+            .map(|i| {
+                let row = self.row(i);
+                (permutation_numerator(&row, p), permutation_denominator(&row, p))
+            })
+            .collect();
+        let (num, den): (Vec<Fr>, Vec<Fr>) = terms.into_iter().unzip();
+        let prefix = grand_product(&num, &den);
+        self.cols[Ent::z_perm as usize].coeffs[1..CIRCUIT_SIZE].copy_from_slice(&prefix[1..]);
         self.set_shifted();
     }
 }

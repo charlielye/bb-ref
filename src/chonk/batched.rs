@@ -73,6 +73,7 @@ pub fn translator_oink_prove(polys: &mut TranslatorPolys, v: &Fq, x: &Fq, ck: &C
 /// The MegaZK Oink (`prove_oink` with `emit_alpha = false`) must already have run on `t`.
 pub fn joint_prove(mega: &ProverInstance, mega_params: &RelationParams<Fr>, trans: &mut TranslatorPolys, v: &Fq, x: &Fq, ck: &CommitmentKey, t: &mut NativeTranscript, rng: &mut dyn Rng) {
     let trans_params = translator_oink_prove(trans, v, x, ck, t, rng);
+    crate::base::timing::phase("  joint: translator oink");
     let layout = &mega.layout;
     let mega_rels = HonkRelations { flavor: &MEGA_ZK, layout };
     let trans_rels = TranslatorRelations;
@@ -122,8 +123,10 @@ pub fn joint_prove(mega: &ProverInstance, mega_params: &RelationParams<Fr>, tran
     let unshifted: Vec<&Poly> = PCS_UNSHIFTED.iter().map(|e| &trans.cols[*e]).chain(mega.polys.iter()).collect();
     let to_be_shifted: Vec<&Poly> = layout.shifted.iter().map(|e| mega.poly(*e)).chain(PCS_TO_BE_SHIFTED.iter().map(|e| &trans.cols[*e])).collect();
     let round_claims = sumcheck_round_claims(&committed.univariates, &committed.evaluations, &challenge);
+    crate::base::timing::phase("  joint: sumcheck");
     let claim = shplemini_prove(&unshifted, &to_be_shifted, &challenge, ck, t, Some(&libra), &round_claims);
     kzg_open(claim, ck, t);
+    crate::base::timing::phase("  joint: shplemini + kzg");
 }
 
 /// What the joint verifier needs besides the proofs: the ECCVM's translation challenges and result,

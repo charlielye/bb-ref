@@ -9,6 +9,7 @@
 use super::flavor::{FlavorDesc, Layout};
 use super::relations::{RelationParams, Row};
 use rayon::prelude::*;
+use crate::honk::flavor::{Ent, Rel, BUS_SPECS};
 use crate::base::field::{FieldLike, U256};
 use crate::base::group::Curve;
 use crate::base::poly::Polynomial;
@@ -30,6 +31,16 @@ pub trait RelationSet<F: FieldLike> {
     /// Relations checked only on the sumcheck-disabled rows (bb `IsOffsetOnlyRelation`).
     fn offset_only(&self, r: usize) -> bool;
     fn accumulate(&self, r: usize, acc: &mut [F], row: &[F], p: &RelationParams<F>, scaling: &F);
+    /// bb `Relation::skip`: the relation contributes nothing on the edge `(row0, row1)` (its
+    /// selector, or the combination bb tests, vanishes on both rows), so the prover may skip it.
+    fn skip(&self, _r: usize, _row0: &[F], _row1: &[F]) -> bool {
+        false
+    }
+    /// The relation's univariate length (bb's max subrelation partial length): the prover only
+    /// evaluates it at that many points and extends the accumulator afterwards.
+    fn partial_length(&self, _r: usize) -> usize {
+        usize::MAX
+    }
     fn total_subrelations(&self) -> usize {
         (0..self.num_relations()).map(|r| self.num_subrelations(r)).sum()
     }
@@ -56,6 +67,32 @@ impl<F: FieldLike> RelationSet<F> for HonkRelations<'_> {
     }
     fn accumulate(&self, r: usize, acc: &mut [F], row: &[F], p: &RelationParams<F>, scaling: &F) {
         self.flavor.relations[r].accumulate(acc, &Row { vals: row, layout: self.layout }, p, scaling)
+    }
+    fn partial_length(&self, r: usize) -> usize {
+        self.flavor.relations[r].spec().partial_lengths.iter().copied().max().unwrap_or(0)
+    }
+    fn skip(&self, r: usize, row0: &[F], row1: &[F]) -> bool {
+        let l = self.layout;
+        let zero = |e: Ent| row0[l.idx(e)].is_zero() && row1[l.idx(e)].is_zero();
+        match self.flavor.relations[r] {
+            Rel::Permutation => (row0[l.idx(Ent::z_perm)].clone() - &row0[l.shift_idx(Ent::z_perm)]).is_zero() && (row1[l.idx(Ent::z_perm)].clone() - &row1[l.shift_idx(Ent::z_perm)]).is_zero(),
+            Rel::LogDerivLookup => zero(Ent::q_lookup) && zero(Ent::lookup_read_counts),
+            Rel::Arithmetic => zero(Ent::q_arith),
+            Rel::DeltaRange => zero(Ent::q_delta_range),
+            Rel::Elliptic => zero(Ent::q_elliptic),
+            Rel::Memory => zero(Ent::q_memory),
+            Rel::NonNativeField => zero(Ent::q_nnf),
+            Rel::Poseidon2External => zero(Ent::q_poseidon2_external),
+            Rel::Poseidon2Internal => zero(Ent::q_poseidon2_internal),
+            Rel::Masking | Rel::MegaEccOpBoundary => false,
+            Rel::BilinearBatchedEq => zero(Ent::q_bilinear_batched_eq),
+            Rel::EccOpQueue => zero(Ent::lagrange_ecc_op),
+            Rel::Bus(b) => zero(Ent::q_busread) && zero(BUS_SPECS[b].read_counts),
+            Rel::Poseidon2InitialExternal => zero(Ent::q_poseidon2_external_initial),
+            Rel::Poseidon2QuadInternal => zero(Ent::q_poseidon2_quad_internal),
+            Rel::Poseidon2QuadInternalTerminal => zero(Ent::q_poseidon2_quad_internal_terminal),
+            Rel::Poseidon2TransitionEntry => zero(Ent::q_poseidon2_transition_entry),
+        }
     }
 }
 
@@ -440,6 +477,42 @@ fn add_accumulators<F: FieldLike + Copy>(mut a: Accumulators<F>, b: Accumulators
     a
 }
 
+/// Per-thread scratch for `accumulate_edge`.
+struct Scratch<F> {
+    row0: Vec<F>,
+    row1: Vec<F>,
+    row: Vec<F>,
+    sub: Vec<F>,
+    active: Vec<bool>,
+    /// Points evaluated per relation: `min(partial_length, d)`.
+    len: Vec<usize>,
+}
+
+impl<F: FieldLike + Copy> Scratch<F> {
+    fn new(rels: &impl RelationSet<F>, num_columns: usize, d: usize) -> Self {
+        let max_sub = (0..rels.num_relations()).map(|r| rels.num_subrelations(r)).max().unwrap_or(0);
+        Self {
+            row0: vec![F::zero(); num_columns],
+            row1: vec![F::zero(); num_columns],
+            row: vec![F::zero(); num_columns],
+            sub: vec![F::zero(); max_sub],
+            active: vec![false; rels.num_relations()],
+            len: (0..rels.num_relations()).map(|r| rels.partial_length(r).min(d)).collect(),
+        }
+    }
+}
+
+/// The accumulator of subrelation `j` of relation `ri` at point `k`: stored for `k` below the
+/// relation's partial length, barycentrically extended beyond it.
+fn accumulator_at<F: FieldLike + Copy>(rels: &impl RelationSet<F>, acc: &Accumulators<F>, ri: usize, j: usize, k: usize, d: usize) -> F {
+    let len = rels.partial_length(ri).min(d);
+    if k < len {
+        acc[ri][j][k]
+    } else {
+        evaluate_univariate(&acc[ri][j][..len], &F::from_u64(k as u64))
+    }
+}
+
 /// The accumulators over a range of edges, split across threads (exact arithmetic: any split
 /// gives the same sums).
 fn accumulate_edges<F: FieldLike + Copy + Send + Sync>(rels: &(impl RelationSet<F> + Sync), table: &[Vec<F>], edges: std::ops::Range<usize>, params: &RelationParams<F>, betas: &[F], round: usize, d: usize) -> Accumulators<F>
@@ -450,29 +523,43 @@ where
         .into_par_iter()
         .with_min_len(16)
         .fold(
-            || new_accumulators(rels, d),
-            |mut acc, e| {
-                accumulate_edge(rels, table, e, params, &pow_tail(betas, round, e), &mut acc, d);
-                acc
+            || (new_accumulators(rels, d), Scratch::new(rels, table.len(), d)),
+            |(mut acc, mut scratch), e| {
+                accumulate_edge(rels, table, e, params, &pow_tail(betas, round, e), &mut acc, &mut scratch);
+                (acc, scratch)
             },
         )
+        .map(|(acc, _)| acc)
         .reduce(|| new_accumulators(rels, d), add_accumulators)
 }
 
-/// Add the contributions of the edge `(table[·][2e], table[·][2e+1])` at every `k`.
-fn accumulate_edge<F: FieldLike + Copy>(rels: &impl RelationSet<F>, table: &[Vec<F>], e: usize, params: &RelationParams<F>, scaling: &F, acc: &mut Accumulators<F>, d: usize) {
-    let mut row = vec![F::zero(); table.len()];
-    for k in 0..d {
-        for (j, col) in table.iter().enumerate() {
-            let a = col.get(2 * e).copied().unwrap_or(F::zero());
-            let b = col.get(2 * e + 1).copied().unwrap_or(F::zero());
-            row[j] = linear_at(&a, &b, k);
+/// Add the contributions of the edge `(table[·][2e], table[·][2e+1])` at every `k`, skipping the
+/// relations that vanish on it.
+fn accumulate_edge<F: FieldLike + Copy>(rels: &impl RelationSet<F>, table: &[Vec<F>], e: usize, params: &RelationParams<F>, scaling: &F, acc: &mut Accumulators<F>, s: &mut Scratch<F>) {
+    for (j, col) in table.iter().enumerate() {
+        s.row0[j] = col.get(2 * e).copied().unwrap_or(F::zero());
+        s.row1[j] = col.get(2 * e + 1).copied().unwrap_or(F::zero());
+    }
+    let mut num_points = 0;
+    for ri in 0..rels.num_relations() {
+        s.active[ri] = !rels.skip(ri, &s.row0, &s.row1);
+        if s.active[ri] {
+            num_points = num_points.max(s.len[ri]);
+        }
+    }
+    for k in 0..num_points {
+        for j in 0..table.len() {
+            s.row[j] = linear_at(&s.row0[j], &s.row1[j], k);
         }
         for ri in 0..rels.num_relations() {
-            let mut sub = vec![F::zero(); rels.num_subrelations(ri)];
-            rels.accumulate(ri, &mut sub, &row, params, scaling);
-            for (j, v) in sub.into_iter().enumerate() {
-                acc[ri][j][k] += v;
+            if !s.active[ri] || k >= s.len[ri] {
+                continue;
+            }
+            let ns = rels.num_subrelations(ri);
+            s.sub[..ns].fill(F::zero());
+            rels.accumulate(ri, &mut s.sub[..ns], &s.row, params, scaling);
+            for j in 0..ns {
+                acc[ri][j][k] += s.sub[j];
             }
         }
     }
@@ -498,7 +585,7 @@ fn batch_over_relations<F: FieldLike + Copy>(rels: &impl RelationSet<F>, acc: &A
                 if !(ri == 0 && j == 0) {
                     alpha_idx += 1;
                 }
-                let mut term = acc[ri][j][k] * alpha;
+                let mut term = accumulator_at(rels, acc, ri, j, k, d) * alpha;
                 if rels.linearly_independent(ri, j) {
                     term *= pow_factor;
                 }
@@ -585,7 +672,7 @@ where
             // virtual round: the table has one row and the edge is (P(u), 0)
             let mut acc = new_accumulators(rels, d);
             let edge_table: Vec<Vec<F>> = self.table.iter().map(|c| vec![c[0], F::zero()]).collect();
-            accumulate_edge(rels, &edge_table, 0, params, &F::one(), &mut acc, d);
+            accumulate_edge(rels, &edge_table, 0, params, &F::one(), &mut acc, &mut Scratch::new(rels, edge_table.len(), d));
             let rd = if self.row_disabling { Some((self.rd0, self.rd1)) } else { None };
             batch_over_relations(rels, &acc, alphas, &betas[round], partial_eval, rd, d)
         }

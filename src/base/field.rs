@@ -114,6 +114,28 @@ impl<F: PrimeField<BigInt = U256>> FieldLike for F {
 
 // ---- integer / byte helpers on the canonical representation ----
 
+/// Invert every non-zero element with one field inversion (zeros stay zero), as bb's `batch_invert`.
+pub fn batch_invert<F: PrimeField>(v: &mut [F]) {
+    ark_ff::batch_inversion(v);
+}
+
+/// `z[0] = 1, z[i+1] = z[i] * num[i] / den[i]` with a single batched inversion (bb `compute_grand_product`).
+pub fn grand_product<F: PrimeField>(num: &[F], den: &[F]) -> Vec<F> {
+    let mut num_prefix = Vec::with_capacity(num.len() + 1);
+    let mut den_prefix = Vec::with_capacity(num.len() + 1);
+    let (mut n, mut d) = (F::one(), F::one());
+    num_prefix.push(n);
+    den_prefix.push(d);
+    for (a, b) in num.iter().zip(den) {
+        n *= a;
+        d *= b;
+        num_prefix.push(n);
+        den_prefix.push(d);
+    }
+    batch_invert(&mut den_prefix);
+    num_prefix.iter().zip(&den_prefix).map(|(n, d)| *n * d).collect()
+}
+
 pub fn u256<F: PrimeField<BigInt = U256>>(f: &F) -> U256 {
     f.into_bigint()
 }

@@ -78,6 +78,7 @@ fn msm(points: &[GrumpkinAffine], scalars: &[Fq]) -> GrumpkinAffine {
 /// bb `ECCVMProver::construct_proof` on `t`; the TripleIPA proof is returned separately.
 pub fn eccvm_prove(q: &EccOpQueue, ck: &GrumpkinKey, t: &mut NativeTranscript, rng: &mut dyn Rng) -> EccvmProverOutput {
     let mut polys = EccvmPolys::from_op_queue(q);
+    crate::base::timing::phase("  eccvm: trace polys");
     polys.add_masking(rng);
     let n = FIXED_SIZE;
 
@@ -105,7 +106,9 @@ pub fn eccvm_prove(q: &EccOpQueue, ck: &GrumpkinKey, t: &mut NativeTranscript, r
     let alpha: Fq = t.challenge("Sumcheck:alpha");
     let gate_challenges: Vec<Fq> = t.dyadic_powers("Sumcheck:gate_challenge", CONST_ECCVM_LOG_N);
     let mut zk = ZkData::<Grumpkin>::new(CONST_ECCVM_LOG_N, t, ck, rng);
+    crate::base::timing::phase("  eccvm: oink commits + derived polys");
     let sc = prove_sumcheck::<Grumpkin>(&EccvmRelations, &sumcheck_spec(), &polys.cols, t, &alpha, &gate_challenges, &params, Some(&mut zk), Some(ck));
+    crate::base::timing::phase("  eccvm: sumcheck");
 
     // Every univariate opening claim, paired with the commitment the verifier holds for it.
     let mut claims: Vec<ProverClaim<Fq>> = Vec::new();
@@ -239,7 +242,9 @@ pub fn eccvm_prove(q: &EccOpQueue, ck: &GrumpkinKey, t: &mut NativeTranscript, r
         univariate_poly: shplonk.claim.poly,
     };
     let mut ipa_transcript = NativeTranscript::new();
+    crate::base::timing::phase("  eccvm: shplemini + translation claims");
     triple_ipa_prove(ck, &input, &mut ipa_transcript);
+    crate::base::timing::phase("  eccvm: triple ipa");
     let _ = subgroup_domain::<Grumpkin>;
     EccvmProverOutput {
         ipa_proof: ipa_transcript.export_proof(),

@@ -518,7 +518,7 @@ pub fn shplemini_prove(
     let mut current = a_0.coeffs.clone();
     for l in 0..log_n - 1 {
         let half = current.len() / 2;
-        let next: Vec<Fr> = (0..half).map(|j| current[2 * j] + u[l] * (current[2 * j + 1] - current[2 * j])).collect();
+        let next: Vec<Fr> = (0..half).into_par_iter().map(|j| current[2 * j] + u[l] * (current[2 * j + 1] - current[2 * j])).collect();
         folds.push(Poly::from_coeffs(next.clone()));
         current = next;
     }
@@ -613,7 +613,7 @@ pub fn shplonk_prove<C: Curve<TF = Fr>>(
     t: &mut NativeTranscript,
 ) -> ShplonkProverOutput<C>
 where
-    C::Fr: Copy,
+    C::Fr: Copy + Send + Sync,
     C::G: AffineRepr<ScalarField = C::Fr>,
 {
     type F<C> = <C as Curve>::Fr;
@@ -622,61 +622,62 @@ where
     let max_size = claims.iter().chain(libra_claims).chain(sumcheck_claims).map(|c| c.poly.len()).max().unwrap();
 
     // Q = sum_j nu^j (f_j - v_j) / (X - x_j)
-    let mut q = Polynomial::<F<C>>::zero(max_size);
+    // Every opening `(poly, x, v, nu^i)` in bb's batching order: a Gemini fold contributes its
+    // positive and negative openings back to back; Libra and committed-sumcheck claims start at
+    // nu^{2 * virtual_log_n}.
+    let mut openings: Vec<(&Polynomial<F<C>>, F<C>, F<C>, F<C>)> = Vec::new();
     let mut current_nu = F::<C>::one();
     let mut fold_idx = 0;
-    let add_quotient = |q: &mut Polynomial<F<C>>, poly: &Polynomial<F<C>>, x: &F<C>, v: &F<C>, scale: &F<C>| {
-        let mut tmp = poly.clone();
-        tmp.coeffs.resize(max_size, F::<C>::zero());
-        tmp.coeffs[0] -= v;
-        tmp.factor_root(x);
-        q.add_scaled(&tmp, scale);
-    };
     for c in claims {
         if c.gemini_fold {
-            add_quotient(&mut q, &c.poly, &(-c.challenge), &fold_pos_evals[fold_idx], &current_nu);
+            openings.push((&c.poly, -c.challenge, fold_pos_evals[fold_idx], current_nu));
             fold_idx += 1;
             current_nu *= nu;
         }
-        add_quotient(&mut q, &c.poly, &c.challenge, &c.evaluation, &current_nu);
+        openings.push((&c.poly, c.challenge, c.evaluation, current_nu));
         current_nu *= nu;
     }
     if !libra_claims.is_empty() || !sumcheck_claims.is_empty() {
         current_nu = nu.pow_u64(2 * virtual_log_n as u64);
         for c in libra_claims.iter().chain(sumcheck_claims) {
-            add_quotient(&mut q, &c.poly, &c.challenge, &c.evaluation, &current_nu);
+            openings.push((&c.poly, c.challenge, c.evaluation, current_nu));
             current_nu *= nu;
         }
     }
+    let zero = || Polynomial::<F<C>>::zero(max_size);
+    let add = |mut a: Polynomial<F<C>>, b: Polynomial<F<C>>| {
+        a.add_scaled(&b, &F::<C>::one());
+        a
+    };
+    // Q = sum_i nu^i (p_i(X) - v_i) / (X - x_i); the quotients are computed across openings in parallel
+    let q = openings
+        .par_iter()
+        .with_min_len(4)
+        .fold(zero, |mut q, (poly, x, v, scale)| {
+            let mut tmp = (*poly).clone();
+            tmp.coeffs.resize(max_size, F::<C>::zero());
+            tmp.coeffs[0] -= v;
+            tmp.factor_root(x);
+            q.add_scaled(&tmp, scale);
+            q
+        })
+        .reduce(zero, add);
     let quotient_commitment = ck.commit(&q);
     t.send("Shplonk:Q", &quotient_commitment);
     let z: F<C> = t.challenge("Shplonk:z");
 
-    // G = Q - sum_j nu^j (f_j - v_j) / (z - x_j)
-    let mut g = q;
-    let mut current_nu = F::<C>::one();
-    let mut fold_idx = 0;
-    let subtract = |g: &mut Polynomial<F<C>>, poly: &Polynomial<F<C>>, x: &F<C>, v: &F<C>, scale: &F<C>| {
-        let s = *scale * (z - x).invert();
-        g.add_scaled(poly, &(-s));
-        g.coeffs[0] += s * v;
-    };
-    for c in claims {
-        if c.gemini_fold {
-            subtract(&mut g, &c.poly, &(-c.challenge), &fold_pos_evals[fold_idx], &current_nu);
-            fold_idx += 1;
-            current_nu *= nu;
-        }
-        subtract(&mut g, &c.poly, &c.challenge, &c.evaluation, &current_nu);
-        current_nu *= nu;
-    }
-    if !libra_claims.is_empty() || !sumcheck_claims.is_empty() {
-        current_nu = nu.pow_u64(2 * virtual_log_n as u64);
-        for c in libra_claims.iter().chain(sumcheck_claims) {
-            subtract(&mut g, &c.poly, &c.challenge, &c.evaluation, &current_nu);
-            current_nu *= nu;
-        }
-    }
+    // G = Q - sum_i nu^i / (z - x_i) (p_i(X) - v_i)
+    let batched = openings
+        .par_iter()
+        .with_min_len(4)
+        .fold(zero, |mut g, (poly, x, v, scale)| {
+            let s = *scale * (z - x).invert();
+            g.add_scaled(poly, &(-s));
+            g.coeffs[0] += s * v;
+            g
+        })
+        .reduce(zero, add);
+    let g = add(q, batched);
     ShplonkProverOutput {
         claim: ProverClaim {
             poly: g,

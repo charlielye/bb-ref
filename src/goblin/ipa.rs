@@ -3,6 +3,7 @@
 //! claim and a univariate claim with a single inner-product proof. Native only: Chonk's client verifier
 //! runs the ECCVM verifier natively, and Grumpkin openings are discharged as accumulators.
 
+use rayon::prelude::*;
 use crate::base::field::FieldLike;
 use crate::base::poly::{eq_table, Polynomial};
 use crate::base::{Fq, GrumpkinAffine, GrumpkinKey, NativeTranscript};
@@ -60,8 +61,8 @@ pub fn inner_product_prove(ck: &GrumpkinKey, witness: &P, mut b: Vec<Fq>, t: &mu
     let mut challenge_product = Fq::one();
     for round in 0..log_n {
         let half = n >> (round + 1);
-        let inner_l: Fq = (0..half).map(|i| a[i] * b[half + i]).sum();
-        let inner_r: Fq = (0..half).map(|i| a[half + i] * b[i]).sum();
+        let inner_l: Fq = (0..half).into_par_iter().map(|i| a[i] * b[half + i]).sum();
+        let inner_r: Fq = (0..half).into_par_iter().map(|i| a[half + i] * b[i]).sum();
         let l = msm(&g[half..2 * half], &a[..half]) + aux_generator * inner_l;
         let r = msm(&g[..half], &a[half..2 * half]) + aux_generator * inner_r;
         let index = log_n - round - 1;
@@ -71,11 +72,11 @@ pub fn inner_product_prove(ck: &GrumpkinKey, witness: &P, mut b: Vec<Fq>, t: &mu
         assert!(!u.is_zero(), "IPA round challenge is zero");
         let u_inv = u.invert();
         challenge_product *= u;
-        for i in 0..half {
-            a[i] = u_inv * a[i] + a[half + i];
-            b[i] = u * b[i] + b[half + i];
-        }
-        g = Proj::normalize_batch(&(0..half).map(|i| g[i] * u + g[half + i]).collect::<Vec<_>>());
+        let (a_lo, a_hi) = a.split_at_mut(half);
+        a_lo.par_iter_mut().zip(&a_hi[..half]).for_each(|(lo, hi)| *lo = u_inv * *lo + hi);
+        let (b_lo, b_hi) = b.split_at_mut(half);
+        b_lo.par_iter_mut().zip(&b_hi[..half]).for_each(|(lo, hi)| *lo = u * *lo + hi);
+        g = Proj::normalize_batch(&(0..half).into_par_iter().map(|i| g[i] * u + g[half + i]).collect::<Vec<_>>());
     }
     t.send("IPA:G_0", &(g[0] * challenge_product.invert()).into_affine());
     t.send("IPA:a_0", &(a[0] * challenge_product));

@@ -82,6 +82,22 @@ impl<T: FieldLike<Native = Fr>> RelationSet<T> for TranslatorRelations {
     fn accumulate(&self, r: usize, acc: &mut [T], row: &[T], p: &RelationParams<T>, scaling: &T) {
         TRANSLATOR_RELATIONS[r].accumulate(acc, row, p, scaling)
     }
+    fn partial_length(&self, r: usize) -> usize {
+        TRANSLATOR_RELATIONS[r].partial_lengths().into_iter().max().unwrap()
+    }
+    fn skip(&self, r: usize, row0: &[T], row1: &[T]) -> bool {
+        let both = |f: &dyn Fn(&[T]) -> bool| f(row0) && f(row1);
+        let at = |r: &[T], e: Ent| r[e as usize].clone();
+        match TRANSLATOR_RELATIONS[r] {
+            TranslatorRel::Permutation => both(&|r: &[T]| (at(r, z_perm) - &at(r, z_perm_shift)).is_zero()),
+            TranslatorRel::DeltaRange => false,
+            TranslatorRel::Opcode => both(&|r: &[T]| (at(r, lagrange_even_in_minicircuit) + &at(r, lagrange_odd_in_minicircuit)).is_zero()),
+            TranslatorRel::AccumulatorTransfer => both(&|r: &[T]| (at(r, lagrange_odd_in_minicircuit) + &at(r, lagrange_last_in_minicircuit) + &at(r, lagrange_result_row)).is_zero()),
+            TranslatorRel::Decomposition | TranslatorRel::NonNativeField => both(&|r: &[T]| at(r, lagrange_even_in_minicircuit).is_zero()),
+            TranslatorRel::ZeroConstraints => both(&|r: &[T]| (at(r, lagrange_odd_in_minicircuit) + &at(r, lagrange_even_in_minicircuit) + &at(r, lagrange_mini_masking) - &T::one()).is_zero()),
+            TranslatorRel::ShiftableFirstCoeffZero => both(&|r: &[T]| at(r, lagrange_first).is_zero()),
+        }
+    }
 }
 
 fn c<T: FieldLike>(v: u64) -> T {
