@@ -70,6 +70,25 @@ pub trait FieldLike:
     fn is_zero(&self) -> bool {
         ark_ff::Zero::is_zero(&self.value())
     }
+    /// bb `convert_constant_to_fixed_witness` on a constant: natively just the constant; in-circuit a
+    /// fresh witness fixed to `v` by a gate (an artifact bb's verifiers emit that must be mirrored).
+    fn fixed_witness(_ctx: &Self::Ctx, v: Self::Native) -> Self {
+        Self::constant(v)
+    }
+    /// bb `operator/`: in-circuit this also constrains the divisor to be non-zero (one extra gate),
+    /// so it is used exactly where bb divides rather than inverts.
+    fn div(&self, other: &Self) -> Self {
+        self.clone() * &other.invert()
+    }
+    /// bb `ranged_less_than<num_bits>`: `self < other` as a field element; both are assumed to be
+    /// below `2^num_bits` (in-circuit this costs a bool witness and a range gate).
+    fn ranged_less_than(&self, other: &Self, _num_bits: u32) -> Self {
+        Self::from_u64((u256(&self.value()) < u256(&other.value())) as u64)
+    }
+    /// bb `pow<num_bits>(exponent)` for an exponent below `2^num_bits` (in-circuit: bit decomposition).
+    fn pow_field(&self, exponent: &Self, _num_bits: u32) -> Self {
+        self.pow_u64(u256_to_u64(&u256(&exponent.value())))
+    }
 }
 
 impl<F: PrimeField<BigInt = U256>> FieldLike for F {

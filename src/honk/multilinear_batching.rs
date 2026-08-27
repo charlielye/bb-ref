@@ -3,11 +3,11 @@
 //! `Σ_i γ^i (P_i(x) + α S_i(x)) eq(x, r_i)`, then merge the outputs with powers of `ρ`.
 //! The width is a runtime value (bb instantiates one flavor per width).
 
-use crate::base::poly::eq_table;
 use super::hypernova::{ProverClaim, VerifierClaim};
 use crate::base::codec::FromChallenge;
 use crate::base::field::FieldLike;
 use crate::base::group::{Curve, GroupLike};
+use crate::base::poly::eq_table;
 use crate::base::poly::evaluate_univariate;
 use crate::base::transcript::Transcript;
 use crate::base::{Fr, G1Affine, NativeTranscript, Poly};
@@ -206,8 +206,11 @@ where
 
     let rho: F<C> = t.challenge("claim_merge_challenge");
     let scalars = powers(&rho, n);
+    // bb `compute_new_claim`: the commitments are batched before the evaluations are summed
     let ns: Vec<C::G> = claims.iter().map(|c| c.non_shifted_commitment.clone()).collect();
     let sh: Vec<C::G> = claims.iter().map(|c| c.shifted_commitment.clone()).collect();
+    let non_shifted_commitment = C::G::batch_mul(&ns, &scalars);
+    let shifted_commitment = C::G::batch_mul(&sh, &scalars);
     let mut non_shifted_evaluation = F::<C>::zero();
     let mut shifted_evaluation = F::<C>::zero();
     for i in 0..n {
@@ -218,8 +221,8 @@ where
         challenge,
         non_shifted_evaluation,
         shifted_evaluation,
-        non_shifted_commitment: C::G::batch_mul(&ns, &scalars),
-        shifted_commitment: C::G::batch_mul(&sh, &scalars),
+        non_shifted_commitment,
+        shifted_commitment,
     };
     (verified, claim)
 }

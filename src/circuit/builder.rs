@@ -6,12 +6,12 @@
 use super::mega::MegaState;
 use super::op_queue::EccOpQueue;
 use super::trace::{BlockId, Blocks, GateRow, Kind, MEGA_BLOCKS, ULTRA_BLOCKS};
-use std::cell::RefCell;
-use std::rc::Rc;
 use crate::base::field::{u256, u256_num_bits, u256_shr, FieldLike};
 use crate::base::poseidon2::round_constants;
 use crate::base::Fr;
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
+use std::rc::Rc;
 
 pub const IS_CONSTANT: u32 = u32::MAX;
 const REAL_VARIABLE: u32 = u32::MAX - 1;
@@ -93,6 +93,30 @@ pub struct RangeList {
     pub range_tag: u32,
     pub tau_tag: u32,
     pub variable_indices: Vec<u32>,
+}
+
+thread_local! {
+    static GLOBAL_GATE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static CURRENT_BLOCK_LENS: std::cell::RefCell<[usize; 12]> = const { std::cell::RefCell::new([0; 12]) };
+}
+
+/// Gates created on this thread so far (all builders); with `BBREF_TRACE_GATES` set, `trace_phase`
+/// prints it with a label so a trace-dump difference can be mapped to a verifier phase.
+pub fn global_gate_count() -> usize {
+    GLOBAL_GATE_COUNT.with(|c| c.get())
+}
+pub fn trace_phase(label: &str) {
+    if std::env::var_os("BBREF_TRACE_GATES").is_some() {
+        let lens = CURRENT_BLOCK_LENS.with(|b| *b.borrow());
+        eprintln!(
+            "[gates {:>7} | ecc_op {:>5} arith {:>6} busread {:>4} poseidon2 {:>5}] {label}",
+            global_gate_count(),
+            lens[BlockId::EccOp as usize],
+            lens[BlockId::Arithmetic as usize],
+            lens[BlockId::Busread as usize],
+            lens[BlockId::Poseidon2 as usize]
+        );
+    }
 }
 
 pub struct Builder {
@@ -247,6 +271,7 @@ impl Builder {
     fn increment_num_gates(&mut self) {
         assert!(!self.circuit_finalized, "cannot add gates after the circuit is finalized");
         self.num_gates += 1;
+        GLOBAL_GATE_COUNT.with(|c| c.set(c.get() + 1));
     }
     pub fn failure(&mut self, msg: &str) {
         if self.failed.is_none() {
@@ -334,13 +359,19 @@ impl Builder {
     pub(super) fn append_row(&mut self, block: BlockId, row: GateRow) {
         self.blocks.get_mut(block).rows.push(row);
         self.increment_num_gates();
+        let len = self.blocks.get(block).rows.len();
+        CURRENT_BLOCK_LENS.with(|b| b.borrow_mut()[block as usize] = len);
     }
     fn append(&mut self, block: BlockId, row: GateRow) {
         self.append_row(block, row);
     }
     /// Ultra keeps external rounds in their own block; Mega puts every Poseidon2 gate in one block.
     fn poseidon2_external_block(&self) -> BlockId {
-        if self.is_mega() { BlockId::Poseidon2 } else { BlockId::Poseidon2External }
+        if self.is_mega() {
+            BlockId::Poseidon2
+        } else {
+            BlockId::Poseidon2External
+        }
     }
     pub fn create_add_gate(&mut self, g: AddTriple) {
         self.create_big_add_gate(
@@ -454,7 +485,10 @@ impl Builder {
     }
     pub fn memory_selectors_row(&self, t: MemorySelector) -> GateRow {
         let one = Fr::one();
-        let mut row = GateRow { kind: Kind::Memory, ..Default::default() };
+        let mut row = GateRow {
+            kind: Kind::Memory,
+            ..Default::default()
+        };
         row.gate_value = if matches!(t, MemorySelector::None) { Fr::zero() } else { one };
         match t {
             MemorySelector::None => {}
@@ -484,11 +518,32 @@ impl Builder {
     pub fn create_poseidon2_external_gate(&mut self, wires: [u32; 4], round_idx: usize) {
         let rc = &round_constants()[round_idx];
         let block = self.poseidon2_external_block();
-        self.append(block, GateRow { wires, q_1: rc[0], q_2: rc[1], q_3: rc[2], q_4: rc[3], kind: Kind::Poseidon2Ext, gate_value: Fr::one(), ..Default::default() });
+        self.append(
+            block,
+            GateRow {
+                wires,
+                q_1: rc[0],
+                q_2: rc[1],
+                q_3: rc[2],
+                q_4: rc[3],
+                kind: Kind::Poseidon2Ext,
+                gate_value: Fr::one(),
+                ..Default::default()
+            },
+        );
     }
     pub fn create_poseidon2_internal_gate(&mut self, wires: [u32; 4], round_idx: usize) {
         let rc = &round_constants()[round_idx];
-        self.append(BlockId::Poseidon2Internal, GateRow { wires, q_1: rc[0], kind: Kind::Poseidon2Int, gate_value: Fr::one(), ..Default::default() });
+        self.append(
+            BlockId::Poseidon2Internal,
+            GateRow {
+                wires,
+                q_1: rc[0],
+                kind: Kind::Poseidon2Int,
+                gate_value: Fr::one(),
+                ..Default::default()
+            },
+        );
     }
 
     // ---- range constraints ----
@@ -560,7 +615,12 @@ impl Builder {
         variable_indices.push(index);
         self.assign_tag(index, range_tag);
         self.create_unconstrained_gates(&variable_indices);
-        RangeList { target_range, range_tag, tau_tag, variable_indices }
+        RangeList {
+            target_range,
+            range_tag,
+            tau_tag,
+            variable_indices,
+        }
     }
 
     /// Decompose into `target_range_bitnum`-bit limbs, range-constrain each, and prove the
@@ -668,10 +728,26 @@ impl Builder {
     fn create_sort_constraint_with_edges(&mut self, indices: &[u32], start: Fr, end: Fr) {
         assert!(indices.len() % NUM_WIRES == 0 && indices.len() > NUM_WIRES);
         let z = self.zero_idx;
-        let edge = |x: u32, v: Fr| AddTriple { a: x, b: z, c: z, a_scaling: Fr::one(), b_scaling: Fr::zero(), c_scaling: Fr::zero(), const_scaling: -v };
+        let edge = |x: u32, v: Fr| AddTriple {
+            a: x,
+            b: z,
+            c: z,
+            a_scaling: Fr::one(),
+            b_scaling: Fr::zero(),
+            c_scaling: Fr::zero(),
+            const_scaling: -v,
+        };
         self.create_add_gate(edge(indices[0], start));
         for c in indices.chunks(NUM_WIRES) {
-            self.append(BlockId::DeltaRange, GateRow { wires: [c[0], c[1], c[2], c[3]], kind: Kind::DeltaRange, gate_value: Fr::one(), ..Default::default() });
+            self.append(
+                BlockId::DeltaRange,
+                GateRow {
+                    wires: [c[0], c[1], c[2], c[3]],
+                    kind: Kind::DeltaRange,
+                    gate_value: Fr::one(),
+                    ..Default::default()
+                },
+            );
         }
         let last = *indices.last().unwrap();
         self.create_unconstrained_gate(BlockId::DeltaRange, [last, z, z, z]);

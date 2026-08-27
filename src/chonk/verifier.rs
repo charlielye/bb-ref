@@ -55,7 +55,7 @@ pub fn chonk_verify(hiding_vk: &Vk<Bn254>, proof: &ChonkProof, g2: &G2Points, gr
     }
     let num_public_inputs = proof.hiding_oink_proof.len() - overhead;
     let mut t = NativeTranscript::from_proof(&proof.hiding_oink_proof);
-    let oink = verify_oink::<Bn254>(&MEGA_ZK, &layout, hiding_vk, &mut t, num_public_inputs, false);
+    let oink = verify_oink::<Bn254>(&MEGA_ZK, &layout, hiding_vk, &hiding_vk.hash(), &mut t, num_public_inputs, false);
     let io = HidingKernelIo::from_public_inputs(&oink.public_inputs);
     if !io.pairing_points.check(g2) {
         return false;

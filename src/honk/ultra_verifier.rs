@@ -48,7 +48,7 @@ pub fn reduce_to_pairing_check<C: Curve>(flavor: &FlavorDesc, vk: &Vk<C>, proof:
     let log_n = flavor.virtual_log_n;
 
     let mut t = Transcript::<C::TF, C::Hash>::from_proof(proof);
-    let oink = verify_oink::<C>(flavor, &layout, vk, &mut t, num_public_inputs, true);
+    let oink = verify_oink::<C>(flavor, &layout, vk, &vk.hash(), &mut t, num_public_inputs, true);
     let gate_challenges: Vec<C::Fr> = t.dyadic_powers("Sumcheck:gate_challenge", log_n);
 
     let mut libra_commitments: Vec<C::G> = Vec::new();

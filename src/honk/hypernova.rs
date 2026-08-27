@@ -5,13 +5,14 @@
 
 use super::flavor::FlavorDesc;
 use super::multilinear_batching::{mlb_prove, mlb_verify};
-use super::oink::verify_oink;
+use super::oink::{verify_oink, OinkOutput};
 use super::oink_prover::prove_oink;
 use super::prover_instance::ProverInstance;
 use super::sumcheck::{prove_sumcheck, verify_sumcheck, HonkRelations, SumcheckSpec};
 use crate::base::codec::{ChallengeField, Transcriptable};
 use crate::base::field::FieldLike;
 use crate::base::group::{Curve, GroupLike};
+use crate::base::poseidon2::Hasher;
 use crate::base::transcript::Transcript;
 use crate::base::{Bn254, CommitmentKey, Fr, G1Affine, NativeTranscript, Poly, Rng, Vk};
 
@@ -37,6 +38,33 @@ pub struct VerifierClaim<C: Curve> {
     pub shifted_evaluation: C::Fr,
     pub non_shifted_commitment: C::G,
     pub shifted_commitment: C::G,
+}
+
+impl<C: Curve> VerifierClaim<C> {
+    /// bb `hash_with_origin_tagging`: Poseidon2 over the challenge, the two evaluations and the two
+    /// commitments (the kernel's `output_hn_accum_hash`).
+    pub fn hash(&self) -> C::TF {
+        let mut fields: Vec<C::TF> = self.challenge.iter().flat_map(Transcriptable::to_fields).collect();
+        fields.extend(self.non_shifted_evaluation.to_fields());
+        fields.extend(self.shifted_evaluation.to_fields());
+        fields.extend(self.non_shifted_commitment.to_fields());
+        fields.extend(self.shifted_commitment.to_fields());
+        C::Hash::hash(&fields)
+    }
+    /// bb `stdlib_from_native`: every component as a fresh witness, in declaration order.
+    pub fn from_native<N: Curve>(ctx: &<C::Fr as FieldLike>::Ctx, native: &VerifierClaim<N>) -> Self
+    where
+        C::Fr: FieldLike<Native = <N::Fr as FieldLike>::Native>,
+        C::G: GroupLike<C::Fr, Native = <N::G as GroupLike<N::Fr>>::Native>,
+    {
+        Self {
+            challenge: native.challenge.iter().map(|c| C::Fr::from_witness(ctx, c.value())).collect(),
+            non_shifted_evaluation: C::Fr::from_witness(ctx, native.non_shifted_evaluation.value()),
+            shifted_evaluation: C::Fr::from_witness(ctx, native.shifted_evaluation.value()),
+            non_shifted_commitment: C::G::from_witness(ctx, native.non_shifted_commitment.value()),
+            shifted_commitment: C::G::from_witness(ctx, native.shifted_commitment.value()),
+        }
+    }
 }
 
 impl ProverClaim {
@@ -152,16 +180,25 @@ pub fn instance_to_accumulator(inst: &mut ProverInstance, vk: &Vk<Bn254>, ck: &C
     }
 }
 
-/// The verifier's side of `instance_to_accumulator` on a proof already loaded into `t`.
-pub fn verify_instance_to_accumulator<C: Curve>(flavor: &FlavorDesc, vk: &Vk<C>, num_public_inputs: usize, t: &mut Transcript<C::TF, C::Hash>) -> (bool, VerifierClaim<C>)
+/// The verifier's side of `instance_to_accumulator` on a proof already loaded into `t`. Returns the
+/// Oink output too (public inputs and witness commitments feed the kernel's IO checks).
+pub fn verify_instance_to_accumulator<C: Curve>(
+    flavor: &FlavorDesc,
+    vk: &Vk<C>,
+    vk_hash: &C::TF,
+    num_public_inputs: usize,
+    t: &mut Transcript<C::TF, C::Hash>,
+) -> (bool, VerifierClaim<C>, OinkOutput<C>)
 where
     C::TF: ChallengeField,
 {
     let layout = flavor.layout();
-    let oink = verify_oink::<C>(flavor, &layout, vk, t, num_public_inputs, true);
+    let oink = verify_oink::<C>(flavor, &layout, vk, vk_hash, t, num_public_inputs, true);
     let betas: Vec<C::Fr> = t.dyadic_powers("HypernovaFoldingProver:gate_challenge", flavor.virtual_log_n);
     let sc = verify_sumcheck::<C>(&HonkRelations { flavor, layout: &layout }, &SumcheckSpec::honk(flavor, &layout), t, &oink.alpha, &oink.params, &betas);
+    crate::circuit::builder::trace_phase("hypernova: sumcheck verified");
     let (uc, sh) = batching_challenges::<C>(t, layout.num_unshifted(), layout.num_shifted());
+    crate::circuit::builder::trace_phase("hypernova: batching challenges");
     let mut non_shifted_evaluation = C::Fr::zero();
     let mut shifted_evaluation = C::Fr::zero();
     for (i, c) in uc.iter().enumerate() {
@@ -170,6 +207,7 @@ where
     for (j, c) in sh.iter().enumerate() {
         shifted_evaluation += &(sc.evals[layout.num_unshifted() + j].clone() * c);
     }
+    crate::circuit::builder::trace_phase("hypernova: batched evaluations");
     let to_be_shifted: Vec<C::G> = layout.shifted.iter().map(|e| oink.commitments[layout.idx(*e)].clone()).collect();
     let claim = VerifierClaim {
         challenge: sc.challenge,
@@ -178,7 +216,8 @@ where
         non_shifted_commitment: C::G::batch_mul(&oink.commitments, &uc),
         shifted_commitment: C::G::batch_mul(&to_be_shifted, &sh),
     };
-    (sc.verified, claim)
+    crate::circuit::builder::trace_phase("hypernova: batched commitments");
+    (sc.verified, claim, oink)
 }
 
 /// Stateful driver for one folding group (bb `HypernovaFoldingProver`): accumulate each instance,
@@ -236,12 +275,12 @@ where
             cached: vec![],
         }
     }
-    pub fn accumulate_instance(&mut self, flavor: &FlavorDesc, vk: &Vk<C>, proof: &[C::TF]) -> bool {
+    pub fn accumulate_instance(&mut self, flavor: &FlavorDesc, vk: &Vk<C>, vk_hash: &C::TF, proof: &[C::TF]) -> (bool, OinkOutput<C>) {
         let num_public_inputs = proof.len() - instance_proof_length_without_pis::<C>(flavor);
         self.transcript.load_proof(proof);
-        let (verified, claim) = verify_instance_to_accumulator::<C>(flavor, vk, num_public_inputs, &mut self.transcript);
+        let (verified, claim, oink) = verify_instance_to_accumulator::<C>(flavor, vk, vk_hash, num_public_inputs, &mut self.transcript);
         self.cached.push(claim);
-        verified
+        (verified, oink)
     }
     pub fn finalize(&mut self, batching_proof: &[C::TF], previous: Option<VerifierClaim<C>>) -> (bool, VerifierClaim<C>) {
         let mut claims: Vec<VerifierClaim<C>> = previous.into_iter().collect();

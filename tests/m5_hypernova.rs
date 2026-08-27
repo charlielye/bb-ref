@@ -84,7 +84,7 @@ fn check_folding(name: &str, entries: &[(&str, &'static FlavorDesc)], with_prev:
     // ---- verifier, on bb's proofs ----
     let mut verifier = FoldingVerifier::<Bn254>::new();
     for (i, (_, flavor)) in entries.iter().enumerate() {
-        assert!(verifier.accumulate_instance(flavor, &vks[i], &read_proof(&dump.join(format!("instance_proof_{i}.bin")))), "{name}: instance {i} rejected");
+        assert!(verifier.accumulate_instance(flavor, &vks[i], &vks[i].hash(), &read_proof(&dump.join(format!("instance_proof_{i}.bin")))).0, "{name}: instance {i} rejected");
     }
     let (ok, vacc) = verifier.finalize(&read_proof(&dump.join("batch_proof.bin")), prev.as_ref().map(ProverClaim::to_verifier_claim));
     assert!(ok, "{name}: batching rejected");

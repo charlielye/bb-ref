@@ -34,12 +34,21 @@ pub fn compute_public_input_delta<F: FieldLike>(public_inputs: &[F], beta: &F, g
             denominator_acc -= beta;
         }
     }
-    numerator * &denominator.invert()
+    numerator.div(&denominator)
 }
 
-pub fn verify_oink<C: Curve>(flavor: &FlavorDesc, layout: &Layout, vk: &Vk<C>, t: &mut Transcript<C::TF, C::Hash>, num_public_inputs: usize, emit_alpha: bool) -> OinkOutput<C> {
-    let vk_hash = vk.hash();
-    t.add_to_hash_buffer("vk_hash", &vk_hash);
+/// `vk_hash` is the hash the verifier was handed (bb `VKAndHash`); it is checked against the hash
+/// recomputed from `vk` (natively an assertion, in-circuit a copy constraint).
+pub fn verify_oink<C: Curve>(flavor: &FlavorDesc, layout: &Layout, vk: &Vk<C>, vk_hash: &C::TF, t: &mut Transcript<C::TF, C::Hash>, num_public_inputs: usize, emit_alpha: bool) -> OinkOutput<C> {
+    crate::circuit::builder::trace_phase("oink: start");
+    let computed_vk_hash = vk.hash();
+    crate::circuit::builder::trace_phase("oink: vk hashed");
+    t.add_to_hash_buffer("vk_hash", &computed_vk_hash);
+    assert_eq!(vk_hash.value(), computed_vk_hash.value(), "VK hash mismatch");
+    vk_hash.assert_equal(&computed_vk_hash);
+    let num_public_inputs_field = C::Fr::from_u64(num_public_inputs as u64);
+    assert_eq!(vk.num_public_inputs.value(), num_public_inputs_field.value(), "num_public_inputs mismatch with VK");
+    vk.num_public_inputs.assert_equal(&num_public_inputs_field);
     assert_eq!(vk.comms.len(), layout.num_precomputed, "VK commitment count does not match flavor");
 
     let public_inputs: Vec<C::Fr> = (0..num_public_inputs).map(|i| t.receive(&format!("public_input_{i}"))).collect();
@@ -102,6 +111,7 @@ pub fn verify_oink<C: Curve>(flavor: &FlavorDesc, layout: &Layout, vk: &Vk<C>, t
     recv(t, &mut comms, Ent::z_perm);
 
     let alpha: C::Fr = if emit_alpha { t.challenge("alpha") } else { C::Fr::zero() };
+    crate::circuit::builder::trace_phase("oink: done");
 
     let commitments = comms
         .into_iter()

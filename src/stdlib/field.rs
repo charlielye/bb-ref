@@ -640,6 +640,88 @@ fn validate_split_in_field_unsafe(lo: &FieldT, hi: &FieldT, lo_bits: u32) {
     lo_diff.create_range_constraint(lo_bits as u64);
 }
 
+/// A boolean witness (bb `bool_t`, the non-inverted slice): a witness constrained to `{0, 1}` by a
+/// bool gate. Only ever created from a witness here, so no inversion flag is needed.
+#[derive(Clone)]
+pub struct BoolT {
+    pub ctx: Ctx,
+    pub witness_index: u32,
+    pub value: bool,
+}
+
+impl BoolT {
+    pub fn from_witness(ctx: &Ctx, value: bool) -> Self {
+        let idx = ctx.borrow_mut().add_variable(Fr::from(value as u64));
+        ctx.borrow_mut().create_bool_gate(idx);
+        Self {
+            ctx: ctx.clone(),
+            witness_index: idx,
+            value,
+        }
+    }
+    /// bb `field_t(const bool_t&)`.
+    pub fn to_field(&self) -> FieldT {
+        FieldT::from_witness_index(&self.ctx, self.witness_index)
+    }
+}
+
+impl FieldT {
+    /// bb `ranged_less_than<num_bits>`.
+    pub fn ranged_less_than_bits(&self, other: &Self, num_bits: u32) -> Self {
+        if self.is_constant() && other.is_constant() {
+            return Self::constant(Fr::from((u256(&self.get_value()) < u256(&other.get_value())) as u64));
+        }
+        let ctx = same_ctx(&self.ctx, &other.ctx).unwrap();
+        let range_constant: Fr = from_u256(crate::base::field::U256::from(1u64) << num_bits);
+        let predicate = BoolT::from_witness(&ctx, u256(&self.get_value()) < u256(&other.get_value()));
+        let term_a = &(&FieldT::neg(self) + &Self::constant(range_constant)) - &Self::constant(Fr::one());
+        let term_b = &FieldT::neg(&predicate.to_field()) * &Self::constant(range_constant);
+        let predicate_valid = other.add_two(&term_a, &term_b);
+        predicate_valid.create_range_constraint(num_bits as u64);
+        predicate.to_field()
+    }
+
+    /// bb `pow<num_bits>(const field_t& exponent)`: bit-decompose the exponent (bool witnesses, most
+    /// significant first in the accumulator), then square-and-conditionally-multiply.
+    pub fn pow_field_bits(&self, exponent: &Self, num_bits: u32) -> Self {
+        let exponent_value = u256(&exponent.get_value());
+        assert!((u256_num_bits(&exponent_value) as u32) <= num_bits, "exponent too large in field_t::pow");
+        if self.is_constant() && exponent.is_constant() {
+            return Self::constant(self.get_value().pow_u64(crate::base::field::u256_to_u64(&exponent_value)));
+        }
+        if exponent.is_constant() {
+            return self.pow_u32(crate::base::field::u256_to_u64(&exponent_value) as u32);
+        }
+        let ctx = same_ctx(&self.ctx, &exponent.ctx).unwrap();
+        let mut bits: Vec<Option<BoolT>> = vec![None; num_bits as usize];
+        let mut remaining = exponent_value;
+        for i in 0..num_bits as usize {
+            let bit = remaining.0[0] & 1 == 1;
+            bits[num_bits as usize - 1 - i] = Some(BoolT::from_witness(&ctx, bit));
+            remaining = u256_shr(remaining, 1);
+        }
+        let bits: Vec<BoolT> = bits.into_iter().map(Option::unwrap).collect();
+        let mut exponent_accumulator = Self::constant(Fr::zero());
+        for bit in &bits {
+            exponent_accumulator = FieldT::add(&exponent_accumulator, &exponent_accumulator);
+            exponent_accumulator = FieldT::add(&exponent_accumulator, &bit.to_field());
+        }
+        exponent.assert_equal(&exponent_accumulator);
+        let mut accumulator = Self {
+            ctx: Some(ctx.clone()),
+            ..Self::constant(Fr::one())
+        };
+        let one = Self::constant(Fr::one());
+        for bit in &bits {
+            accumulator = FieldT::mul(&accumulator, &accumulator);
+            // conditional_assign_internal(bit, self, one) = (self - one).madd(bit, one)
+            let multiplier = FieldT::sub(self, &one).madd(&bit.to_field(), &one);
+            accumulator = FieldT::mul(&accumulator, &multiplier);
+        }
+        accumulator.normalize()
+    }
+}
+
 impl fmt::Debug for FieldT {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "FieldT({:?})", self.get_value())
@@ -677,6 +759,20 @@ impl FieldLike for FieldT {
     }
     fn pow_u64(&self, e: u64) -> Self {
         self.pow_u32(u32::try_from(e).expect("in-circuit exponents are 32-bit"))
+    }
+    fn fixed_witness(ctx: &Ctx, v: Fr) -> Self {
+        let mut f = FieldT::constant(v);
+        f.convert_constant_to_fixed_witness(ctx);
+        f
+    }
+    fn div(&self, other: &Self) -> Self {
+        FieldT::div(self, other)
+    }
+    fn ranged_less_than(&self, other: &Self, num_bits: u32) -> Self {
+        self.ranged_less_than_bits(other, num_bits)
+    }
+    fn pow_field(&self, exponent: &Self, num_bits: u32) -> Self {
+        self.pow_field_bits(exponent, num_bits)
     }
 }
 

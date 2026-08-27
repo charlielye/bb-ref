@@ -37,7 +37,9 @@ impl<F: FieldLike> Polynomial<F> {
     }
     /// Coefficients in reverse order over the full length: `X^{n-1} p(1/X)` (bb `Polynomial::reverse`).
     pub fn reverse(&self) -> Self {
-        Self { coeffs: self.coeffs.iter().rev().cloned().collect() }
+        Self {
+            coeffs: self.coeffs.iter().rev().cloned().collect(),
+        }
     }
     /// Horner evaluation of the univariate `sum_i coeffs[i] X^i`.
     pub fn evaluate(&self, z: &F) -> F {
@@ -141,16 +143,22 @@ pub fn evaluate_univariate<F: FieldLike>(vals: &[F], u: &F) -> F {
     for i in 0..n {
         full_numerator *= &(u.clone() - &F::from_u64(i as u64));
     }
-    let mut result = F::zero();
-    for (i, v) in vals.iter().enumerate() {
-        let mut denom = F::one();
-        for j in 0..n {
-            if j != i {
-                denom *= &(F::from_u64(i as u64) - &F::from_u64(j as u64));
+    // bb `Univariate::evaluate`: every denominator inverse first, then the terms
+    let denominator_inverses: Vec<F> = (0..n)
+        .map(|i| {
+            let mut denom = F::one();
+            for j in 0..n {
+                if j != i {
+                    denom *= &(F::from_u64(i as u64) - &F::from_u64(j as u64));
+                }
             }
-        }
-        denom *= &(u.clone() - &F::from_u64(i as u64));
-        result += &(v.clone() * &denom.invert());
+            denom *= &(u.clone() - &F::from_u64(i as u64));
+            F::one().div(&denom)
+        })
+        .collect();
+    let mut result = F::zero();
+    for (v, inv) in vals.iter().zip(&denominator_inverses) {
+        result += &(v.clone() * inv);
     }
     result * &full_numerator
 }

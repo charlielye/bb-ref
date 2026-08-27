@@ -188,6 +188,7 @@ pub fn shplemini_verify<C: Curve>(
     let committed_sumcheck = !sumcheck_round_evaluations.is_empty();
     assert!(!committed_sumcheck || has_zk, "committed sumcheck requires ZK for the nu power indexing");
 
+    crate::circuit::builder::trace_phase("shplemini: start");
     let rho: F<C> = t.challenge("rho");
     let fold_commitments: Vec<C::G> = (1..virtual_log_n).map(|i| t.receive(&format!("Gemini:FOLD_{i}"))).collect();
     let gemini_r: F<C> = t.challenge("Gemini:r");
@@ -215,15 +216,20 @@ pub fn shplemini_verify<C: Curve>(
     let q_commitment: C::G = t.receive("Shplonk:Q");
     let z: F<C> = t.challenge("Shplonk:z");
 
+    crate::circuit::builder::trace_phase("shplemini: challenges received");
     let mut commitments = vec![q_commitment];
     let mut scalars = vec![F::<C>::one()];
     let mut constant_term_accumulator = F::<C>::zero();
 
-    // 1/(z - r^{2^j}), 1/(z + r^{2^j})
+    // 1/(z - r^{2^j}), 1/(z + r^{2^j}): every denominator first, then the inversions
+    // (bb `compute_inverted_gemini_denominators`)
     let mut inverse_vanishing_evals = Vec::with_capacity(2 * virtual_log_n);
     for rp in &r_powers {
-        inverse_vanishing_evals.push((z.clone() - rp).invert());
-        inverse_vanishing_evals.push((z.clone() + rp).invert());
+        inverse_vanishing_evals.push(z.clone() - rp);
+        inverse_vanishing_evals.push(z.clone() + rp);
+    }
+    for d in inverse_vanishing_evals.iter_mut() {
+        *d = d.invert();
     }
 
     // ClaimBatcher::compute_scalars_for_each_batch
@@ -249,6 +255,7 @@ pub fn shplemini_verify<C: Curve>(
     aggregate(&batcher.unshifted_comms, &batcher.unshifted_evals, &unshifted_scalar, &mut commitments, &mut scalars);
     aggregate(&batcher.shifted_comms, &batcher.shifted_evals, &shifted_scalar, &mut commitments, &mut scalars);
 
+    crate::circuit::builder::trace_phase("shplemini: batched claims");
     // GeminiVerifier::compute_fold_pos_evaluations
     let mut fold_pos_evals = Vec::with_capacity(virtual_log_n);
     let mut eval_pos_prev = batched_evaluation;
@@ -264,6 +271,7 @@ pub fn shplemini_verify<C: Curve>(
     }
     fold_pos_evals.reverse();
 
+    crate::circuit::builder::trace_phase("shplemini: fold pos evals");
     // batch_gemini_claims_received_from_prover
     for j in 1..virtual_log_n {
         let pos = 2 * j;
@@ -300,9 +308,9 @@ pub fn shplemini_verify<C: Curve>(
             commitments.push(c.clone());
         }
         let g = F::<C>::constant(C::subgroup_generator());
-        let inv_z_minus_r = (z.clone() - &gemini_r).invert();
-        let inv_z_minus_gr = (z.clone() - &(g.clone() * &gemini_r)).invert();
-        let inv_z_minus_one = (z.clone() - &F::<C>::one()).invert();
+        let inv_z_minus_r = F::<C>::one().div(&(z.clone() - &gemini_r));
+        let inv_z_minus_gr = F::<C>::one().div(&(z.clone() - &(g.clone() * &gemini_r)));
+        let inv_z_minus_one = F::<C>::one().div(&(z.clone() - &F::<C>::one()));
         let mut grouped = [F::<C>::zero(), F::<C>::zero(), F::<C>::zero()];
         for (idx, (comm_idx, point, _, _)) in SMALL_IPA_CLAIMS.iter().enumerate() {
             let denom = match point {
@@ -321,12 +329,12 @@ pub fn shplemini_verify<C: Curve>(
 
     if committed_sumcheck {
         // batch_sumcheck_round_claims: each round univariate is opened at 0, 1 and u_i.
-        let inv_z = z.invert();
-        let inv_z_minus_one = (z.clone() - &F::<C>::one()).invert();
+        let inv_z = F::<C>::one().div(&z);
+        let inv_z_minus_one = F::<C>::one().div(&(z.clone() - &F::<C>::one()));
         let mut power = 2 * virtual_log_n + NUM_SMALL_IPA_OPENING_CLAIMS;
         for (i, (comm, evals)) in sumcheck_round_commitments.iter().zip(sumcheck_round_evaluations).enumerate() {
             commitments.push(comm.clone());
-            let inv_z_minus_u = (z.clone() - &multivariate_challenge[i]).invert();
+            let inv_z_minus_u = F::<C>::one().div(&(z.clone() - &multivariate_challenge[i]));
             let mut batched_scalar = F::<C>::zero();
             for (denominator, eval) in [(&inv_z, &evals[0]), (&inv_z_minus_one, &evals[1]), (&inv_z_minus_u, &evals[2])] {
                 let scaling_factor = denominator.clone() * &nu_powers[power];
@@ -338,6 +346,7 @@ pub fn shplemini_verify<C: Curve>(
         }
     }
 
+    crate::circuit::builder::trace_phase("shplemini: done");
     commitments.push(g1_identity.clone());
     scalars.push(constant_term_accumulator);
     ShpleminiOutput {
@@ -376,11 +385,17 @@ pub fn shplonk_verify<C: Curve>(claims: &[VerifierOpeningClaim<C>], g1_identity:
 /// The MSM behind bb `ShplonkVerifier_::compute_partially_evaluated_quotient_claim`.
 pub fn shplonk_batch_claim<C: Curve>(claims: &[VerifierOpeningClaim<C>], q: C::G, nu: &C::Fr, z: &C::Fr, g1_identity: C::G) -> BatchOpeningClaim<C> {
     let nu_pows = powers(nu, claims.len());
+    // bb `ShplonkVerifier_::initialize` fixes a zero "evaluation" witness in-circuit (unused natively)
+    if let Some(ctx) = nu.ctx() {
+        let _evaluation = C::Fr::fixed_witness(&ctx, <C::Fr as FieldLike>::Native::from(0u64));
+    }
     let mut commitments = vec![q];
     let mut scalars = vec![C::Fr::one()];
     let mut identity_scalar = C::Fr::zero();
-    for (c, nu_pow) in claims.iter().zip(&nu_pows) {
-        let factor = nu_pow.clone() * (z.clone() - &c.challenge).invert();
+    // bb `accumulate_claims`: every inverse first, then the batching
+    let inverse_vanishing_evals: Vec<C::Fr> = claims.iter().map(|c| (z.clone() - &c.challenge).invert()).collect();
+    for ((c, nu_pow), inv) in claims.iter().zip(&nu_pows).zip(&inverse_vanishing_evals) {
+        let factor = nu_pow.clone() * inv;
         commitments.push(c.commitment.clone());
         scalars.push(C::Fr::zero() - &factor);
         identity_scalar += factor * &c.evaluation;
@@ -395,6 +410,7 @@ pub fn shplonk_batch_claim<C: Curve>(claims: &[VerifierOpeningClaim<C>], q: C::G
 }
 
 pub fn kzg_reduce_verify_batch_opening_claim<C: Curve>(mut claim: BatchOpeningClaim<C>, t: &mut Transcript<C::TF, C::Hash>, expected_final_msm_size: usize) -> PairingPoints<C> {
+    crate::circuit::builder::trace_phase("kzg: start");
     let w: C::G = t.receive("KZG:W");
     claim.commitments.push(w.clone());
     claim.scalars.push(claim.evaluation_point.clone());

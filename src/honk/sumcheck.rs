@@ -120,11 +120,19 @@ pub fn row_disabling_main_factor<F: FieldLike>(u: &[F]) -> F {
 /// `scaling` is `pow_beta(u)`; `(main, offset)` are the row-disabling factors `(1-L(u), L(u))`
 /// or `(1, 0)` (bb `compute_full_relation_purported_value` + `scale_and_batch_elements`).
 pub fn full_relation_value<F: FieldLike>(rels: &impl RelationSet<F>, evals: &[F], params: &RelationParams<F>, scaling: &F, alphas: &[F], main_factor: &F, offset_factor: &F) -> F {
+    // every relation is accumulated before any batching (bb `accumulate_relation_evaluations` then
+    // `scale_and_batch_elements`), which fixes the in-circuit gate order
+    let accumulated: Vec<Vec<F>> = (0..rels.num_relations())
+        .map(|ri| {
+            let mut acc = vec![F::zero(); rels.num_subrelations(ri)];
+            rels.accumulate(ri, &mut acc, evals, params, scaling);
+            crate::circuit::builder::trace_phase(&format!("relation {ri} accumulated"));
+            acc
+        })
+        .collect();
     let mut result = F::zero();
     let mut alpha_idx = 0;
-    for ri in 0..rels.num_relations() {
-        let mut acc = vec![F::zero(); rels.num_subrelations(ri)];
-        rels.accumulate(ri, &mut acc, evals, params, scaling);
+    for (ri, acc) in accumulated.iter().enumerate() {
         let factor = if rels.offset_only(ri) { offset_factor } else { main_factor };
         for (j, e) in acc.iter().enumerate() {
             if ri == 0 && j == 0 {
@@ -199,6 +207,7 @@ pub fn verify_sumcheck<C: Curve>(
         }
     }
 
+    crate::circuit::builder::trace_phase("sumcheck: rounds done");
     let evals: Vec<F<C>> = t.receive_vec("Sumcheck:evaluations", spec.num_entities);
 
     let (main_factor, offset_factor) = if spec.row_disabling {
@@ -208,7 +217,9 @@ pub fn verify_sumcheck<C: Curve>(
     } else {
         (F::<C>::one(), F::<C>::zero())
     };
+    crate::circuit::builder::trace_phase("sumcheck: row disabling factors");
     let mut full_value = full_relation_value(rels, &evals, params, &partial_evaluation_result, &alphas, &main_factor, &offset_factor);
+    crate::circuit::builder::trace_phase("sumcheck: full relation value");
 
     let mut libra_evaluation = F::<C>::zero();
     if spec.has_zk {

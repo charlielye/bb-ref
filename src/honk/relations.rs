@@ -163,8 +163,8 @@ fn logderiv_lookup<T: FieldLike>(acc: &mut [T], r: &Row<T>, p: &RelationParams<T
     let read_tags = r.e(lookup_read_tags);
     // 1 - (1 - read_tag)(1 - q_lookup)
     let inverse_exists = -(read_tags.clone() * read_selector) + read_tags + read_selector;
-    let table_term = table_term(r, p);
     let lookup_term = lookup_term(r, p);
+    let table_term = table_term(r, p);
 
     acc[0] += &((lookup_term.clone() * &table_term * inverses - &inverse_exists) * scaling);
     let mut tmp = read_selector.clone() * &table_term;
@@ -193,12 +193,7 @@ fn arithmetic<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: &T) {
 // relations/delta_range_constraint_relation.hpp
 fn delta_range<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: &T) {
     let qs = r.e(q_delta_range).clone() * scaling;
-    let deltas = [
-        r.e(w_r).clone() - r.e(w_l),
-        r.e(w_o).clone() - r.e(w_r),
-        r.e(w_4).clone() - r.e(w_o),
-        r.s(w_l).clone() - r.e(w_4),
-    ];
+    let deltas = [r.e(w_r).clone() - r.e(w_l), r.e(w_o).clone() - r.e(w_r), r.e(w_4).clone() - r.e(w_o), r.s(w_l).clone() - r.e(w_4)];
     for (i, d) in deltas.iter().enumerate() {
         // T = (D - 3) * D;  T * (T + 2) == D(D-1)(D-2)(D-3)
         let mut tmp = (d.clone() - &c(3)) * d;
@@ -289,8 +284,7 @@ fn memory<T: FieldLike>(acc: &mut [T], r: &Row<T>, p: &RelationParams<T>, scalin
     neg_next_gate_access_type += &(w_1s.clone() * &p.eta);
     neg_next_gate_access_type = neg_next_gate_access_type - w_4s;
     let value_delta = w_3s.clone() - w_3;
-    let adjacent_values_match_if_adjacent_indices_match_and_next_access_is_a_read_operation =
-        (index_delta_is_zero.clone() * &value_delta) * &(neg_next_gate_access_type.clone() + &c(1));
+    let adjacent_values_match_if_adjacent_indices_match_and_next_access_is_a_read_operation = (index_delta_is_zero.clone() * &value_delta) * &(neg_next_gate_access_type.clone() + &c(1));
     let next_gate_access_type_is_boolean = neg_next_gate_access_type.sqr() + &neg_next_gate_access_type;
     let q_3_by_memory_and_scaling = q_3.clone() * &q_memory_by_scaling;
     acc[3] += &(adjacent_values_match_if_adjacent_indices_match_and_next_access_is_a_read_operation * &q_3_by_memory_and_scaling);
@@ -574,12 +568,19 @@ fn poseidon2_quad_internal_terminal<T: FieldLike>(acc: &mut [T], r: &Row<T>, sca
     let u_3 = pow5(w4.clone() + r.e(q_4));
     let cf = &qp.closed_form;
     let shifts = [r.s(w_l), r.s(w_r), r.s(w_o), r.s(w_4)];
+    // bb's order: all wire terms, the selector scaling, all bodies, then the accumulations
+    let wps: Vec<T> = (0..4)
+        .map(|j| wr.clone() * &k::<T>(cf[j][0]) + wo.clone() * &k::<T>(cf[j][1]) + w4.clone() * &k::<T>(cf[j][2]) - shifts[j])
+        .collect();
     let q_by_scaling = r.e(q_poseidon2_quad_internal_terminal).clone() * scaling;
+    let bodies: Vec<T> = (0..4)
+        .map(|j| {
+            let u3_term = if j == 0 { u_3.clone() * &k::<T>(cf[0][6]) } else { u_3.clone() };
+            u_0.clone() * &k::<T>(cf[j][3]) + u_1.clone() * &k::<T>(cf[j][4]) + u_2.clone() * &k::<T>(cf[j][5]) + u3_term + &wps[j]
+        })
+        .collect();
     for j in 0..4 {
-        let wp = wr.clone() * &k::<T>(cf[j][0]) + wo.clone() * &k::<T>(cf[j][1]) + w4.clone() * &k::<T>(cf[j][2]) - shifts[j];
-        let u3_term = if j == 0 { u_3.clone() * &k::<T>(cf[0][6]) } else { u_3.clone() };
-        let body = u_0.clone() * &k::<T>(cf[j][3]) + u_1.clone() * &k::<T>(cf[j][4]) + u_2.clone() * &k::<T>(cf[j][5]) + u3_term + &wp;
-        acc[j] += q_by_scaling.clone() * &body;
+        acc[j] += q_by_scaling.clone() * &bodies[j];
     }
 }
 

@@ -25,9 +25,10 @@ BBREF_OUT=$F/data/$(cut -c1-7 "$F/PIN")/instance/translator "$BIN" --gtest_filte
 # M11: BatchedHonkTranslator joint proof (bb dump; then `cargo test --test m11_batched` writes rust/, verified by the last line)
 BBREF_SCRIPT=$F/scripts/mega_zk.txt BBREF_OUT=$F/data/$(cut -c1-7 "$F/PIN")/instance/batched "$BIN" --gtest_filter='BbRefDump.Batched'
 [ -f "$F/data/$(cut -c1-7 "$F/PIN")/instance/batched/rust/joint_proof.bin" ] && BBREF_SCRIPT=$F/scripts/mega_zk.txt BBREF_IN=$F/data/$(cut -c1-7 "$F/PIN")/instance/batched/rust "$BIN" --gtest_filter='BbRefDump.Batched'
-# M12: Chonk end-to-end (bb mock IVC with real kernels, 2 apps; then `cargo test --test m12_chonk` writes rust/, verified by the last line)
-BBREF_NUM_APPS=2 BBREF_OUT=$F/data/$(cut -c1-7 "$F/PIN")/instance/chonk/bb_2apps "$BIN" --gtest_filter='BbRefDump.Chonk'
-[ -f "$F/data/$(cut -c1-7 "$F/PIN")/instance/chonk/rust/proof_fields.bin" ] && BBREF_IN=$F/data/$(cut -c1-7 "$F/PIN")/instance/chonk/rust "$BIN" --gtest_filter='BbRefDump.Chonk'
+# M12/M14: Chonk end-to-end (bb mock IVC with real kernels, 2 apps, per-circuit instance dumps); then
+# `cargo test --test m14_kernels` rebuilds the same IVC in Rust, writes rust_kernels/ (verified by the last line)
+BBREF_DUMP_CIRCUITS=1 BBREF_NUM_APPS=2 BBREF_OUT=$F/data/$(cut -c1-7 "$F/PIN")/instance/chonk/bb_2apps "$BIN" --gtest_filter='BbRefDump.Chonk'
+[ -f "$F/data/$(cut -c1-7 "$F/PIN")/instance/chonk/rust_kernels/proof_fields.bin" ] && BBREF_IN=$F/data/$(cut -c1-7 "$F/PIN")/instance/chonk/rust_kernels "$BIN" --gtest_filter='BbRefDump.Chonk'
 # Pinned real flows: fixtures/regen_chonk_flows.sh (needs the flows downloaded)
 # RNG tapes (bb CSPRNG byte stream recorded by the patched numeric/random/engine.cpp; single-threaded): the
 # Rust ZK provers replay them and must reproduce bb's proofs byte for byte.
@@ -36,6 +37,9 @@ mkdir -p $T/eccvm_proof/base_tape $T/batched_tape
 HARDWARE_CONCURRENCY=1 BB_RNG_TAPE_OUT=$T/eccvm_proof/base_tape/rng_tape.bin BBREF_CASE=base BBREF_OUT=$T/eccvm_proof/base_tape "$BIN" --gtest_filter='BbRefDump.EccvmProof'
 HARDWARE_CONCURRENCY=1 BB_RNG_TAPE_OUT=$T/batched_tape/rng_tape.bin BBREF_SCRIPT=$F/scripts/mega_zk.txt BBREF_OUT=$T/batched_tape "$BIN" --gtest_filter='BbRefDump.Batched'
 ACIR=$F/../../aztec-packages2/barretenberg/acir_tests/acir_tests
+# full ChonkProof byte-exactness (no per-circuit dumps: the MegaZK dump would draw masking)
+mkdir -p $T/chonk/bb_2apps_tape
+HARDWARE_CONCURRENCY=1 BB_RNG_TAPE_OUT=$T/chonk/bb_2apps_tape/rng_tape.bin BBREF_NUM_APPS=2 BBREF_OUT=$T/chonk/bb_2apps_tape "$BIN" --gtest_filter='BbRefDump.Chonk'
 for prog in array_dynamic a_1_mul; do
   mkdir -p $T/${prog}_tape
   HARDWARE_CONCURRENCY=1 BB_RNG_TAPE_OUT=$T/${prog}_tape/rng_tape.bin BBREF_PROGRAM=$ACIR/$prog/target/program.json BBREF_WITNESS=$ACIR/$prog/target/witness.gz BBREF_OUT=$T/${prog}_tape "$BIN" --gtest_filter='BbRefDump.UltraInstance'

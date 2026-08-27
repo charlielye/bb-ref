@@ -30,7 +30,7 @@ fn verify(vk: &bb_ref::base::vk::Vk<bb_ref::base::Bn254>, oink_proof: &[Fr], joi
     let layout = MEGA_ZK.layout();
     let num_public_inputs = oink_proof.len() - mega_zk_oink_length_without_public_inputs();
     let mut t = NativeTranscript::from_proof(oink_proof);
-    let oink = verify_oink::<bb_ref::base::Bn254>(&MEGA_ZK, &layout, vk, &mut t, num_public_inputs, false);
+    let oink = verify_oink::<bb_ref::base::Bn254>(&MEGA_ZK, &layout, vk, &vk.hash(), &mut t, num_public_inputs, false);
     let r = joint_verify(vk, &oink, joint_proof, inputs, &mut t);
     r.verified && r.pairing_points.check(&bn254_g2())
 }

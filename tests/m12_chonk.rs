@@ -1,20 +1,18 @@
-//! M12 exit: Chonk end-to-end natively. Rust runs the IVC over kernel-shaped circuits and bb
-//! verifies the resulting `ChonkProof`; Rust verifies bb's mock IVC proof (real recursive kernels)
+//! M12 exit: Chonk end-to-end natively. Rust verifies bb's mock IVC proof (real recursive kernels)
 //! and bb's proofs of the pinned real transaction flows; proof field/msgpack layouts round-trip.
+//! (Rust proving the IVC is exercised with real kernels in `m14_kernels.rs`.)
 mod common;
 use ark_ec::{AffineRepr, CurveGroup};
 use bb_ref::base::codec::Transcriptable;
-use bb_ref::base::io::{decode_fields, encode_fields};
+use bb_ref::base::io::decode_fields;
 use bb_ref::base::srs::bn254_g2;
 use bb_ref::base::vk::Vk;
-use bb_ref::base::{Bn254, CommitmentKey, Fr, G1Affine, GrumpkinKey, OsRng};
+use bb_ref::base::{Bn254, Fr, G1Affine, GrumpkinKey};
 use bb_ref::chonk::batched::mega_zk_oink_length_without_public_inputs;
-use bb_ref::chonk::ivc::{Chonk, CircuitKind};
 use bb_ref::chonk::proof::ChonkProof;
 use bb_ref::chonk::verifier::{chonk_verify, HIDING_KERNEL_PUBLIC_INPUTS_SIZE};
 use bb_ref::goblin::eccvm::FIXED_SIZE;
 use bb_ref::honk::MEGA_ZK;
-use common::dummy_ivc::{app_circuit, hiding_circuit, kernel_circuit, MockDatabus};
 use std::path::Path;
 
 fn verify(vk: &Vk<Bn254>, proof: &ChonkProof) -> bool {
@@ -44,36 +42,6 @@ fn check_bb_proof(dir: &Path) {
     let pi_start = bad.hiding_oink_proof.len() - mega_zk_oink_length_without_public_inputs() - HIDING_KERNEL_PUBLIC_INPUTS_SIZE;
     tamper_point(&mut bad.hiding_oink_proof, pi_start + 8);
     assert!(!verify(&vk, &bad), "tampered hiding kernel public input accepted");
-}
-
-#[test]
-fn rust_ivc_verifies_and_exports() {
-    let kinds = vec![CircuitKind::App, CircuitKind::App, CircuitKind::Kernel, CircuitKind::Kernel, CircuitKind::HidingKernel];
-    let mut ivc = Chonk::new(kinds.clone(), CommitmentKey::new(1 << 17));
-    let mut bus = MockDatabus::default();
-    for _ in 0..kinds.len() {
-        let mut circuit = match ivc.current_kind() {
-            CircuitKind::App => app_circuit(&ivc, &mut bus),
-            CircuitKind::Kernel => kernel_circuit(&mut ivc, &mut bus),
-            CircuitKind::HidingKernel => hiding_circuit(&mut ivc, &mut bus, &mut OsRng),
-        };
-        ivc.accumulate(&mut circuit, &mut OsRng);
-    }
-    let proof = ivc.prove(&mut OsRng);
-    assert_eq!(ChonkProof::from_fields(&proof.to_fields()), proof, "field layout round trip");
-    assert_eq!(ChonkProof::from_msgpack(&proof.to_msgpack()), proof, "msgpack round trip");
-    assert!(verify(ivc.hiding_vk(), &proof), "Rust Chonk proof rejected by the Rust verifier");
-
-    let out = common::fixture_dir("instance/chonk/rust");
-    std::fs::create_dir_all(&out).unwrap();
-    std::fs::write(out.join("proof_fields.bin"), encode_fields(&proof.to_fields())).unwrap();
-    std::fs::write(out.join("proof.msgpack"), proof.to_msgpack()).unwrap();
-    std::fs::write(out.join("vk"), ivc.hiding_vk().to_bytes()).unwrap();
-
-    let mut bad = proof.clone();
-    let kzg_w = bad.joint_proof.len() - 4;
-    tamper_point(&mut bad.joint_proof, kzg_w);
-    assert!(!verify(ivc.hiding_vk(), &bad), "tampered KZG opening accepted");
 }
 
 #[test]

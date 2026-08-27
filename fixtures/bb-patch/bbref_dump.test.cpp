@@ -1047,8 +1047,24 @@ TEST(BbRefDump, Chonk)
     std::filesystem::create_directories(out);
     PrivateFunctionExecutionMockCircuitProducer producer(static_cast<size_t>(std::stoul(n_env)));
     Chonk ivc{ producer.circuit_kinds() };
+    // BBREF_DUMP_CIRCUITS=1 additionally dumps every circuit's proving instance (polys + VK) for the
+    // Rust kernel builder to compare against. Off for RNG-tape runs: the MegaZK dump draws masking.
+    const bool dump_circuits = std::getenv("BBREF_DUMP_CIRCUITS") != nullptr;
     for (size_t idx = 0; idx < producer.total_num_circuits; ++idx) {
-        producer.construct_and_accumulate_next_circuit(ivc, TestSettings{ .log2_num_gates = 5 });
+        const bool is_hiding = ivc.get_num_circuits_accumulated() == ivc.get_num_circuits() - 1;
+        auto circuit = producer.create_next_circuit(ivc, is_hiding ? 0 : 5, 0, false);
+        const auto kind = ivc.current_kind();
+        if (dump_circuits) {
+            const auto dir = out / ("circuit_" + std::to_string(idx));
+            if (kind == CircuitKind::App) {
+                dump_from_builder<MegaAppFlavor>(circuit, dir);
+            } else if (kind == CircuitKind::Kernel) {
+                dump_from_builder<MegaKernelFlavor>(circuit, dir);
+            } else {
+                dump_from_builder<MegaZKFlavor>(circuit, dir);
+            }
+        }
+        ivc.accumulate(circuit, PrivateFunctionExecutionMockCircuitProducer::make_circuit_verification_key(kind, circuit));
     }
     auto proof = ivc.prove();
     auto vk = ivc.get_hiding_kernel_vk_and_hash()->vk;

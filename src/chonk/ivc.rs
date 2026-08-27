@@ -17,7 +17,7 @@ use crate::goblin::translator::builder::TranslatorCircuit;
 use crate::goblin::translator::TranslatorPolys;
 use crate::honk::decider::decider_prove;
 use crate::honk::flavor::{FlavorDesc, MEGA_APP, MEGA_KERNEL, MEGA_ZK};
-use crate::honk::hypernova::{FoldingProver, ProverClaim};
+use crate::honk::hypernova::{FoldingProver, ProverClaim, VerifierClaim};
 use crate::honk::oink_prover::prove_oink;
 use crate::honk::prover_instance::ProverInstance;
 use std::cell::RefCell;
@@ -56,6 +56,9 @@ pub struct Chonk {
     /// The folding transcript of the current group, continued by the decider (bb `prover_accumulation_transcript`).
     accumulation_transcript: NativeTranscript,
     prover_accumulator: Option<ProverClaim>,
+    /// The previous kernel's output accumulator (bb `recursive_verifier_native_accum`): what the next
+    /// kernel's recursive verifier starts from.
+    pub recursive_verifier_native_accum: Option<VerifierClaim<Bn254>>,
     pub verification_queue: Vec<VerifierInputs>,
     /// The current kernel's multilinear batching proof (consumed by its recursive verifier).
     pub multilinear_batch_proof: Vec<Fr>,
@@ -81,6 +84,7 @@ impl Chonk {
             folding_prover: None,
             accumulation_transcript: NativeTranscript::new(),
             prover_accumulator: None,
+            recursive_verifier_native_accum: None,
             verification_queue: Vec::new(),
             multilinear_batch_proof: Vec::new(),
             decider_proof: Vec::new(),

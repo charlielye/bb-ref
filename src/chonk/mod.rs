@@ -2,5 +2,6 @@
 
 pub mod batched;
 pub mod ivc;
+pub mod kernel;
 pub mod proof;
 pub mod verifier;
