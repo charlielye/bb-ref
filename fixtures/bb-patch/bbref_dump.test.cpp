@@ -37,6 +37,7 @@
 #include "barretenberg/hypernova/hypernova_verifier.hpp"
 #include "barretenberg/ultra_honk/verifier_instance.hpp"
 #include "barretenberg/stdlib/hash/poseidon2/poseidon2.hpp"
+#include "barretenberg/stdlib/hash/sha256/sha256.hpp"
 #include "barretenberg/stdlib/hash/poseidon2/poseidon2_permutation.hpp"
 #include "barretenberg/stdlib/primitives/databus/databus.hpp"
 #include "barretenberg/stdlib/primitives/pairing_points.hpp"
@@ -1309,10 +1310,32 @@ void cycle_group_mul_witness(Builder& b)
     r.assert_equal(e);
 }
 
+// One compression of a fixed message block onto the SHA-256 IV (MegaApp flavor: it has lookups).
+void sha256_block(Builder& b)
+{
+    static constexpr uint64_t iv[8] = { 0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+                                        0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19 };
+    std::array<field_ct, 8> h;
+    std::array<field_ct, 16> in;
+    for (size_t i = 0; i < 8; ++i) {
+        h[i] = w(b, iv[i]);
+    }
+    for (size_t i = 0; i < 16; ++i) {
+        in[i] = w(b, (i * 0x01010101ULL + 0x61626364ULL) & 0xffffffffULL);
+    }
+    auto out = stdlib::SHA256<Builder>::sha256_block(h, in);
+    for (auto& o : out) {
+        auto e = w(b, uint256_t(o.get_value()).data[0]);
+        o.assert_equal(e);
+    }
+}
+
 void run(Builder& b, const std::string& name)
 {
     auto suffix = [&](const std::string& prefix) { return std::stoul(name.substr(prefix.size())); };
-    if (name == "field_ops") {
+    if (name == "sha256_block") {
+        sha256_block(b);
+    } else if (name == "field_ops") {
         field_ops(b);
     } else if (name == "bool_ops") {
         bool_ops(b);
@@ -1357,7 +1380,12 @@ TEST(BbRefDump, Stdlib)
     MegaCircuitBuilder builder{ std::make_shared<ECCOpQueue>() };
     stdlib_programs::run(builder, program);
     ASSERT_FALSE(builder.failed()) << builder.err();
-    dump_from_builder<MegaKernelFlavor>(builder, out);
+    const char* flavor = std::getenv("BBREF_FLAVOR");
+    if (flavor != nullptr && std::string(flavor) == "app") {
+        dump_from_builder<MegaAppFlavor>(builder, out);
+    } else {
+        dump_from_builder<MegaKernelFlavor>(builder, out);
+    }
 }
 
 // --- M16: whole Noir circuits -----------------------------------------------------------------------------

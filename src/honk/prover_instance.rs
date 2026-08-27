@@ -89,8 +89,8 @@ impl ProverInstance {
         builder.finalize_circuit();
         builder.blocks.compute_offsets(trace_offset);
         let blocks = &builder.blocks;
-        // Lookup tables (none yet) sit at the lookup block's offset; the trace must hold both.
-        let tables_size = 0;
+        // Lookup tables sit at the lookup block's offset; the trace must hold both.
+        let tables_size = builder.tables_size();
         let tables_end = blocks.get(BlockId::Lookup).trace_offset + tables_size;
         let trace_end = trace_offset + NUM_ZERO_ROWS + blocks.total_content_size();
         let dyadic_size = tables_end.max(trace_end).next_power_of_two();
@@ -175,6 +175,28 @@ impl ProverInstance {
             polys[idx(Ent::sigma_1)].coeffs[r] = -Fr::from(r as u64 + 1);
         }
 
+        // bb `construct_lookup_table_polynomials` + `construct_lookup_read_counts`.
+        if has(Ent::table_1) {
+            let mut offset = blocks.get(BlockId::Lookup).trace_offset;
+            for table in &builder.lookup_tables {
+                let index: std::collections::HashMap<[Fr; 3], usize> =
+                    (0..table.size()).map(|i| ([table.columns[0][i], table.columns[1][i], table.columns[2][i]], i)).collect();
+                for gate in &table.lookup_gates {
+                    let i = offset + index[&gate.to_table_components(table.use_twin_keys)];
+                    polys[idx(Ent::lookup_read_counts)].coeffs[i] += Fr::one();
+                    polys[idx(Ent::lookup_read_tags)].coeffs[i] = Fr::one();
+                }
+                for i in 0..table.size() {
+                    for c in 0..3 {
+                        polys[idx([Ent::table_1, Ent::table_2, Ent::table_3][c])].coeffs[offset + i] = table.columns[c][i];
+                    }
+                    polys[idx(Ent::table_4)].coeffs[offset + i] = Fr::from(table.table_index as u64);
+                }
+                offset += table.size();
+            }
+        } else {
+            assert!(builder.lookup_tables.is_empty(), "lookup gates in a flavor without lookups");
+        }
         polys[idx(Ent::lagrange_first)].coeffs[trace_offset] = Fr::one();
         polys[idx(Ent::lagrange_last)].coeffs[final_active_wire_idx] = Fr::one();
 

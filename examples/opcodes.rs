@@ -6,6 +6,28 @@ use std::collections::BTreeMap;
 fn main() {
     let root = std::env::args().nth(1).expect("flows dir");
     let mut totals: BTreeMap<String, usize> = BTreeMap::new();
+    if std::env::args().nth(2).as_deref() == Some("acir_tests") {
+        // One line per program that uses a non-protocol black box.
+        let mut progs = std::fs::read_dir(&root).unwrap().map(|e| e.unwrap().path()).collect::<Vec<_>>();
+        progs.sort();
+        for prog in progs {
+            let Ok(bytes) = std::fs::read(prog.join("target/program.json")) else { continue };
+            let circuit = bb_ref::acir::format::decode_program(&bytes);
+            let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+            for op in &circuit.opcodes {
+                if let Opcode::BlackBoxFuncCall(b) = op {
+                    let name = format!("{b:?}");
+                    let name = name.split(|c: char| !c.is_alphanumeric()).next().unwrap().to_string();
+                    if matches!(name.as_str(), "RANGE" | "Poseidon2Permutation" | "RecursiveAggregation" | "MultiScalarMul" | "EmbeddedCurveAdd") { continue; }
+                    *counts.entry(name).or_default() += 1;
+                }
+            }
+            if !counts.is_empty() {
+                println!("{:45} {:?}", prog.file_name().unwrap().to_string_lossy(), counts);
+            }
+        }
+        return;
+    }
     let mut flows = std::fs::read_dir(&root).unwrap().map(|e| e.unwrap().path()).collect::<Vec<_>>();
     flows.sort();
     for flow in flows {

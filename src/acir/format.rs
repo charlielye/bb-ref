@@ -28,6 +28,13 @@ pub enum FunctionInput {
 }
 
 #[derive(Deserialize, Debug, Clone)]
+pub struct Sha256Compression {
+    pub inputs: Vec<FunctionInput>,
+    pub hash_values: Vec<FunctionInput>,
+    pub outputs: Vec<Witness>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
 pub enum BlackBoxFuncCall {
     AES128Encrypt(IgnoredAny),
     AND(IgnoredAny),
@@ -48,7 +55,7 @@ pub enum BlackBoxFuncCall {
         inputs: Vec<FunctionInput>,
         outputs: Vec<Witness>,
     },
-    Sha256Compression(IgnoredAny),
+    Sha256Compression(Sha256Compression),
 }
 
 /// Grumpkin MSM: `points` and `scalars` are flat `(x, y)` / `(lo, hi)` pairs.

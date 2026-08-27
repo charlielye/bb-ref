@@ -48,3 +48,7 @@ done
 for prog in field_ops poseidon2_hash_1 poseidon2_hash_2 poseidon2_hash_3 poseidon2_hash_4 poseidon2_hash_7 poseidon2_hash_16 poseidon2_hash_20 transcript goblin_batch_mul_1 goblin_batch_mul_2 goblin_batch_mul_7 aggregate_multiple_2 aggregate_multiple_3 aggregate_multiple_7 io_app_default io_kernel_default io_hiding_default kernel_io_set hiding_io_set bool_ops cycle_group_add cycle_group_mul_1 cycle_group_mul_3 cycle_group_mul_witness; do
   BBREF_STDLIB=$prog BBREF_OUT=$T/stdlib/$prog "$BIN" --gtest_filter='BbRefDump.Stdlib'
 done
+# lookup-table programs are dumped as MegaApp (MegaKernel has no lookups)
+for prog in sha256_block; do
+  BBREF_FLAVOR=app BBREF_STDLIB=$prog BBREF_OUT=$T/stdlib/$prog "$BIN" --gtest_filter='BbRefDump.Stdlib'
+done

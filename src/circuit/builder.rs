@@ -157,6 +157,8 @@ pub struct Builder {
     pub rom_logup_records: Vec<u32>,
     /// Keyed by `target_range`; processed in key order at finalization (bb `std::map`).
     pub range_lists: BTreeMap<u64, RangeList>,
+    /// Lookup tables in creation order (bb `lookup_tables`); `table_index` is the 1-based position.
+    pub lookup_tables: Vec<super::plookup::BasicTable>,
     pub failed: Option<String>,
     pub is_write_vk_mode: bool,
     /// Present for Mega circuits: the op queue, databus and op-code constants.
@@ -181,6 +183,7 @@ impl Builder {
             constant_variable_indices: HashMap::new(),
             blocks: Blocks::new(if mega { MEGA_BLOCKS } else { ULTRA_BLOCKS }),
             memory: Default::default(),
+            lookup_tables: vec![],
             memory_read_records: vec![],
             memory_write_records: vec![],
             rom_logup_records: vec![],
@@ -406,6 +409,84 @@ impl Builder {
             BlockId::Poseidon2External
         }
     }
+    /// The rows every lookup table occupies in the trace (bb `get_tables_size`).
+    pub fn tables_size(&self) -> usize {
+        self.lookup_tables.iter().map(|t| t.size()).sum()
+    }
+
+    /// The position of the basic table `id`, created on first use (bb `get_table`).
+    fn get_table(&mut self, id: super::plookup::BasicTableId) -> usize {
+        if let Some(i) = self.lookup_tables.iter().position(|t| t.id == id) {
+            return i;
+        }
+        let index = self.lookup_tables.len() + 1;
+        self.lookup_tables.push(super::plookup::create_basic_table(id, index));
+        self.lookup_tables.len() - 1
+    }
+
+    /// bb `create_gates_from_plookup_accumulators`: one lookup gate per slice of a multi-table read,
+    /// the first row holding the key witnesses; returns the accumulator witnesses.
+    pub fn create_gates_from_plookup_accumulators(
+        &mut self,
+        id: super::plookup::MultiTableId,
+        read_values: &super::plookup::ReadData<Fr>,
+        key_a_index: u32,
+        key_b_index: Option<u32>,
+    ) -> super::plookup::ReadData<u32> {
+        let multi_table = super::plookup::get_multitable(id);
+        let num_lookups = read_values.columns[0].len();
+        let mut read_data = super::plookup::ReadData {
+            columns: [vec![], vec![], vec![]],
+            lookup_entries: vec![],
+        };
+        for i in 0..num_lookups {
+            let is_first = i == 0;
+            let is_last = i == num_lookups - 1;
+            let table = self.get_table(multi_table.basic_table_ids[i]);
+            let first_idx = if is_first {
+                key_a_index
+            } else {
+                self.add_variable(read_values.columns[0][i])
+            };
+            let second_idx = match key_b_index {
+                Some(b) if is_first => b,
+                _ => self.add_variable(read_values.columns[1][i]),
+            };
+            let third_idx = self.add_variable(read_values.columns[2][i]);
+            read_data.columns[0].push(first_idx);
+            read_data.columns[1].push(second_idx);
+            read_data.columns[2].push(third_idx);
+            let step = |c: usize| if is_last { Fr::zero() } else { -multi_table.column_step_sizes[c][i + 1] };
+            self.create_lookup_gate(
+                [first_idx, second_idx, third_idx],
+                table,
+                read_values.lookup_entries[i],
+                [step(0), step(1), step(2)],
+            );
+        }
+        read_data
+    }
+
+    /// bb `create_lookup_gate`: wires `(key, value1, value2, 0)`, `q_2/q_m/q_c` the negated step
+    /// sizes into the next row's accumulators, `q_3` the table index.
+    fn create_lookup_gate(
+        &mut self,
+        wires: [u32; 3],
+        table: usize,
+        entry: super::plookup::LookupEntry,
+        column_step_sizes: [Fr; 3],
+    ) {
+        self.lookup_tables[table].lookup_gates.push(entry);
+        let mut row = GateRow::wires([wires[0], wires[1], wires[2], self.zero_idx]);
+        row.kind = Kind::Lookup;
+        row.gate_value = Fr::one();
+        row.q_m = column_step_sizes[1];
+        row.q_c = column_step_sizes[2];
+        row.q_2 = column_step_sizes[0];
+        row.q_3 = Fr::from(self.lookup_tables[table].table_index as u64);
+        self.append(BlockId::Lookup, row);
+    }
+
     pub fn create_add_gate(&mut self, g: AddTriple) {
         self.create_big_add_gate(
             AddQuad {

@@ -20,7 +20,7 @@ use crate::circuit::{Builder, EccOpQueue, IS_CONSTANT};
 use crate::stdlib::cycle_group::{CycleGroup, CycleScalar};
 use crate::stdlib::io::{AppIo, KernelIo, MAX_APPS_PER_KERNEL};
 use crate::stdlib::memory::{RamTable, RomTable};
-use crate::stdlib::{poseidon2, BoolT, Ctx, FieldT, StdBn254};
+use crate::stdlib::{poseidon2, sha256, BoolT, Ctx, FieldT, StdBn254};
 use ark_ec::AffineRepr;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -63,6 +63,11 @@ struct Poseidon2Constraint {
     state: Vec<u32>,
     result: Vec<u32>,
 }
+struct Sha256Constraint {
+    inputs: Vec<FunctionInput>,
+    hash_values: Vec<FunctionInput>,
+    outputs: Vec<u32>,
+}
 
 /// One linear AssertZero with at most two witnesses (half of a batched-eq row).
 struct BatchedEqEntry {
@@ -82,6 +87,7 @@ struct Constraints {
     batched_eq: Vec<BilinearBatchedEqGate>,
     range: Vec<(u32, u32)>,
     poseidon2: Vec<Poseidon2Constraint>,
+    sha256: Vec<Sha256Constraint>,
     msm: Vec<MultiScalarMul>,
     ec_add: Vec<EmbeddedCurveAdd>,
     blocks: BTreeMap<u32, BlockConstraint>,
@@ -352,6 +358,16 @@ fn classify(circuit: &Circuit, is_mega: bool) -> (Constraints, Vec<u32>) {
                 BlackBoxFuncCall::RANGE { input, num_bits } => {
                     let w = c.input(input);
                     c.range.push((w, *num_bits));
+                }
+                BlackBoxFuncCall::Sha256Compression(s) => {
+                    assert!(s.inputs.len() == 16 && s.hash_values.len() == 8 && s.outputs.len() == 8);
+                    s.inputs.iter().chain(&s.hash_values).for_each(|i| c.note_input(i));
+                    let outputs = s.outputs.iter().map(|w| c.note(*w)).collect();
+                    c.sha256.push(Sha256Constraint {
+                        inputs: s.inputs.clone(),
+                        hash_values: s.hash_values.clone(),
+                        outputs,
+                    });
                 }
                 BlackBoxFuncCall::Poseidon2Permutation { inputs, outputs } => {
                     let state = inputs.iter().map(|i| c.input(i)).collect();
@@ -820,6 +836,14 @@ fn lower(builder: Builder, c: Constraints) -> Ctx {
         }
         for (w, num_bits) in c.range {
             b.create_dyadic_range_constraint(w, num_bits as u64);
+        }
+    }
+    for s in &c.sha256 {
+        let inputs: [FieldT; 16] = std::array::from_fn(|i| to_field_ct(&ctx, &s.inputs[i]));
+        let hash_values: [FieldT; 8] = std::array::from_fn(|i| to_field_ct(&ctx, &s.hash_values[i]));
+        let output = sha256::sha256_block(&hash_values, &inputs);
+        for (out, result) in output.iter().zip(&s.outputs) {
+            out.assert_equal(&FieldT::from_witness_index(&ctx, *result));
         }
     }
     for p in &c.poseidon2 {

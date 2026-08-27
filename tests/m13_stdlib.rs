@@ -11,7 +11,9 @@ use bb_ref::circuit::{Builder, EccOpQueue};
 use bb_ref::honk::circuit_checker::check_circuit;
 use bb_ref::honk::oink_prover::prove_oink;
 use bb_ref::honk::prover_instance::ProverInstance;
-use bb_ref::honk::MEGA_KERNEL;
+use bb_ref::honk::flavor::FlavorDesc;
+use bb_ref::honk::{MEGA_APP, MEGA_KERNEL};
+use bb_ref::stdlib::sha256;
 use bb_ref::stdlib::cycle_group::{CycleGroup, CycleScalar};
 use bb_ref::stdlib::field::split_unique;
 use bb_ref::stdlib::hash::StdPoseidon2;
@@ -169,6 +171,69 @@ fn wb(ctx: &Ctx, v: bool) -> BoolT {
     BoolT::from_witness(ctx, v)
 }
 
+/// The programs with lookup gates are dumped as MegaApp (MegaKernel has no lookup entities).
+fn flavor_of(name: &str) -> &'static FlavorDesc {
+    if name.starts_with("sha256") {
+        &MEGA_APP
+    } else {
+        &MEGA_KERNEL
+    }
+}
+
+fn sha256_block(ctx: &Ctx) {
+    const IV: [u64; 8] = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+    let h: [FieldT; 8] = std::array::from_fn(|i| w(ctx, IV[i]));
+    let input: [FieldT; 16] = std::array::from_fn(|i| w(ctx, (i as u64 * 0x01010101 + 0x61626364) & 0xffffffff));
+    let out = sha256::sha256_block(&h, &input);
+    let words: [u32; 16] = std::array::from_fn(|i| ((i as u64 * 0x01010101 + 0x61626364) & 0xffffffff) as u32);
+    let expected = sha256_compress(IV.map(|v| v as u32), &words);
+    for (o, e) in out.iter().zip(expected) {
+        assert_eq!(o.get_value(), Fr::from(e as u64), "sha256 compression output");
+        let e = w(ctx, bb_ref::base::field::u256(&o.get_value()).0[0]);
+        o.assert_equal(&e);
+    }
+}
+
+/// Reference SHA-256 compression function (FIPS 180-4).
+fn sha256_compress(h: [u32; 8], block: &[u32; 16]) -> [u32; 8] {
+    const K: [u32; 64] = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98,
+        0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786,
+        0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8,
+        0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+        0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819,
+        0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a,
+        0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+        0xc67178f2,
+    ];
+    let mut w = [0u32; 64];
+    w[..16].copy_from_slice(block);
+    for i in 16..64 {
+        let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+        let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+        w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
+    }
+    let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut hh] = h;
+    for i in 0..64 {
+        let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+        let ch = (e & f) ^ (!e & g);
+        let t1 = hh.wrapping_add(s1).wrapping_add(ch).wrapping_add(K[i]).wrapping_add(w[i]);
+        let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+        let maj = (a & b) ^ (a & c) ^ (b & c);
+        let t2 = s0.wrapping_add(maj);
+        hh = g;
+        g = f;
+        f = e;
+        e = d.wrapping_add(t1);
+        d = c;
+        c = b;
+        b = a;
+        a = t1.wrapping_add(t2);
+    }
+    let out = [a, b, c, d, e, f, g, hh];
+    std::array::from_fn(|i| h[i].wrapping_add(out[i]))
+}
+
 fn bool_ops(ctx: &Ctx) {
     let (t, f, ct) = (wb(ctx, true), wb(ctx, false), BoolT::constant(true));
     let a1 = t.and(&f);
@@ -310,6 +375,7 @@ fn run(ctx: &Ctx, name: &str) {
     let suffix = |prefix: &str| name[prefix.len()..].parse::<u64>().unwrap();
     match name {
         "field_ops" => field_ops(ctx),
+        "sha256_block" => sha256_block(ctx),
         "bool_ops" => bool_ops(ctx),
         "cycle_group_add" => cycle_group_add(ctx),
         "cycle_group_mul_witness" => cycle_group_mul_witness(ctx),
@@ -353,6 +419,7 @@ pub const PROGRAMS: &[&str] = &[
     "cycle_group_mul_1",
     "cycle_group_mul_3",
     "cycle_group_mul_witness",
+    "sha256_block",
 ];
 
 fn check(name: &str) {
@@ -367,8 +434,8 @@ fn check(name: &str) {
     run(&ctx, name);
     let mut builder = Rc::try_unwrap(ctx).ok().unwrap().into_inner();
     assert!(builder.failed.is_none(), "{name}: builder failure {:?}", builder.failed);
-    let inst = ProverInstance::from_builder(&MEGA_KERNEL, &mut builder, &mut OsRng);
-    let expected = ProverInstance::load_dump(&MEGA_KERNEL, &dump);
+    let inst = ProverInstance::from_builder(flavor_of(name), &mut builder, &mut OsRng);
+    let expected = ProverInstance::load_dump(flavor_of(name), &dump);
     assert_eq!(inst.dyadic_size, expected.dyadic_size, "{name}: dyadic size");
     assert_eq!(inst.public_inputs, expected.public_inputs, "{name}: public inputs");
     let compare: Vec<usize> = (0..inst.layout.num_unshifted()).collect();
@@ -391,7 +458,7 @@ fn stdlib_programs_are_satisfied() {
         run(&ctx, name);
         let mut builder = Rc::try_unwrap(ctx).ok().unwrap().into_inner();
         assert!(builder.failed.is_none(), "{name}: builder failure {:?}", builder.failed);
-        let mut inst = ProverInstance::from_builder(&MEGA_KERNEL, &mut builder, &mut OsRng);
+        let mut inst = ProverInstance::from_builder(flavor_of(name), &mut builder, &mut OsRng);
         let ck = CommitmentKey::new(inst.max_end_index);
         let vk = inst.compute_vk(&ck);
         let out = prove_oink(&mut inst, &vk, &ck, &mut NativeTranscript::new(), &mut OsRng, true);

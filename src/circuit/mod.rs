@@ -4,6 +4,7 @@ pub mod builder;
 pub mod mega;
 pub mod memory;
 pub mod op_queue;
+pub mod plookup;
 pub mod trace;
 
 pub use builder::{Builder, IS_CONSTANT};
