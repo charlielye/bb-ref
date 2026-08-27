@@ -314,7 +314,8 @@ fn msm<T: FieldLike<Native = Fq>>(acc: &mut [T], r: &[T], scaling: &T) {
         acc[8 + j] += q_double.clone() * s * scaling;
     }
 
-    let inverse_seven = T::constant(Fq::from(7u64).invert());
+    static INVERSE_SEVEN: std::sync::LazyLock<Fq> = std::sync::LazyLock::new(|| Fq::from(7u64).invert());
+    let inverse_seven = T::constant(*INVERSE_SEVEN);
     let skew_select: [T; 4] = std::array::from_fn(|k| slices[k].clone() * &inverse_seven);
     let mut x_skew_collision = [T::zero(), T::zero(), T::zero(), T::zero()];
     let (x_s1, y_s1, skew_slope1) = add(&xs[0], &ys[0], &acc_x, &acc_y, &lambda[0], &skew_select[0], &mut x_skew_collision[0]);
@@ -571,7 +572,8 @@ pub fn set_numerator<T: FieldLike<Native = Fq>>(r: &[T], p: &RelationParams<T>) 
     {
         let (table_x, table_y) = (v(precompute_tx), v(precompute_ty));
         let skew = v(precompute_skew);
-        let negative_inverse_seven = T::constant((-Fq::from(7u64)).invert());
+        static NEGATIVE_INVERSE_SEVEN: std::sync::LazyLock<Fq> = std::sync::LazyLock::new(|| (-Fq::from(7u64)).invert());
+        let negative_inverse_seven = T::constant(*NEGATIVE_INVERSE_SEVEN);
         let adjusted_skew = skew * &negative_inverse_seven;
         let wnaf_scalar_sum = v(precompute_scalar_sum);
         let w = [to_wnaf(&v(precompute_s1hi), &v(precompute_s1lo)), to_wnaf(&v(precompute_s2hi), &v(precompute_s2lo)), to_wnaf(&v(precompute_s3hi), &v(precompute_s3lo)), to_wnaf(&v(precompute_s4hi), &v(precompute_s4lo))];

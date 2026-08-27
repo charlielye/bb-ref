@@ -176,7 +176,9 @@ fn logderiv_lookup<T: FieldLike>(acc: &mut [T], r: &Row<T>, p: &RelationParams<T
 
 // relations/ultra_arithmetic_relation.hpp
 fn arithmetic<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: &T) {
-    let neg_half = T::constant(-(<T::Native as From<u64>>::from(2)).inverse().unwrap());
+    // -1/2 in T's native field, computed once (an inversion per call dominated the relation)
+    static NEG_HALF_FR: std::sync::LazyLock<crate::base::Fr> = std::sync::LazyLock::new(|| -(crate::base::Fr::from(2u64)).inverse().unwrap());
+    let neg_half = k::<T>(*NEG_HALF_FR);
     let q_arith_sub_1 = r.e(q_arith).clone() - &c(1);
     let scaled_q_arith = r.e(q_arith).clone() * scaling;
     let tmp0 = (r.e(w_r).clone() * r.e(w_l) * &neg_half) * &((r.e(q_arith).clone() - &c(3)) * r.e(q_m));

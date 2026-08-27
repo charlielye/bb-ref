@@ -477,10 +477,29 @@ fn add_accumulators<F: FieldLike + Copy>(mut a: Accumulators<F>, b: Accumulators
     a
 }
 
+/// `BBREF_TIMING_RELATIONS=1`: nanoseconds and active edges per relation of the current round
+/// (meaningful single-threaded), printed for round 0 of every sumcheck.
+static RELATION_STATS: std::sync::Mutex<Vec<(u128, u64)>> = std::sync::Mutex::new(Vec::new());
+static EXTENSION_NS: std::sync::Mutex<u128> = std::sync::Mutex::new(0);
+fn relation_stats_enabled() -> bool {
+    std::env::var_os("BBREF_TIMING_RELATIONS").is_some()
+}
+fn print_relation_stats<F: FieldLike>(rels: &impl RelationSet<F>, num_edges: usize) {
+    let mut stats = RELATION_STATS.lock().unwrap();
+    let ext = std::mem::take(&mut *EXTENSION_NS.lock().unwrap());
+    eprintln!("[relations] {} edges, row extension {:.0} ms", num_edges, ext as f64 / 1e6);
+    for (r, (ns, edges)) in stats.iter().enumerate() {
+        eprintln!("[relations]   rel {r:2}: {:8.1} ms over {:7} active edges ({:.1} us/edge, partial length {})", *ns as f64 / 1e6, edges, *ns as f64 / 1e3 / (*edges).max(1) as f64, rels.partial_length(r).min(64));
+    }
+    stats.clear();
+}
+
 /// Per-thread scratch for `accumulate_edge`.
 struct Scratch<F> {
     row0: Vec<F>,
     row1: Vec<F>,
+    /// `row1 - row0`: the edge univariate is stepped by repeated addition (bb `extend_edges`).
+    delta: Vec<F>,
     row: Vec<F>,
     sub: Vec<F>,
     active: Vec<bool>,
@@ -494,6 +513,7 @@ impl<F: FieldLike + Copy> Scratch<F> {
         Self {
             row0: vec![F::zero(); num_columns],
             row1: vec![F::zero(); num_columns],
+            delta: vec![F::zero(); num_columns],
             row: vec![F::zero(); num_columns],
             sub: vec![F::zero(); max_sub],
             active: vec![false; rels.num_relations()],
@@ -539,6 +559,7 @@ fn accumulate_edge<F: FieldLike + Copy>(rels: &impl RelationSet<F>, table: &[Vec
     for (j, col) in table.iter().enumerate() {
         s.row0[j] = col.get(2 * e).copied().unwrap_or(F::zero());
         s.row1[j] = col.get(2 * e + 1).copied().unwrap_or(F::zero());
+        s.delta[j] = s.row1[j] - s.row0[j];
     }
     let mut num_points = 0;
     for ri in 0..rels.num_relations() {
@@ -547,21 +568,45 @@ fn accumulate_edge<F: FieldLike + Copy>(rels: &impl RelationSet<F>, table: &[Vec
             num_points = num_points.max(s.len[ri]);
         }
     }
+    let stats = relation_stats_enabled();
+    let mut ext_ns = 0u128;
+    let mut rel_ns = vec![0u128; if stats { rels.num_relations() } else { 0 }];
     for k in 0..num_points {
-        for j in 0..table.len() {
-            s.row[j] = linear_at(&s.row0[j], &s.row1[j], k);
+        let t0 = stats.then(std::time::Instant::now);
+        if k == 0 {
+            s.row.copy_from_slice(&s.row0);
+        } else {
+            for (r, d) in s.row.iter_mut().zip(&s.delta) {
+                *r += *d;
+            }
+        }
+        if let Some(t0) = t0 {
+            ext_ns += t0.elapsed().as_nanos();
         }
         for ri in 0..rels.num_relations() {
             if !s.active[ri] || k >= s.len[ri] {
                 continue;
             }
+            let t0 = stats.then(std::time::Instant::now);
             let ns = rels.num_subrelations(ri);
             s.sub[..ns].fill(F::zero());
             rels.accumulate(ri, &mut s.sub[..ns], &s.row, params, scaling);
             for j in 0..ns {
                 acc[ri][j][k] += s.sub[j];
             }
+            if let Some(t0) = t0 {
+                rel_ns[ri] += t0.elapsed().as_nanos();
+            }
         }
+    }
+    if stats {
+        let mut st = RELATION_STATS.lock().unwrap();
+        st.resize(rels.num_relations(), (0, 0));
+        for ri in 0..rels.num_relations() {
+            st[ri].0 += rel_ns[ri];
+            st[ri].1 += s.active[ri] as u64;
+        }
+        *EXTENSION_NS.lock().unwrap() += ext_ns;
     }
 }
 
@@ -658,7 +703,14 @@ where
         let round = self.round;
         if round < self.log_n {
             let round_size = 1 << (self.log_n - round);
+            if round == 0 && relation_stats_enabled() {
+                RELATION_STATS.lock().unwrap().clear();
+                *EXTENSION_NS.lock().unwrap() = 0;
+            }
             let acc = accumulate_edges(rels, &self.table, self.excluded_head / 2..round_size / 2, params, betas, round, d);
+            if round == 0 && relation_stats_enabled() {
+                print_relation_stats(rels, round_size / 2);
+            }
             let mut univariate = batch_over_relations(rels, &acc, alphas, &betas[round], partial_eval, None, d);
             if self.row_disabling {
                 let head = accumulate_edges(rels, &self.table, 0..self.excluded_head / 2, params, betas, round, d);
