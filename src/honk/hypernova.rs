@@ -178,12 +178,12 @@ pub fn instance_to_accumulator(
     let mut shifted_polynomial = Poly::zero(inst.dyadic_size);
     let mut non_shifted_evaluation = Fr::zero();
     let mut shifted_evaluation = Fr::zero();
+    non_shifted_polynomial.add_scaled_batch(&uc.iter().enumerate().map(|(i, c)| (&inst.polys[i], *c)).collect::<Vec<_>>());
+    shifted_polynomial.add_scaled_batch(&sh.iter().enumerate().map(|(j, c)| (inst.poly(layout.shifted[j]), *c)).collect::<Vec<_>>());
     for (i, c) in uc.iter().enumerate() {
-        non_shifted_polynomial.add_scaled(&inst.polys[i], c);
         non_shifted_evaluation += sc.evals[i] * c;
     }
     for (j, c) in sh.iter().enumerate() {
-        shifted_polynomial.add_scaled(inst.poly(layout.shifted[j]), c);
         shifted_evaluation += sc.evals[layout.num_unshifted() + j] * c;
     }
     // Batching the commitments equals committing to the batched polynomials.

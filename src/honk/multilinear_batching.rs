@@ -3,6 +3,7 @@
 //! `Σ_i γ^i (P_i(x) + α S_i(x)) eq(x, r_i)`, then merge the outputs with powers of `ρ`.
 //! The width is a runtime value (bb instantiates one flavor per width).
 
+use rayon::prelude::*;
 use super::hypernova::{ProverClaim, VerifierClaim};
 use crate::base::codec::FromChallenge;
 use crate::base::field::FieldLike;
@@ -64,16 +65,25 @@ pub fn mlb_prove(claims: Vec<ProverClaim>, t: &mut NativeTranscript) -> ProverCl
         let mut univariate = vec![Fr::zero(); UNIVARIATE_LENGTH];
         if round < log_n {
             let half = circuit_size >> (round + 1);
-            for e in 0..half {
-                for k in 0..UNIVARIATE_LENGTH {
-                    let (mut s0, mut s1) = (Fr::zero(), Fr::zero());
-                    for i in 0..n {
-                        let eq_k = linear(eq[i][2 * e], eq[i][2 * e + 1], k) * gamma_powers[i];
-                        s0 += linear(non_shifted[i][2 * e], non_shifted[i][2 * e + 1], k) * eq_k;
-                        s1 += linear(shifted[i][2 * e], shifted[i][2 * e + 1], k) * eq_k;
+            let zeros = || vec![Fr::zero(); UNIVARIATE_LENGTH];
+            let edges = (0..half)
+                .into_par_iter()
+                .with_min_len(64)
+                .fold(zeros, |mut acc, e| {
+                    for k in 0..UNIVARIATE_LENGTH {
+                        let (mut s0, mut s1) = (Fr::zero(), Fr::zero());
+                        for i in 0..n {
+                            let eq_k = linear(eq[i][2 * e], eq[i][2 * e + 1], k) * gamma_powers[i];
+                            s0 += linear(non_shifted[i][2 * e], non_shifted[i][2 * e + 1], k) * eq_k;
+                            s1 += linear(shifted[i][2 * e], shifted[i][2 * e + 1], k) * eq_k;
+                        }
+                        acc[k] += s0 + alpha * s1;
                     }
-                    univariate[k] += s0 + alpha * s1;
-                }
+                    acc
+                })
+                .reduce(zeros, |a, b| a.iter().zip(&b).map(|(x, y)| *x + *y).collect());
+            for k in 0..UNIVARIATE_LENGTH {
+                univariate[k] += edges[k];
             }
         } else {
             // Virtual round: the polynomials are extended by zero; eq needs its true value at 1.
@@ -104,11 +114,9 @@ pub fn mlb_prove(claims: Vec<ProverClaim>, t: &mut NativeTranscript) -> ProverCl
             col.truncate(half);
         };
         if round < log_n {
-            non_shifted
-                .iter_mut()
-                .chain(shifted.iter_mut())
-                .chain(eq.iter_mut())
-                .for_each(fold);
+            non_shifted.par_iter_mut().for_each(fold);
+            shifted.par_iter_mut().for_each(fold);
+            eq.par_iter_mut().for_each(fold);
         } else {
             for col in non_shifted.iter_mut().chain(shifted.iter_mut()) {
                 col[0] *= Fr::one() - u;
@@ -130,9 +138,9 @@ pub fn mlb_prove(claims: Vec<ProverClaim>, t: &mut NativeTranscript) -> ProverCl
     let mut new_shifted = Poly::zero(circuit_size);
     let mut non_shifted_evaluation = Fr::zero();
     let mut shifted_evaluation = Fr::zero();
-    for (i, c) in claims.iter().enumerate() {
-        new_non_shifted.add_scaled(&c.non_shifted_polynomial, &scalars[i]);
-        new_shifted.add_scaled(&c.shifted_polynomial, &scalars[i]);
+    new_non_shifted.add_scaled_batch(&claims.iter().zip(&scalars).map(|(c, s)| (&c.non_shifted_polynomial, *s)).collect::<Vec<_>>());
+    new_shifted.add_scaled_batch(&claims.iter().zip(&scalars).map(|(c, s)| (&c.shifted_polynomial, *s)).collect::<Vec<_>>());
+    for i in 0..n {
         non_shifted_evaluation += scalars[i] * evals[i];
         shifted_evaluation += scalars[i] * evals[n + i];
     }

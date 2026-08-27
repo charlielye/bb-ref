@@ -597,14 +597,18 @@ pub fn shplemini_prove(
     let mut batched_unshifted = Poly::zero(n);
     let mut batched_to_be_shifted = Poly::zero(n);
     let mut scalar = Fr::one();
+    let mut unshifted_terms = Vec::with_capacity(unshifted.len());
+    let mut shifted_terms = Vec::with_capacity(to_be_shifted.len());
     for f in unshifted {
-        batched_unshifted.add_scaled(f, &scalar);
+        unshifted_terms.push((*f, scalar));
         scalar *= rho;
     }
     for g in to_be_shifted {
-        batched_to_be_shifted.add_scaled(g, &scalar);
+        shifted_terms.push((*g, scalar));
         scalar *= rho;
     }
+    batched_unshifted.add_scaled_batch(&unshifted_terms);
+    batched_to_be_shifted.add_scaled_batch(&shifted_terms);
     let mut a_0 = batched_unshifted.clone();
     a_0.add_scaled(&batched_to_be_shifted.shifted(), &Fr::one());
     crate::base::timing::phase("    shplemini: batching");
@@ -708,6 +712,17 @@ pub fn sumcheck_round_claims(univariates: &[Poly], evaluations: &[[Fr; 3]], u: &
     claims
 }
 
+/// `q += scale * (p - v) / (X - x)` with `x` a root of `p - v` (bb `factor_roots`), fused with
+/// the accumulation: `q_{n-2} = p_{n-1}`, `q_{i-1} = p_i + x q_i`.
+fn accumulate_quotient<F: FieldLike + Copy>(q: &mut [F], p: &[F], x: F, v: F, scale: F) {
+    let mut carry = F::zero();
+    for i in (1..p.len()).rev() {
+        carry = p[i] + x * carry;
+        q[i - 1] += scale * carry;
+    }
+    assert!((p[0] - v + x * carry).is_zero(), "accumulate_quotient: not a root");
+}
+
 /// bb `ShplonkProver_::prove`: batched quotient `Q`, then `G = Q - Q_z` opened at `z` with value 0.
 /// `virtual_log_n` only matters when `libra_claims` is non-empty.
 pub fn shplonk_prove<C: Curve<TF = Fr>>(
@@ -760,23 +775,20 @@ where
             current_nu *= nu;
         }
     }
-    let zero = || Polynomial::<F<C>>::zero(max_size);
-    let add = |mut a: Polynomial<F<C>>, b: Polynomial<F<C>>| {
-        a.add_scaled(&b, &F::<C>::one());
-        a
-    };
-    // Q = sum_i nu^i (p_i(X) - v_i) / (X - x_i); the quotients are computed across openings in parallel
-    let q = openings
+    // Longest openings first so the parallel folds below balance.
+    openings.sort_by_key(|o| std::cmp::Reverse(o.0.len()));
+    // Q = sum_i nu^i (p_i(X) - v_i) / (X - x_i): each quotient at its own length, openings in
+    // parallel, then one row-parallel sum.
+    let quotients: Vec<Polynomial<F<C>>> = openings
         .par_iter()
-        .with_min_len(4)
-        .fold(zero, |mut q, (poly, x, v, scale)| {
-            let mut tmp = (*poly).clone();
-            tmp.coeffs[0] -= v;
-            tmp.factor_root(x);
-            q.add_scaled(&tmp, scale);
+        .map(|(poly, x, v, scale)| {
+            let mut q = Polynomial::zero(poly.len());
+            accumulate_quotient(&mut q.coeffs, &poly.coeffs, *x, *v, *scale);
             q
         })
-        .reduce(zero, add);
+        .collect();
+    let mut q = Polynomial::<F<C>>::zero(max_size);
+    q.add_scaled_batch(&quotients.iter().map(|p| (p, F::<C>::one())).collect::<Vec<_>>());
     crate::base::timing::phase("    shplonk: quotient");
     let quotient_commitment = ck.commit(&q);
     crate::base::timing::phase("    shplonk: Q commit");
@@ -784,17 +796,12 @@ where
     let z: F<C> = t.challenge("Shplonk:z");
 
     // G = Q - sum_i nu^i / (z - x_i) (p_i(X) - v_i)
-    let batched = openings
-        .par_iter()
-        .with_min_len(4)
-        .fold(zero, |mut g, (poly, x, v, scale)| {
-            let s = *scale * (z - x).invert();
-            g.add_scaled(poly, &(-s));
-            g.coeffs[0] += s * v;
-            g
-        })
-        .reduce(zero, add);
-    let g = add(q, batched);
+    let mut g = q;
+    let scalars: Vec<F<C>> = openings.iter().map(|(_, x, _, scale)| *scale * (z - x).invert()).collect();
+    g.add_scaled_batch(&openings.iter().zip(&scalars).map(|((poly, ..), s)| (*poly, -*s)).collect::<Vec<_>>());
+    for ((_, _, v, _), s) in openings.iter().zip(&scalars) {
+        g.coeffs[0] += *s * v;
+    }
     crate::base::timing::phase("    shplonk: batched G");
     ShplonkProverOutput {
         claim: ProverClaim {

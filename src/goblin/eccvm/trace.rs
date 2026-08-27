@@ -662,20 +662,23 @@ pub fn compute_msm_rows(msms: &[Vec<ScalarMul>], total_muls: u32, num_rows: usiz
         }
     }
     assert_eq!(row_index, num_rows - 1);
-    // Slopes: every op's (p1, p2) is affine by now.
-    let mut op_iter = ops.iter();
+    // Slopes: one batched normalization of the accumulators and one batched inversion of the
+    // slope denominators (zero denominators stay zero).
+    let p1: Vec<(Fq, Fq)> = Proj::normalize_batch(&ops.iter().map(|o| o.p1).collect::<Vec<_>>()).iter().map(affine_xy).collect();
+    let acc: Vec<(Fq, Fq)> = Proj::normalize_batch(&accumulator_trace).iter().map(affine_xy).collect();
+    let mut inverses: Vec<Fq> = ops.iter().zip(&p1).map(|(op, (x1, y1))| if op.is_double { *y1 + *y1 } else { op.p2.0 - *x1 }).collect();
+    crate::base::field::batch_invert(&mut inverses);
+    let mut op_idx = 0;
     for (row_index, row) in rows.iter_mut().enumerate().take(num_rows - 1).skip(1) {
-        (row.accumulator_x, row.accumulator_y) = xy(&accumulator_trace[row_index - 1]);
+        (row.accumulator_x, row.accumulator_y) = acc[row_index - 1];
         let (skew_row, add_row) = (row.q_skew, row.q_add);
         for st in row.add_state.iter_mut() {
-            let op = op_iter.next().unwrap();
-            let (x1, y1) = xy(&op.p1);
+            let (op, (x1, y1), inverse) = (&ops[op_idx], p1[op_idx], inverses[op_idx]);
+            op_idx += 1;
             if op.is_double {
-                let inverse = invert_or_zero(y1 + y1);
                 st.lambda = (x1 + x1 + x1) * x1 * inverse;
                 st.collision_inverse = Fq::from(0u64);
             } else {
-                let inverse = invert_or_zero(op.p2.0 - x1);
                 let active = if skew_row {
                     st.add && st.slice == 7
                 } else {
@@ -692,7 +695,7 @@ pub fn compute_msm_rows(msms: &[Vec<ScalarMul>], total_muls: u32, num_rows: usiz
     }
     let last = rows.last_mut().unwrap();
     last.msm_transition = true;
-    (last.accumulator_x, last.accumulator_y) = xy(accumulator_trace.last().unwrap());
+    (last.accumulator_x, last.accumulator_y) = *acc.last().unwrap();
     (rows, read_counts)
 }
 

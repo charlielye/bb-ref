@@ -349,9 +349,7 @@ pub fn triple_ipa_prove(ck: &GrumpkinKey, input: &TripleIpaInput, t: &mut Native
     let claim = claims.batch();
     let batch = |polys: &[P], rhos: &[Fq]| {
         let mut acc = P::zero(n);
-        for (p, r) in polys.iter().zip(rhos) {
-            acc.add_scaled(p, r);
-        }
+        acc.add_scaled_batch(&polys.iter().zip(rhos).map(|(p, r)| (p, *r)).collect::<Vec<_>>());
         acc
     };
     let unshifted = batch(&input.unshifted_polys, &claims.unshifted_rho_powers);

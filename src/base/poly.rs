@@ -2,6 +2,7 @@
 //! window: a plain coefficient vector of the dyadic size).
 
 use super::field::{FieldLike, Fr};
+use rayon::prelude::*;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Polynomial<F: FieldLike> {
@@ -68,11 +69,30 @@ impl<F: FieldLike> Polynomial<F> {
         vals.pop().unwrap()
     }
     /// `self += scalar * other` (other may be shorter).
-    pub fn add_scaled(&mut self, other: &Self, scalar: &F) {
-        assert!(other.len() <= self.len(), "add_scaled: other is longer");
-        for (a, b) in self.coeffs.iter_mut().zip(&other.coeffs) {
-            *a += &(scalar.clone() * b);
+    pub fn add_scaled(&mut self, other: &Self, scalar: &F)
+    where
+        F: Send + Sync,
+    {
+        self.add_scaled_batch(&[(other, scalar.clone())]);
+    }
+    /// `self += sum_i scalar_i * poly_i` in one pass over the rows, chunks in parallel (bb
+    /// `add_scaled_batch`); shorter polynomials are zero-extended.
+    pub fn add_scaled_batch(&mut self, terms: &[(&Self, F)])
+    where
+        F: Send + Sync,
+    {
+        for (p, _) in terms {
+            assert!(p.len() <= self.len(), "add_scaled_batch: term is longer");
         }
+        const CHUNK: usize = 1 << 12;
+        self.coeffs.par_chunks_mut(CHUNK).enumerate().for_each(|(c, chunk)| {
+            let start = c * CHUNK;
+            for (p, s) in terms {
+                for (a, b) in chunk.iter_mut().zip(p.coeffs.iter().skip(start)) {
+                    *a += &(s.clone() * b);
+                }
+            }
+        });
     }
     /// In-place division by `(X - root)`, assuming `root` is a root (bb `factor_roots`).
     pub fn factor_root(&mut self, root: &F) {
