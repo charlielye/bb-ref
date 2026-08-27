@@ -72,7 +72,7 @@ fn mock_flows_bb_proofs_verify() {
         let proof = ChonkProof::from_fields(&decode_fields(&std::fs::read(dir.join("proof")).unwrap()));
         assert!(verify(&vk, &proof), "{flow}: bb proof rejected");
         if let Ok(inputs) = std::fs::read(dir.join("ivc-inputs.msgpack")) {
-            let steps = decode_steps(&inputs, &mut OsRng);
+            let steps = decode_steps(&inputs);
             assert_eq!(
                 steps.last().unwrap().vk.to_bytes(),
                 vk.to_bytes(),
@@ -88,7 +88,7 @@ fn mock_flows_bb_proofs_verify() {
 /// and leaves it for bb (`fixtures/regen_acir.sh` runs `bb verify` on it).
 #[test]
 fn mock_flow_rust_proof() {
-    let steps = decode_steps(&common::read("acir/mock_1_1/ivc-inputs.msgpack"), &mut OsRng);
+    let steps = decode_steps(&common::read("acir/mock_1_1/ivc-inputs.msgpack"));
     assert_eq!(steps.len(), 7);
     let (proof, vk) = prove_steps(&steps, CommitmentKey::new(1 << 17), &mut OsRng, true);
     assert!(verify(&vk, &proof), "Rust proof rejected by the Rust verifier");
@@ -109,7 +109,7 @@ fn mock_flow_byte_exact_with_seed() {
         return;
     }
     let mut rng = DebugRng::new(12345);
-    let steps = decode_steps(&common::read("acir/mock_1_1/ivc-inputs.msgpack"), &mut rng);
+    let steps = decode_steps(&common::read("acir/mock_1_1/ivc-inputs.msgpack"));
     let (proof, vk) = prove_steps(&steps, CommitmentKey::new(1 << 17), &mut rng, false);
     assert_eq!(encode_fields(&proof.to_fields()), std::fs::read(dir.join("proof")).unwrap(), "proof bytes");
     assert_eq!(vk.to_bytes(), std::fs::read(dir.join("vk")).unwrap(), "vk bytes");
@@ -124,7 +124,7 @@ fn mock_flow_byte_exact_with_tape() {
         return;
     }
     let mut tape = TapeRng::from_bytes(std::fs::read(dir.join("rng_tape.bin")).unwrap());
-    let steps = decode_steps(&common::read("acir/mock_1_1/ivc-inputs.msgpack"), &mut tape);
+    let steps = decode_steps(&common::read("acir/mock_1_1/ivc-inputs.msgpack"));
     let (proof, vk) = prove_steps(&steps, CommitmentKey::new(1 << 17), &mut tape, true);
     assert_eq!(
         vk.to_bytes(),

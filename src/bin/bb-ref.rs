@@ -60,7 +60,7 @@ fn chonk(cmd: &str, flags: &HashMap<String, String>) {
         }
         "prove" => {
             let mut rng = bb_ref::base::rng::from_env();
-            let steps = decode_steps(&std::fs::read(get("--ivc_inputs_path")).expect("ivc inputs"), rng.as_mut());
+            let steps = decode_steps(&std::fs::read(get("--ivc_inputs_path")).expect("ivc inputs"));
             let check_vks = flags.get("--vk_policy").is_some_and(|v| v == "check");
             // The largest circuit of the flow, or the joint proof's 2^17, sizes the commitment key.
             let max_size = steps.iter().map(|s| 1usize << s.vk.log_n()).max().unwrap_or(0).max(1 << 17);

@@ -21,6 +21,7 @@
 #include "barretenberg/chonk/chonk.hpp"
 #include "barretenberg/chonk/chonk_verifier.hpp"
 #include "barretenberg/chonk/mock_circuit_producer.hpp"
+#include "barretenberg/chonk/private_execution_steps.hpp"
 #include "barretenberg/chonk/batched_honk_translator/batched_honk_translator_verifier.hpp"
 #include "barretenberg/circuit_checker/translator_circuit_checker.hpp"
 #include "barretenberg/translator_vm/translator_circuit_builder.hpp"
@@ -1079,6 +1080,56 @@ TEST(BbRefDump, Chonk)
     proof.to_file_msgpack((out / "proof.msgpack").string());
     write_file(out / "vk", to_buffer(*vk));
     EXPECT_TRUE(verify(proof, vk));
+}
+
+// --- Real-flow per-circuit dumps -------------------------------------------------------------------------
+// BBREF_IVC_INPUTS=<ivc-inputs.msgpack> BBREF_OUT=<dir> ./bin/dsl_tests --gtest_filter='BbRefDump.ChonkFlow'
+// Mirrors `bb prove --scheme chonk` (PrivateExecutionSteps parse + accumulate with the pinned VKs) and
+// dumps every circuit's proving instance. Run with HARDWARE_CONCURRENCY=1 BB_RNG_SEED=<seed> so the
+// witness-gap fills and op-queue/masking randomness match a same-seeded bb-ref run (which must also
+// build a dump instance before each accumulate to keep the draw ledger aligned).
+TEST(BbRefDump, ChonkFlow)
+{
+    const char* inputs = std::getenv("BBREF_IVC_INPUTS");
+    const char* out_env = std::getenv("BBREF_OUT");
+    if (inputs == nullptr || out_env == nullptr) {
+        GTEST_SKIP() << "set BBREF_IVC_INPUTS and BBREF_OUT";
+    }
+    bb::srs::init_file_crs_factory(bb::srs::bb_crs_path());
+    bb::srs::init_grumpkin_file_crs_factory(bb::srs::bb_crs_path());
+    std::filesystem::path out(out_env);
+    std::filesystem::create_directories(out);
+    PrivateExecutionSteps steps;
+    steps.parse(PrivateExecutionStepRaw::load_and_decompress(inputs));
+    auto ivc = std::make_shared<Chonk>(steps.kinds);
+    // BBREF_PLAIN=1 skips the dumps, making this loop exactly `bb prove`'s accumulate; with
+    // BB_RNG_TAPE_OUT set (flushed per draw) the printed positions are per-phase draw-ledger marks.
+    const bool plain = std::getenv("BBREF_PLAIN") != nullptr;
+    const char* tape_path = std::getenv("BB_RNG_TAPE_OUT");
+    auto mark = [&](const std::string& label) {
+        if (tape_path != nullptr) {
+            std::cerr << "[draws] " << label << " " << std::filesystem::file_size(tape_path) / 32 << std::endl;
+        }
+    };
+    for (size_t i = 0; i < steps.folding_stack.size(); ++i) {
+        mark("before_build_" + std::to_string(i));
+        const acir_format::ProgramMetadata metadata{ .ivc = ivc };
+        auto circuit = acir_format::create_circuit<Chonk::ClientCircuit>(steps.folding_stack[i], metadata);
+        mark("after_build_" + std::to_string(i));
+        const auto dir = out / ("circuit_" + std::to_string(i));
+        dispatch_kind(steps.kinds[i], [&]<CircuitKind K>() {
+            using FlavorT = flavor_for<K>;
+            if (!plain) {
+                dump_from_builder<FlavorT>(circuit, dir);
+            }
+            mark("after_dump_" + std::to_string(i));
+            auto vk = from_buffer<std::shared_ptr<typename FlavorT::VerificationKey>>(steps.precomputed_vks[i]);
+            ivc->accumulate(circuit, Chonk::CircuitVerificationKey{ vk });
+            mark("after_accumulate_" + std::to_string(i));
+        });
+    }
+    auto proof = ivc->prove();
+    write_proof(out / "proof_fields.bin", proof.to_field_elements());
 }
 
 // --- M13: stdlib programs (gate-exactness of the in-circuit primitives) ---------------------------------

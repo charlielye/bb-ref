@@ -32,7 +32,7 @@ fn main() {
     flows.sort();
     for flow in flows {
         let Ok(bytes) = std::fs::read(flow.join("ivc-inputs.msgpack")) else { continue };
-        let steps = decode_steps(&bytes, &mut OsRng);
+        let steps = decode_steps(&bytes);
         println!("== {}", flow.file_name().unwrap().to_string_lossy());
         for s in &steps {
             let mut counts: BTreeMap<String, usize> = BTreeMap::new();

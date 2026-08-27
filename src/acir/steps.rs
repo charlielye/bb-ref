@@ -53,15 +53,23 @@ struct StepRaw {
 pub struct PrivateExecutionStep {
     pub name: String,
     pub circuit: Circuit,
-    pub witness: Vec<Fr>,
+    /// The gzipped witness, decoded (and its gaps filled with random elements) only when the step is
+    /// accumulated: `bb prove` drives the bbapi `ChonkAccumulate` command, which decodes per step,
+    /// so the gap-fill draws interleave with the accumulation draws.
+    pub witness_gz: Vec<u8>,
     pub kind: CircuitKind,
     /// The VK pinned alongside the circuit; proving checks the circuit still has it.
     pub vk: Vk<Bn254>,
 }
 
-/// bb `PrivateExecutionSteps::parse`: every step's witness is decoded (and its gaps filled) before
-/// any proving.
-pub fn decode_steps(bytes: &[u8], rng: &mut dyn Rng) -> Vec<PrivateExecutionStep> {
+impl PrivateExecutionStep {
+    pub fn decode_witness(&self, rng: &mut dyn Rng) -> Vec<Fr> {
+        decode_witness(&self.witness_gz, rng)
+    }
+}
+
+/// The bytecode/VK halves of bb's step parsing (witnesses stay raw; see `PrivateExecutionStep`).
+pub fn decode_steps(bytes: &[u8]) -> Vec<PrivateExecutionStep> {
     let raw: Vec<StepRaw> = rmp_serde::from_slice(bytes).expect("ivc-inputs msgpack");
     raw.into_iter()
         .map(|s| {
@@ -74,7 +82,7 @@ pub fn decode_steps(bytes: &[u8], rng: &mut dyn Rng) -> Vec<PrivateExecutionStep
             PrivateExecutionStep {
                 name: s.function_name,
                 circuit: decode_program_gz(&s.bytecode.0),
-                witness: decode_witness(&s.witness.0, rng),
+                witness_gz: s.witness.0,
                 kind,
                 vk: Vk::from_bytes(&s.vk.0, kind.flavor().layout().num_precomputed),
             }
@@ -94,7 +102,8 @@ pub fn prove_steps(
     let mut ivc = Chonk::new(steps.iter().map(|s| s.kind).collect(), ck);
     for step in steps {
         crate::base::timing::phase(&format!("== {} ({:?})", step.name, step.kind));
-        let mut circuit = build_circuit_mega(&step.circuit, Some(&step.witness), Some(&mut ivc), rng);
+        let witness = step.decode_witness(rng);
+        let mut circuit = build_circuit_mega(&step.circuit, Some(&witness), Some(&mut ivc), rng);
         assert!(
             circuit.failed.is_none(),
             "{}: circuit not satisfied: {:?}",
