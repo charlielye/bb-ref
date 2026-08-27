@@ -137,7 +137,7 @@ fn mock_ivc_byte_exact_with_tape() {
 /// The first outputs of `std::mt19937_64(12345)` (bb's debug engine seed).
 #[test]
 fn mt19937_64_reference() {
-    let mut mt = common::mock_ivc::Mt19937_64::new(12345);
+    let mut mt = bb_ref::base::rng::Mt19937_64::new(12345);
     let expected: [u64; 4] = [
         6597103971274460346,
         7386862472818278521,

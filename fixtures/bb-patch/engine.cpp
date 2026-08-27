@@ -292,6 +292,15 @@ RNG& get_randomness()
     // Use determinism for logging
     return get_debug_randomness();
 #else
+    // bb-ref fixture hook: BB_RNG_SEED=<u64> makes every draw come from the seeded debug engine
+    // (mt19937_64), which bb-ref mirrors; single-threaded use only (HARDWARE_CONCURRENCY=1).
+    static RNG* seeded = [] () -> RNG* {
+        const char* seed = std::getenv("BB_RNG_SEED");
+        return seed != nullptr ? &get_debug_randomness(true, std::strtoull(seed, nullptr, 10)) : nullptr;
+    }();
+    if (seeded != nullptr) {
+        return *seeded;
+    }
     static RandomEngine engine;
     return engine;
 #endif

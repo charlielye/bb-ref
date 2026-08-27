@@ -98,6 +98,23 @@ fn mock_flow_rust_proof() {
     std::fs::write(out.join("vk"), vk.to_bytes()).unwrap();
 }
 
+/// With bb's seeded debug engine (`BB_RNG_SEED=12345`, mirrored by `DebugRng`) the whole ChonkProof of
+/// mock_1_1 is byte-identical to bb's — the tapeless equivalent of `mock_flow_byte_exact_with_tape`.
+#[test]
+fn mock_flow_byte_exact_with_seed() {
+    use bb_ref::base::rng::DebugRng;
+    let dir = common::fixture_dir("acir/mock_1_1_seed");
+    if !dir.join("proof").exists() {
+        eprintln!("skipping acir seed: no dump");
+        return;
+    }
+    let mut rng = DebugRng::new(12345);
+    let steps = decode_steps(&common::read("acir/mock_1_1/ivc-inputs.msgpack"), &mut rng);
+    let (proof, vk) = prove_steps(&steps, CommitmentKey::new(1 << 17), &mut rng, false);
+    assert_eq!(encode_fields(&proof.to_fields()), std::fs::read(dir.join("proof")).unwrap(), "proof bytes");
+    assert_eq!(vk.to_bytes(), std::fs::read(dir.join("vk")).unwrap(), "vk bytes");
+}
+
 /// With bb's RNG tape the whole ChonkProof of mock_1_1 is byte-identical to bb's.
 #[test]
 fn mock_flow_byte_exact_with_tape() {

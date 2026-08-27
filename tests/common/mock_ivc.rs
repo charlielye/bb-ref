@@ -2,7 +2,6 @@
 //! arithmetic filler gates with witnesses from bb's debug RNG, the mock databus (`MockDatabusProducer`),
 //! and the real kernel logic (`complete_kernel_circuit_logic`).
 use bb_ref::base::field::FieldLike;
-use bb_ref::base::field::U256;
 use bb_ref::base::poly::Poly;
 use bb_ref::base::rng::Rng;
 use bb_ref::base::Fr;
@@ -21,66 +20,7 @@ use bb_ref::stdlib::io::AppIo;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-/// `std::mt19937_64`.
-pub struct Mt19937_64 {
-    mt: [u64; 312],
-    index: usize,
-}
-
-impl Mt19937_64 {
-    pub fn new(seed: u64) -> Self {
-        let mut mt = [0u64; 312];
-        mt[0] = seed;
-        for i in 1..312 {
-            mt[i] = 6364136223846793005u64
-                .wrapping_mul(mt[i - 1] ^ (mt[i - 1] >> 62))
-                .wrapping_add(i as u64);
-        }
-        Self { mt, index: 312 }
-    }
-    fn twist(&mut self) {
-        for i in 0..312 {
-            let x = (self.mt[i] & 0xFFFF_FFFF_8000_0000) | (self.mt[(i + 1) % 312] & 0x7FFF_FFFF);
-            let mut xa = x >> 1;
-            if x & 1 == 1 {
-                xa ^= 0xB502_6F5A_A966_19E9;
-            }
-            self.mt[i] = self.mt[(i + 156) % 312] ^ xa;
-        }
-        self.index = 0;
-    }
-    pub fn next_u64(&mut self) -> u64 {
-        if self.index >= 312 {
-            self.twist();
-        }
-        let mut y = self.mt[self.index];
-        self.index += 1;
-        y ^= (y >> 29) & 0x5555_5555_5555_5555;
-        y ^= (y << 17) & 0x71D6_7FFF_EDA6_0000;
-        y ^= (y << 37) & 0xFFF7_EEE0_0000_0000;
-        y ^= y >> 43;
-        y
-    }
-}
-
-/// bb `numeric::get_debug_randomness()`: `mt19937_64(12345)`, a u256 being four draws (low limb first).
-pub struct DebugRng(pub Mt19937_64);
-
-impl DebugRng {
-    pub fn new() -> Self {
-        Self(Mt19937_64::new(12345))
-    }
-}
-
-impl Rng for DebugRng {
-    fn next_u256(&mut self) -> U256 {
-        let a = self.0.next_u64();
-        let b = self.0.next_u64();
-        let c = self.0.next_u64();
-        let d = self.0.next_u64();
-        U256::new([a, b, c, d])
-    }
-}
+pub use bb_ref::base::rng::DebugRng;
 
 /// bb `MockCircuits::add_arithmetic_gates`.
 pub fn add_arithmetic_gates(b: &mut Builder, num_gates: usize, rng: &mut dyn Rng) {
@@ -209,7 +149,7 @@ impl MockIvcCircuits {
     pub fn new() -> Self {
         Self {
             bus: MockDatabus::default(),
-            rng: DebugRng::new(),
+            rng: DebugRng::new(12345),
         }
     }
 
