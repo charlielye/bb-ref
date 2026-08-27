@@ -26,7 +26,7 @@ pub fn prove_ultra(inst: &mut ProverInstance, vk: &Vk<Bn254>, rng: &mut dyn Rng)
     let polys = inst.all_polys();
     let mut zk = flavor.has_zk.then(|| ZkData::<Bn254>::new(flavor.virtual_log_n, &mut t, &ck, rng));
     let rels = HonkRelations { flavor, layout: &inst.layout };
-    let sc = prove_sumcheck::<Bn254>(&rels, &SumcheckSpec::honk(flavor, &inst.layout), &polys, &mut t, &oink.alpha, &betas, &oink.params, zk.as_mut(), None);
+    let sc = prove_sumcheck::<Bn254>(&rels, &SumcheckSpec::honk(flavor, &inst.layout).with_witness_end(inst.max_end_index), &polys, &mut t, &oink.alpha, &betas, &oink.params, zk.as_mut(), None);
 
     let layout = &inst.layout;
     let unshifted: Vec<&_> = inst.polys.iter().collect();

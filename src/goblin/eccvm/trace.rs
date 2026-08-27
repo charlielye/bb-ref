@@ -616,6 +616,7 @@ impl EccvmPolys {
         assert!(num_rows <= FIXED_SIZE, "ECCVM circuit exceeds its fixed size");
 
         let mut polys = EccvmPolys::zero(FIXED_SIZE);
+        polys.num_rows = num_rows;
         let mut set = |e: Ent, i: usize, v: Fq| polys.cols[e as usize].coeffs[TRACE_OFFSET + i] = v;
         set(lagrange_first, 0, Fq::one());
         set(lagrange_second, 1, Fq::one());

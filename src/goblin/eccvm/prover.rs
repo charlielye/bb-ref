@@ -27,6 +27,8 @@ const POW_MASK_SIZE: usize = 8;
 
 pub fn sumcheck_spec() -> SumcheckSpec {
     SumcheckSpec {
+        witness_end: usize::MAX,
+        active_prefix_end: None,
         virtual_log_n: CONST_ECCVM_LOG_N,
         has_zk: true,
         row_disabling: true,
@@ -78,7 +80,7 @@ fn msm(points: &[GrumpkinAffine], scalars: &[Fq]) -> GrumpkinAffine {
 /// bb `ECCVMProver::construct_proof` on `t`; the TripleIPA proof is returned separately.
 pub fn eccvm_prove(q: &EccOpQueue, ck: &GrumpkinKey, t: &mut NativeTranscript, rng: &mut dyn Rng) -> EccvmProverOutput {
     let mut polys = EccvmPolys::from_op_queue(q);
-    crate::base::timing::phase("  eccvm: trace polys");
+    crate::base::timing::phase(&format!("  eccvm: trace polys ({} of {} rows)", polys.num_rows, polys.size()));
     polys.add_masking(rng);
     let n = FIXED_SIZE;
 
@@ -107,7 +109,9 @@ pub fn eccvm_prove(q: &EccOpQueue, ck: &GrumpkinKey, t: &mut NativeTranscript, r
     let gate_challenges: Vec<Fq> = t.dyadic_powers("Sumcheck:gate_challenge", CONST_ECCVM_LOG_N);
     let mut zk = ZkData::<Grumpkin>::new(CONST_ECCVM_LOG_N, t, ck, rng);
     crate::base::timing::phase("  eccvm: oink commits + derived polys");
-    let sc = prove_sumcheck::<Grumpkin>(&EccvmRelations, &sumcheck_spec(), &polys.cols, t, &alpha, &gate_challenges, &params, Some(&mut zk), Some(ck));
+    let mut spec = sumcheck_spec();
+    spec.active_prefix_end = Some(polys.num_rows);
+    let sc = prove_sumcheck::<Grumpkin>(&EccvmRelations, &spec, &polys.cols, t, &alpha, &gate_challenges, &params, Some(&mut zk), Some(ck));
     crate::base::timing::phase("  eccvm: sumcheck");
 
     // Every univariate opening claim, paired with the commitment the verifier holds for it.

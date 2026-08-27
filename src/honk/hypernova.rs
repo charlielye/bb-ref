@@ -144,7 +144,7 @@ pub fn instance_to_accumulator(inst: &mut ProverInstance, vk: &Vk<Bn254>, ck: &C
     let polys = inst.all_polys();
     let sc = prove_sumcheck::<Bn254>(
         &HonkRelations { flavor, layout: &inst.layout },
-        &SumcheckSpec::honk(flavor, &inst.layout),
+        &SumcheckSpec::honk(flavor, &inst.layout).with_witness_end(inst.max_end_index),
         &polys,
         t,
         &oink.alpha,

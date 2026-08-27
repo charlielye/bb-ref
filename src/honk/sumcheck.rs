@@ -99,6 +99,12 @@ impl<F: FieldLike> RelationSet<F> for HonkRelations<'_> {
 /// Shape of one sumcheck instance.
 #[derive(Clone, Copy)]
 pub struct SumcheckSpec {
+    /// bb `compute_effective_round_size`: edges past the witness polynomials' extent are all-zero
+    /// witness rows on which every relation vanishes, so the prover skips them (halved each round).
+    pub witness_end: usize,
+    /// bb `row_skip_active_prefix_end` (ECCVM): the trace rows, after which only the final edge
+    /// (`lagrange_last`) can contribute.
+    pub active_prefix_end: Option<usize>,
     pub virtual_log_n: usize,
     pub has_zk: bool,
     /// Rows `0..trace_offset` are excluded from the relation and handled by the row-disabling
@@ -115,6 +121,8 @@ pub struct SumcheckSpec {
 impl SumcheckSpec {
     pub fn honk(flavor: &FlavorDesc, layout: &Layout) -> Self {
         Self {
+            witness_end: usize::MAX,
+            active_prefix_end: None,
             virtual_log_n: flavor.virtual_log_n,
             has_zk: flavor.has_zk,
             row_disabling: flavor.has_zk,
@@ -123,6 +131,10 @@ impl SumcheckSpec {
             batched_len: layout.batched_len,
             num_entities: layout.num_all(),
         }
+    }
+    pub fn with_witness_end(mut self, witness_end: usize) -> Self {
+        self.witness_end = witness_end;
+        self
     }
 }
 
@@ -522,14 +534,61 @@ impl<F: FieldLike + Copy> Scratch<F> {
     }
 }
 
-/// The accumulator of subrelation `j` of relation `ri` at point `k`: stored for `k` below the
-/// relation's partial length, barycentrically extended beyond it.
-fn accumulator_at<F: FieldLike + Copy>(rels: &impl RelationSet<F>, acc: &Accumulators<F>, ri: usize, j: usize, k: usize, d: usize) -> F {
-    let len = rels.partial_length(ri).min(d);
-    if k < len {
-        acc[ri][j][k]
-    } else {
-        evaluate_univariate(&acc[ri][j][..len], &F::from_u64(k as u64))
+/// Lagrange weights extending a univariate known at `0..len` to the points `len..d`:
+/// `weights[len][k - len][i] = prod_{j != i} (k - j) / (i - j)` (bb `BarycentricData`), one
+/// batched inversion for all of them.
+pub struct ExtensionWeights<F> {
+    weights: Vec<Vec<Vec<F>>>,
+}
+
+impl<F: FieldLike + Copy> ExtensionWeights<F> {
+    pub fn new(lengths: impl Iterator<Item = usize>, d: usize) -> Self {
+        let mut weights = vec![vec![]; d + 1];
+        for len in lengths.filter(|l| *l < d) {
+            if !weights[len].is_empty() {
+                continue;
+            }
+            let mut inverse: Vec<F> = (0..len)
+                .map(|i| {
+                    let mut den = F::one();
+                    for j in (0..len).filter(|j| *j != i) {
+                        den *= &(F::from_u64(i as u64) - &F::from_u64(j as u64));
+                    }
+                    den
+                })
+                .collect();
+            for x in inverse.iter_mut() {
+                *x = x.invert();
+            }
+            weights[len] = (len..d)
+                .map(|k| {
+                    (0..len)
+                        .map(|i| {
+                            let mut num = F::one();
+                            for j in (0..len).filter(|j| *j != i) {
+                                num *= &(F::from_u64(k as u64) - &F::from_u64(j as u64));
+                            }
+                            num * inverse[i]
+                        })
+                        .collect()
+                })
+                .collect();
+        }
+        Self { weights }
+    }
+    /// The accumulator of subrelation `j` of relation `ri` at point `k`: stored for `k` below the
+    /// relation's partial length, extended beyond it.
+    fn accumulator_at(&self, rels: &impl RelationSet<F>, acc: &Accumulators<F>, ri: usize, j: usize, k: usize, d: usize) -> F {
+        let len = rels.partial_length(ri).min(d);
+        if k < len {
+            acc[ri][j][k]
+        } else {
+            let mut v = F::zero();
+            for (w, a) in self.weights[len][k - len].iter().zip(&acc[ri][j][..len]) {
+                v += &(*w * *a);
+            }
+            v
+        }
     }
 }
 
@@ -611,7 +670,7 @@ fn accumulate_edge<F: FieldLike + Copy>(rels: &impl RelationSet<F>, table: &[Vec
 }
 
 /// bb `batch_over_relations`: `S(k) = sum_r Λ_r(k) sum_j α_{r,j} acc_{r,j}(k) [lin. indep.: · (1 + k(β - 1)) · c]`.
-fn batch_over_relations<F: FieldLike + Copy>(rels: &impl RelationSet<F>, acc: &Accumulators<F>, alphas: &[F], beta: &F, partial_eval: &F, row_disabling: Option<(F, F)>, d: usize) -> Vec<F> {
+fn batch_over_relations<F: FieldLike + Copy>(rels: &impl RelationSet<F>, ext: &ExtensionWeights<F>, acc: &Accumulators<F>, alphas: &[F], beta: &F, partial_eval: &F, row_disabling: Option<(F, F)>, d: usize) -> Vec<F> {
     let mut result = vec![F::zero(); d];
     for k in 0..d {
         let pow_factor = linear_at(&F::one(), beta, k) * *partial_eval;
@@ -630,7 +689,7 @@ fn batch_over_relations<F: FieldLike + Copy>(rels: &impl RelationSet<F>, acc: &A
                 if !(ri == 0 && j == 0) {
                     alpha_idx += 1;
                 }
-                let mut term = accumulator_at(rels, acc, ri, j, k, d) * alpha;
+                let mut term = ext.accumulator_at(rels, acc, ri, j, k, d) * alpha;
                 if rels.linearly_independent(ri, j) {
                     term *= pow_factor;
                 }
@@ -668,13 +727,20 @@ pub struct RoundProver<F> {
     rd0: F,
     rd1: F,
     round: usize,
+    /// Rows past this are all-zero witness rows (bb witness `end_index`), halved each round.
+    witness_end: usize,
+    active_prefix_end: Option<usize>,
+    ext: ExtensionWeights<F>,
 }
 
 impl<F: FieldLike + Copy + Send + Sync> RoundProver<F>
 where
     RelationParams<F>: Sync,
 {
-    pub fn new(polys: &[Polynomial<F>], row_disabling: bool, trace_offset: usize) -> Self {
+    /// `witness_end`: rows from there on are all-zero witness rows (bb witness `end_index`; the
+    /// full size disables row skipping). `active_prefix_end`: the ECCVM's trace rows, beyond which
+    /// only the last edge is evaluated (bb `row_skip_active_prefix_end`).
+    pub fn new(polys: &[Polynomial<F>], row_disabling: bool, trace_offset: usize, witness_end: usize, active_prefix_end: Option<usize>) -> Self {
         let n = polys[0].len();
         Self {
             table: polys.iter().map(|p| p.coeffs.clone()).collect(),
@@ -684,7 +750,34 @@ where
             rd0: F::one(),
             rd1: F::one(),
             round: 0,
+            witness_end: witness_end.min(n),
+            active_prefix_end,
+            ext: ExtensionWeights { weights: vec![] },
         }
+    }
+    /// Extension weights for this relation set and univariate length (built once, on the first round).
+    fn ensure_weights(&mut self, rels: &impl RelationSet<F>, d: usize) {
+        if self.ext.weights.is_empty() {
+            self.ext = ExtensionWeights::new((0..rels.num_relations()).map(|r| rels.partial_length(r)), d);
+        }
+    }
+
+    /// bb `compute_edge_ranges`: the edges to evaluate this round, after the disabled head.
+    fn edge_ranges(&self, round_size: usize) -> Vec<std::ops::Range<usize>> {
+        let head = self.excluded_head / 2;
+        let effective = round_size.min(self.witness_end + self.witness_end % 2) / 2;
+        let mut ranges = vec![];
+        match self.active_prefix_end {
+            Some(prefix) if prefix < round_size => {
+                let prefix_end = ((prefix + prefix % 2) / 2).min(effective).max(head);
+                ranges.push(head..prefix_end);
+                if effective > prefix_end && effective >= head + 1 {
+                    ranges.push(effective - 1..effective);
+                }
+            }
+            _ => ranges.push(head..effective),
+        }
+        ranges
     }
     pub fn log_n(&self) -> usize {
         self.log_n
@@ -699,7 +792,8 @@ where
 
     /// The round univariate of the relations (bb `compute_univariate` + `compute_offset_area_contribution`,
     /// or `compute_virtual_contribution` for a virtual round), without any Libra term.
-    pub fn univariate(&self, rels: &(impl RelationSet<F> + Sync), params: &RelationParams<F>, betas: &[F], partial_eval: &F, alphas: &[F], d: usize) -> Vec<F> {
+    pub fn univariate(&mut self, rels: &(impl RelationSet<F> + Sync), params: &RelationParams<F>, betas: &[F], partial_eval: &F, alphas: &[F], d: usize) -> Vec<F> {
+        self.ensure_weights(rels, d);
         let round = self.round;
         if round < self.log_n {
             let round_size = 1 << (self.log_n - round);
@@ -707,14 +801,19 @@ where
                 RELATION_STATS.lock().unwrap().clear();
                 *EXTENSION_NS.lock().unwrap() = 0;
             }
-            let acc = accumulate_edges(rels, &self.table, self.excluded_head / 2..round_size / 2, params, betas, round, d);
+            let acc = self
+                .edge_ranges(round_size)
+                .into_iter()
+                .map(|edges| accumulate_edges(rels, &self.table, edges, params, betas, round, d))
+                .reduce(add_accumulators)
+                .unwrap_or_else(|| new_accumulators(rels, d));
             if round == 0 && relation_stats_enabled() {
                 print_relation_stats(rels, round_size / 2);
             }
-            let mut univariate = batch_over_relations(rels, &acc, alphas, &betas[round], partial_eval, None, d);
+            let mut univariate = batch_over_relations(rels, &self.ext, &acc, alphas, &betas[round], partial_eval, None, d);
             if self.row_disabling {
                 let head = accumulate_edges(rels, &self.table, 0..self.excluded_head / 2, params, betas, round, d);
-                let head_uni = batch_over_relations(rels, &head, alphas, &betas[round], partial_eval, Some((self.rd0, self.rd1)), d);
+                let head_uni = batch_over_relations(rels, &self.ext, &head, alphas, &betas[round], partial_eval, Some((self.rd0, self.rd1)), d);
                 for (k, v) in head_uni.into_iter().enumerate() {
                     univariate[k] += v;
                 }
@@ -726,7 +825,7 @@ where
             let edge_table: Vec<Vec<F>> = self.table.iter().map(|c| vec![c[0], F::zero()]).collect();
             accumulate_edge(rels, &edge_table, 0, params, &F::one(), &mut acc, &mut Scratch::new(rels, edge_table.len(), d));
             let rd = if self.row_disabling { Some((self.rd0, self.rd1)) } else { None };
-            batch_over_relations(rels, &acc, alphas, &betas[round], partial_eval, rd, d)
+            batch_over_relations(rels, &self.ext, &acc, alphas, &betas[round], partial_eval, rd, d)
         }
     }
 
@@ -746,6 +845,8 @@ where
                 col[0] *= F::one() - *u;
             }
         }
+        self.witness_end = self.witness_end.div_ceil(2);
+        self.active_prefix_end = self.active_prefix_end.map(|p| p.div_ceil(2));
         if round == 1 {
             self.rd1 = F::zero();
         }
@@ -842,12 +943,13 @@ where
     type F<C> = <C as Curve>::Fr;
     let d = spec.batched_len;
     let alphas = alpha_powers(alpha, rels.total_subrelations() - 1);
-    let mut state = RoundProver::new(polys, spec.row_disabling, spec.trace_offset);
+    let mut state = RoundProver::new(polys, spec.row_disabling, spec.trace_offset, spec.witness_end, spec.active_prefix_end);
     let mut committed = CommittedRounds::<C>::new();
     let mut challenge = Vec::with_capacity(spec.virtual_log_n);
     let mut partial_eval = F::<C>::one();
     let mut last_univariate = Vec::new();
     for round in 0..spec.virtual_log_n {
+        let round_start = relation_stats_enabled().then(std::time::Instant::now);
         let mut univariate = state.univariate(rels, params, betas, &partial_eval, &alphas, d);
         if let Some(zk) = zk.as_deref_mut() {
             for (k, v) in zk.round_univariate(round, d).into_iter().enumerate() {
@@ -861,6 +963,9 @@ where
         }
         let u: F<C> = t.challenge(&format!("Sumcheck:u_{round}"));
         state.partially_evaluate(&u);
+        if let Some(t0) = round_start {
+            eprintln!("[round {round}] {:.1} ms", t0.elapsed().as_secs_f64() * 1e3);
+        }
         if let Some(zk) = zk.as_deref_mut() {
             zk.update(&u, round);
         }
