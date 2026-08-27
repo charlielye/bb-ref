@@ -1,5 +1,7 @@
-//! ROM (LogUp scheme) and RAM arrays (bb `rom_ram_logic`). Accesses emit memory gates as they
-//! happen; the consistency gates over the sorted records are added at finalization.
+//! ROM and RAM arrays (bb `rom_ram_logic`). Single-value ROM cells use the LogUp scheme; ROM
+//! cells holding a pair of values (Straus point tables) use the sorted-transcript scheme, as does
+//! RAM. Accesses emit memory gates as they happen; the consistency gates over the sorted records
+//! are added at finalization.
 
 use super::builder::{AddQuad, Builder, MemorySelector};
 use super::trace::BlockId;
@@ -23,8 +25,11 @@ pub enum RamAccess {
 pub struct RomRecord {
     pub index_witness: u32,
     pub value_witness: u32,
+    /// The second value column of a pair cell (the zero witness for single-value cells).
+    pub value2_witness: u32,
     pub index: u32,
     pub access_type: RomAccess,
+    pub record_witness: u32,
     pub gate_index: usize,
 }
 
@@ -42,9 +47,11 @@ pub struct RamRecord {
 
 #[derive(Clone, Debug, Default)]
 pub struct RomTranscript {
-    /// Value witness per cell (`UNINITIALIZED` until set).
-    pub state: Vec<u32>,
+    /// Value witnesses per cell (`UNINITIALIZED` until set).
+    pub state: Vec<[u32; 2]>,
     pub records: Vec<RomRecord>,
+    /// Fixed by the first access: single-value cells (LogUp) or pairs (sorted transcript).
+    pub use_logup: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -64,30 +71,140 @@ impl Builder {
     // ---- ROM (single-value cells, LogUp) ----
 
     pub fn create_rom_array(&mut self, size: usize) -> usize {
-        self.memory.rom_arrays.push(RomTranscript { state: vec![UNINITIALIZED; size], records: vec![] });
+        self.memory.rom_arrays.push(RomTranscript { state: vec![[UNINITIALIZED; 2]; size], records: vec![], use_logup: None });
         self.memory.rom_arrays.len() - 1
+    }
+
+    fn rom_scheme(&mut self, rom_id: usize, logup: bool) {
+        let rom = &mut self.memory.rom_arrays[rom_id];
+        assert_ne!(rom.use_logup, Some(!logup), "ROM array mixes single-value and pair accesses");
+        rom.use_logup = Some(logup);
     }
 
     /// Initialize cell `index` (a circuit constant) to `value_witness`. Each cell exactly once.
     pub fn set_rom_element(&mut self, rom_id: usize, index: usize, value_witness: u32) {
+        self.rom_scheme(rom_id, true);
         let index_witness = if index == 0 { self.zero_idx() } else { self.put_constant_variable(Fr::from(index as u64)) };
-        assert_eq!(self.memory.rom_arrays[rom_id].state[index], UNINITIALIZED, "ROM cell initialized twice");
-        let record = RomRecord { index_witness, value_witness, index: index as u32, access_type: RomAccess::TableEntry, gate_index: 0 };
-        self.memory.rom_arrays[rom_id].state[index] = value_witness;
+        assert_eq!(self.memory.rom_arrays[rom_id].state[index][0], UNINITIALIZED, "ROM cell initialized twice");
+        let z = self.zero_idx();
+        let record = RomRecord { index_witness, value_witness, value2_witness: z, index: index as u32, access_type: RomAccess::TableEntry, record_witness: 0, gate_index: 0 };
+        self.memory.rom_arrays[rom_id].state[index] = [value_witness, z];
         let record = self.create_rom_logup_gate(record, rom_id, false);
         self.memory.rom_arrays[rom_id].records.push(record);
     }
 
     /// Read the cell addressed by `index_witness`; returns a fresh witness holding the value.
     pub fn read_rom_array(&mut self, rom_id: usize, index_witness: u32) -> u32 {
+        self.rom_scheme(rom_id, true);
         let index = Self::low_u64(&self.get_variable(index_witness)) as usize;
-        let cell = self.memory.rom_arrays[rom_id].state[index];
+        let cell = self.memory.rom_arrays[rom_id].state[index][0];
         assert_ne!(cell, UNINITIALIZED, "ROM read of uninitialized cell");
         let value_witness = self.add_variable(self.get_variable(cell));
-        let record = RomRecord { index_witness, value_witness, index: index as u32, access_type: RomAccess::Read, gate_index: 0 };
+        let z = self.zero_idx();
+        let record = RomRecord { index_witness, value_witness, value2_witness: z, index: index as u32, access_type: RomAccess::Read, record_witness: 0, gate_index: 0 };
         let record = self.create_rom_logup_gate(record, rom_id, true);
         self.memory.rom_arrays[rom_id].records.push(record);
         value_witness
+    }
+
+    // ---- ROM (pair cells, sorted transcript) ----
+
+    /// bb `set_ROM_element_pair`: initialize cell `index` to two value witnesses.
+    pub fn set_rom_element_pair(&mut self, rom_id: usize, index: usize, values: [u32; 2]) {
+        self.rom_scheme(rom_id, false);
+        let index_witness = self.put_constant_variable(Fr::from(index as u64));
+        assert_eq!(self.memory.rom_arrays[rom_id].state[index][0], UNINITIALIZED, "ROM cell initialized twice");
+        let record = RomRecord {
+            index_witness,
+            value_witness: values[0],
+            value2_witness: values[1],
+            index: index as u32,
+            access_type: RomAccess::TableEntry,
+            record_witness: 0,
+            gate_index: 0,
+        };
+        self.memory.rom_arrays[rom_id].state[index] = values;
+        let record = self.create_rom_gate(record, MemorySelector::RomRead);
+        self.memory.rom_arrays[rom_id].records.push(record);
+    }
+
+    /// bb `read_ROM_array_pair`: fresh witnesses holding the pair at the (witness) index.
+    pub fn read_rom_array_pair(&mut self, rom_id: usize, index_witness: u32) -> [u32; 2] {
+        self.rom_scheme(rom_id, false);
+        let index = Self::low_u64(&self.get_variable(index_witness)) as usize;
+        let cell = self.memory.rom_arrays[rom_id].state[index];
+        assert!(cell[0] != UNINITIALIZED && cell[1] != UNINITIALIZED, "ROM read of uninitialized cell");
+        let values = [self.add_variable(self.get_variable(cell[0])), self.add_variable(self.get_variable(cell[1]))];
+        let record = RomRecord {
+            index_witness,
+            value_witness: values[0],
+            value2_witness: values[1],
+            index: index as u32,
+            access_type: RomAccess::Read,
+            record_witness: 0,
+            gate_index: 0,
+        };
+        let record = self.create_rom_gate(record, MemorySelector::RomRead);
+        self.memory.rom_arrays[rom_id].records.push(record);
+        values
+    }
+
+    fn create_rom_gate(&mut self, mut record: RomRecord, selector: MemorySelector) -> RomRecord {
+        record.record_witness = self.add_variable(Fr::zero());
+        let mut row = self.memory_selectors_row(selector);
+        row.wires = [record.index_witness, record.value_witness, record.value2_witness, record.record_witness];
+        let block = self.blocks.get_mut(BlockId::Memory);
+        block.rows.push(row);
+        record.gate_index = block.len() - 1;
+        self.num_gates_inc();
+        record
+    }
+
+    /// bb `process_ROM_array`: the records sorted by index, each paired with its access record
+    /// through the tag permutation, and the final index pinned to `size - 1`.
+    fn process_rom_array(&mut self, rom_id: usize) {
+        let read_tag = self.get_new_tag();
+        let sorted_list_tag = self.get_new_tag();
+        self.set_tau_transposition(read_tag, sorted_list_tag);
+        let rom = self.memory.rom_arrays[rom_id].clone();
+        assert!(rom.state.iter().all(|c| c[0] != UNINITIALIZED && c[1] != UNINITIALIZED), "ROM array has uninitialized cells");
+        let mut records = rom.records.clone();
+        records.sort_by_key(|r| (r.index, r.gate_index));
+        let size = rom.state.len();
+        for (i, record) in records.iter().enumerate() {
+            let index_witness = if i == 0 {
+                self.zero_idx()
+            } else if i == records.len() - 1 {
+                self.put_constant_variable(Fr::from(size as u64 - 1))
+            } else {
+                self.add_variable(Fr::from(record.index as u64))
+            };
+            let value_witness = self.add_variable(self.get_variable(record.value_witness));
+            let value2_witness = self.add_variable(self.get_variable(record.value2_witness));
+            let sorted = RomRecord { index_witness, value_witness, value2_witness, record_witness: 0, gate_index: 0, ..*record };
+            let sorted = self.create_rom_gate(sorted, MemorySelector::RomConsistencyCheck);
+            self.assign_tag(record.record_witness, read_tag);
+            self.assign_tag(sorted.record_witness, sorted_list_tag);
+            self.memory_read_records.push(sorted.gate_index as u32);
+            self.memory_read_records.push(record.gate_index as u32);
+        }
+        let max_index = self.add_variable(Fr::from(size as u64));
+        let z = self.zero_idx();
+        self.create_unconstrained_gate(BlockId::Memory, [max_index, z, z, z]);
+        self.create_big_add_gate(
+            AddQuad {
+                a: max_index,
+                b: z,
+                c: z,
+                d: z,
+                a_scaling: Fr::one(),
+                b_scaling: Fr::zero(),
+                c_scaling: Fr::zero(),
+                d_scaling: Fr::zero(),
+                const_scaling: -Fr::from(size as u64),
+            },
+            false,
+        );
     }
 
     /// Row layout: `w_l = index, w_r = value, w_o = multiplicity (table) or zero (read), w_4 = inverse`
@@ -108,7 +225,7 @@ impl Builder {
     /// Point each table row's `w_o` at a witness holding that cell's read count. Emits no gates.
     fn process_rom_logup_array(&mut self, rom_id: usize) {
         let rom = self.memory.rom_arrays[rom_id].clone();
-        assert!(rom.state.iter().all(|c| *c != UNINITIALIZED), "ROM array has uninitialized cells");
+        assert!(rom.state.iter().all(|c| c[0] != UNINITIALIZED), "ROM array has uninitialized cells");
         let mut table_row_gate = vec![0usize; rom.state.len()];
         let mut read_counts = vec![0u64; rom.state.len()];
         for r in &rom.records {
@@ -125,7 +242,10 @@ impl Builder {
 
     pub(super) fn process_rom_arrays(&mut self) {
         for i in 0..self.memory.rom_arrays.len() {
-            self.process_rom_logup_array(i);
+            match self.memory.rom_arrays[i].use_logup {
+                Some(false) => self.process_rom_array(i),
+                _ => self.process_rom_logup_array(i),
+            }
         }
     }
 

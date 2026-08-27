@@ -37,12 +37,29 @@ pub enum BlackBoxFuncCall {
     Blake3(IgnoredAny),
     EcdsaSecp256k1(IgnoredAny),
     EcdsaSecp256r1(IgnoredAny),
-    MultiScalarMul(IgnoredAny),
-    EmbeddedCurveAdd(IgnoredAny),
+    MultiScalarMul(MultiScalarMul),
+    EmbeddedCurveAdd(EmbeddedCurveAdd),
     Keccakf1600(IgnoredAny),
     RecursiveAggregation(RecursiveAggregation),
     Poseidon2Permutation { inputs: Vec<FunctionInput>, outputs: Vec<Witness> },
     Sha256Compression(IgnoredAny),
+}
+
+/// Grumpkin MSM: `points` and `scalars` are flat `(x, y)` / `(lo, hi)` pairs.
+#[derive(Deserialize, Debug, Clone)]
+pub struct MultiScalarMul {
+    pub points: Vec<FunctionInput>,
+    pub scalars: Vec<FunctionInput>,
+    pub predicate: FunctionInput,
+    pub outputs: [Witness; 2],
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct EmbeddedCurveAdd {
+    pub input1: [FunctionInput; 2],
+    pub input2: [FunctionInput; 2],
+    pub predicate: FunctionInput,
+    pub outputs: [Witness; 2],
 }
 
 /// `std::verify_proof_with_type`: a proof of `proof_type` under the key held in `verification_key`.

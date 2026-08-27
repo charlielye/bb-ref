@@ -61,6 +61,22 @@ pub struct MulQuad {
     pub const_scaling: Fr,
 }
 /// `q_m*a*b + q_l*a + q_r*b + q_o*c + q_c = 0`
+pub struct EccAddGate {
+    pub x1: u32,
+    pub y1: u32,
+    pub x2: u32,
+    pub y2: u32,
+    pub x3: u32,
+    pub y3: u32,
+    pub is_addition: bool,
+}
+pub struct EccDblGate {
+    pub x1: u32,
+    pub y1: u32,
+    pub x3: u32,
+    pub y3: u32,
+}
+
 pub struct ArithmeticTriple {
     pub a: u32,
     pub b: u32,
@@ -426,6 +442,43 @@ impl Builder {
         );
     }
     /// `x^2 - x = 0`
+    /// bb `create_ecc_add_gate`: `(x1, y1) ± (x2, y2) = (x3, y3)` on Grumpkin; the second row is an
+    /// unconstrained carrier read by the first through shifts, and a gate whose input is the previous
+    /// gate's output fuses into that carrier row.
+    pub fn create_ecc_add_gate(&mut self, g: EccAddGate) {
+        let q_sign = if g.is_addition { Fr::one() } else { -Fr::one() };
+        let z = self.zero_idx();
+        let block = self.blocks.get_mut(BlockId::Elliptic);
+        match block.rows.last_mut() {
+            Some(last) if last.wires[1] == g.x1 && last.wires[2] == g.y1 => {
+                last.q_1 = q_sign;
+                last.kind = Kind::Elliptic;
+                last.gate_value = Fr::one();
+            }
+            _ => {
+                block.rows.push(GateRow { wires: [z, g.x1, g.y1, z], q_1: q_sign, kind: Kind::Elliptic, gate_value: Fr::one(), ..Default::default() });
+                self.increment_num_gates();
+            }
+        }
+        self.create_unconstrained_gate(BlockId::Elliptic, [g.x2, g.x3, g.y3, g.y2]);
+    }
+    /// bb `create_ecc_dbl_gate`: `2 * (x1, y1) = (x3, y3)` (`q_m` marks a doubling).
+    pub fn create_ecc_dbl_gate(&mut self, g: EccDblGate) {
+        let z = self.zero_idx();
+        let block = self.blocks.get_mut(BlockId::Elliptic);
+        match block.rows.last_mut() {
+            Some(last) if last.wires[1] == g.x1 && last.wires[2] == g.y1 => {
+                last.q_m = Fr::one();
+                last.kind = Kind::Elliptic;
+                last.gate_value = Fr::one();
+            }
+            _ => {
+                block.rows.push(GateRow { wires: [z, g.x1, g.y1, z], q_m: Fr::one(), kind: Kind::Elliptic, gate_value: Fr::one(), ..Default::default() });
+                self.increment_num_gates();
+            }
+        }
+        self.create_unconstrained_gate(BlockId::Elliptic, [z, g.x3, g.y3, z]);
+    }
     pub fn create_bool_gate(&mut self, x: u32) {
         self.append(
             BlockId::Arithmetic,

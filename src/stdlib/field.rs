@@ -6,6 +6,7 @@ use crate::base::codec::{ChallengeField, FromChallenge, Transcriptable};
 use crate::base::field::{from_u256, u256, u256_low_bits, u256_num_bits, u256_shr, FieldLike};
 use crate::base::Fr;
 use crate::circuit::builder::{AddQuad, AddTriple, ArithmeticTriple, MulQuad, DEFAULT_PLOOKUP_RANGE_BITNUM};
+use super::bool::BoolT;
 use crate::circuit::{Builder, IS_CONSTANT};
 use ark_ff::PrimeField;
 use std::cell::RefCell;
@@ -23,7 +24,7 @@ pub struct FieldT {
     pub multiplicative_constant: Fr,
 }
 
-fn same_ctx(a: &Option<Ctx>, b: &Option<Ctx>) -> Option<Ctx> {
+pub(super) fn same_ctx(a: &Option<Ctx>, b: &Option<Ctx>) -> Option<Ctx> {
     match (a, b) {
         (Some(x), Some(y)) => {
             assert!(Rc::ptr_eq(x, y), "values from different builders");
@@ -367,6 +368,36 @@ impl FieldT {
     }
 
     /// bb `operator/`: asserts the divisor is non-zero, then divides.
+    pub fn sqr(&self) -> Self {
+        self.mul(self)
+    }
+    /// bb `field_t::is_zero`: a boolean witness with two polynomial identities binding it.
+    pub fn is_zero(&self) -> BoolT {
+        let value = self.get_value();
+        if self.is_constant() {
+            return BoolT::constant(value.is_zero());
+        }
+        let ctx = self.ctx.clone().unwrap();
+        let is_zero = BoolT::from_witness(&ctx, value.is_zero());
+        let inverse_native = if value.is_zero() { Fr::one() } else { value.invert() };
+        let inverse = FieldT::from_witness(&ctx, inverse_native);
+        FieldT::evaluate_polynomial_identity(self, &inverse, &is_zero.to_field(), &Self::constant(-Fr::one()));
+        FieldT::evaluate_polynomial_identity(&is_zero.to_field(), &FieldT::neg(&inverse), &is_zero.to_field(), &Self::constant(Fr::zero()));
+        is_zero
+    }
+    pub fn eq(&self, other: &Self) -> BoolT {
+        self.sub(other).is_zero()
+    }
+    /// bb `field_t::conditional_assign`: `predicate ? lhs : rhs`, normalized.
+    pub fn conditional_assign(predicate: &BoolT, lhs: &Self, rhs: &Self) -> Self {
+        if predicate.is_constant() {
+            return if predicate.get_value() { lhs.clone() } else { rhs.clone() };
+        }
+        if lhs.witness_index == rhs.witness_index && lhs.additive_constant == rhs.additive_constant && lhs.multiplicative_constant == rhs.multiplicative_constant {
+            return lhs.clone();
+        }
+        lhs.sub(rhs).madd(&predicate.to_field(), rhs).normalize()
+    }
     pub fn div(&self, other: &Self) -> Self {
         other.assert_is_not_zero();
         self.divide_no_zero_check(other)
@@ -638,31 +669,6 @@ fn validate_split_in_field_unsafe(lo: &FieldT, hi: &FieldT, lo_bits: u32) {
     let lo_diff = &(&FieldT::neg(lo) + &FieldT::constant(from_u256::<Fr>(r_lo) - Fr::one())) + &(&borrow * &shift);
     hi_diff.create_range_constraint(hi_bits as u64);
     lo_diff.create_range_constraint(lo_bits as u64);
-}
-
-/// A boolean witness (bb `bool_t`, the non-inverted slice): a witness constrained to `{0, 1}` by a
-/// bool gate. Only ever created from a witness here, so no inversion flag is needed.
-#[derive(Clone)]
-pub struct BoolT {
-    pub ctx: Ctx,
-    pub witness_index: u32,
-    pub value: bool,
-}
-
-impl BoolT {
-    pub fn from_witness(ctx: &Ctx, value: bool) -> Self {
-        let idx = ctx.borrow_mut().add_variable(Fr::from(value as u64));
-        ctx.borrow_mut().create_bool_gate(idx);
-        Self {
-            ctx: ctx.clone(),
-            witness_index: idx,
-            value,
-        }
-    }
-    /// bb `field_t(const bool_t&)`.
-    pub fn to_field(&self) -> FieldT {
-        FieldT::from_witness_index(&self.ctx, self.witness_index)
-    }
 }
 
 impl FieldT {

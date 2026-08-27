@@ -6,7 +6,7 @@ mod common;
 use bb_ref::base::io::{decode_fields, encode_fields};
 use bb_ref::base::rng::{Rng, TapeRng};
 use bb_ref::base::srs::bn254_g2;
-use bb_ref::base::{CommitmentKey, Fr, GrumpkinKey, OsRng};
+use bb_ref::base::{CommitmentKey, GrumpkinKey, OsRng};
 use bb_ref::chonk::ivc::{Chonk, CircuitKind};
 use bb_ref::chonk::proof::ChonkProof;
 use bb_ref::chonk::verifier::chonk_verify;
@@ -51,45 +51,7 @@ fn run_ivc(rng: &mut dyn Rng, compare_with: Option<&Path>) -> (Chonk, ChonkProof
             } else {
                 (0..inst.layout.num_unshifted()).collect()
             };
-            // report the earliest differing row over every compared polynomial, with the whole gate
-            // selectors first (a gate-sequence difference), then everything (copy cycles, witnesses)
-            let is_selector = |i: usize| inst.layout.unshifted[i].name().starts_with("q_");
-            let mut first: Option<(usize, usize)> = None;
-            for &i in compare.iter().filter(|i| is_selector(**i)) {
-                if let Some(r) = inst.polys[i].coeffs.iter().zip(&expected.polys[i].coeffs).position(|(x, y)| x != y) {
-                    if first.map_or(true, |(fr, _)| r < fr) {
-                        first = Some((r, i));
-                    }
-                }
-            }
-            let selector_diff_found = first.is_some();
-            for &i in compare.iter().filter(|i| !selector_diff_found && !is_selector(**i)) {
-                if let Some(r) = inst.polys[i].coeffs.iter().zip(&expected.polys[i].coeffs).position(|(x, y)| x != y) {
-                    if first.map_or(true, |(fr, _)| r < fr) {
-                        first = Some((r, i));
-                    }
-                }
-            }
-            if let Some((r, i)) = first {
-                let mut report = format!("circuit {idx} ({kind:?}): first difference at row {r} in {}\n", inst.layout.unshifted[i].name());
-                for (desc, block) in circuit.blocks.iter() {
-                    report += &format!("  block {:?}: offset {} len {}\n", desc.id, block.trace_offset, block.rows.len());
-                }
-                for row in r.saturating_sub(1)..=r + 1 {
-                    for &j in &compare {
-                        let (a, b) = (inst.polys[j].coeffs[row], expected.polys[j].coeffs[row]);
-                        if a != Fr::from(0u64) || b != Fr::from(0u64) {
-                            report += &format!(
-                                "  row {row} {:>24}: rust {:?}{}\n",
-                                inst.layout.unshifted[j].name(),
-                                a,
-                                if a == b { String::new() } else { format!("  bb {b:?}") }
-                            );
-                        }
-                    }
-                }
-                panic!("{report}");
-            }
+            common::assert_polys_equal(&format!("circuit {idx} ({kind:?})"), &inst, &expected, &circuit, &compare);
             assert_eq!(inst.compute_vk(&ivc.ck).to_bytes(), std::fs::read(dir.join("vk")).unwrap(), "circuit {idx}: VK");
         }
         ivc.accumulate(&mut circuit, rng);

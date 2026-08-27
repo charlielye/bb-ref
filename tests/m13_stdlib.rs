@@ -5,14 +5,18 @@ mod common;
 use bb_ref::base::field::from_hex;
 use bb_ref::base::group::{GroupLike, PairingPoints};
 use bb_ref::base::transcript::Transcript;
-use bb_ref::base::{CommitmentKey, Fr, OsRng};
+use bb_ref::base::{CommitmentKey, Fq, Fr, GrumpkinAffine, NativeTranscript, OsRng};
+use bb_ref::honk::circuit_checker::check_circuit;
+use bb_ref::honk::oink_prover::prove_oink;
 use bb_ref::circuit::{Builder, EccOpQueue};
 use bb_ref::honk::prover_instance::ProverInstance;
 use bb_ref::honk::MEGA_KERNEL;
 use bb_ref::stdlib::field::split_unique;
 use bb_ref::stdlib::hash::StdPoseidon2;
 use bb_ref::stdlib::io::{AppIo, DataBusDepot, HidingKernelIo, KernelIo, MAX_APPS_PER_KERNEL};
-use bb_ref::stdlib::{Ctx, FieldT, GoblinElement, StdBn254};
+use bb_ref::stdlib::cycle_group::{CycleGroup, CycleScalar};
+use bb_ref::stdlib::{BoolT, Ctx, FieldT, GoblinElement, StdBn254};
+use ark_ec::{AffineRepr, CurveGroup};
 use common::eccvm_ops::g1_times;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -136,10 +140,148 @@ fn hiding_io_set(ctx: &Ctx) {
     io.set_public();
 }
 
+// --- M16: booleans, conditional selection, Grumpkin points ---
+fn gp(k: u64) -> GrumpkinAffine {
+    (GrumpkinAffine::generator() * Fq::from(k)).into_affine()
+}
+fn wb(ctx: &Ctx, v: bool) -> BoolT {
+    BoolT::from_witness(ctx, v)
+}
+
+fn bool_ops(ctx: &Ctx) {
+    let (t, f, ct) = (wb(ctx, true), wb(ctx, false), BoolT::constant(true));
+    let a1 = t.and(&f);
+    let a2 = t.or(&f);
+    let a3 = t.xor(&f);
+    let a4 = t.not();
+    let a5 = a4.and(&f);
+    let a6 = t.eq(&f);
+    let a7 = t.not().eq(&f.not());
+    let a8 = t.or(&f.not());
+    let a9 = t.and(&ct);
+    let a10 = f.or(&ct);
+    let a11 = f.not().and(&a2);
+    let a12 = a4.xor(&f.not());
+    let n = a4.normalize();
+    t.not().assert_equal(&f);
+    t.assert_equal(&ct);
+    a1.assert_equal(&a5);
+    let c1 = BoolT::conditional_assign(&t, &a1, &a2);
+    let c2 = BoolT::conditional_assign(&f.not(), &a3, &a6);
+    let c3 = BoolT::conditional_assign(&ct, &a1, &a2);
+    let c4 = BoolT::conditional_assign(&a1, &a2, &a2);
+    let (x, y, z) = (w(ctx, 3), w(ctx, 3), w(ctx, 4));
+    let e1 = x.eq(&y);
+    let e2 = x.eq(&z);
+    let iz = (&x - &y).is_zero();
+    let iz2 = (&(&x * &c(2)) - &c(6)).is_zero();
+    let s1 = FieldT::conditional_assign(&t, &x, &z);
+    let s2 = FieldT::conditional_assign(&t.not(), &x, &z);
+    let s3 = FieldT::conditional_assign(&ct, &x, &z);
+    let s4 = FieldT::conditional_assign(&e2, &x, &x);
+    let fb = BoolT::from_field(&(&x - &c(2)));
+    let fbf = a4.to_field();
+    let fb2 = BoolT::from_field(&fbf);
+    let fb3 = BoolT::from_field(&c(1));
+    let terms = [
+        a1.to_field(),
+        a2.to_field(),
+        a4.to_field(),
+        c2.to_field(),
+        e1.to_field(),
+        iz2.to_field(),
+        s1,
+        s2,
+        s3,
+        s4,
+        fb.to_field(),
+        fb2.to_field(),
+        fb3.to_field(),
+        n.to_field(),
+        a7.to_field(),
+        a8.to_field(),
+        a9.to_field(),
+        a10.to_field(),
+        a11.to_field(),
+        a12.to_field(),
+        c1.to_field(),
+        c3.to_field(),
+        c4.to_field(),
+        e2.to_field(),
+        iz.to_field(),
+    ];
+    let sum = terms[1..].iter().fold(terms[0].clone(), |acc, t| &acc + t);
+    sum.assert_equal(&FieldT::from_witness(ctx, sum.get_value()));
+}
+
+fn from_witness_point(ctx: &Ctx, p: GrumpkinAffine) -> CycleGroup {
+    CycleGroup::from_xy(FieldT::from_witness(ctx, p.x), FieldT::from_witness(ctx, p.y), true)
+}
+
+fn cycle_group_add(ctx: &Ctx) {
+    let mut p = from_witness_point(ctx, gp(3));
+    let q = from_witness_point(ctx, gp(5));
+    let mut r = p.add(&q);
+    let mut s = r.sub(&p);
+    let mut d = p.add(&p);
+    let n = q.neg();
+    let u = p.unconditional_add(&q, None);
+    let mut v = r.dbl(None);
+    let cc7 = CycleGroup::constant(gp(7));
+    let pc = p.add(&cc7);
+    let cp = cc7.sub(&p);
+    let cc = cc7.add(&CycleGroup::constant(gp(9)));
+    let ucp = cc7.unconditional_add(&p, None);
+    let pn = p.add(&n);
+    let qq = q.sub(&q);
+    let mut z = qq.add(&p);
+    let mut e = from_witness_point(ctx, gp(8));
+    r.assert_equal(&mut e);
+    let mut e2 = from_witness_point(ctx, gp(5));
+    s.assert_equal(&mut e2);
+    let mut e3 = from_witness_point(ctx, gp(6));
+    d.assert_equal(&mut e3);
+    let mut e4 = from_witness_point(ctx, gp(16));
+    v.assert_equal(&mut e4);
+    z.assert_equal(&mut p);
+    let ca = CycleGroup::conditional_assign(&wb(ctx, true), &p, &q);
+    let cb = CycleGroup::conditional_assign(&BoolT::constant(false), &p, &q);
+    let terms = [pc.x, cp.y, cc.x, ucp.y, pn.x, u.x, n.y, ca.x, cb.y, pn.is_infinity.to_field()];
+    let sum = terms[1..].iter().fold(terms[0].clone(), |acc, t| &acc + t);
+    sum.assert_equal(&FieldT::from_witness(ctx, sum.get_value()));
+}
+
+fn cycle_group_mul(ctx: &Ctx, k: u64) {
+    let one = CycleGroup::constant(GrumpkinAffine::generator());
+    let mut points = vec![];
+    let mut scalars = vec![];
+    for i in 0..k {
+        scalars.push(CycleScalar::new(w(ctx, 12345 + i), w(ctx, 67 + i)));
+        points.push(one.clone());
+    }
+    let mut r = CycleGroup::batch_mul(&points, &scalars);
+    let mut e = from_witness_point(ctx, r.get_value());
+    r.assert_equal(&mut e);
+}
+
+fn cycle_group_mul_witness(ctx: &Ctx) {
+    let p = from_witness_point(ctx, gp(3));
+    let s = CycleScalar::new(w(ctx, 999), w(ctx, 5));
+    let cc = CycleGroup::constant(gp(11));
+    let cs = CycleScalar::constant(Fq::from(13u64));
+    let mut r = CycleGroup::batch_mul(&[p, cc], &[s, cs]);
+    let mut e = from_witness_point(ctx, r.get_value());
+    r.assert_equal(&mut e);
+}
+
 fn run(ctx: &Ctx, name: &str) {
     let suffix = |prefix: &str| name[prefix.len()..].parse::<u64>().unwrap();
     match name {
         "field_ops" => field_ops(ctx),
+        "bool_ops" => bool_ops(ctx),
+        "cycle_group_add" => cycle_group_add(ctx),
+        "cycle_group_mul_witness" => cycle_group_mul_witness(ctx),
+        _ if name.starts_with("cycle_group_mul_") => cycle_group_mul(ctx, suffix("cycle_group_mul_")),
         "transcript" => transcript(ctx),
         "io_app_default" => AppIo::add_default(ctx),
         "io_kernel_default" => KernelIo::add_default(ctx),
@@ -174,6 +316,11 @@ pub const PROGRAMS: &[&str] = &[
     "io_hiding_default",
     "kernel_io_set",
     "hiding_io_set",
+    "bool_ops",
+    "cycle_group_add",
+    "cycle_group_mul_1",
+    "cycle_group_mul_3",
+    "cycle_group_mul_witness",
 ];
 
 fn check(name: &str) {
@@ -190,19 +337,26 @@ fn check(name: &str) {
     let expected = ProverInstance::load_dump(&MEGA_KERNEL, &dump);
     assert_eq!(inst.dyadic_size, expected.dyadic_size, "{name}: dyadic size");
     assert_eq!(inst.public_inputs, expected.public_inputs, "{name}: public inputs");
-    for i in 0..inst.layout.num_unshifted() {
-        let e = inst.layout.unshifted[i];
-        if let Some(r) = inst.polys[i].coeffs.iter().zip(&expected.polys[i].coeffs).position(|(x, y)| x != y) {
-            panic!(
-                "{name}: polynomial {} differs at row {r}: {:?} vs bb {:?}",
-                e.name(),
-                inst.polys[i].coeffs[r],
-                expected.polys[i].coeffs[r]
-            );
-        }
-    }
+    let compare: Vec<usize> = (0..inst.layout.num_unshifted()).collect();
+    common::assert_polys_equal(name, &inst, &expected, &builder, &compare);
     let ck = CommitmentKey::new(inst.max_end_index);
     assert_eq!(inst.compute_vk(&ck).to_bytes(), std::fs::read(dump.join("vk")).unwrap(), "{name}: VK");
+}
+
+/// Every program builds a circuit all MegaKernel relations vanish on (bb-independent).
+#[test]
+fn stdlib_programs_are_satisfied() {
+    for name in PROGRAMS {
+        let ctx = Rc::new(RefCell::new(Builder::new_mega(Rc::new(RefCell::new(EccOpQueue::new())))));
+        run(&ctx, name);
+        let mut builder = Rc::try_unwrap(ctx).ok().unwrap().into_inner();
+        assert!(builder.failed.is_none(), "{name}: builder failure {:?}", builder.failed);
+        let mut inst = ProverInstance::from_builder(&MEGA_KERNEL, &mut builder, &mut OsRng);
+        let ck = CommitmentKey::new(inst.max_end_index);
+        let vk = inst.compute_vk(&ck);
+        let out = prove_oink(&mut inst, &vk, &ck, &mut NativeTranscript::new(), &mut OsRng, true);
+        assert_eq!(check_circuit(&inst, &out.params), None, "{name}: relation failure");
+    }
 }
 
 #[test]

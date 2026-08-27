@@ -1,6 +1,7 @@
 //! ACIR ingestion: msgpack decoding of Noir artifacts and lowering of the protocol-relevant opcode
-//! subset (arithmetic, range, Poseidon2, memory and databus blocks, HyperNova recursion) to the
-//! circuit builder, plus the `ivc-inputs.msgpack` private execution steps a Chonk proof is made of.
+//! subset (arithmetic, range, Poseidon2, Grumpkin MSM/addition, memory and databus blocks,
+//! HyperNova recursion) to the circuit builder, plus the `ivc-inputs.msgpack` private execution
+//! steps a Chonk proof is made of.
 pub mod format;
 pub mod lower;
 pub mod mock;

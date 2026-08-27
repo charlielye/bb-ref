@@ -1,22 +1,25 @@
 //! ACIR → builder (bb `acir_to_constraint_buf` + `acir_format::build_constraints`). Opcodes are first
 //! classified into constraint lists, then lowered in bb's fixed order: quads, big quads, ranges,
-//! Poseidon2, memory and databus blocks, HyperNova recursion (the kernel logic), and finally the
-//! default (infinity) pairing points as public inputs for circuits that verify nothing.
+//! Poseidon2, Grumpkin MSM and addition, memory and databus blocks, HyperNova recursion (the kernel
+//! logic), and finally the default (infinity) pairing points as public inputs for circuits that
+//! verify nothing.
 
-use super::format::{field, BlackBoxFuncCall, BlockType, Circuit, FunctionInput, Opcode, Witness};
+use super::format::{field, BlackBoxFuncCall, BlockType, Circuit, EmbeddedCurveAdd, FunctionInput, MultiScalarMul, Opcode, Witness};
 use super::mock::mock_chonk_from_constraints;
 use crate::base::field::FieldLike;
 use crate::base::rng::Rng;
 use crate::base::vk::Vk;
-use crate::base::Fr;
+use crate::base::{Fr, GrumpkinAffine};
 use crate::chonk::ivc::{Chonk, CircuitKind};
 use crate::chonk::kernel::{complete_kernel_circuit_logic, VkWitnesses};
 use crate::circuit::builder::MulQuad;
 use crate::circuit::mega::BilinearBatchedEqGate;
 use crate::circuit::{Builder, EccOpQueue, IS_CONSTANT};
 use crate::stdlib::io::{AppIo, KernelIo, MAX_APPS_PER_KERNEL};
+use crate::stdlib::cycle_group::{CycleGroup, CycleScalar};
 use crate::stdlib::memory::{RamTable, RomTable};
-use crate::stdlib::{poseidon2, Ctx, FieldT, StdBn254};
+use crate::stdlib::{poseidon2, BoolT, Ctx, FieldT, StdBn254};
+use ark_ec::AffineRepr;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -77,6 +80,8 @@ struct Constraints {
     batched_eq: Vec<BilinearBatchedEqGate>,
     range: Vec<(u32, u32)>,
     poseidon2: Vec<Poseidon2Constraint>,
+    msm: Vec<MultiScalarMul>,
+    ec_add: Vec<EmbeddedCurveAdd>,
     blocks: BTreeMap<u32, BlockConstraint>,
     hn_recursion: Vec<RecursionConstraint>,
 }
@@ -90,6 +95,11 @@ impl Constraints {
         match i {
             FunctionInput::Witness(w) => self.note(*w),
             FunctionInput::Constant(_) => panic!("constant inputs are not supported here"),
+        }
+    }
+    fn note_input(&mut self, i: &FunctionInput) {
+        if let FunctionInput::Witness(w) = i {
+            self.note(*w);
         }
     }
 }
@@ -313,6 +323,21 @@ fn classify(circuit: &Circuit, is_mega: bool) -> (Constraints, Vec<u32>) {
                     let result = outputs.iter().map(|w| c.note(*w)).collect();
                     c.poseidon2.push(Poseidon2Constraint { state, result });
                 }
+                BlackBoxFuncCall::MultiScalarMul(m) => {
+                    assert_eq!(m.points.len(), m.scalars.len(), "MultiScalarMul input size mismatch");
+                    m.points.iter().chain(&m.scalars).chain([&m.predicate]).for_each(|i| c.note_input(i));
+                    m.outputs.iter().for_each(|w| {
+                        c.note(*w);
+                    });
+                    c.msm.push(m.clone());
+                }
+                BlackBoxFuncCall::EmbeddedCurveAdd(e) => {
+                    e.input1.iter().chain(&e.input2).chain([&e.predicate]).for_each(|i| c.note_input(i));
+                    e.outputs.iter().for_each(|w| {
+                        c.note(*w);
+                    });
+                    c.ec_add.push(e.clone());
+                }
                 BlackBoxFuncCall::RecursiveAggregation(r) => {
                     match &r.predicate {
                         FunctionInput::Constant(p) if field(p).is_zero() => continue,
@@ -432,6 +457,100 @@ fn create_block_constraints(ctx: &Ctx, block: &BlockConstraint) {
             }
         }
     }
+}
+
+/// bb `to_field_ct`.
+fn to_field_ct(ctx: &Ctx, input: &FunctionInput) -> FieldT {
+    match input {
+        FunctionInput::Constant(v) => FieldT::constant(field(v)),
+        FunctionInput::Witness(w) => FieldT::from_witness_index(ctx, w.0),
+    }
+}
+
+fn set_witness(ctx: &Ctx, input: &FunctionInput, value: Fr) {
+    if let FunctionInput::Witness(w) = input {
+        ctx.borrow_mut().set_variable(w.0, value);
+    }
+}
+
+/// bb `to_grumpkin_point`: a disabled constraint (predicate false) substitutes the generator so
+/// the point is always valid; in write-VK mode witness coordinates are set to it too.
+fn to_grumpkin_point(ctx: &Ctx, x: &FunctionInput, y: &FunctionInput, predicate: &BoolT) -> CycleGroup {
+    let one = GrumpkinAffine::generator();
+    let mut point_x = to_field_ct(ctx, x);
+    let mut point_y = to_field_ct(ctx, y);
+    let constant_coordinates = matches!(x, FunctionInput::Constant(_)) && matches!(y, FunctionInput::Constant(_));
+    if ctx.borrow().is_write_vk_mode && !constant_coordinates {
+        set_witness(ctx, x, one.x);
+        set_witness(ctx, y, one.y);
+    }
+    if !predicate.is_constant() {
+        point_x = FieldT::conditional_assign(predicate, &point_x, &FieldT::constant(one.x));
+        point_y = FieldT::conditional_assign(predicate, &point_y, &FieldT::constant(one.y));
+    } else {
+        assert!(predicate.get_value(), "Grumpkin point with a constant false predicate");
+    }
+    CycleGroup::from_xy(point_x, point_y, true)
+}
+
+/// bb `to_grumpkin_scalar`: a disabled constraint uses the scalar 1.
+fn to_grumpkin_scalar(ctx: &Ctx, lo: &FunctionInput, hi: &FunctionInput, predicate: &BoolT) -> CycleScalar {
+    let mut lo_field = to_field_ct(ctx, lo);
+    let mut hi_field = to_field_ct(ctx, hi);
+    assert!(!(matches!(lo, FunctionInput::Constant(_)) && matches!(hi, FunctionInput::Witness(_))), "scalar lo is constant while hi is not");
+    if ctx.borrow().is_write_vk_mode {
+        set_witness(ctx, lo, Fr::one());
+        set_witness(ctx, hi, Fr::zero());
+    }
+    if !predicate.is_constant() {
+        lo_field = FieldT::conditional_assign(predicate, &lo_field, &FieldT::constant(Fr::one()));
+        hi_field = FieldT::conditional_assign(predicate, &hi_field, &FieldT::constant(Fr::zero()));
+    } else {
+        assert!(predicate.get_value(), "Grumpkin scalar with a constant false predicate");
+    }
+    CycleScalar::new(lo_field, hi_field)
+}
+
+/// The claimed result of an EC operation as circuit coordinates; in write-VK mode the witnesses
+/// are set to the generator first.
+fn claimed_result_fields(ctx: &Ctx, outputs: &[Witness; 2]) -> (FieldT, FieldT) {
+    let x = FieldT::from_witness_index(ctx, outputs[0].0);
+    let y = FieldT::from_witness_index(ctx, outputs[1].0);
+    if ctx.borrow().is_write_vk_mode {
+        let one = GrumpkinAffine::generator();
+        let mut b = ctx.borrow_mut();
+        b.set_variable(outputs[0].0, one.x);
+        b.set_variable(outputs[1].0, one.y);
+    }
+    (x, y)
+}
+
+/// bb `create_multi_scalar_mul_constraint`.
+fn create_multi_scalar_mul_constraint(ctx: &Ctx, m: &MultiScalarMul) {
+    let predicate = BoolT::from_field(&to_field_ct(ctx, &m.predicate));
+    let (result_x, result_y) = claimed_result_fields(ctx, &m.outputs);
+    let input_result = CycleGroup::from_xy(result_x, result_y, false);
+    let mut points = vec![];
+    let mut scalars = vec![];
+    for i in (0..m.points.len()).step_by(2) {
+        points.push(to_grumpkin_point(ctx, &m.points[i], &m.points[i + 1], &predicate));
+        scalars.push(to_grumpkin_scalar(ctx, &m.scalars[i], &m.scalars[i + 1], &predicate));
+    }
+    let mut result = CycleGroup::batch_mul(&points, &scalars);
+    let mut to_be_asserted_equal = CycleGroup::conditional_assign(&predicate, &input_result, &result);
+    result.assert_equal(&mut to_be_asserted_equal);
+}
+
+/// bb `create_ec_add_constraint` (the claimed result point is built after the inputs).
+fn create_ec_add_constraint(ctx: &Ctx, e: &EmbeddedCurveAdd) {
+    let predicate = BoolT::from_field(&to_field_ct(ctx, &e.predicate));
+    let (result_x, result_y) = claimed_result_fields(ctx, &e.outputs);
+    let input1 = to_grumpkin_point(ctx, &e.input1[0], &e.input1[1], &predicate);
+    let input2 = to_grumpkin_point(ctx, &e.input2[0], &e.input2[1], &predicate);
+    let input_result = CycleGroup::from_xy(result_x, result_y, false);
+    let mut result = input1.add(&input2);
+    let mut to_be_asserted_equal = CycleGroup::conditional_assign(&predicate, &input_result, &result);
+    result.assert_equal(&mut to_be_asserted_equal);
 }
 
 pub(super) fn io_public_inputs_size(kind: CircuitKind) -> usize {
@@ -581,6 +700,12 @@ fn lower(builder: Builder, c: Constraints) -> Ctx {
         for i in 0..4 {
             out[i].assert_equal(&FieldT::from_witness_index(&ctx, p.result[i]));
         }
+    }
+    for m in &c.msm {
+        create_multi_scalar_mul_constraint(&ctx, m);
+    }
+    for e in &c.ec_add {
+        create_ec_add_constraint(&ctx, e);
     }
     for block in c.blocks.values() {
         create_block_constraints(&ctx, block);

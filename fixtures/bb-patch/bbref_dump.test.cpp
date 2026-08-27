@@ -44,6 +44,7 @@
 #include "barretenberg/transcript/transcript.hpp"
 #include "barretenberg/stdlib/primitives/memory/ram_table.hpp"
 #include "barretenberg/stdlib/primitives/memory/rom_table.hpp"
+#include "barretenberg/stdlib/primitives/group/cycle_group.hpp"
 #include "barretenberg/stdlib/special_public_inputs/special_public_inputs.hpp"
 #include <fstream>
 #include <sstream>
@@ -1212,11 +1213,115 @@ void hiding_io_set(Builder& b)
     io.set_public();
 }
 
+// --- M16: booleans, conditional selection, Grumpkin points (cycle_group) ---
+using cycle_group_ct = stdlib::cycle_group<Builder>;
+using cycle_scalar_ct = stdlib::cycle_scalar<Builder>;
+using bool_ct = stdlib::bool_t<Builder>;
+grumpkin::g1::affine_element gp(uint64_t k)
+{
+    return grumpkin::g1::affine_element(grumpkin::g1::element(grumpkin::g1::affine_one) * grumpkin::fr(k));
+}
+bool_ct wb(Builder& b, bool v) { return bool_ct(witness_ct(&b, fr(v ? 1 : 0))); }
+
+void bool_ops(Builder& b)
+{
+    bool_ct t = wb(b, true), f = wb(b, false), ct(true);
+    bool_ct a1 = t && f, a2 = t || f, a3 = t ^ f, a4 = !t, a5 = a4 && f, a6 = (t == f), a7 = (!t == !f), a8 = t || !f,
+            a9 = t && ct, a10 = f || ct, a11 = !f && a2, a12 = a4 ^ !f;
+    bool_ct n = a4.normalize();
+    (!t).assert_equal(f);
+    t.assert_equal(ct);
+    a1.assert_equal(a5);
+    bool_ct c1 = bool_ct::conditional_assign(t, a1, a2), c2 = bool_ct::conditional_assign(!f, a3, a6),
+            c3 = bool_ct::conditional_assign(ct, a1, a2), c4 = bool_ct::conditional_assign(a1, a2, a2);
+    field_ct x = w(b, 3), y = w(b, 3), z = w(b, 4);
+    bool_ct e1 = (x == y), e2 = (x == z), iz = (x - y).is_zero(), iz2 = (x * field_ct(2) - field_ct(6)).is_zero();
+    field_ct s1 = field_ct::conditional_assign(t, x, z), s2 = field_ct::conditional_assign(!t, x, z),
+             s3 = field_ct::conditional_assign(ct, x, z), s4 = field_ct::conditional_assign(e2, x, x);
+    bool_ct fb = bool_ct(x - field_ct(2));
+    field_ct fbf(a4);
+    bool_ct fb2 = bool_ct(fbf);
+    bool_ct fb3 = bool_ct(field_ct(1));
+    field_ct sum = field_ct(a1) + field_ct(a2) + field_ct(a4) + field_ct(c2) + field_ct(e1) + field_ct(iz2) + s1 + s2 +
+                   s3 + s4 + field_ct(fb) + field_ct(fb2) + field_ct(fb3) + field_ct(n) + field_ct(a7) + field_ct(a8) +
+                   field_ct(a9) + field_ct(a10) + field_ct(a11) + field_ct(a12) + field_ct(c1) + field_ct(c3) +
+                   field_ct(c4) + field_ct(e2) + field_ct(iz);
+    sum.assert_equal(field_ct(witness_ct(&b, sum.get_value())));
+}
+
+void cycle_group_add(Builder& b)
+{
+    auto p = cycle_group_ct::from_witness(&b, gp(3));
+    auto q = cycle_group_ct::from_witness(&b, gp(5));
+    auto r = p + q;
+    auto s = r - p;
+    auto d = p + p;
+    auto n = -q;
+    auto u = p.unconditional_add(q);
+    auto v = r.dbl();
+    cycle_group_ct c(gp(7));
+    auto pc = p + c;
+    auto cp = c - p;
+    auto cc = c + cycle_group_ct(gp(9));
+    auto ucp = c.unconditional_add(p);
+    auto pn = p + n;
+    auto qq = q - q;
+    auto z = qq + p;
+    auto e = cycle_group_ct::from_witness(&b, gp(8));
+    r.assert_equal(e);
+    auto e2 = cycle_group_ct::from_witness(&b, gp(5));
+    s.assert_equal(e2);
+    auto e3 = cycle_group_ct::from_witness(&b, gp(6));
+    d.assert_equal(e3);
+    auto e4 = cycle_group_ct::from_witness(&b, gp(16));
+    v.assert_equal(e4);
+    z.assert_equal(p);
+    auto ca = cycle_group_ct::conditional_assign(wb(b, true), p, q);
+    auto cb = cycle_group_ct::conditional_assign(bool_ct(false), p, q);
+    field_ct sum = pc.x() + cp.y() + cc.x() + ucp.y() + pn.x() + u.x() + n.y() + ca.x() + cb.y() +
+                   field_ct(pn.is_point_at_infinity());
+    sum.assert_equal(field_ct(witness_ct(&b, sum.get_value())));
+}
+
+void cycle_group_mul(Builder& b, size_t k)
+{
+    cycle_group_ct one(grumpkin::g1::affine_one);
+    std::vector<cycle_group_ct> points;
+    std::vector<cycle_scalar_ct> scalars;
+    for (size_t i = 0; i < k; ++i) {
+        field_ct lo = w(b, 12345 + i), hi = w(b, 67 + i);
+        scalars.emplace_back(lo, hi);
+        points.push_back(one);
+    }
+    auto r = cycle_group_ct::batch_mul(points, scalars);
+    auto e = cycle_group_ct::from_witness(&b, r.get_value());
+    r.assert_equal(e);
+}
+
+void cycle_group_mul_witness(Builder& b)
+{
+    auto p = cycle_group_ct::from_witness(&b, gp(3));
+    cycle_scalar_ct s(w(b, 999), w(b, 5));
+    cycle_group_ct c(gp(11));
+    cycle_scalar_ct cs(grumpkin::fr(13));
+    auto r = cycle_group_ct::batch_mul({ p, c }, { s, cs });
+    auto e = cycle_group_ct::from_witness(&b, r.get_value());
+    r.assert_equal(e);
+}
+
 void run(Builder& b, const std::string& name)
 {
     auto suffix = [&](const std::string& prefix) { return std::stoul(name.substr(prefix.size())); };
     if (name == "field_ops") {
         field_ops(b);
+    } else if (name == "bool_ops") {
+        bool_ops(b);
+    } else if (name == "cycle_group_add") {
+        cycle_group_add(b);
+    } else if (name.starts_with("cycle_group_mul_witness")) {
+        cycle_group_mul_witness(b);
+    } else if (name.starts_with("cycle_group_mul_")) {
+        cycle_group_mul(b, suffix("cycle_group_mul_"));
     } else if (name.starts_with("poseidon2_hash_")) {
         poseidon2_hash(b, suffix("poseidon2_hash_"));
     } else if (name == "transcript") {
@@ -1253,4 +1358,30 @@ TEST(BbRefDump, Stdlib)
     stdlib_programs::run(builder, program);
     ASSERT_FALSE(builder.failed()) << builder.err();
     dump_from_builder<MegaKernelFlavor>(builder, out);
+}
+
+// --- M16: whole Noir circuits -----------------------------------------------------------------------------
+// BBREF_PROGRAM=<program.json> BBREF_KIND=app|kernel|hiding BBREF_OUT=<dir> ./bin/dsl_tests --gtest_filter='BbRefDump.AcirMega'
+// The Mega circuit of a Noir artifact in write-VK mode (kernels against the mocked IVC state), dumped for
+// Rust's gate-level diff.
+TEST(BbRefDump, AcirMega)
+{
+    const char* program = std::getenv("BBREF_PROGRAM");
+    const char* kind = std::getenv("BBREF_KIND");
+    const char* out = std::getenv("BBREF_OUT");
+    if (program == nullptr || kind == nullptr || out == nullptr) {
+        GTEST_SKIP() << "set BBREF_PROGRAM, BBREF_KIND, BBREF_OUT";
+    }
+    bb::srs::init_file_crs_factory(bb::srs::bb_crs_path());
+    auto bytecode = get_bytecode(program);
+    acir_format::AcirProgram prog{ acir_format::circuit_buf_to_acir_format(std::move(bytecode), true), {} };
+    auto builder = acir_format::create_circuit<MegaCircuitBuilder>(prog, acir_format::ProgramMetadata{});
+    const std::string k(kind);
+    if (k == "app") {
+        dump_from_builder<MegaAppFlavor>(builder, out);
+    } else if (k == "kernel") {
+        dump_from_builder<MegaKernelFlavor>(builder, out);
+    } else {
+        dump_from_builder<MegaZKFlavor>(builder, out);
+    }
 }
