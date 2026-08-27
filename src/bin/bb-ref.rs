@@ -64,7 +64,9 @@ fn chonk(cmd: &str, flags: &HashMap<String, String>) {
                 &mut OsRng,
             );
             let check_vks = flags.get("--vk_policy").is_some_and(|v| v == "check");
-            let (proof, vk) = prove_steps(&steps, CommitmentKey::new(1 << 17), &mut OsRng, check_vks);
+            // The largest circuit of the flow, or the joint proof's 2^17, sizes the commitment key.
+            let max_size = steps.iter().map(|s| 1usize << s.vk.log_n()).max().unwrap_or(0).max(1 << 17);
+            let (proof, vk) = prove_steps(&steps, CommitmentKey::new(max_size), &mut OsRng, check_vks);
             let out = out_dir(flags);
             std::fs::write(out.join("proof"), encode_fields(&proof.to_fields())).unwrap();
             std::fs::write(out.join("vk"), vk.to_bytes()).unwrap();
