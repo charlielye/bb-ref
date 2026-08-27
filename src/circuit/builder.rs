@@ -125,10 +125,11 @@ pub fn trace_phase(label: &str) {
     if std::env::var_os("BBREF_TRACE_GATES").is_some() {
         let lens = CURRENT_BLOCK_LENS.with(|b| *b.borrow());
         eprintln!(
-            "[gates {:>7} | ecc_op {:>5} arith {:>6} busread {:>4} poseidon2 {:>5}] {label}",
+            "[gates {:>7} | ecc_op {:>5} arith {:>6} nnf {:>5} busread {:>4} poseidon2 {:>5}] {label}",
             global_gate_count(),
             lens[BlockId::EccOp as usize],
             lens[BlockId::Arithmetic as usize],
+            lens[BlockId::Nnf as usize],
             lens[BlockId::Busread as usize],
             lens[BlockId::Poseidon2 as usize]
         );
@@ -159,6 +160,9 @@ pub struct Builder {
     pub range_lists: BTreeMap<u64, RangeList>,
     /// Lookup tables in creation order (bb `lookup_tables`); `table_index` is the 1-based position.
     pub lookup_tables: Vec<super::plookup::BasicTable>,
+    /// Non-native partial products whose gates are emitted at finalization (bb
+    /// `cached_partial_non_native_field_multiplications`).
+    pub cached_partial_multiplications: Vec<super::nnf::CachedPartialMultiplication>,
     pub failed: Option<String>,
     pub is_write_vk_mode: bool,
     /// Present for Mega circuits: the op queue, databus and op-code constants.
@@ -184,6 +188,7 @@ impl Builder {
             blocks: Blocks::new(if mega { MEGA_BLOCKS } else { ULTRA_BLOCKS }),
             memory: Default::default(),
             lookup_tables: vec![],
+            cached_partial_multiplications: vec![],
             memory_read_records: vec![],
             memory_write_records: vec![],
             rom_logup_records: vec![],
@@ -964,6 +969,7 @@ impl Builder {
         if self.circuit_finalized {
             return;
         }
+        self.process_non_native_field_multiplications();
         self.process_rom_arrays();
         self.process_ram_arrays();
         self.process_range_lists();

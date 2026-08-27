@@ -38,6 +38,7 @@
 #include "barretenberg/ultra_honk/verifier_instance.hpp"
 #include "barretenberg/stdlib/hash/poseidon2/poseidon2.hpp"
 #include "barretenberg/stdlib/hash/sha256/sha256.hpp"
+#include "barretenberg/stdlib/primitives/curves/secp256r1.hpp"
 #include "barretenberg/stdlib/hash/poseidon2/poseidon2_permutation.hpp"
 #include "barretenberg/stdlib/primitives/databus/databus.hpp"
 #include "barretenberg/stdlib/primitives/pairing_points.hpp"
@@ -1330,10 +1331,106 @@ void sha256_block(Builder& b)
     }
 }
 
+// Every bigfield operation over secp256r1's base field (MegaApp flavor: it has NNF gates).
+void trace_op(const char* label, Builder& b)
+{
+    if (std::getenv("BBREF_TRACE_GATES") != nullptr) {
+        std::cerr << "[bb gates 0 arith " << b.blocks.arithmetic.size() << " nnf "
+                  << b.blocks.nnf.size() << "] " << label << std::endl;
+    }
+}
+
+void bigfield_ops(Builder& b)
+{
+    using Fq = stdlib::secp256r1<Builder>::BaseField;
+    using FqNative = ::bb::secp256r1::fq;
+    const FqNative a_n(uint256_t(0x1234567890abcdefULL, 0xfedcba0987654321ULL, 0x0f0e0d0c0b0a0908ULL, 0x0706050403020100ULL));
+    const FqNative c_n(uint256_t(0x00000000000000ffULL, 0x1111111111111111ULL, 0x2222222222222222ULL, 0x3333333333333333ULL));
+    Fq a = Fq::from_witness(&b, a_n);
+    trace_op("a", b);
+    Fq c = Fq::from_witness(&b, c_n);
+    trace_op("c", b);
+    Fq k(uint256_t(0x9999));
+    trace_op("k", b);
+    bool_ct t = wb(b, true), f = wb(b, false);
+    trace_op("t", b);
+    Fq s = a + c;
+    trace_op("s", b);
+    Fq d = a - c;
+    trace_op("d", b);
+    Fq m = a * c;
+    trace_op("m", b);
+    Fq q = a / c;
+    trace_op("q", b);
+    Fq sq = a.sqr();
+    trace_op("sq", b);
+    Fq ma = a.madd(c, { s });
+    trace_op("ma", b);
+    Fq mm = Fq::mult_madd({ a, c }, { c, a }, { m });
+    trace_op("mm", b);
+    Fq dm = Fq::dual_madd(a, c, s, d, { sq });
+    trace_op("dm", b);
+    Fq msd = Fq::msub_div({ a }, { c }, d, { s });
+    trace_op("msd", b);
+    Fq cn = m.conditional_negate(t);
+    trace_op("cn", b);
+    Fq cs = Fq::conditional_assign(f, a, c);
+    trace_op("cs", b);
+    Fq ka = k * a;
+    trace_op("ka", b);
+    Fq ak = a + k;
+    trace_op("ak", b);
+    Fq amk = a - k;
+    trace_op("amk", b);
+    Fq kq = k / a;
+    trace_op("kq", b);
+    Fq sm = Fq::sum({ a, c, s, d, m });
+    trace_op("sm", b);
+    Fq p5 = a.pow(5);
+    trace_op("p5", b);
+    Fq ng = -a;
+    trace_op("ng", b);
+    Fq inv = a.invert();
+    trace_op("inv", b);
+    Fq sa = a.sqradd({ c });
+    trace_op("sa", b);
+    bool_ct e1 = (a == c);
+    trace_op("e1", b);
+    bool_ct e2 = (cs == a);
+    trace_op("e2", b);
+    bool_ct lt = a.is_less_than(Fq::modulus);
+    trace_op("lt", b);
+    a.assert_is_in_field();
+    trace_op("a.assert_is_in_field();", b);
+    mm.assert_is_not_equal(m);
+    trace_op("mm.assert_is_not_equal(m);", b);
+    (inv * a).assert_equal(Fq::one());
+    trace_op("(inv * a).assert_equal(Fq::one());", b);
+    Fq r = q * c;
+    trace_op("r", b);
+    r.reduce_mod_target_modulus();
+    trace_op("r.reduce_mod_target_modulus();", b);
+    r.assert_equal(a);
+    trace_op("r.assert_equal(a);", b);
+    Fq acc = Fq::sum({ sq, ma, mm, dm, msd, cn, ka, ak, amk, kq, sm, p5, ng, sa });
+    trace_op("acc", b);
+    acc.assert_zero_if(f);
+    trace_op("acc.assert_zero_if(f);", b);
+    field_ct out = acc.get_limb(0).element + acc.get_limb(1).element + acc.get_limb(2).element + acc.get_limb(3).element +
+                   acc.get_prime_basis_limb() + field_ct(e1) + field_ct(e2) + field_ct(lt);
+    trace_op("acc.get_prime_basis_limb() + field_ct(e1", b);
+    field_ct e(witness_ct(&b, out.get_value()));
+    trace_op("e", b);
+    (out - e).assert_is_zero();
+    trace_op("(out - e).assert_is_zero();", b);
+}
+
 void run(Builder& b, const std::string& name)
 {
     auto suffix = [&](const std::string& prefix) { return std::stoul(name.substr(prefix.size())); };
-    if (name == "sha256_block") {
+    if (name == "bigfield_ops") {
+        bigfield_ops(b);
+    } else if (name == "sha256_block") {
         sha256_block(b);
     } else if (name == "field_ops") {
         field_ops(b);

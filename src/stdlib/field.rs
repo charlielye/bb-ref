@@ -419,6 +419,10 @@ impl FieldT {
     }
     /// bb `field_t::conditional_assign`: `predicate ? lhs : rhs`, normalized.
     pub fn conditional_assign(predicate: &BoolT, lhs: &Self, rhs: &Self) -> Self {
+        Self::conditional_assign_internal(predicate, lhs, rhs).normalize()
+    }
+    /// bb `conditional_assign_internal`: `predicate ? lhs : rhs` left unnormalized.
+    pub fn conditional_assign_internal(predicate: &BoolT, lhs: &Self, rhs: &Self) -> Self {
         if predicate.is_constant() {
             return if predicate.get_value() {
                 lhs.clone()
@@ -432,7 +436,7 @@ impl FieldT {
         {
             return lhs.clone();
         }
-        lhs.sub(rhs).madd(&predicate.to_field(), rhs).normalize()
+        lhs.sub(rhs).madd(&predicate.to_field(), rhs)
     }
     pub fn div(&self, other: &Self) -> Self {
         other.assert_is_not_zero();
@@ -726,10 +730,14 @@ fn validate_split_in_field_unsafe(lo: &FieldT, hi: &FieldT, lo_bits: u32) {
 }
 
 impl FieldT {
-    /// bb `ranged_less_than<num_bits>`.
+    /// bb `ranged_less_than<num_bits>` as a field (the predicate's value).
     pub fn ranged_less_than_bits(&self, other: &Self, num_bits: u32) -> Self {
+        self.ranged_less_than(other, num_bits).to_field()
+    }
+    /// bb `ranged_less_than<num_bits>`: `self < other` for `num_bits`-bit values.
+    pub fn ranged_less_than(&self, other: &Self, num_bits: u32) -> BoolT {
         if self.is_constant() && other.is_constant() {
-            return Self::constant(Fr::from((u256(&self.get_value()) < u256(&other.get_value())) as u64));
+            return BoolT::constant(u256(&self.get_value()) < u256(&other.get_value()));
         }
         let ctx = same_ctx(&self.ctx, &other.ctx).unwrap();
         let range_constant: Fr = from_u256(crate::base::field::U256::from(1u64) << num_bits);
@@ -738,7 +746,7 @@ impl FieldT {
         let term_b = &FieldT::neg(&predicate.to_field()) * &Self::constant(range_constant);
         let predicate_valid = other.add_two(&term_a, &term_b);
         predicate_valid.create_range_constraint(num_bits as u64);
-        predicate.to_field()
+        predicate
     }
 
     /// bb `pow<num_bits>(const field_t& exponent)`: bit-decompose the exponent (bool witnesses, most

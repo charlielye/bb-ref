@@ -3,6 +3,7 @@
 pub mod builder;
 pub mod mega;
 pub mod memory;
+pub mod nnf;
 pub mod op_queue;
 pub mod plookup;
 pub mod trace;

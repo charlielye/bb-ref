@@ -137,6 +137,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ark-secp256r1"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8e7450e67fdd507af9e1b70dbabffe335d425cbcdeb531b8979b3a8e838fd78"
+dependencies = [
+ "ark-ec",
+ "ark-ff",
+ "ark-std",
+]
+
+[[package]]
 name = "ark-serialize"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -204,12 +215,14 @@ dependencies = [
  "ark-ec",
  "ark-ff",
  "ark-grumpkin",
+ "ark-secp256r1",
  "ark-serialize",
  "ark-std",
  "base64",
  "blake3",
  "flate2",
  "hex",
+ "num-bigint",
  "rand",
  "rayon",
  "rmp-serde",
