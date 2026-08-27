@@ -34,11 +34,15 @@ impl TranslatorPolys {
                 }
             }
         }
+        crate::base::timing::phase("    translator: wires");
         p.compute_lagrange_polynomials();
         p.compute_extra_range_constraint_numerator();
         p.compute_concatenated_polynomials();
+        crate::base::timing::phase("    translator: lagrange + concatenated");
         p.compute_ordered_range_constraint_polynomials();
+        crate::base::timing::phase("    translator: ordered");
         p.set_shifted();
+        crate::base::timing::phase("    translator: shifted");
         p
     }
 

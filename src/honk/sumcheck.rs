@@ -36,6 +36,10 @@ pub trait RelationSet<F: FieldLike> {
     fn skip(&self, _r: usize, _row0: &[F], _row1: &[F]) -> bool {
         false
     }
+    /// bb `Flavor::skip_entire_row`: every relation vanishes on the edge `(row0, row1)`.
+    fn skip_row(&self, _row0: &[F], _row1: &[F]) -> bool {
+        false
+    }
     /// The relation's univariate length (bb's max subrelation partial length): the prover only
     /// evaluates it at that many points and extends the accumulator afterwards.
     fn partial_length(&self, _r: usize) -> usize {
@@ -493,7 +497,7 @@ fn add_accumulators<F: FieldLike + Copy>(mut a: Accumulators<F>, b: Accumulators
 /// (meaningful single-threaded), printed for round 0 of every sumcheck.
 static RELATION_STATS: std::sync::Mutex<Vec<(u128, u64)>> = std::sync::Mutex::new(Vec::new());
 static EXTENSION_NS: std::sync::Mutex<u128> = std::sync::Mutex::new(0);
-fn relation_stats_enabled() -> bool {
+pub fn relation_stats_enabled() -> bool {
     std::env::var_os("BBREF_TIMING_RELATIONS").is_some()
 }
 fn print_relation_stats<F: FieldLike>(rels: &impl RelationSet<F>, num_edges: usize) {
@@ -517,6 +521,9 @@ struct Scratch<F> {
     active: Vec<bool>,
     /// Points evaluated per relation: `min(partial_length, d)`.
     len: Vec<usize>,
+    /// Columns read by the edge's active relations: the only ones stepped.
+    cols: Vec<usize>,
+    mark: Vec<bool>,
 }
 
 impl<F: FieldLike + Copy> Scratch<F> {
@@ -530,8 +537,40 @@ impl<F: FieldLike + Copy> Scratch<F> {
             sub: vec![F::zero(); max_sub],
             active: vec![false; rels.num_relations()],
             len: (0..rels.num_relations()).map(|r| rels.partial_length(r).min(d)).collect(),
+            cols: Vec::with_capacity(num_columns),
+            mark: vec![false; num_columns],
         }
     }
+}
+
+/// The columns each relation reads, found by re-randomizing one column at a time: a body that
+/// depends on a column changes value with overwhelming probability (Schwartz-Zippel), so the
+/// edge extension can skip the others (bb `LazyExtendedEdges`).
+fn used_columns<F: FieldLike + Copy>(rels: &impl RelationSet<F>, num_columns: usize, params: &RelationParams<F>) -> Vec<Vec<usize>> {
+    let mut rng = ark_std::test_rng();
+    let mut draw = || F::constant(<F::Native as ark_ff::UniformRand>::rand(&mut rng));
+    let row: Vec<F> = (0..num_columns).map(|_| draw()).collect();
+    let alt: Vec<F> = (0..num_columns).map(|_| draw()).collect();
+    let scaling = draw();
+    let eval = |r: usize, row: &[F]| {
+        let mut acc = vec![F::zero(); rels.num_subrelations(r)];
+        rels.accumulate(r, &mut acc, row, params, &scaling);
+        acc
+    };
+    (0..rels.num_relations())
+        .map(|r| {
+            let base = eval(r, &row);
+            let mut probe = row.clone();
+            (0..num_columns)
+                .filter(|&j| {
+                    probe[j] = alt[j];
+                    let changed = eval(r, &probe).iter().zip(&base).any(|(a, b)| !(*a - b).is_zero());
+                    probe[j] = row[j];
+                    changed
+                })
+                .collect()
+        })
+        .collect()
 }
 
 /// Lagrange weights extending a univariate known at `0..len` to the points `len..d`:
@@ -594,7 +633,7 @@ impl<F: FieldLike + Copy> ExtensionWeights<F> {
 
 /// The accumulators over a range of edges, split across threads (exact arithmetic: any split
 /// gives the same sums).
-fn accumulate_edges<F: FieldLike + Copy + Send + Sync>(rels: &(impl RelationSet<F> + Sync), table: &[Vec<F>], edges: std::ops::Range<usize>, params: &RelationParams<F>, betas: &[F], round: usize, d: usize) -> Accumulators<F>
+fn accumulate_edges<F: FieldLike + Copy + Send + Sync>(rels: &(impl RelationSet<F> + Sync), used: &[Vec<usize>], table: &[Vec<F>], edges: std::ops::Range<usize>, params: &RelationParams<F>, betas: &[F], round: usize, d: usize) -> Accumulators<F>
 where
     RelationParams<F>: Sync,
 {
@@ -604,7 +643,7 @@ where
         .fold(
             || (new_accumulators(rels, d), Scratch::new(rels, table.len(), d)),
             |(mut acc, mut scratch), e| {
-                accumulate_edge(rels, table, e, params, &pow_tail(betas, round, e), &mut acc, &mut scratch);
+                accumulate_edge(rels, used, table, e, params, &pow_tail(betas, round, e), &mut acc, &mut scratch);
                 (acc, scratch)
             },
         )
@@ -614,29 +653,42 @@ where
 
 /// Add the contributions of the edge `(table[·][2e], table[·][2e+1])` at every `k`, skipping the
 /// relations that vanish on it.
-fn accumulate_edge<F: FieldLike + Copy>(rels: &impl RelationSet<F>, table: &[Vec<F>], e: usize, params: &RelationParams<F>, scaling: &F, acc: &mut Accumulators<F>, s: &mut Scratch<F>) {
+fn accumulate_edge<F: FieldLike + Copy>(rels: &impl RelationSet<F>, used: &[Vec<usize>], table: &[Vec<F>], e: usize, params: &RelationParams<F>, scaling: &F, acc: &mut Accumulators<F>, s: &mut Scratch<F>) {
     for (j, col) in table.iter().enumerate() {
         s.row0[j] = col.get(2 * e).copied().unwrap_or(F::zero());
         s.row1[j] = col.get(2 * e + 1).copied().unwrap_or(F::zero());
-        s.delta[j] = s.row1[j] - s.row0[j];
+    }
+    if rels.skip_row(&s.row0, &s.row1) {
+        return;
     }
     let mut num_points = 0;
+    s.cols.clear();
     for ri in 0..rels.num_relations() {
         s.active[ri] = !rels.skip(ri, &s.row0, &s.row1);
         if s.active[ri] {
             num_points = num_points.max(s.len[ri]);
+            for &j in &used[ri] {
+                if !s.mark[j] {
+                    s.mark[j] = true;
+                    s.cols.push(j);
+                }
+            }
         }
+    }
+    for &j in &s.cols {
+        s.mark[j] = false;
+        s.delta[j] = s.row1[j] - s.row0[j];
     }
     let stats = relation_stats_enabled();
     let mut ext_ns = 0u128;
     let mut rel_ns = vec![0u128; if stats { rels.num_relations() } else { 0 }];
     for k in 0..num_points {
         let t0 = stats.then(std::time::Instant::now);
-        if k == 0 {
-            s.row.copy_from_slice(&s.row0);
-        } else {
-            for (r, d) in s.row.iter_mut().zip(&s.delta) {
-                *r += *d;
+        for &j in &s.cols {
+            if k == 0 {
+                s.row[j] = s.row0[j];
+            } else {
+                s.row[j] += s.delta[j];
             }
         }
         if let Some(t0) = t0 {
@@ -731,6 +783,8 @@ pub struct RoundProver<F> {
     witness_end: usize,
     active_prefix_end: Option<usize>,
     ext: ExtensionWeights<F>,
+    /// Columns read by each relation (`used_columns`), found on the first round.
+    used: Vec<Vec<usize>>,
 }
 
 impl<F: FieldLike + Copy + Send + Sync> RoundProver<F>
@@ -742,8 +796,14 @@ where
     /// only the last edge is evaluated (bb `row_skip_active_prefix_end`).
     pub fn new(polys: &[Polynomial<F>], row_disabling: bool, trace_offset: usize, witness_end: usize, active_prefix_end: Option<usize>) -> Self {
         let n = polys[0].len();
+        // Columns stop at their last non-zero coefficient (bb `end_index`); reads past the end are
+        // zero and folds only touch the stored prefix.
+        let trim = |p: &Polynomial<F>| {
+            let end = p.coeffs.iter().rposition(|c| !c.is_zero()).map_or(0, |i| i + 1);
+            p.coeffs[..end].to_vec()
+        };
         Self {
-            table: polys.iter().map(|p| p.coeffs.clone()).collect(),
+            table: polys.iter().map(trim).collect(),
             log_n: n.trailing_zeros() as usize,
             row_disabling,
             excluded_head: if row_disabling { trace_offset } else { 0 },
@@ -753,12 +813,14 @@ where
             witness_end: witness_end.min(n),
             active_prefix_end,
             ext: ExtensionWeights { weights: vec![] },
+            used: vec![],
         }
     }
     /// Extension weights for this relation set and univariate length (built once, on the first round).
-    fn ensure_weights(&mut self, rels: &impl RelationSet<F>, d: usize) {
+    fn ensure_weights(&mut self, rels: &impl RelationSet<F>, params: &RelationParams<F>, d: usize) {
         if self.ext.weights.is_empty() {
             self.ext = ExtensionWeights::new((0..rels.num_relations()).map(|r| rels.partial_length(r)), d);
+            self.used = used_columns(rels, self.table.len(), params);
         }
     }
 
@@ -784,16 +846,16 @@ where
     }
     /// Current value of column `i` (its evaluation once all real rounds are done).
     pub fn current(&self, i: usize) -> F {
-        self.table[i][0]
+        self.table[i].first().copied().unwrap_or(F::zero())
     }
     pub fn evals(&self) -> Vec<F> {
-        self.table.iter().map(|c| c[0]).collect()
+        (0..self.table.len()).map(|i| self.current(i)).collect()
     }
 
     /// The round univariate of the relations (bb `compute_univariate` + `compute_offset_area_contribution`,
     /// or `compute_virtual_contribution` for a virtual round), without any Libra term.
     pub fn univariate(&mut self, rels: &(impl RelationSet<F> + Sync), params: &RelationParams<F>, betas: &[F], partial_eval: &F, alphas: &[F], d: usize) -> Vec<F> {
-        self.ensure_weights(rels, d);
+        self.ensure_weights(rels, params, d);
         let round = self.round;
         if round < self.log_n {
             let round_size = 1 << (self.log_n - round);
@@ -804,7 +866,7 @@ where
             let acc = self
                 .edge_ranges(round_size)
                 .into_iter()
-                .map(|edges| accumulate_edges(rels, &self.table, edges, params, betas, round, d))
+                .map(|edges| accumulate_edges(rels, &self.used, &self.table, edges, params, betas, round, d))
                 .reduce(add_accumulators)
                 .unwrap_or_else(|| new_accumulators(rels, d));
             if round == 0 && relation_stats_enabled() {
@@ -812,7 +874,7 @@ where
             }
             let mut univariate = batch_over_relations(rels, &self.ext, &acc, alphas, &betas[round], partial_eval, None, d);
             if self.row_disabling {
-                let head = accumulate_edges(rels, &self.table, 0..self.excluded_head / 2, params, betas, round, d);
+                let head = accumulate_edges(rels, &self.used, &self.table, 0..self.excluded_head / 2, params, betas, round, d);
                 let head_uni = batch_over_relations(rels, &self.ext, &head, alphas, &betas[round], partial_eval, Some((self.rd0, self.rd1)), d);
                 for (k, v) in head_uni.into_iter().enumerate() {
                     univariate[k] += v;
@@ -822,8 +884,8 @@ where
         } else {
             // virtual round: the table has one row and the edge is (P(u), 0)
             let mut acc = new_accumulators(rels, d);
-            let edge_table: Vec<Vec<F>> = self.table.iter().map(|c| vec![c[0], F::zero()]).collect();
-            accumulate_edge(rels, &edge_table, 0, params, &F::one(), &mut acc, &mut Scratch::new(rels, edge_table.len(), d));
+            let edge_table: Vec<Vec<F>> = (0..self.table.len()).map(|i| vec![self.current(i), F::zero()]).collect();
+            accumulate_edge(rels, &self.used, &edge_table, 0, params, &F::one(), &mut acc, &mut Scratch::new(rels, edge_table.len(), d));
             let rd = if self.row_disabling { Some((self.rd0, self.rd1)) } else { None };
             batch_over_relations(rels, &self.ext, &acc, alphas, &betas[round], partial_eval, rd, d)
         }
@@ -834,6 +896,9 @@ where
         let round = self.round;
         if round < self.log_n {
             self.table.par_iter_mut().for_each(|col| {
+                if col.len() % 2 == 1 {
+                    col.push(F::zero());
+                }
                 let half = col.len() / 2;
                 for k in 0..half {
                     col[k] = col[2 * k] + *u * (col[2 * k + 1] - col[2 * k]);
@@ -842,7 +907,9 @@ where
             });
         } else {
             for col in self.table.iter_mut() {
-                col[0] *= F::one() - *u;
+                if let Some(c) = col.first_mut() {
+                    *c *= F::one() - *u;
+                }
             }
         }
         self.witness_end = self.witness_end.div_ceil(2);

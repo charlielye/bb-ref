@@ -3,7 +3,7 @@
 
 use super::trace::{fq_cube_root_of_unity, offset_generator, offset_generator_base};
 use super::{Ent, LAST_ADDITION_ROUND};
-use crate::base::field::FieldLike;
+use crate::base::field::{FieldLike, NativeField};
 use crate::base::Fq;
 use crate::honk::relations::RelationParams;
 use crate::honk::sumcheck::RelationSet;
@@ -92,7 +92,7 @@ impl EccvmRel {
 }
 
 fn c<T: FieldLike<Native = Fq>>(v: u64) -> T {
-    T::from_u64(v)
+    T::constant(Fq::small(v))
 }
 
 fn bools<T: FieldLike>(acc: &mut [T], r: &[T], scaling: &T) {

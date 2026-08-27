@@ -93,16 +93,26 @@ pub fn joint_prove(mega: &ProverInstance, mega_params: &RelationParams<Fr>, tran
     let mut challenge = Vec::with_capacity(JOINT_LOG_N);
     let mut univariate = Vec::new();
     for round in 0..JOINT_LOG_N {
+        let t0 = std::time::Instant::now();
         univariate = mega_state.univariate(&mega_rels, mega_params, &betas, &partial_eval, &mega_alphas, d);
+        let t1 = std::time::Instant::now();
         let u_t = trans_state.univariate(&trans_rels, &trans_params, &betas, &partial_eval, &trans_alphas, d);
+        if crate::honk::sumcheck::relation_stats_enabled() {
+            eprintln!("[joint round {round}] mega {:.1} ms, translator {:.1} ms", (t1 - t0).as_secs_f64() * 1e3, t1.elapsed().as_secs_f64() * 1e3);
+        }
         let libra = zk.round_univariate(round, d);
         for k in 0..d {
             univariate[k] += u_t[k] * alpha_kh + libra[k];
         }
         committed.process(round, &univariate, ck, t);
         let u: Fr = t.challenge(&format!("Sumcheck:u_{round}"));
+        let t2 = std::time::Instant::now();
         mega_state.partially_evaluate(&u);
+        let t3 = std::time::Instant::now();
         trans_state.partially_evaluate(&u);
+        if crate::honk::sumcheck::relation_stats_enabled() {
+            eprintln!("[joint round {round}] fold mega {:.1} ms, translator {:.1} ms", (t3 - t2).as_secs_f64() * 1e3, t3.elapsed().as_secs_f64() * 1e3);
+        }
         if round == LOG_MINI_CIRCUIT_SIZE - 1 {
             let mini: Vec<Fr> = minicircuit_entities().map(|e| trans_state.current(e)).collect();
             t.send_vec("Sumcheck:minicircuit_evaluations", &mini);

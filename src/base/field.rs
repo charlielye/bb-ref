@@ -7,6 +7,34 @@ use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 pub type Fr = ark_bn254::Fr;
 pub type Fq = ark_bn254::Fq;
+
+/// The native prime fields values can live in, with the conversions relation bodies need at no
+/// per-call cost (`F::from(u64)` is a Montgomery multiplication).
+pub trait NativeField: PrimeField<BigInt = U256> {
+    /// `v` as a field element, from a table for small `v`.
+    fn small(v: u64) -> Self;
+    /// A bn254 `Fr` constant in this field (relation constants are written as `Fr`).
+    fn from_fr(v: Fr) -> Self;
+}
+
+macro_rules! native_field {
+    ($F:ty, $from_fr:expr) => {
+        impl NativeField for $F {
+            fn small(v: u64) -> Self {
+                static SMALL: std::sync::LazyLock<[$F; 64]> = std::sync::LazyLock::new(|| std::array::from_fn(|i| <$F>::from(i as u64)));
+                match SMALL.get(v as usize) {
+                    Some(x) => *x,
+                    None => Self::from(v),
+                }
+            }
+            fn from_fr(v: Fr) -> Self {
+                $from_fr(v)
+            }
+        }
+    };
+}
+native_field!(Fr, |v| v);
+native_field!(Fq, |v: Fr| from_u256::<Fq>(u256(&v)));
 /// 256-bit little-endian-limbed integer (canonical, non-Montgomery form).
 pub type U256 = BigInt<4>;
 
@@ -29,7 +57,7 @@ pub trait FieldLike:
     + for<'a> MulAssign<&'a Self>
 {
     /// The underlying prime field of the values.
-    type Native: PrimeField<BigInt = U256>;
+    type Native: NativeField;
     /// Builder context: `()` natively, a builder handle in-circuit.
     type Ctx: Clone;
 
@@ -46,10 +74,10 @@ pub trait FieldLike:
         Self::constant(Self::Native::from(v))
     }
     fn zero() -> Self {
-        Self::from_u64(0)
+        Self::constant(<Self::Native as ark_ff::AdditiveGroup>::ZERO)
     }
     fn one() -> Self {
-        Self::from_u64(1)
+        Self::constant(<Self::Native as ark_ff::Field>::ONE)
     }
     fn sqr(&self) -> Self {
         self.clone() * self
@@ -91,7 +119,7 @@ pub trait FieldLike:
     }
 }
 
-impl<F: PrimeField<BigInt = U256>> FieldLike for F {
+impl<F: NativeField> FieldLike for F {
     type Native = F;
     type Ctx = ();
     fn ctx(&self) -> Option<()> {

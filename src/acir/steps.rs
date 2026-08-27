@@ -82,21 +82,24 @@ pub fn decode_steps(bytes: &[u8], rng: &mut dyn Rng) -> Vec<PrivateExecutionStep
         .collect()
 }
 
-/// bb `ChonkAPI::prove` (with `--vk_policy check`): accumulate every step, then prove. Returns the
-/// proof and the hiding kernel's VK.
-pub fn prove_steps(steps: &[PrivateExecutionStep], ck: CommitmentKey, rng: &mut dyn Rng) -> (ChonkProof, Vk<Bn254>) {
+/// bb `ChonkAPI::prove`: accumulate every step, then prove. Returns the proof and the hiding
+/// kernel's VK. `check_vks` recomputes each circuit's VK and compares it with the pinned one
+/// (bb `--vk_policy check`); otherwise the pinned VKs are used as they are (bb's default).
+pub fn prove_steps(steps: &[PrivateExecutionStep], ck: CommitmentKey, rng: &mut dyn Rng, check_vks: bool) -> (ChonkProof, Vk<Bn254>) {
     let mut ivc = Chonk::new(steps.iter().map(|s| s.kind).collect(), ck);
     for step in steps {
         crate::base::timing::phase(&format!("== {} ({:?})", step.name, step.kind));
         let mut circuit = build_circuit_mega(&step.circuit, Some(&step.witness), Some(&mut ivc), rng);
         assert!(circuit.failed.is_none(), "{}: circuit not satisfied: {:?}", step.name, circuit.failed);
         crate::base::timing::phase("circuit built");
-        ivc.accumulate(&mut circuit, rng);
-        let computed = match step.kind {
-            CircuitKind::HidingKernel => ivc.hiding_vk(),
-            _ => &ivc.verification_queue.last().unwrap().vk,
-        };
-        assert_eq!(computed.to_bytes(), step.vk.to_bytes(), "{}: the pinned VK does not match the circuit", step.name);
+        ivc.accumulate(&mut circuit, (!check_vks).then(|| step.vk.clone()), rng);
+        if check_vks {
+            let computed = match step.kind {
+                CircuitKind::HidingKernel => ivc.hiding_vk(),
+                _ => &ivc.verification_queue.last().unwrap().vk,
+            };
+            assert_eq!(computed.to_bytes(), step.vk.to_bytes(), "{}: the pinned VK does not match the circuit", step.name);
+        }
     }
     let proof = ivc.prove(rng);
     let vk = ivc.hiding_vk().clone();

@@ -295,6 +295,7 @@ pub fn triple_ipa_prove(ck: &GrumpkinKey, input: &TripleIpaInput, t: &mut Native
     };
     let unshifted = batch(&input.unshifted_polys, &claims.unshifted_rho_powers);
     let shifted = batch(&input.shifted_polys, &claims.shifted_rho_powers);
+    crate::base::timing::phase("    ipa: batching");
     add_claim_to_hash_buffer(&claim, t);
 
     let eq = eq_table(&claim.multilinear_challenge, log_n);
@@ -312,7 +313,9 @@ pub fn triple_ipa_prove(ck: &GrumpkinKey, input: &TripleIpaInput, t: &mut Native
     let zeta = zeta_challenges(t);
     let witness = batch(&[unshifted, shifted, input.univariate_poly.clone()], &zeta);
     let (_, vector, _) = combine(&claim, zeta, &cross, t);
+    crate::base::timing::phase("    ipa: cross terms + combine");
     inner_product_prove(ck, &witness, vector.tensor(&eq), t);
+    crate::base::timing::phase("    ipa: inner product prove");
 }
 
 /// bb `TripleIPA::reduce_to_accumulator`.

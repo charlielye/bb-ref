@@ -170,12 +170,13 @@ pub fn instance_to_accumulator(inst: &mut ProverInstance, vk: &Vk<Bn254>, ck: &C
         shifted_evaluation += sc.evals[layout.num_unshifted() + j] * c;
     }
     // Batching the commitments equals committing to the batched polynomials.
+    let to_be_shifted: Vec<G1Affine> = layout.shifted.iter().map(|e| oink.commitments[layout.idx(*e)]).collect();
     ProverClaim {
         challenge: sc.challenge,
         non_shifted_evaluation,
         shifted_evaluation,
-        non_shifted_commitment: ck.commit(&non_shifted_polynomial),
-        shifted_commitment: ck.commit(&shifted_polynomial),
+        non_shifted_commitment: <Bn254 as Curve>::G::batch_mul(&oink.commitments, &uc),
+        shifted_commitment: <Bn254 as Curve>::G::batch_mul(&to_be_shifted, &sh),
         non_shifted_polynomial,
         shifted_polynomial,
         dyadic_size: inst.dyadic_size,

@@ -512,6 +512,7 @@ pub fn shplemini_prove(
     }
     let mut a_0 = batched_unshifted.clone();
     a_0.add_scaled(&batched_to_be_shifted.shifted(), &Fr::one());
+    crate::base::timing::phase("    shplemini: batching");
 
     // folds A_{l+1}[j] = A_l[2j] + u_l (A_l[2j+1] - A_l[2j]), l = 0..log_n-2
     let mut folds: Vec<Poly> = Vec::with_capacity(virtual_log_n - 1);
@@ -533,7 +534,9 @@ pub fn shplemini_prove(
             folds.push(Poly::from_coeffs(vec![final_eval * tail]));
         }
     }
+    crate::base::timing::phase("    shplemini: folds");
     let fold_comms: Vec<_> = folds.par_iter().map(|f| ck.commit(f)).collect();
+    crate::base::timing::phase("    shplemini: fold commits");
     for (l, c) in fold_comms.iter().enumerate() {
         t.send(&format!("Gemini:FOLD_{}", l + 1), c);
     }
@@ -655,14 +658,15 @@ where
         .with_min_len(4)
         .fold(zero, |mut q, (poly, x, v, scale)| {
             let mut tmp = (*poly).clone();
-            tmp.coeffs.resize(max_size, F::<C>::zero());
             tmp.coeffs[0] -= v;
             tmp.factor_root(x);
             q.add_scaled(&tmp, scale);
             q
         })
         .reduce(zero, add);
+    crate::base::timing::phase("    shplonk: quotient");
     let quotient_commitment = ck.commit(&q);
+    crate::base::timing::phase("    shplonk: Q commit");
     t.send("Shplonk:Q", &quotient_commitment);
     let z: F<C> = t.challenge("Shplonk:z");
 
@@ -678,6 +682,7 @@ where
         })
         .reduce(zero, add);
     let g = add(q, batched);
+    crate::base::timing::phase("    shplonk: batched G");
     ShplonkProverOutput {
         claim: ProverClaim {
             poly: g,
@@ -696,7 +701,9 @@ pub fn kzg_open(claim: ProverClaim, ck: &CommitmentKey, t: &mut NativeTranscript
     let mut quotient = claim.poly;
     quotient.coeffs[0] -= claim.evaluation;
     quotient.factor_root(&claim.challenge);
+    crate::base::timing::phase("    kzg: quotient");
     t.send("KZG:W", &ck.commit(&quotient));
+    crate::base::timing::phase("    kzg: W commit");
 }
 
 /// bb `SmallSubgroupIPAProver` for the Libra data: computes and commits to the grand-sum

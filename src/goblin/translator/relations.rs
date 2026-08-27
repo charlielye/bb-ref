@@ -3,7 +3,7 @@
 
 use super::builder::negative_modulus_limbs;
 use super::{Ent, NUM_LIMB_BITS, MICRO_LIMB_BITS};
-use crate::base::field::FieldLike;
+use crate::base::field::{FieldLike, NativeField};
 use crate::base::Fr;
 use crate::honk::relations::RelationParams;
 use crate::honk::sumcheck::RelationSet;
@@ -85,12 +85,26 @@ impl<T: FieldLike<Native = Fr>> RelationSet<T> for TranslatorRelations {
     fn partial_length(&self, r: usize) -> usize {
         TRANSLATOR_RELATIONS[r].partial_lengths().into_iter().max().unwrap()
     }
+    /// bb `TranslatorFlavor::skip_entire_row`: an unused row of the (mostly empty) fixed-size
+    /// trace, where no relation contributes.
+    fn skip_row(&self, row0: &[T], row1: &[T]) -> bool {
+        let at = |r: &[T], e: Ent| r[e as usize].clone();
+        [row0, row1].iter().all(|r| {
+            [ordered_range_constraints_0_shift, ordered_range_constraints_1_shift, ordered_range_constraints_2_shift, ordered_range_constraints_3_shift, ordered_range_constraints_4_shift].iter().all(|e| at(r, *e).is_zero())
+                && (at(r, z_perm) - &at(r, z_perm_shift)).is_zero()
+                && at(r, lagrange_last).is_zero()
+        })
+    }
     fn skip(&self, r: usize, row0: &[T], row1: &[T]) -> bool {
         let both = |f: &dyn Fn(&[T]) -> bool| f(row0) && f(row1);
         let at = |r: &[T], e: Ent| r[e as usize].clone();
         match TRANSLATOR_RELATIONS[r] {
             TranslatorRel::Permutation => both(&|r: &[T]| (at(r, z_perm) - &at(r, z_perm_shift)).is_zero()),
-            TranslatorRel::DeltaRange => false,
+            TranslatorRel::DeltaRange => both(&|r: &[T]| {
+                [(ordered_range_constraints_0, ordered_range_constraints_0_shift), (ordered_range_constraints_1, ordered_range_constraints_1_shift), (ordered_range_constraints_2, ordered_range_constraints_2_shift), (ordered_range_constraints_3, ordered_range_constraints_3_shift), (ordered_range_constraints_4, ordered_range_constraints_4_shift)]
+                    .iter()
+                    .all(|(e, es)| (at(r, *es) - &at(r, *e)).is_zero())
+            }),
             TranslatorRel::Opcode => both(&|r: &[T]| (at(r, lagrange_even_in_minicircuit) + &at(r, lagrange_odd_in_minicircuit)).is_zero()),
             TranslatorRel::AccumulatorTransfer => both(&|r: &[T]| (at(r, lagrange_odd_in_minicircuit) + &at(r, lagrange_last_in_minicircuit) + &at(r, lagrange_result_row)).is_zero()),
             TranslatorRel::Decomposition | TranslatorRel::NonNativeField => both(&|r: &[T]| at(r, lagrange_even_in_minicircuit).is_zero()),
@@ -100,12 +114,19 @@ impl<T: FieldLike<Native = Fr>> RelationSet<T> for TranslatorRelations {
     }
 }
 
-fn c<T: FieldLike>(v: u64) -> T {
-    T::from_u64(v)
+fn c<T: FieldLike<Native = Fr>>(v: u64) -> T {
+    T::constant(Fr::small(v))
 }
 
+/// `2^68`, `2^136`, `2^204`: the limb shifts, computed once.
+static LIMB_SHIFTS: std::sync::LazyLock<[Fr; 3]> = std::sync::LazyLock::new(|| {
+    let s = Fr::from(2u64).pow_u64(NUM_LIMB_BITS as u64);
+    [s, s * s, s * s * s]
+});
+static NEG_MODULUS_LIMBS: std::sync::LazyLock<[Fr; 5]> = std::sync::LazyLock::new(negative_modulus_limbs);
+
 /// bb `TranslatorPermutationRelationImpl::compute_grand_product_numerator`.
-pub fn permutation_numerator<T: FieldLike>(r: &[T], p: &RelationParams<T>) -> T {
+pub fn permutation_numerator<T: FieldLike<Native = Fr>>(r: &[T], p: &RelationParams<T>) -> T {
     let v = |e: Ent| r[e as usize].clone();
     let chosen_set = v(lagrange_masking) * &p.beta;
     let chosen_set2 = v(lagrange_ordered_masking) * &p.beta;
@@ -117,7 +138,7 @@ pub fn permutation_numerator<T: FieldLike>(r: &[T], p: &RelationParams<T>) -> T 
 }
 
 /// bb `TranslatorPermutationRelationImpl::compute_grand_product_denominator`.
-pub fn permutation_denominator<T: FieldLike>(r: &[T], p: &RelationParams<T>) -> T {
+pub fn permutation_denominator<T: FieldLike<Native = Fr>>(r: &[T], p: &RelationParams<T>) -> T {
     let v = |e: Ent| r[e as usize].clone();
     let chosen_set = v(lagrange_ordered_masking) * &p.beta;
     (v(ordered_range_constraints_0) + &chosen_set + &p.gamma)
@@ -127,7 +148,7 @@ pub fn permutation_denominator<T: FieldLike>(r: &[T], p: &RelationParams<T>) -> 
         * (v(ordered_range_constraints_4) + &chosen_set + &p.gamma)
 }
 
-fn permutation<T: FieldLike>(acc: &mut [T], r: &[T], p: &RelationParams<T>, scaling: &T) {
+fn permutation<T: FieldLike<Native = Fr>>(acc: &mut [T], r: &[T], p: &RelationParams<T>, scaling: &T) {
     let v = |e: Ent| r[e as usize].clone();
     acc[0] += ((v(z_perm) + &v(lagrange_first)) * permutation_numerator(r, p) - &((v(z_perm_shift) + &v(lagrange_last)) * permutation_denominator(r, p))) * scaling;
     acc[1] += (v(lagrange_last) * &v(z_perm_shift)) * scaling;
@@ -137,7 +158,7 @@ fn permutation<T: FieldLike>(acc: &mut [T], r: &[T], p: &RelationParams<T>, scal
 const ORDERED: [Ent; 5] = [ordered_range_constraints_0, ordered_range_constraints_1, ordered_range_constraints_2, ordered_range_constraints_3, ordered_range_constraints_4];
 const ORDERED_SHIFT: [Ent; 5] = [ordered_range_constraints_0_shift, ordered_range_constraints_1_shift, ordered_range_constraints_2_shift, ordered_range_constraints_3_shift, ordered_range_constraints_4_shift];
 
-fn delta_range<T: FieldLike>(acc: &mut [T], r: &[T], scaling: &T) {
+fn delta_range<T: FieldLike<Native = Fr>>(acc: &mut [T], r: &[T], scaling: &T) {
     let v = |e: Ent| r[e as usize].clone();
     let maximum_sort_value = -c::<T>((1 << MICRO_LIMB_BITS) - 1);
     let not_last_or_masking = v(lagrange_real_last) + &v(lagrange_ordered_masking) - &T::one();
@@ -159,7 +180,7 @@ fn delta_range<T: FieldLike>(acc: &mut [T], r: &[T], scaling: &T) {
 const ACC: [Ent; 4] = [accumulators_binary_limbs_0, accumulators_binary_limbs_1, accumulators_binary_limbs_2, accumulators_binary_limbs_3];
 const ACC_SHIFT: [Ent; 4] = [accumulators_binary_limbs_0_shift, accumulators_binary_limbs_1_shift, accumulators_binary_limbs_2_shift, accumulators_binary_limbs_3_shift];
 
-fn opcode<T: FieldLike>(acc: &mut [T], r: &[T], scaling: &T) {
+fn opcode<T: FieldLike<Native = Fr>>(acc: &mut [T], r: &[T], scaling: &T) {
     let v = |e: Ent| r[e as usize].clone();
     let opv = v(Ent::op);
     let even = v(lagrange_even_in_minicircuit);
@@ -182,7 +203,7 @@ fn opcode<T: FieldLike>(acc: &mut [T], r: &[T], scaling: &T) {
     }
 }
 
-fn accumulator_transfer<T: FieldLike>(acc: &mut [T], r: &[T], p: &RelationParams<T>, scaling: &T) {
+fn accumulator_transfer<T: FieldLike<Native = Fr>>(acc: &mut [T], r: &[T], p: &RelationParams<T>, scaling: &T) {
     let v = |e: Ent| r[e as usize].clone();
     let odd = v(lagrange_odd_in_minicircuit);
     let last_in_mini = v(lagrange_last_in_minicircuit);
@@ -241,7 +262,7 @@ const ACC_HIGH: usize = 7;
 const Q_LOW: usize = 8;
 const Q_HIGH: usize = 9;
 
-fn decomposition<T: FieldLike>(acc: &mut [T], r: &[T], scaling: &T) {
+fn decomposition<T: FieldLike<Native = Fr>>(acc: &mut [T], r: &[T], scaling: &T) {
     let v = |e: Ent| r[e as usize].clone();
     let shift: T = c(1u64 << MICRO_LIMB_BITS);
     let shifts = [T::one(), shift.clone(), shift.sqr(), shift.sqr() * &shift, shift.sqr().sqr(), shift.sqr().sqr() * &shift];
@@ -319,7 +340,7 @@ fn decomposition<T: FieldLike>(acc: &mut [T], r: &[T], scaling: &T) {
     push(40, tail_check(RC[Q_HIGH][4], &s12, RC[Q_HIGH][5]));
     push(41, tail_check(RC_SHIFT[Q_HIGH][3], &s10, RC_SHIFT[Q_HIGH][4]));
     // wide limbs from two 68-bit limbs (subrelations 42..47)
-    let limb_shift: T = c::<T>(2).pow_u64(NUM_LIMB_BITS as u64);
+    let limb_shift: T = T::constant(LIMB_SHIFTS[0]);
     let pair = |lo: Ent, hi: Ent, wide: Ent| (v(lo) + &(v(hi) * &limb_shift)) - &v(wide);
     push(42, pair(p_x_low_limbs, p_x_low_limbs_shift, x_lo_y_hi));
     push(43, pair(p_x_high_limbs, p_x_high_limbs_shift, x_hi_z_1));
@@ -331,10 +352,10 @@ fn decomposition<T: FieldLike>(acc: &mut [T], r: &[T], scaling: &T) {
 
 fn non_native_field<T: FieldLike<Native = Fr>>(acc: &mut [T], r: &[T], p: &RelationParams<T>, scaling: &T) {
     let v = |e: Ent| r[e as usize].clone();
-    let shift: T = c::<T>(2).pow_u64(NUM_LIMB_BITS as u64);
-    let shiftx2 = shift.sqr();
-    let shiftx3 = shiftx2.clone() * &shift;
-    let neg: [T; 5] = std::array::from_fn(|i| T::constant(negative_modulus_limbs()[i]));
+    let shift: T = T::constant(LIMB_SHIFTS[0]);
+    let shiftx2: T = T::constant(LIMB_SHIFTS[1]);
+    let shiftx3: T = T::constant(LIMB_SHIFTS[2]);
+    let neg: [T; 5] = std::array::from_fn(|i| T::constant(NEG_MODULUS_LIMBS[i]));
     let x = &p.evaluation_input_x;
     let (v1, v2, v3, v4) = (&p.batching_challenge_v[0], &p.batching_challenge_v[1], &p.batching_challenge_v[2], &p.batching_challenge_v[3]);
     let opv = v(Ent::op);
@@ -378,6 +399,8 @@ fn non_native_field<T: FieldLike<Native = Fr>>(acc: &mut [T], r: &[T], p: &Relat
 }
 
 /// The entities that must be zero outside the mini circuit (bb `TranslatorZeroConstraintsRelation` order).
+static ZERO_CONSTRAINT_ENTITIES: std::sync::LazyLock<Vec<Ent>> = std::sync::LazyLock::new(zero_constraint_entities);
+
 fn zero_constraint_entities() -> Vec<Ent> {
     let mut out = Vec::with_capacity(68);
     for group in RC.iter() {
@@ -391,15 +414,15 @@ fn zero_constraint_entities() -> Vec<Ent> {
     out
 }
 
-fn zero_constraints<T: FieldLike>(acc: &mut [T], r: &[T], scaling: &T) {
+fn zero_constraints<T: FieldLike<Native = Fr>>(acc: &mut [T], r: &[T], scaling: &T) {
     let v = |e: Ent| r[e as usize].clone();
     let not_in_minicircuit_or_masked = (v(lagrange_odd_in_minicircuit) + &v(lagrange_even_in_minicircuit) + &v(lagrange_mini_masking) - &T::one()) * scaling;
-    for (i, e) in zero_constraint_entities().into_iter().enumerate() {
-        acc[i] += v(e) * &not_in_minicircuit_or_masked;
+    for (i, e) in ZERO_CONSTRAINT_ENTITIES.iter().enumerate() {
+        acc[i] += v(*e) * &not_in_minicircuit_or_masked;
     }
 }
 
-fn shiftable_first_coeff_zero<T: FieldLike>(acc: &mut [T], r: &[T], scaling: &T) {
+fn shiftable_first_coeff_zero<T: FieldLike<Native = Fr>>(acc: &mut [T], r: &[T], scaling: &T) {
     let v = |e: Ent| r[e as usize].clone();
     for i in 0..5 {
         acc[i] += v(lagrange_first) * &v(ORDERED[i]) * scaling;

@@ -5,7 +5,7 @@
 //!   bb-ref write_vk --scheme ultra_honk [--disable_zk] -b <program.json> -o <out_dir>
 //!   bb-ref verify   --scheme ultra_honk [--disable_zk] -k <vk> -p <proof> -i <public_inputs>
 //!   bb-ref write_vk --scheme chonk --circuit_kind app|kernel|hiding -b <program.json> -o <out_dir>
-//!   bb-ref prove    --scheme chonk --ivc_inputs_path <ivc-inputs.msgpack> -o <out_dir>
+//!   bb-ref prove    --scheme chonk --ivc_inputs_path <ivc-inputs.msgpack> -o <out_dir> [--vk_policy check]
 //!   bb-ref verify   --scheme chonk -k <vk> -p <proof>
 
 use bb_ref::acir::{build_circuit, build_circuit_mega, decode_program, decode_steps, decode_witness, prove_steps};
@@ -60,7 +60,8 @@ fn chonk(cmd: &str, flags: &HashMap<String, String>) {
         }
         "prove" => {
             let steps = decode_steps(&std::fs::read(get("--ivc_inputs_path")).expect("ivc inputs"), &mut OsRng);
-            let (proof, vk) = prove_steps(&steps, CommitmentKey::new(1 << 17), &mut OsRng);
+            let check_vks = flags.get("--vk_policy").is_some_and(|v| v == "check");
+            let (proof, vk) = prove_steps(&steps, CommitmentKey::new(1 << 17), &mut OsRng, check_vks);
             let out = out_dir(flags);
             std::fs::write(out.join("proof"), encode_fields(&proof.to_fields())).unwrap();
             std::fs::write(out.join("vk"), vk.to_bytes()).unwrap();

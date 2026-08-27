@@ -607,11 +607,14 @@ impl EccvmPolys {
         let ops = q.get_eccvm_ops();
         let total_muls = total_number_of_muls(&ops);
         let transcript_rows = compute_transcript_rows(&ops, total_muls);
+        crate::base::timing::phase("    eccvm: transcript rows");
         let msms = get_msms(&ops);
         let flattened: Vec<ScalarMul> = msms.iter().flatten().cloned().collect();
         let precompute_rows = compute_precompute_rows(&flattened);
+        crate::base::timing::phase("    eccvm: precompute rows");
         let num_msm_rows_total = 2 + msms.iter().map(|m| num_msm_rows(m.len())).sum::<usize>();
         let (msm_rows, read_counts) = compute_msm_rows(&msms, total_muls, num_msm_rows_total);
+        crate::base::timing::phase("    eccvm: msm rows");
         let num_rows = transcript_rows.len().max(precompute_rows.len()).max(msm_rows.len()) + TRACE_OFFSET;
         assert!(num_rows <= FIXED_SIZE, "ECCVM circuit exceeds its fixed size");
 

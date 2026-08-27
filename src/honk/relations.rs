@@ -6,7 +6,7 @@
 
 use super::flavor::{Ent, Layout, Rel, BUS_SPECS};
 use super::quad_params::quad_params;
-use crate::base::field::{from_hex, FieldLike};
+use crate::base::field::{from_hex, FieldLike, NativeField};
 use crate::base::poseidon2_params::INTERNAL_MATRIX_DIAGONAL_MINUS_ONE;
 use ark_ff::Field;
 use Ent::*;
@@ -99,7 +99,7 @@ impl Rel {
 }
 
 fn c<T: FieldLike>(v: u64) -> T {
-    T::from_u64(v)
+    T::constant(T::Native::small(v))
 }
 
 // relations/permutation_relation.hpp
@@ -434,7 +434,7 @@ fn poseidon2_internal<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: &T) {
 
 /// A bn254 scalar constant lifted into the relation's field type.
 fn k<T: FieldLike>(v: crate::base::Fr) -> T {
-    T::constant(crate::base::field::from_u256(crate::base::field::u256(&v)))
+    T::constant(T::Native::from_fr(v))
 }
 
 /// bb `bilinear_or_batched_eq_check_relation.hpp`: `q_bilinear_batched_eq` selects the bilinear
@@ -445,7 +445,8 @@ fn bilinear_batched_eq<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: &T) {
     let two_minus_q_cp = -q_cp.clone() + c::<T>(2);
     let q_cp_minus_1 = q_cp.clone() - c::<T>(1);
     let bilinear_gate = q_cp.clone() * &two_minus_q_cp;
-    let batched_eq_gate = q_cp.clone() * &q_cp_minus_1 * &k::<T>(crate::base::Fr::from(2u64).invert());
+    static HALF: std::sync::LazyLock<crate::base::Fr> = std::sync::LazyLock::new(|| crate::base::Fr::from(2u64).invert());
+    let batched_eq_gate = q_cp.clone() * &q_cp_minus_1 * &k::<T>(*HALF);
     let scaled_bilinear_gate = bilinear_gate * scaling;
     let scaled_batched_eq_gate = batched_eq_gate * scaling;
     let products = r.e(q_m).clone() * w1 * w2 + r.e(q_5).clone() * w1 * w3;

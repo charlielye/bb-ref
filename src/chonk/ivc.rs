@@ -125,20 +125,21 @@ impl Chonk {
         &self.hiding.as_ref().expect("hiding kernel not accumulated").1
     }
 
-    /// bb `Chonk::accumulate`. The circuit must have been built on `self.op_queue`.
-    pub fn accumulate(&mut self, circuit: &mut Builder, rng: &mut dyn Rng) {
+    /// bb `Chonk::accumulate`. The circuit must have been built on `self.op_queue`; `vk` is its
+    /// precomputed verification key (computed here when absent).
+    pub fn accumulate(&mut self, circuit: &mut Builder, vk: Option<Vk<Bn254>>, rng: &mut dyn Rng) {
         assert!(self.accumulated < self.kinds.len(), "Chonk: every circuit has already been accumulated");
         let kind = self.current_kind();
         let next = self.next_kind();
         match kind {
             CircuitKind::HidingKernel => {
                 let inst = ProverInstance::from_builder(&MEGA_ZK, circuit, rng);
-                let vk = inst.compute_vk(&self.ck);
+                let vk = vk.unwrap_or_else(|| inst.compute_vk(&self.ck));
                 self.hiding = Some((inst, vk));
                 self.accumulated += 1;
             }
             CircuitKind::App | CircuitKind::Kernel => {
-                self.accumulate_and_fold(circuit, kind, next, rng);
+                self.accumulate_and_fold(circuit, vk, kind, next, rng);
                 if next == Some(CircuitKind::HidingKernel) {
                     decider_prove(self.prover_accumulator.as_ref().unwrap(), &mut self.accumulation_transcript);
                     self.decider_proof = self.accumulation_transcript.export_proof();
@@ -152,7 +153,7 @@ impl Chonk {
         }
     }
 
-    fn accumulate_and_fold(&mut self, circuit: &mut Builder, kind: CircuitKind, next: Option<CircuitKind>, rng: &mut dyn Rng) {
+    fn accumulate_and_fold(&mut self, circuit: &mut Builder, vk: Option<Vk<Bn254>>, kind: CircuitKind, next: Option<CircuitKind>, rng: &mut dyn Rng) {
         let is_init_group = self.accumulated == 0;
         assert_eq!(
             self.verification_queue.is_empty() && !is_init_group,
@@ -165,7 +166,7 @@ impl Chonk {
         }
         let mut inst = ProverInstance::from_builder(kind.flavor(), circuit, rng);
         timing::phase("prover instance");
-        let vk = inst.compute_vk(&self.ck);
+        let vk = vk.unwrap_or_else(|| inst.compute_vk(&self.ck));
         timing::phase("vk");
         let proof = self.folding_prover.as_mut().unwrap().accumulate_instance(&mut inst, &vk, &self.ck, rng);
         timing::phase("instance to accumulator (oink + sumcheck)");
@@ -203,8 +204,9 @@ impl Chonk {
         timing::phase("eccvm");
         let (v, x) = (eccvm.batching_challenge_v, eccvm.evaluation_challenge_x);
         let circuit = TranslatorCircuit::new(v, x, &q);
-        let mut polys = TranslatorPolys::from_circuit(&circuit, &TranslatorPolys::random_masking(rng));
         timing::phase("translator circuit");
+        let mut polys = TranslatorPolys::from_circuit(&circuit, &TranslatorPolys::random_masking(rng));
+        timing::phase("translator polys");
         joint_prove(&inst, &oink.params, &mut polys, &v, &x, &self.ck, &mut t, rng);
         let joint_proof = t.export_proof();
         timing::phase("joint proof");

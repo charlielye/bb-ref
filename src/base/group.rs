@@ -33,7 +33,7 @@ pub trait GroupLike<F: FieldLike>: Clone + Debug + PartialEq {
 
 impl<P: SWCurveConfig> GroupLike<P::ScalarField> for Affine<P>
 where
-    P::ScalarField: PrimeField<BigInt = super::field::U256>,
+    P::ScalarField: super::field::NativeField,
 {
     type Native = Affine<P>;
     fn one(_: &()) -> Self {

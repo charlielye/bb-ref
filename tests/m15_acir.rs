@@ -82,7 +82,7 @@ fn mock_flows_bb_proofs_verify() {
 fn mock_flow_rust_proof() {
     let steps = decode_steps(&common::read("acir/mock_1_1/ivc-inputs.msgpack"), &mut OsRng);
     assert_eq!(steps.len(), 7);
-    let (proof, vk) = prove_steps(&steps, CommitmentKey::new(1 << 17), &mut OsRng);
+    let (proof, vk) = prove_steps(&steps, CommitmentKey::new(1 << 17), &mut OsRng, true);
     assert!(verify(&vk, &proof), "Rust proof rejected by the Rust verifier");
     let out = common::fixture_dir("acir/rust_1_1");
     std::fs::create_dir_all(&out).unwrap();
@@ -100,7 +100,7 @@ fn mock_flow_byte_exact_with_tape() {
     }
     let mut tape = TapeRng::from_bytes(std::fs::read(dir.join("rng_tape.bin")).unwrap());
     let steps = decode_steps(&common::read("acir/mock_1_1/ivc-inputs.msgpack"), &mut tape);
-    let (proof, vk) = prove_steps(&steps, CommitmentKey::new(1 << 17), &mut tape);
+    let (proof, vk) = prove_steps(&steps, CommitmentKey::new(1 << 17), &mut tape, true);
     assert_eq!(vk.to_bytes(), std::fs::read(dir.join("vk")).unwrap(), "hiding kernel VK");
     let expected = decode_fields(&std::fs::read(dir.join("proof")).unwrap());
     let fields = proof.to_fields();

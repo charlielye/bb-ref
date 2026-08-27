@@ -54,7 +54,7 @@ fn run_ivc(rng: &mut dyn Rng, compare_with: Option<&Path>) -> (Chonk, ChonkProof
             common::assert_polys_equal(&format!("circuit {idx} ({kind:?})"), &inst, &expected, &circuit, &compare);
             assert_eq!(inst.compute_vk(&ivc.ck).to_bytes(), std::fs::read(dir.join("vk")).unwrap(), "circuit {idx}: VK");
         }
-        ivc.accumulate(&mut circuit, rng);
+        ivc.accumulate(&mut circuit, None, rng);
     }
     let proof = ivc.prove(rng);
     (ivc, proof)

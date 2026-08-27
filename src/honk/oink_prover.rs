@@ -6,6 +6,7 @@ use super::oink::compute_public_input_delta;
 use super::prover_instance::ProverInstance;
 use super::relations::{lookup_term, table_term, RelationParams, Row};
 use rayon::prelude::*;
+use crate::base::G1Affine;
 use crate::base::field::{batch_invert, grand_product, FieldLike, Fr};
 use crate::base::poly::Poly;
 use crate::base::rng::Rng;
@@ -16,18 +17,25 @@ use crate::base::{Bn254, CommitmentKey};
 pub struct OinkProverOutput {
     pub params: RelationParams<Fr>,
     pub alpha: Fr,
+    /// Commitments to every unshifted entity in layout order (the VK's, then the witness ones).
+    pub commitments: Vec<G1Affine>,
 }
 
 /// Commit to the polynomials in parallel, then send them in transcript order.
-fn commit_and_send(inst: &ProverInstance, ck: &CommitmentKey, t: &mut NativeTranscript, ents: &[Ent]) {
+fn commit_and_send(inst: &ProverInstance, ck: &CommitmentKey, t: &mut NativeTranscript, ents: &[Ent], out: &mut [Option<G1Affine>]) {
     let comms: Vec<_> = ents.par_iter().map(|e| ck.commit(inst.poly(*e))).collect();
     for (e, c) in ents.iter().zip(&comms) {
         t.send(e.name(), c);
+        out[inst.layout.idx(*e)] = Some(*c);
     }
 }
 
 pub fn prove_oink(inst: &mut ProverInstance, vk: &Vk<Bn254>, ck: &CommitmentKey, t: &mut NativeTranscript, rng: &mut dyn Rng, emit_alpha: bool) -> OinkProverOutput {
     let flavor = inst.flavor;
+    let mut comms: Vec<Option<G1Affine>> = vec![None; inst.layout.unshifted.len()];
+    for (i, c) in vk.comms.iter().enumerate() {
+        comms[inst.layout.num_masking + i] = Some(*c);
+    }
     t.add_to_hash_buffer("vk_hash", &vk.hash());
     for (i, pi) in inst.public_inputs.iter().enumerate() {
         t.send(&format!("public_input_{i}"), pi);
@@ -46,7 +54,8 @@ pub fn prove_oink(inst: &mut ProverInstance, vk: &Vk<Bn254>, ck: &CommitmentKey,
     for b in inst.layout.buses() {
         first.extend([BUS_SPECS[b].value, BUS_SPECS[b].read_counts]);
     }
-    commit_and_send(inst, ck, t, &first);
+    commit_and_send(inst, ck, t, &first, &mut comms);
+    crate::base::timing::phase("    oink: wire commits");
 
     let mut params = RelationParams::<Fr>::default();
     if flavor.has(Rel::Memory) {
@@ -58,12 +67,14 @@ pub fn prove_oink(inst: &mut ProverInstance, vk: &Vk<Bn254>, ck: &CommitmentKey,
     }
     add_ram_rom_memory_records_to_wire_4(inst, &params);
     add_rom_logup_inverses_to_wire_4(inst, &params);
+    crate::base::timing::phase("    oink: memory records");
     let mut second: Vec<Ent> = vec![];
     if flavor.has(Rel::LogDerivLookup) {
         second.extend([Ent::lookup_read_counts, Ent::lookup_read_tags]);
     }
     second.push(Ent::w_4);
-    commit_and_send(inst, ck, t, &second);
+    commit_and_send(inst, ck, t, &second, &mut comms);
+    crate::base::timing::phase("    oink: w_4/lookup commits");
 
     let c: Vec<Fr> = t.challenges(&["beta", "gamma"]);
     params.beta = c[0];
@@ -79,14 +90,18 @@ pub fn prove_oink(inst: &mut ProverInstance, vk: &Vk<Bn254>, ck: &CommitmentKey,
         compute_databus_inverses(inst, b, &params);
         third.push(BUS_SPECS[b].inverses);
     }
-    commit_and_send(inst, ck, t, &third);
+    crate::base::timing::phase("    oink: inverses");
+    commit_and_send(inst, ck, t, &third, &mut comms);
+    crate::base::timing::phase("    oink: inverse commits");
 
     params.public_input_delta = compute_public_input_delta(&inst.public_inputs, &params.beta, &params.gamma, &Fr::from(inst.pub_inputs_offset as u64));
     compute_grand_product(inst, &params);
-    commit_and_send(inst, ck, t, &[Ent::z_perm]);
+    crate::base::timing::phase("    oink: grand product");
+    commit_and_send(inst, ck, t, &[Ent::z_perm], &mut comms);
 
     let alpha: Fr = if emit_alpha { t.challenge("alpha") } else { Fr::from(0u64) };
-    OinkProverOutput { params, alpha }
+    let commitments = comms.into_iter().zip(&inst.layout.unshifted).map(|(c, e)| c.unwrap_or_else(|| panic!("no commitment for {}", e.name()))).collect();
+    OinkProverOutput { params, alpha, commitments }
 }
 
 /// `w_4 = w_3 η³ + w_2 η² + w_1 η (+ 1 for writes)` at every memory access row.

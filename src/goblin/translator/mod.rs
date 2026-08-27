@@ -278,22 +278,26 @@ pub fn fixed_vk_hash() -> Fr {
     from_hex("0x281228e56fbfb62a424c94bda780104c9b5e758b8a02f148ce5e98c2867fdfc1")
 }
 
-/// The Translator's polynomials, one per entity, all of the fixed circuit size.
+/// The Translator's polynomials, one per entity: the wires span the mini circuit, everything
+/// else the fixed circuit size (values past a column's end are zero).
 pub struct TranslatorPolys {
     pub cols: Vec<Polynomial<Fr>>,
 }
 
 impl TranslatorPolys {
     pub fn zero() -> Self {
+        let wires = FIRST_WIRE..FIRST_WIRE + NUM_WIRES;
+        let wire_shifts: Vec<usize> = wires.clone().skip(1).map(shift_of).collect();
+        let len = |e: usize| if wires.contains(&e) || wire_shifts.contains(&e) { MINI_CIRCUIT_SIZE } else { CIRCUIT_SIZE };
         Self {
-            cols: (0..NUM_ALL_ENTITIES).map(|_| Polynomial::zero(CIRCUIT_SIZE)).collect(),
+            cols: (0..NUM_ALL_ENTITIES).map(|e| Polynomial::zero(len(e))).collect(),
         }
     }
     pub fn col(&self, e: Ent) -> &Polynomial<Fr> {
         &self.cols[e as usize]
     }
     pub fn row(&self, i: usize) -> Vec<Fr> {
-        self.cols.iter().map(|c| c.coeffs[i]).collect()
+        self.cols.iter().map(|c| c.coeffs.get(i).copied().unwrap_or_else(Fr::zero)).collect()
     }
     /// Materialize every shifted column from its source (bb `set_shifted`).
     pub fn set_shifted(&mut self) {
