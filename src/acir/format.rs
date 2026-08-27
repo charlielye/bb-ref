@@ -37,8 +37,8 @@ pub struct Sha256Compression {
 #[derive(Deserialize, Debug, Clone)]
 pub enum BlackBoxFuncCall {
     AES128Encrypt(IgnoredAny),
-    AND(IgnoredAny),
-    XOR(IgnoredAny),
+    AND(Logic),
+    XOR(Logic),
     RANGE {
         input: FunctionInput,
         num_bits: u32,
@@ -49,13 +49,29 @@ pub enum BlackBoxFuncCall {
     EcdsaSecp256r1(EcdsaSecp256r1),
     MultiScalarMul(MultiScalarMul),
     EmbeddedCurveAdd(EmbeddedCurveAdd),
-    Keccakf1600(IgnoredAny),
+    Keccakf1600(Keccakf1600),
     RecursiveAggregation(RecursiveAggregation),
     Poseidon2Permutation {
         inputs: Vec<FunctionInput>,
         outputs: Vec<Witness>,
     },
     Sha256Compression(Sha256Compression),
+}
+
+/// Bitwise XOR/AND of two `num_bits`-bit inputs.
+#[derive(Deserialize, Debug, Clone)]
+pub struct Logic {
+    pub lhs: FunctionInput,
+    pub rhs: FunctionInput,
+    pub num_bits: u32,
+    pub output: Witness,
+}
+
+/// Keccak-f[1600] over 25 64-bit lanes.
+#[derive(Deserialize, Debug, Clone)]
+pub struct Keccakf1600 {
+    pub inputs: Vec<FunctionInput>,
+    pub outputs: Vec<Witness>,
 }
 
 /// secp256r1 ECDSA verification over byte-wise inputs (32 bytes per coordinate, 64 per signature).

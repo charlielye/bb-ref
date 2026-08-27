@@ -21,6 +21,13 @@ pub enum BasicTableId {
     Sha256Base16,
     Sha256Base16Rotate2,
     Secp256r1FixedBase { axis: u8, window: u8 },
+    KeccakRho(u8),
+    KeccakTheta,
+    KeccakChi,
+    KeccakInput,
+    KeccakOutput,
+    UintXor(u8),
+    UintAnd(u8),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -32,6 +39,13 @@ pub enum MultiTableId {
     Sha256WitnessInput,
     Sha256WitnessOutput,
     Secp256r1FixedBase { axis: u8, is_lo: bool },
+    KeccakNormalizeAndRotate(u8),
+    KeccakThetaOutput,
+    KeccakChiOutput,
+    KeccakFormatInput,
+    KeccakFormatOutput,
+    Uint32Xor,
+    Uint32And,
 }
 
 /// How a basic table maps a key to its two values (bb `get_values_from_key`).
@@ -43,6 +57,12 @@ pub enum TableValues {
     SparseNormalization { base: u64, table: &'static [u64] },
     /// The two limbs of one axis of a secp256r1 fixed-base table entry.
     FixedBase { axis: u8, window: u8 },
+    KeccakRho { bits: u8 },
+    KeccakTheta,
+    KeccakChi,
+    KeccakInput,
+    UintXor,
+    UintAnd,
 }
 
 impl TableValues {
@@ -69,6 +89,12 @@ impl TableValues {
                 }
                 [Fr::from(accumulator), Fr::zero()]
             }
+            TableValues::KeccakRho { bits } => super::keccak_tables::rho_values(bits as usize, key[0]),
+            TableValues::KeccakTheta => super::keccak_tables::theta_values(key[0]),
+            TableValues::KeccakChi => super::keccak_tables::chi_values(key[0]),
+            TableValues::KeccakInput => super::keccak_tables::input_values(key[0]),
+            TableValues::UintXor => super::uint_tables::values(key, true),
+            TableValues::UintAnd => super::uint_tables::values(key, false),
             TableValues::FixedBase { axis, window } => {
                 super::secp256r1_fixed_base::extract_axis(&super::secp256r1_fixed_base::entry(window as usize, key[0] as usize), axis)
             }
@@ -135,8 +161,17 @@ impl MultiTable {
         let column_step_sizes = [steps(&column_coefficients[0]), steps(&column_coefficients[1]), steps(&column_coefficients[2])];
         Self { basic_table_ids, slice_sizes, column_coefficients, column_step_sizes, get_table_values }
     }
+    /// bb's tables that set the step sizes directly (the ρ tables).
+    pub(crate) fn from_steps(
+        column_step_sizes: [Vec<Fr>; 3],
+        slice_sizes: Vec<u64>,
+        basic_table_ids: Vec<BasicTableId>,
+        get_table_values: Vec<TableValues>,
+    ) -> Self {
+        Self { basic_table_ids, slice_sizes, column_coefficients: [vec![], vec![], vec![]], column_step_sizes, get_table_values }
+    }
     /// Coefficients `1, c, c², …` per column (bb's repeated-coefficient constructor).
-    fn repeated(c: [Fr; 3], num_lookups: usize, slice_size: u64, id: BasicTableId, values: TableValues) -> Self {
+    pub(crate) fn repeated(c: [Fr; 3], num_lookups: usize, slice_size: u64, id: BasicTableId, values: TableValues) -> Self {
         let geometric = |c: Fr| {
             let mut v = vec![Fr::one()];
             for i in 1..num_lookups {
@@ -172,6 +207,15 @@ pub fn get_multitable(id: MultiTableId) -> &'static MultiTable {
                 tables.push((Secp256r1FixedBase { axis, is_lo }, super::secp256r1_fixed_base::multitable(axis, is_lo)));
             }
         }
+        for lane in 0..25u8 {
+            tables.push((KeccakNormalizeAndRotate(lane), super::keccak_tables::rho_multitable(lane as usize)));
+        }
+        tables.push((KeccakThetaOutput, super::keccak_tables::theta_multitable()));
+        tables.push((KeccakChiOutput, super::keccak_tables::chi_multitable()));
+        tables.push((KeccakFormatInput, super::keccak_tables::input_multitable()));
+        tables.push((KeccakFormatOutput, super::keccak_tables::output_multitable()));
+        tables.push((Uint32Xor, super::uint_tables::uint32_multitable(true)));
+        tables.push((Uint32And, super::uint_tables::uint32_multitable(false)));
         tables
     });
     &TABLES.iter().find(|(i, _)| *i == id).expect("multitable").1
@@ -248,6 +292,13 @@ pub fn create_basic_table(id: BasicTableId, table_index: usize) -> BasicTable {
         Sha256Base16 => sparse_table_with_rotation(id, table_index, 16, 10, 0),
         Sha256Base16Rotate2 => sparse_table_with_rotation(id, table_index, 16, 11, 2),
         Secp256r1FixedBase { axis, window } => super::secp256r1_fixed_base::basic_table(id, table_index, axis, window as usize),
+        KeccakRho(bits) => super::keccak_tables::rho_table(id, table_index, bits as usize),
+        KeccakTheta => super::keccak_tables::theta_table(id, table_index),
+        KeccakChi => super::keccak_tables::chi_table(id, table_index),
+        KeccakInput => super::keccak_tables::input_table(id, table_index),
+        KeccakOutput => super::keccak_tables::output_table(id, table_index),
+        UintXor(bits) => super::uint_tables::table(id, table_index, bits as usize, true),
+        UintAnd(bits) => super::uint_tables::table(id, table_index, bits as usize, false),
     }
 }
 
@@ -408,7 +459,7 @@ pub mod sha256 {
                     vec![sparse(16, 2), sparse(16, 2), sparse(16, 0)],
                 )
             }
-            MultiTableId::Secp256r1FixedBase { .. } => unreachable!("not a sha256 table"),
+            _ => unreachable!("not a sha256 table"),
         }
     }
 }

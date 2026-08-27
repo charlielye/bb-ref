@@ -17,6 +17,8 @@ use bb_ref::stdlib::bigfield::BigField;
 use bb_ref::stdlib::biggroup::{Element, Scalar};
 use bb_ref::stdlib::byte_array::ByteArray;
 use bb_ref::stdlib::ecdsa::ecdsa_verify_signature;
+use bb_ref::stdlib::keccak;
+use bb_ref::stdlib::logic::create_logic_constraint;
 use bb_ref::stdlib::sha256;
 use num_bigint::BigUint;
 use bb_ref::stdlib::cycle_group::{CycleGroup, CycleScalar};
@@ -178,7 +180,7 @@ fn wb(ctx: &Ctx, v: bool) -> BoolT {
 
 /// The programs with lookup gates are dumped as MegaApp (MegaKernel has no lookup entities).
 fn flavor_of(name: &str) -> &'static FlavorDesc {
-    if ["sha256", "bigfield", "biggroup", "secp256r1", "ecdsa"].iter().any(|p| name.starts_with(p)) {
+    if ["sha256", "bigfield", "biggroup", "secp256r1", "ecdsa", "keccak", "logic"].iter().any(|p| name.starts_with(p)) {
         &MEGA_APP
     } else {
         &MEGA_KERNEL
@@ -357,6 +359,64 @@ fn ecdsa_r1(ctx: &Ctx) {
     let result = ecdsa_verify_signature(&hashed_message, &public_key, &r, &s);
     assert!(result.get_value(), "ecdsa signature should verify");
     result.assert_equal(&BoolT::constant(true));
+}
+
+/// Reference Keccak-f[1600] (FIPS 202).
+fn keccak_f1600(state: &mut [u64; 25]) {
+    const RC: [u64; 24] = [
+        0x0000000000000001, 0x0000000000008082, 0x800000000000808a, 0x8000000080008000, 0x000000000000808b,
+        0x0000000080000001, 0x8000000080008081, 0x8000000000008009, 0x000000000000008a, 0x0000000000000088,
+        0x0000000080008009, 0x000000008000000a, 0x000000008000808b, 0x800000000000008b, 0x8000000000008089,
+        0x8000000000008003, 0x8000000000008002, 0x8000000000000080, 0x000000000000800a, 0x800000008000000a,
+        0x8000000080008081, 0x8000000000008080, 0x0000000080000001, 0x8000000080008008,
+    ];
+    const ROT: [u32; 25] = [0, 1, 62, 28, 27, 36, 44, 6, 55, 20, 3, 10, 43, 25, 39, 41, 45, 15, 21, 8, 18, 2, 61, 56, 14];
+    for rc in RC {
+        let c: [u64; 5] = std::array::from_fn(|x| (0..5).fold(0, |acc, y| acc ^ state[y * 5 + x]));
+        let d: [u64; 5] = std::array::from_fn(|x| c[(x + 4) % 5] ^ c[(x + 1) % 5].rotate_left(1));
+        for i in 0..25 {
+            state[i] ^= d[i % 5];
+        }
+        let mut b = [0u64; 25];
+        for y in 0..5 {
+            for x in 0..5 {
+                b[((2 * x + 3 * y) % 5) * 5 + y] = state[y * 5 + x].rotate_left(ROT[y * 5 + x]);
+            }
+        }
+        for y in 0..5 {
+            for x in 0..5 {
+                state[y * 5 + x] = b[y * 5 + x] ^ (!b[y * 5 + (x + 1) % 5] & b[y * 5 + (x + 2) % 5]);
+            }
+        }
+        state[0] ^= rc;
+    }
+}
+
+fn keccak_permutation(ctx: &Ctx) {
+    let mut native: [u64; 25] = std::array::from_fn(|i| (i as u64 + 1).wrapping_mul(0x9e3779b97f4a7c15));
+    let state: [FieldT; 25] = std::array::from_fn(|i| w(ctx, native[i]));
+    let out = keccak::permutation_opcode(ctx, &state);
+    keccak_f1600(&mut native);
+    for (o, e) in out.iter().zip(native) {
+        assert_eq!(o.get_value(), Fr::from(e), "keccak-f[1600] output");
+        o.assert_equal(&w(ctx, e));
+    }
+}
+
+fn logic_ops(ctx: &Ctx) {
+    let (a, b) = (w(ctx, 0xdeadbeef), w(ctx, 0x12345678));
+    let x = create_logic_constraint(&a, &b, 32, true);
+    assert_eq!(x.get_value(), Fr::from(0xdeadbeefu64 ^ 0x12345678));
+    let y = create_logic_constraint(&a, &b, 32, false);
+    assert_eq!(y.get_value(), Fr::from(0xdeadbeefu64 & 0x12345678));
+    let (p, q) = (w(ctx, 0x0123456789abcdef), w(ctx, 0xfedcba9876543210));
+    let z = create_logic_constraint(&p, &q, 64, true);
+    assert_eq!(z.get_value(), Fr::from(0x0123456789abcdefu64 ^ 0xfedcba9876543210));
+    let (e, f) = (w(ctx, 0xa5), w(ctx, 0x3c));
+    let g = create_logic_constraint(&e, &f, 8, false);
+    let h = create_logic_constraint(&e, &c(0x0f), 8, true);
+    let sum = FieldT::accumulate(&[x, y, z, g, h]);
+    sum.assert_equal(&FieldT::from_witness(ctx, sum.get_value()));
 }
 
 fn sha256_block(ctx: &Ctx) {
@@ -569,6 +629,8 @@ fn run(ctx: &Ctx, name: &str) {
         "hiding_io_set" => hiding_io_set(ctx),
         "secp256r1_mul" => secp256r1_mul(ctx),
         "ecdsa_r1" => ecdsa_r1(ctx),
+        "keccak_permutation" => keccak_permutation(ctx),
+        "logic_ops" => logic_ops(ctx),
         _ if name.starts_with("poseidon2_hash_") => poseidon2_hash(ctx, suffix("poseidon2_hash_")),
         _ if name.starts_with("goblin_batch_mul_") => goblin_batch_mul(ctx, suffix("goblin_batch_mul_")),
         _ if name.starts_with("aggregate_multiple_") => aggregate_multiple(ctx, suffix("aggregate_multiple_")),
@@ -607,6 +669,8 @@ pub const PROGRAMS: &[&str] = &[
     "biggroup_ops",
     "secp256r1_mul",
     "ecdsa_r1",
+    "keccak_permutation",
+    "logic_ops",
 ];
 
 fn check(name: &str) {

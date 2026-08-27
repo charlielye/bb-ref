@@ -12,6 +12,8 @@ pub mod field;
 pub mod goblin;
 pub mod hash;
 pub mod io;
+pub mod keccak;
+pub mod logic;
 pub mod memory;
 pub mod plookup;
 pub mod poseidon2;

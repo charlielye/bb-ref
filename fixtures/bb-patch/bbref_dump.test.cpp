@@ -40,6 +40,8 @@
 #include "barretenberg/stdlib/hash/sha256/sha256.hpp"
 #include "barretenberg/stdlib/primitives/curves/secp256r1.hpp"
 #include "barretenberg/stdlib/encryption/ecdsa/ecdsa.hpp"
+#include "barretenberg/stdlib/hash/keccak/keccak.hpp"
+#include "barretenberg/stdlib/primitives/logic/logic.hpp"
 #include "barretenberg/stdlib/primitives/biggroup/biggroup_secp256r1.hpp"
 #include "barretenberg/stdlib/hash/poseidon2/poseidon2_permutation.hpp"
 #include "barretenberg/stdlib/primitives/databus/databus.hpp"
@@ -1513,9 +1515,46 @@ void ecdsa_r1(Builder& b)
     result.assert_equal(bool_ct(true));
 }
 
+void keccak_permutation(Builder& b)
+{
+    std::array<field_ct, 25> state;
+    for (size_t i = 0; i < 25; ++i) {
+        const uint64_t v = static_cast<uint64_t>(i + 1) * 0x9e3779b97f4a7c15ULL;
+        state[i] = field_ct(witness_ct(&b, bb::fr(v)));
+    }
+    const auto out = stdlib::keccak<Builder>::permutation_opcode(state, &b);
+    for (size_t i = 0; i < 25; ++i) {
+        out[i].assert_equal(field_ct(witness_ct(&b, out[i].get_value())));
+    }
+}
+
+void logic_ops(Builder& b)
+{
+    auto w = [&](uint64_t v) { return field_ct(witness_ct(&b, bb::fr(v))); };
+    field_ct a = w(0xdeadbeefULL), bb_ = w(0x12345678ULL);
+    field_ct x = stdlib::logic<Builder>::create_logic_constraint(a, bb_, 32, true);
+    field_ct y = stdlib::logic<Builder>::create_logic_constraint(a, bb_, 32, false);
+    field_ct c = w(0x0123456789abcdefULL), d = w(0xfedcba9876543210ULL);
+    field_ct z = stdlib::logic<Builder>::create_logic_constraint(c, d, 64, true);
+    field_ct e = w(0xa5ULL), f = w(0x3cULL);
+    field_ct g = stdlib::logic<Builder>::create_logic_constraint(e, f, 8, false);
+    field_ct k(bb::fr(0x0f));
+    field_ct h = stdlib::logic<Builder>::create_logic_constraint(e, k, 8, true);
+    field_ct sum = field_ct::accumulate({ x, y, z, g, h });
+    sum.assert_equal(field_ct(witness_ct(&b, sum.get_value())));
+}
+
 void run(Builder& b, const std::string& name)
 {
     auto suffix = [&](const std::string& prefix) { return std::stoul(name.substr(prefix.size())); };
+    if (name == "keccak_permutation") {
+        keccak_permutation(b);
+        return;
+    }
+    if (name == "logic_ops") {
+        logic_ops(b);
+        return;
+    }
     if (name == "secp256r1_mul") {
         secp256r1_mul(b);
         return;

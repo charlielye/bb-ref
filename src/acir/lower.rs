@@ -5,7 +5,7 @@
 //! verify nothing.
 
 use super::format::{
-    field, BlackBoxFuncCall, BlockType, Circuit, EmbeddedCurveAdd, FunctionInput, MultiScalarMul, Opcode,
+    field, BlackBoxFuncCall, BlockType, Circuit, EmbeddedCurveAdd, FunctionInput, Logic, MultiScalarMul, Opcode,
     Witness,
 };
 use super::mock::mock_chonk_from_constraints;
@@ -24,6 +24,8 @@ use crate::stdlib::memory::{RamTable, RomTable};
 use crate::stdlib::biggroup::Element;
 use crate::stdlib::byte_array::ByteArray;
 use crate::stdlib::ecdsa::ecdsa_verify_signature;
+use crate::stdlib::keccak;
+use crate::stdlib::logic::create_logic_constraint;
 use crate::stdlib::{poseidon2, sha256, BoolT, Ctx, FieldT, StdBn254};
 use ark_ff::{BigInteger, PrimeField};
 use ark_ec::{AffineRepr, CurveGroup};
@@ -73,6 +75,16 @@ struct Sha256Constraint {
     hash_values: Vec<FunctionInput>,
     outputs: Vec<u32>,
 }
+/// bb `LogicConstraint`.
+struct LogicConstraint {
+    logic: Logic,
+    is_xor_gate: bool,
+}
+/// bb `Keccakf1600` constraint: 25 input lanes and their output witnesses.
+struct KeccakConstraint {
+    state: Vec<FunctionInput>,
+    result: Vec<u32>,
+}
 /// bb `EcdsaConstraint`: witness indices of the byte-wise inputs.
 struct EcdsaConstraint {
     hashed_message: Vec<u32>,
@@ -103,6 +115,8 @@ struct Constraints {
     poseidon2: Vec<Poseidon2Constraint>,
     sha256: Vec<Sha256Constraint>,
     ecdsa_r1: Vec<EcdsaConstraint>,
+    logic: Vec<LogicConstraint>,
+    keccak: Vec<KeccakConstraint>,
     msm: Vec<MultiScalarMul>,
     ec_add: Vec<EmbeddedCurveAdd>,
     blocks: BTreeMap<u32, BlockConstraint>,
@@ -384,6 +398,19 @@ fn classify(circuit: &Circuit, is_mega: bool) -> (Constraints, Vec<u32>) {
                         outputs,
                     });
                 }
+                BlackBoxFuncCall::AND(l) | BlackBoxFuncCall::XOR(l) => {
+                    c.note_input(&l.lhs);
+                    c.note_input(&l.rhs);
+                    c.note(l.output);
+                    let is_xor_gate = matches!(bb, BlackBoxFuncCall::XOR(_));
+                    c.logic.push(LogicConstraint { logic: l.clone(), is_xor_gate });
+                }
+                BlackBoxFuncCall::Keccakf1600(k) => {
+                    assert!(k.inputs.len() == 25 && k.outputs.len() == 25);
+                    k.inputs.iter().for_each(|i| c.note_input(i));
+                    let result = k.outputs.iter().map(|w| c.note(*w)).collect();
+                    c.keccak.push(KeccakConstraint { state: k.inputs.clone(), result });
+                }
                 BlackBoxFuncCall::EcdsaSecp256r1(e) => {
                     assert!(e.public_key_x.len() == 32 && e.public_key_y.len() == 32 && e.signature.len() == 64 && e.hashed_message.len() == 32);
                     c.note_input(&e.predicate);
@@ -649,6 +676,19 @@ fn claimed_result_fields(ctx: &Ctx, outputs: &[Witness; 2]) -> (FieldT, FieldT) 
         b.set_variable(outputs[1].0, one.y);
     }
     (x, y)
+}
+
+/// bb `create_logic_gate`: the computed result is copied into the ACIR result witness (set first
+/// in write-VK mode).
+fn create_logic_gate(ctx: &Ctx, l: &LogicConstraint) {
+    let left = to_field_ct(ctx, &l.logic.lhs);
+    let right = to_field_ct(ctx, &l.logic.rhs);
+    let computed = create_logic_constraint(&left, &right, l.logic.num_bits as usize, l.is_xor_gate);
+    if ctx.borrow().is_write_vk_mode {
+        let value = computed.get_value();
+        ctx.borrow_mut().set_variable(l.logic.output.0, value);
+    }
+    computed.assert_equal(&FieldT::from_witness_index(ctx, l.logic.output.0));
 }
 
 /// bb `fields_to_bytes`: one range-constrained byte per field.
@@ -923,9 +963,12 @@ fn lower(builder: Builder, c: Constraints) -> Ctx {
             }
             b.create_bilinear_batched_eq_gate(&g);
         }
-        for (w, num_bits) in c.range {
-            b.create_dyadic_range_constraint(w, num_bits as u64);
-        }
+    }
+    for l in &c.logic {
+        create_logic_gate(&ctx, l);
+    }
+    for (w, num_bits) in c.range {
+        ctx.borrow_mut().create_dyadic_range_constraint(w, num_bits as u64);
     }
     for s in &c.sha256 {
         let inputs: [FieldT; 16] = std::array::from_fn(|i| to_field_ct(&ctx, &s.inputs[i]));
@@ -937,6 +980,13 @@ fn lower(builder: Builder, c: Constraints) -> Ctx {
     }
     for e in &c.ecdsa_r1 {
         create_ecdsa_verify_constraints(&ctx, e);
+    }
+    for k in &c.keccak {
+        let state: [FieldT; 25] = std::array::from_fn(|i| to_field_ct(&ctx, &k.state[i]));
+        let output = keccak::permutation_opcode(&ctx, &state);
+        for (out, result) in output.iter().zip(&k.result) {
+            out.assert_equal(&FieldT::from_witness_index(&ctx, *result));
+        }
     }
     for p in &c.poseidon2 {
         assert!(p.state.len() == 4 && p.result.len() == 4);

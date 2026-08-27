@@ -1,6 +1,7 @@
 //! Circuit construction: variables, copy constraints, gates and the execution trace
 //! (bb `stdlib_circuit_builders/{circuit_builder_base,ultra_circuit_builder,rom_ram_logic}`).
 pub mod builder;
+pub mod keccak_tables;
 pub mod mega;
 pub mod memory;
 pub mod nnf;
@@ -8,6 +9,7 @@ pub mod op_queue;
 pub mod plookup;
 pub mod secp256r1_fixed_base;
 pub mod trace;
+pub mod uint_tables;
 
 pub use builder::{Builder, IS_CONSTANT};
 pub use op_queue::EccOpQueue;

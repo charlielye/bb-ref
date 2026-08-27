@@ -116,6 +116,8 @@ builder_tests! {
     ecdsa_secp256r1_high_s: "ecdsa_secp256r1_high_s",
     ecdsa_secp256r1_invalid_inputs: "ecdsa_secp256r1_invalid_inputs",
     ecdsa_secp256r1_invalid_pub_key_in_inactive_branch: "ecdsa_secp256r1_invalid_pub_key_in_inactive_branch",
+    xor: "xor",
+    bit_and: "bit_and",
 }
 
 /// VK hashes of every acir_tests program in the supported opcode subset, from `bb write_vk`.
