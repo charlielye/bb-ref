@@ -50,6 +50,18 @@ impl BoolT {
         ctx.borrow_mut().create_bool_gate(idx);
         Self::build(Some(ctx.clone()), idx, value, false)
     }
+    /// bb `bool_t(witness, use_range_constraint = true)`: constrained through the `[0, 1]` range
+    /// list instead of a bool gate (cheaper in bulk).
+    pub fn from_witness_ranged(ctx: &Ctx, value: bool) -> Self {
+        let idx = ctx.borrow_mut().add_variable(Fr::from(value as u64));
+        ctx.borrow_mut().create_small_range_constraint(idx, 1);
+        Self::build(Some(ctx.clone()), idx, value, false)
+    }
+    pub fn fix_witness(&self) {
+        assert!(!self.is_constant());
+        let value = Fr::from(self.get_value() as u64);
+        self.ctx.as_ref().unwrap().borrow_mut().fix_witness(self.witness_index(), value);
+    }
     /// bb `field_t::operator bool_t`: reinterpret a field element as a boolean (bool gate on its witness).
     pub fn from_field(f: &FieldT) -> Self {
         if f.is_constant() {

@@ -1425,10 +1425,51 @@ void bigfield_ops(Builder& b)
     trace_op("(out - e).assert_is_zero();", b);
 }
 
+// biggroup over secp256r1: point arithmetic, conditionals, a 2-point 128-bit MSM and a scalar mul.
+void biggroup_ops(Builder& b)
+{
+    using Curve = stdlib::secp256r1<Builder>;
+    using G1 = Curve::Group;
+    using Fr = Curve::ScalarField;
+    using FrNative = ::bb::secp256r1::fr;
+    using G1Native = ::bb::secp256r1::g1;
+    const G1Native::affine_element p_n(G1Native::one * FrNative(7));
+    const G1Native::affine_element q_n(G1Native::one * FrNative(11));
+    G1 p = G1::from_witness(&b, p_n);
+    G1 q = G1::from_witness(&b, q_n);
+    trace_op("points", b);
+    bool_ct t = wb(b, true), f = wb(b, false);
+    G1 s = p + q;
+    trace_op("add", b);
+    G1 d = p - q;
+    trace_op("sub", b);
+    G1 dd = p.dbl();
+    trace_op("dbl", b);
+    G1 n = -p;
+    G1 cn = p.conditional_negate(t);
+    G1 cs = G1::conditional_assign(f, p, q);
+    trace_op("conditionals", b);
+    [[maybe_unused]] auto res = s.validate_on_curve("", false);
+    trace_op("validate", b);
+    Fr u1 = Fr::from_witness(&b, FrNative(uint256_t(0x1234567890abcdefULL, 0x0fedcba098765432ULL, 0, 0)));
+    Fr u2 = Fr::from_witness(&b, FrNative(uint256_t(0xabcdef0123456789ULL, 0x1122334455667788ULL, 0, 0)));
+    G1 msm = G1::batch_mul({ p, q }, { u1, u2 }, /*max_num_bits=*/128, /*with_edgecases=*/false);
+    trace_op("batch_mul", b);
+    G1 sm = p.scalar_mul(u1, 128);
+    trace_op("scalar_mul", b);
+    G1 sum = s + d + dd + n + cn + cs + msm + sm;
+    trace_op("sum", b);
+    G1 e = G1::from_witness(&b, sum.get_value());
+    sum.incomplete_assert_equal(e);
+    trace_op("assert", b);
+}
+
 void run(Builder& b, const std::string& name)
 {
     auto suffix = [&](const std::string& prefix) { return std::stoul(name.substr(prefix.size())); };
-    if (name == "bigfield_ops") {
+    if (name == "biggroup_ops") {
+        biggroup_ops(b);
+    } else if (name == "bigfield_ops") {
         bigfield_ops(b);
     } else if (name == "sha256_block") {
         sha256_block(b);

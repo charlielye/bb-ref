@@ -103,3 +103,70 @@ impl RamTable {
         self.ctx.borrow_mut().write_ram_array(id, iw, vw);
     }
 }
+
+/// A ROM table of value pairs (bb `twin_rom_table`): built lazily on the first witness read;
+/// constant reads return the raw entries.
+pub struct TwinRomTable {
+    ctx: Option<Ctx>,
+    raw_entries: Vec<[FieldT; 2]>,
+    rom_id: Option<usize>,
+}
+
+impl TwinRomTable {
+    pub fn new(raw_entries: Vec<[FieldT; 2]>) -> Self {
+        let ctx = raw_entries.iter().find_map(|e| e[0].ctx.clone().or_else(|| e[1].ctx.clone()));
+        Self { ctx, raw_entries, rom_id: None }
+    }
+    pub fn len(&self) -> usize {
+        self.raw_entries.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.raw_entries.is_empty()
+    }
+    fn initialize(&mut self) -> usize {
+        if let Some(id) = self.rom_id {
+            return id;
+        }
+        let ctx = self.ctx.clone().expect("twin_rom_table without a builder");
+        let entries: Vec<[FieldT; 2]> = self
+            .raw_entries
+            .iter()
+            .map(|e| {
+                let fix = |f: &FieldT| {
+                    if f.is_constant() {
+                        let idx = ctx.borrow_mut().put_constant_variable(f.get_value());
+                        FieldT::from_witness_index(&ctx, idx)
+                    } else {
+                        f.clone()
+                    }
+                };
+                [fix(&e[0]), fix(&e[1])]
+            })
+            .collect();
+        let id = ctx.borrow_mut().create_rom_array(entries.len());
+        for (i, e) in entries.iter().enumerate() {
+            let pair = [e[0].get_witness_index(), e[1].get_witness_index()];
+            ctx.borrow_mut().set_rom_element_pair(id, i, pair);
+        }
+        self.rom_id = Some(id);
+        id
+    }
+    pub fn read_const(&self, index: usize) -> [FieldT; 2] {
+        self.raw_entries[index].clone()
+    }
+    pub fn read(&mut self, index: &FieldT) -> [FieldT; 2] {
+        let native_index = Builder::low_u64(&index.get_value()) as usize;
+        assert!(native_index < self.raw_entries.len(), "twin_rom_table: access out of bounds");
+        if index.is_constant() {
+            return self.read_const(native_index);
+        }
+        if self.ctx.is_none() {
+            self.ctx = index.ctx.clone();
+        }
+        let id = self.initialize();
+        let ctx = self.ctx.clone().unwrap();
+        let w = index.get_witness_index();
+        let out = ctx.borrow_mut().read_rom_array_pair(id, w);
+        [FieldT::from_witness_index(&ctx, out[0]), FieldT::from_witness_index(&ctx, out[1])]
+    }
+}

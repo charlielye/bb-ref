@@ -1,6 +1,7 @@
 //! In-circuit types over the builder (bb `stdlib/primitives`, `stdlib/hash`). Values carry a
 //! handle to the builder so that arithmetic on them emits gates in evaluation order.
 pub mod bigfield;
+pub mod biggroup;
 pub mod bool;
 pub mod curve;
 pub mod cycle_group;

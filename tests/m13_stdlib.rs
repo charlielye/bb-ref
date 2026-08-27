@@ -14,6 +14,7 @@ use bb_ref::honk::prover_instance::ProverInstance;
 use bb_ref::honk::flavor::FlavorDesc;
 use bb_ref::honk::{MEGA_APP, MEGA_KERNEL};
 use bb_ref::stdlib::bigfield::BigField;
+use bb_ref::stdlib::biggroup::{Element, Scalar};
 use bb_ref::stdlib::sha256;
 use num_bigint::BigUint;
 use bb_ref::stdlib::cycle_group::{CycleGroup, CycleScalar};
@@ -175,7 +176,7 @@ fn wb(ctx: &Ctx, v: bool) -> BoolT {
 
 /// The programs with lookup gates are dumped as MegaApp (MegaKernel has no lookup entities).
 fn flavor_of(name: &str) -> &'static FlavorDesc {
-    if name.starts_with("sha256") || name.starts_with("bigfield") {
+    if name.starts_with("sha256") || name.starts_with("bigfield") || name.starts_with("biggroup") {
         &MEGA_APP
     } else {
         &MEGA_KERNEL
@@ -275,6 +276,46 @@ fn bigfield_ops(ctx: &Ctx) {
     bb_ref::circuit::builder::trace_phase("bigfield_ops: e");
     out.sub(&e).assert_is_zero();
     bb_ref::circuit::builder::trace_phase("bigfield_ops: out.sub(&e).assert_is_zero();");
+}
+
+type P256 = ark_secp256r1::Config;
+
+fn biggroup_ops(ctx: &Ctx) {
+    use ark_ec::{AffineRepr, CurveGroup};
+    let tr = |l: &str| bb_ref::circuit::builder::trace_phase(&format!("biggroup_ops: {l}"));
+    let g = ark_secp256r1::Affine::generator();
+    let p_n = (g * ark_secp256r1::Fr::from(7u64)).into_affine();
+    let q_n = (g * ark_secp256r1::Fr::from(11u64)).into_affine();
+    let p = Element::<P256>::from_witness(ctx, &p_n);
+    let q = Element::<P256>::from_witness(ctx, &q_n);
+    tr("points");
+    let (t, f) = (wb(ctx, true), wb(ctx, false));
+    let s = p.add(&q);
+    tr("add");
+    let d = p.sub(&q);
+    tr("sub");
+    let dd = p.dbl();
+    tr("dbl");
+    let n = p.neg();
+    let cn = p.conditional_negate(&t);
+    let cs = Element::<P256>::conditional_assign(&f, &p, &q);
+    tr("conditionals");
+    let _res = s.validate_on_curve(false);
+    tr("validate");
+    let scalar = |limbs: [u64; 4]| ark_secp256r1::Fr::from(BigUint::from_slice(&limbs.iter().flat_map(|l| [*l as u32, (*l >> 32) as u32]).collect::<Vec<_>>()));
+    let u1 = Scalar::<P256>::from_witness(ctx, &scalar([0x1234567890abcdef, 0x0fedcba098765432, 0, 0]));
+    let u2 = Scalar::<P256>::from_witness(ctx, &scalar([0xabcdef0123456789, 0x1122334455667788, 0, 0]));
+    let (u1_n, u2_n) = (scalar([0x1234567890abcdef, 0x0fedcba098765432, 0, 0]), scalar([0xabcdef0123456789, 0x1122334455667788, 0, 0]));
+    let msm = Element::<P256>::batch_mul(&[p.clone(), q.clone()], &[u1.clone(), u2], 128, false);
+    assert_eq!(msm.get_value(), (p_n * u1_n + q_n * u2_n).into_affine(), "biggroup batch_mul value");
+    tr("batch_mul");
+    let sm = p.scalar_mul(&u1, 128);
+    tr("scalar_mul");
+    let sum = s.add(&d).add(&dd).add(&n).add(&cn).add(&cs).add(&msm).add(&sm);
+    tr("sum");
+    let e = Element::<P256>::from_witness(ctx, &sum.get_value());
+    sum.incomplete_assert_equal(&e);
+    tr("assert");
 }
 
 fn sha256_block(ctx: &Ctx) {
@@ -474,6 +515,7 @@ fn run(ctx: &Ctx, name: &str) {
         "field_ops" => field_ops(ctx),
         "sha256_block" => sha256_block(ctx),
         "bigfield_ops" => bigfield_ops(ctx),
+        "biggroup_ops" => biggroup_ops(ctx),
         "bool_ops" => bool_ops(ctx),
         "cycle_group_add" => cycle_group_add(ctx),
         "cycle_group_mul_witness" => cycle_group_mul_witness(ctx),
@@ -519,6 +561,7 @@ pub const PROGRAMS: &[&str] = &[
     "cycle_group_mul_witness",
     "sha256_block",
     "bigfield_ops",
+    "biggroup_ops",
 ];
 
 fn check(name: &str) {

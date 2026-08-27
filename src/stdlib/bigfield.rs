@@ -712,6 +712,10 @@ impl<N: PrimeField> BigField<N> {
     pub fn div_check_denominator_nonzero(numerators: &[Self], denominator: &Self) -> Self {
         Self::internal_div(numerators, denominator, true)
     }
+    /// bb static `div_without_denominator_check(numerators, denominator)`.
+    pub fn div_check_denominator_nonzero_off(numerators: &[Self], denominator: &Self) -> Self {
+        Self::internal_div(numerators, denominator, false)
+    }
     pub fn invert(&self) -> Self {
         Self::one().div(self)
     }
@@ -1461,7 +1465,8 @@ impl<N: PrimeField> BigField<N> {
             left.push(fix(&input_left[i]));
             right.push(fix(&input_right[i]));
             if i > 0 {
-                let [lo_2_idx, hi_2_idx] = ctx.borrow_mut().queue_partial_non_native_field_multiplication(left[i].limb_witness_indices(), right[i].limb_witness_indices());
+                let (a_idx, b_idx) = (left[i].limb_witness_indices(), right[i].limb_witness_indices());
+                let [lo_2_idx, hi_2_idx] = ctx.borrow_mut().queue_partial_non_native_field_multiplication(a_idx, b_idx);
                 limb_0_accumulator.push(FieldT::from_witness_index(&ctx, lo_2_idx).neg());
                 limb_2_accumulator.push(FieldT::from_witness_index(&ctx, hi_2_idx).neg());
                 prime_limb_accumulator.push(left[i].prime_limb().mul(&right[i].prime_limb()).neg());
