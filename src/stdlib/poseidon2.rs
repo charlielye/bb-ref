@@ -11,7 +11,12 @@ use crate::circuit::BlockId;
 pub type State = [FieldT; 4];
 
 fn witness_indices(s: &State) -> [u32; 4] {
-    [s[0].get_witness_index(), s[1].get_witness_index(), s[2].get_witness_index(), s[3].get_witness_index()]
+    [
+        s[0].get_witness_index(),
+        s[1].get_witness_index(),
+        s[2].get_witness_index(),
+        s[3].get_witness_index(),
+    ]
 }
 
 fn native(s: &State) -> [Fr; 4] {
@@ -19,7 +24,12 @@ fn native(s: &State) -> [Fr; 4] {
 }
 
 fn to_witnesses(ctx: &Ctx, n: &[Fr; 4]) -> State {
-    [FieldT::from_witness(ctx, n[0]), FieldT::from_witness(ctx, n[1]), FieldT::from_witness(ctx, n[2]), FieldT::from_witness(ctx, n[3])]
+    [
+        FieldT::from_witness(ctx, n[0]),
+        FieldT::from_witness(ctx, n[1]),
+        FieldT::from_witness(ctx, n[2]),
+        FieldT::from_witness(ctx, n[3]),
+    ]
 }
 
 /// The initial external linear layer `M_E * state` in six arithmetic gates.
@@ -78,7 +88,8 @@ fn advance_internal_round(n: &mut [Fr; 4], rc: Fr) {
 fn internal_rounds_mega(ctx: &Ctx, state: &mut State, n: &mut [Fr; 4], rounds_f_beginning: usize) {
     let num_quad_rows = ROUNDS_P / 4;
     let w = witness_indices(state);
-    ctx.borrow_mut().create_poseidon2_transition_entry_gate(w, rounds_f_beginning);
+    ctx.borrow_mut()
+        .create_poseidon2_transition_entry_gate(w, rounds_f_beginning);
     let rc = round_constants();
     for q in 0..num_quad_rows {
         let is_terminal = q == num_quad_rows - 1;
@@ -90,8 +101,14 @@ fn internal_rounds_mega(ctx: &Ctx, state: &mut State, n: &mut [Fr; 4], rounds_f_
         let s0_at_2 = FieldT::from_witness(ctx, after[0]);
         advance_internal_round(&mut after, rc[start + 2][0]);
         let s0_at_3 = FieldT::from_witness(ctx, after[0]);
-        let wires = [state[0].get_witness_index(), s0_at_1.witness_index, s0_at_2.witness_index, s0_at_3.witness_index];
-        ctx.borrow_mut().create_poseidon2_quad_internal_gate(wires, start, start + 4, is_terminal);
+        let wires = [
+            state[0].get_witness_index(),
+            s0_at_1.witness_index,
+            s0_at_2.witness_index,
+            s0_at_3.witness_index,
+        ];
+        ctx.borrow_mut()
+            .create_poseidon2_quad_internal_gate(wires, start, start + 4, is_terminal);
         advance_internal_round(&mut after, rc[start + 3][0]);
         *n = after;
         state[0] = FieldT::from_witness(ctx, n[0]);
@@ -130,6 +147,14 @@ pub fn permutation(ctx: &Ctx, input: &State) -> State {
     }
 
     external_rounds(ctx, &mut state, &mut n, p_end..ROUNDS_F + ROUNDS_P);
-    propagate_to_next_row(ctx, &state, if is_mega { BlockId::Poseidon2 } else { BlockId::Poseidon2External });
+    propagate_to_next_row(
+        ctx,
+        &state,
+        if is_mega {
+            BlockId::Poseidon2
+        } else {
+            BlockId::Poseidon2External
+        },
+    );
     state
 }

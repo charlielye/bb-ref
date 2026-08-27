@@ -64,10 +64,22 @@ mod tests {
     #[test]
     fn matches_bb_precomputed_generators() {
         let g = default_generators(2);
-        assert_eq!(g[0].x, from_hex::<Fr>("0x083e7911d835097629f0067531fc15cafd79a89beecb39903f69572c636f4a5a"));
-        assert_eq!(g[0].y, from_hex::<Fr>("0x1a7f5efaad7f315c25a918f30cc8d7333fccab7ad7c90f14de81bcc528f9935d"));
-        assert_eq!(g[1].x, from_hex::<Fr>("0x054aa86a73cb8a34525e5bbed6e43ba1198e860f5f3950268f71df4591bde402"));
-        assert_eq!(g[1].y, from_hex::<Fr>("0x209dcfbf2cfb57f9f6046f44d71ac6faf87254afc7407c04eb621a6287cac126"));
+        assert_eq!(
+            g[0].x,
+            from_hex::<Fr>("0x083e7911d835097629f0067531fc15cafd79a89beecb39903f69572c636f4a5a")
+        );
+        assert_eq!(
+            g[0].y,
+            from_hex::<Fr>("0x1a7f5efaad7f315c25a918f30cc8d7333fccab7ad7c90f14de81bcc528f9935d")
+        );
+        assert_eq!(
+            g[1].x,
+            from_hex::<Fr>("0x054aa86a73cb8a34525e5bbed6e43ba1198e860f5f3950268f71df4591bde402")
+        );
+        assert_eq!(
+            g[1].y,
+            from_hex::<Fr>("0x209dcfbf2cfb57f9f6046f44d71ac6faf87254afc7407c04eb621a6287cac126")
+        );
         assert!(g.iter().all(|p| p.is_on_curve()));
     }
 }

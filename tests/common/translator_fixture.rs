@@ -79,7 +79,9 @@ pub fn build_translator_queue(dump: &Path) -> EccOpQueue {
 /// bb's masking values for the key's non-op-queue wires (`masking.bin`).
 pub fn read_masking(dump: &Path) -> Vec<[Fr; NUM_MASKED_ROWS_END]> {
     let frs = decode_fields(&std::fs::read(dump.join("masking.bin")).unwrap());
-    (0..NUM_MINICIRCUIT_WIRES).map(|w| std::array::from_fn(|k| frs[w * NUM_MASKED_ROWS_END + k])).collect()
+    (0..NUM_MINICIRCUIT_WIRES)
+        .map(|w| std::array::from_fn(|k| frs[w * NUM_MASKED_ROWS_END + k]))
+        .collect()
 }
 
 /// The same recipe with the ZK prefix and random ops drawn from `rng` (bb's draw order).

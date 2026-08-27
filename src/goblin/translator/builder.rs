@@ -177,25 +177,56 @@ pub fn generate_witness_values(op: &UltraOp, previous_accumulator: &Fq, v: &Fq, 
     let z_1_limbs = split_wide_limb_into_2_limbs(&op.z_1);
     let z_2_limbs = split_wide_limb_into_2_limbs(&op.z_2);
 
-    let remainder = *previous_accumulator * x + Fq::from(op_code) + base_p_x * v + base_p_y * v_squared + base_z_1 * v_cubed + base_z_2 * v_quarted;
+    let remainder = *previous_accumulator * x
+        + Fq::from(op_code)
+        + base_p_x * v
+        + base_p_y * v_squared
+        + base_z_1 * v_cubed
+        + base_z_2 * v_quarted;
     // The integer relation X - r = quotient · q with quotient < 2^256, solved modulo 2^256.
     let mut integer = mul_wrapping(&u256(previous_accumulator), &u256(x));
     integer = add_wrapping(&integer, &U256::from(op_code));
-    for (a, b) in [(&base_p_x, v), (&base_p_y, &v_squared), (&base_z_1, &v_cubed), (&base_z_2, &v_quarted)] {
+    for (a, b) in [
+        (&base_p_x, v),
+        (&base_p_y, &v_squared),
+        (&base_z_1, &v_cubed),
+        (&base_z_2, &v_quarted),
+    ] {
         integer = add_wrapping(&integer, &mul_wrapping(&u256(a), &u256(b)));
     }
     integer = sub_wrapping(&integer, &u256(&remainder));
     let quotient = mul_wrapping(&integer, &modulus_inverse_2_256());
     let remainder_limbs = split_fq_into_limbs(&remainder);
-    let quotient_limbs: [Fr; 4] = std::array::from_fn(|i| slice(&quotient, NUM_LIMB_BITS * i as u32, NUM_LIMB_BITS * (i as u32 + 1)));
+    let quotient_limbs: [Fr; 4] =
+        std::array::from_fn(|i| slice(&quotient, NUM_LIMB_BITS * i as u32, NUM_LIMB_BITS * (i as u32 + 1)));
     let neg_mod = negative_modulus_limbs();
     let shift_1 = Fr::from(2u64).pow_u64(NUM_LIMB_BITS as u64);
     let shift_2_inverse = Fr::from(2u64).pow_u64(2 * NUM_LIMB_BITS as u64).invert();
     let pa = &previous_accumulator_limbs;
-    let (xw, vw, v2, v3, v4) = (&x_witnesses, &v_witnesses, &v_squared_witnesses, &v_cubed_witnesses, &v_quarted_witnesses);
-    let (px, py, z1, z2, qt, rm) = (&p_x_limbs, &p_y_limbs, &z_1_limbs, &z_2_limbs, &quotient_limbs, &remainder_limbs);
+    let (xw, vw, v2, v3, v4) = (
+        &x_witnesses,
+        &v_witnesses,
+        &v_squared_witnesses,
+        &v_cubed_witnesses,
+        &v_quarted_witnesses,
+    );
+    let (px, py, z1, z2, qt, rm) = (
+        &p_x_limbs,
+        &p_y_limbs,
+        &z_1_limbs,
+        &z_2_limbs,
+        &quotient_limbs,
+        &remainder_limbs,
+    );
 
-    let low_part_1 = pa[0] * xw[0] + Fr::from(op_code) + px[0] * vw[0] + py[0] * v2[0] + z1[0] * v3[0] + z2[0] * v4[0] + qt[0] * neg_mod[0] - rm[0];
+    let low_part_1 = pa[0] * xw[0]
+        + Fr::from(op_code)
+        + px[0] * vw[0]
+        + py[0] * v2[0]
+        + z1[0] * v3[0]
+        + z2[0] * v4[0]
+        + qt[0] * neg_mod[0]
+        - rm[0];
     let low_wide = low_part_1
         + (pa[1] * xw[0]
             + pa[0] * xw[1]
@@ -255,8 +286,15 @@ pub fn generate_witness_values(op: &UltraOp, previous_accumulator: &Fq, v: &Fq, 
             * shift_1;
     let high_wide_divided = high_wide * shift_2_inverse;
 
-    let micro4 = |limbs: &[Fr; 4], last_bits: u32| -> [[Fr; 6]; 4] { std::array::from_fn(|i| split_limb_into_microlimbs(&limbs[i], if i == 3 { last_bits } else { NUM_LIMB_BITS })) };
-    let micro2 = |limbs: &[Fr; 2]| -> [[Fr; 6]; 2] { [split_limb_into_microlimbs(&limbs[0], NUM_LIMB_BITS), split_limb_into_microlimbs(&limbs[1], NUM_Z_BITS - NUM_LIMB_BITS)] };
+    let micro4 = |limbs: &[Fr; 4], last_bits: u32| -> [[Fr; 6]; 4] {
+        std::array::from_fn(|i| split_limb_into_microlimbs(&limbs[i], if i == 3 { last_bits } else { NUM_LIMB_BITS }))
+    };
+    let micro2 = |limbs: &[Fr; 2]| -> [[Fr; 6]; 2] {
+        [
+            split_limb_into_microlimbs(&limbs[0], NUM_LIMB_BITS),
+            split_limb_into_microlimbs(&limbs[1], NUM_Z_BITS - NUM_LIMB_BITS),
+        ]
+    };
     AccumulationInput {
         p_x_limbs,
         p_x_microlimbs: micro4(&p_x_limbs, NUM_LAST_LIMB_BITS),
@@ -332,8 +370,16 @@ impl TranslatorCircuit {
         self.push_pair(P_Y_HIGH_LIMBS, a.p_y_limbs[2], a.p_y_limbs[3]);
         self.push_pair(Z_LOW_LIMBS, a.z_1_limbs[0], a.z_2_limbs[0]);
         self.push_pair(Z_HIGH_LIMBS, a.z_1_limbs[1], a.z_2_limbs[1]);
-        self.push_pair(QUOTIENT_LOW_BINARY_LIMBS, a.quotient_binary_limbs[0], a.quotient_binary_limbs[1]);
-        self.push_pair(QUOTIENT_HIGH_BINARY_LIMBS, a.quotient_binary_limbs[2], a.quotient_binary_limbs[3]);
+        self.push_pair(
+            QUOTIENT_LOW_BINARY_LIMBS,
+            a.quotient_binary_limbs[0],
+            a.quotient_binary_limbs[1],
+        );
+        self.push_pair(
+            QUOTIENT_HIGH_BINARY_LIMBS,
+            a.quotient_binary_limbs[2],
+            a.quotient_binary_limbs[3],
+        );
         self.push_pair(RELATION_WIDE_LIMBS, a.relation_wide_limbs[0], a.relation_wide_limbs[1]);
         let low = a.relation_wide_microlimbs[0];
         let high = a.relation_wide_microlimbs[1];
@@ -363,9 +409,18 @@ impl TranslatorCircuit {
         self.lay_limbs_in_row(&a.z_2_microlimbs[1], Z_HIGH_LIMBS_RANGE_CONSTRAINT_0);
         self.lay_limbs_in_row(&a.current_accumulator, ACCUMULATORS_BINARY_LIMBS_0);
         self.lay_limbs_in_row(&a.previous_accumulator, ACCUMULATORS_BINARY_LIMBS_0);
-        self.lay_limbs_in_row(&a.current_accumulator_microlimbs[0], ACCUMULATOR_LOW_LIMBS_RANGE_CONSTRAINT_0);
-        self.lay_limbs_in_row(&a.current_accumulator_microlimbs[1], ACCUMULATOR_LOW_LIMBS_RANGE_CONSTRAINT_0);
-        self.lay_limbs_in_row(&a.current_accumulator_microlimbs[2], ACCUMULATOR_HIGH_LIMBS_RANGE_CONSTRAINT_0);
+        self.lay_limbs_in_row(
+            &a.current_accumulator_microlimbs[0],
+            ACCUMULATOR_LOW_LIMBS_RANGE_CONSTRAINT_0,
+        );
+        self.lay_limbs_in_row(
+            &a.current_accumulator_microlimbs[1],
+            ACCUMULATOR_LOW_LIMBS_RANGE_CONSTRAINT_0,
+        );
+        self.lay_limbs_in_row(
+            &a.current_accumulator_microlimbs[2],
+            ACCUMULATOR_HIGH_LIMBS_RANGE_CONSTRAINT_0,
+        );
         self.lay_limbs_in_row(&top_acc, ACCUMULATOR_HIGH_LIMBS_RANGE_CONSTRAINT_0);
         self.lay_limbs_in_row(&a.quotient_microlimbs[0], QUOTIENT_LOW_LIMBS_RANGE_CONSTRAINT_0);
         self.lay_limbs_in_row(&a.quotient_microlimbs[1], QUOTIENT_LOW_LIMBS_RANGE_CONSTRAINT_0);

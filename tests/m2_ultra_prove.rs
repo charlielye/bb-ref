@@ -26,12 +26,20 @@ fn check_nozk(prog: &str) {
     let mut inst = ProverInstance::load_dump(&ULTRA, &dir);
     let ck = CommitmentKey::new(inst.max_end_index);
     let vk = inst.compute_vk(&ck);
-    assert_eq!(vk.to_bytes(), std::fs::read(dir.join("vk")).unwrap(), "{prog}: VK mismatch");
+    assert_eq!(
+        vk.to_bytes(),
+        std::fs::read(dir.join("vk")).unwrap(),
+        "{prog}: VK mismatch"
+    );
     let proof = prove_ultra(&mut inst, &vk, &mut OsRng);
     let expected = decode_fields(&std::fs::read(dir.join("proof.bin")).unwrap());
     assert_eq!(proof.len(), expected.len(), "{prog}: proof length");
     let first_diff = proof.iter().zip(&expected).position(|(a, b)| a != b);
-    assert!(first_diff.is_none(), "{prog}: proof differs from bb at field {}", first_diff.unwrap());
+    assert!(
+        first_diff.is_none(),
+        "{prog}: proof differs from bb at field {}",
+        first_diff.unwrap()
+    );
 }
 
 fn check_zk(prog: &str) {
@@ -43,13 +51,20 @@ fn check_zk(prog: &str) {
     let mut inst = ProverInstance::load_dump(&ULTRA_ZK, &dir);
     let ck = CommitmentKey::new(inst.max_end_index);
     let vk: Vk<Bn254> = inst.compute_vk(&ck);
-    assert_eq!(vk.to_bytes(), std::fs::read(dir.join("vk")).unwrap(), "{prog}: VK mismatch");
+    assert_eq!(
+        vk.to_bytes(),
+        std::fs::read(dir.join("vk")).unwrap(),
+        "{prog}: VK mismatch"
+    );
     let num_pi = inst.public_inputs.len();
     let proof = prove_ultra(&mut inst, &vk, &mut OsRng);
     let expected = decode_fields(&std::fs::read(dir.join("proof.bin")).unwrap());
     assert_eq!(proof.len(), expected.len(), "{prog}: proof length");
     let (pis, rest): (&[Fr], &[Fr]) = proof.split_at(num_pi - 8);
-    assert!(verify_ultra(&ULTRA_ZK, &vk, pis, rest, &bn254_g2()), "{prog}: Rust ZK proof rejected by Rust verifier");
+    assert!(
+        verify_ultra(&ULTRA_ZK, &vk, pis, rest, &bn254_g2()),
+        "{prog}: Rust ZK proof rejected by Rust verifier"
+    );
 }
 
 /// With bb's CSPRNG tape replayed, the Rust UltraZK proof is byte-identical to bb's. The dumped
@@ -73,7 +88,12 @@ fn check_zk_tape(prog: &str) {
         Ent::lookup_inverses,
     ] {
         for row in 1..4 {
-            assert_eq!(inst.poly(e).coeffs[row], tape.fr(), "{prog}: masking of {} row {row}", e.name());
+            assert_eq!(
+                inst.poly(e).coeffs[row],
+                tape.fr(),
+                "{prog}: masking of {} row {row}",
+                e.name()
+            );
         }
     }
     let ck = CommitmentKey::new(inst.max_end_index);
@@ -81,7 +101,11 @@ fn check_zk_tape(prog: &str) {
     let proof = prove_ultra(&mut inst, &vk, &mut tape);
     let expected = decode_fields(&std::fs::read(dir.join("proof.bin")).unwrap());
     let first_diff = proof.iter().zip(&expected).position(|(a, b)| a != b);
-    assert!(first_diff.is_none(), "{prog}: ZK proof differs from bb at field {}", first_diff.unwrap());
+    assert!(
+        first_diff.is_none(),
+        "{prog}: ZK proof differs from bb at field {}",
+        first_diff.unwrap()
+    );
     assert_eq!(proof.len(), expected.len(), "{prog}: proof length");
     assert_eq!(tape.remaining(), 0, "{prog}: unconsumed tape bytes");
 }

@@ -20,13 +20,21 @@ pub struct RomTable {
 
 impl RomTable {
     pub fn new(ctx: &Ctx, entries: Vec<FieldT>) -> Self {
-        Self { ctx: ctx.clone(), entries, rom_id: None }
+        Self {
+            ctx: ctx.clone(),
+            entries,
+            rom_id: None,
+        }
     }
     fn initialize(&mut self) -> usize {
         if let Some(id) = self.rom_id {
             return id;
         }
-        let witnesses: Vec<u32> = self.entries.iter().map(|e| as_witness_index(&mut self.ctx.borrow_mut(), e)).collect();
+        let witnesses: Vec<u32> = self
+            .entries
+            .iter()
+            .map(|e| as_witness_index(&mut self.ctx.borrow_mut(), e))
+            .collect();
         let mut b = self.ctx.borrow_mut();
         let id = b.create_rom_array(self.entries.len());
         for (i, w) in witnesses.into_iter().enumerate() {
@@ -56,7 +64,11 @@ pub struct RamTable {
 
 impl RamTable {
     pub fn new(ctx: &Ctx, entries: Vec<FieldT>) -> Self {
-        Self { ctx: ctx.clone(), entries, ram_id: None }
+        Self {
+            ctx: ctx.clone(),
+            entries,
+            ram_id: None,
+        }
     }
     fn initialize(&mut self) -> usize {
         if let Some(id) = self.ram_id {
@@ -71,14 +83,20 @@ impl RamTable {
         id
     }
     pub fn read(&mut self, index: &FieldT) -> FieldT {
-        assert!((Builder::low_u64(&index.get_value()) as usize) < self.entries.len(), "RAM access out of bounds");
+        assert!(
+            (Builder::low_u64(&index.get_value()) as usize) < self.entries.len(),
+            "RAM access out of bounds"
+        );
         let id = self.initialize();
         let w = as_witness_index(&mut self.ctx.borrow_mut(), index);
         let out = self.ctx.borrow_mut().read_ram_array(id, w);
         FieldT::from_witness_index(&self.ctx, out)
     }
     pub fn write(&mut self, index: &FieldT, value: &FieldT) {
-        assert!((Builder::low_u64(&index.get_value()) as usize) < self.entries.len(), "RAM access out of bounds");
+        assert!(
+            (Builder::low_u64(&index.get_value()) as usize) < self.entries.len(),
+            "RAM access out of bounds"
+        );
         let id = self.initialize();
         let iw = as_witness_index(&mut self.ctx.borrow_mut(), index);
         let vw = as_witness_index(&mut self.ctx.borrow_mut(), value);

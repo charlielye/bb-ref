@@ -190,10 +190,22 @@ pub const TO_BE_SHIFTED: [Ent; NUM_SHIFTED] = [
 pub fn fixed_vk() -> [GrumpkinAffine; NUM_PRECOMPUTED] {
     let p = |x: &str, y: &str| GrumpkinAffine::new_unchecked(from_hex(x), from_hex(y));
     [
-        p("0x1227d829cc03e51a2cc68ca0e08381c02b78c484f4092a10584ef78381a31968", "0x10b233eb875fed8834f6235ed737946b68c0c7ed258053cd943dcc69212d90d6"),
-        p("0x1976c760e4bde34db58394888baeda91f57bcdddf60aec28b721b10aac55f555", "0x26eec8e50bdb2cfc3956e90bd72c9098d4a5de28c1c1c236955d14884a8f498d"),
-        p("0x1a96c5eae61aba7353221e65adf123d30255415db00b8063157f2764a3034e26", "0x0d04425c0f370a7aaace3cf41f9b2380079c95fa26f9f83b5fd5e26813dbd289"),
-        p("0x23a271e0e1d99d2a526cc8c06df7edf7c86e9cb985e577affb5a64b9daf24401", "0x12a74c457ae1f9bd6076c308f47a006deb82adfd576be1266cde1cdc0d008cd1"),
+        p(
+            "0x1227d829cc03e51a2cc68ca0e08381c02b78c484f4092a10584ef78381a31968",
+            "0x10b233eb875fed8834f6235ed737946b68c0c7ed258053cd943dcc69212d90d6",
+        ),
+        p(
+            "0x1976c760e4bde34db58394888baeda91f57bcdddf60aec28b721b10aac55f555",
+            "0x26eec8e50bdb2cfc3956e90bd72c9098d4a5de28c1c1c236955d14884a8f498d",
+        ),
+        p(
+            "0x1a96c5eae61aba7353221e65adf123d30255415db00b8063157f2764a3034e26",
+            "0x0d04425c0f370a7aaace3cf41f9b2380079c95fa26f9f83b5fd5e26813dbd289",
+        ),
+        p(
+            "0x23a271e0e1d99d2a526cc8c06df7edf7c86e9cb985e577affb5a64b9daf24401",
+            "0x12a74c457ae1f9bd6076c308f47a006deb82adfd576be1266cde1cdc0d008cd1",
+        ),
     ]
 }
 
@@ -222,7 +234,10 @@ pub struct EccvmPolys {
 
 impl EccvmPolys {
     pub fn zero(size: usize) -> Self {
-        Self { cols: (0..NUM_ALL_ENTITIES).map(|_| Polynomial::zero(size)).collect(), num_rows: size }
+        Self {
+            cols: (0..NUM_ALL_ENTITIES).map(|_| Polynomial::zero(size)).collect(),
+            num_rows: size,
+        }
     }
     pub fn size(&self) -> usize {
         self.cols[0].len()

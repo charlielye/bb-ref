@@ -54,6 +54,8 @@ impl Rng for TapeRng {
         assert!(self.pos + 32 <= self.bytes.len(), "RNG tape exhausted");
         let c = &self.bytes[self.pos..self.pos + 32];
         self.pos += 32;
-        U256::new(std::array::from_fn(|i| u64::from_le_bytes(c[8 * i..8 * i + 8].try_into().unwrap())))
+        U256::new(std::array::from_fn(|i| {
+            u64::from_le_bytes(c[8 * i..8 * i + 8].try_into().unwrap())
+        }))
     }
 }

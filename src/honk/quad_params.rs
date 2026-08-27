@@ -59,7 +59,10 @@ fn vec_mat(v: &Vec3, a: &Mat) -> Vec3 {
 }
 
 fn build() -> QuadParams {
-    let d: Vec<Fr> = INTERNAL_MATRIX_DIAGONAL_MINUS_ONE.iter().map(|h| Fr::one() + from_hex::<Fr>(h)).collect();
+    let d: Vec<Fr> = INTERNAL_MATRIX_DIAGONAL_MINUS_ONE
+        .iter()
+        .map(|h| Fr::one() + from_hex::<Fr>(h))
+        .collect();
     let (d1, d2, d3, d4) = (d[0], d[1], d[2], d[3]);
     let sigma = d2 + d3 + d4;
     let f = |v: u64| Fr::from(v);
@@ -94,8 +97,26 @@ fn build() -> QuadParams {
     let sum_a2_one = a2_one[0] + a2_one[1] + a2_one[2];
     let row0_w = vec_mat(&q_t3, &bw);
     let row0_u = vec_mat(&q_t3, &bu);
-    let row0: Row = [row0_w[0], row0_w[1], row0_w[2], row0_u[0] + sum_a2_one, row0_u[1] + sum_a_one, row0_u[2] + f(3), d1];
-    let out_j = |j: usize| -> Row { [mw[j][0], mw[j][1], mw[j][2], mbu[j][0] + a3_one[j], mbu[j][1] + a2_one[j], mbu[j][2] + a_one[j], f(1)] };
+    let row0: Row = [
+        row0_w[0],
+        row0_w[1],
+        row0_w[2],
+        row0_u[0] + sum_a2_one,
+        row0_u[1] + sum_a_one,
+        row0_u[2] + f(3),
+        d1,
+    ];
+    let out_j = |j: usize| -> Row {
+        [
+            mw[j][0],
+            mw[j][1],
+            mw[j][2],
+            mbu[j][0] + a3_one[j],
+            mbu[j][1] + a2_one[j],
+            mbu[j][2] + a_one[j],
+            f(1),
+        ]
+    };
     let closed_form = [row0, out_j(0), out_j(1), out_j(2)];
     let weights: [Vec3; 3] = [[f(1), f(1), f(1)], [d2, d3, d4], [d2 * d2, d3 * d3, d4 * d4]];
     let fwd = weights.map(|w| {
@@ -113,7 +134,11 @@ fn build() -> QuadParams {
         b3_u0_coef: sigma_plus_2 * d1 - sigma - f(3),
         d1_minus_3: d1 - f(3),
         a_one: [d2 + f(2), d3 + f(2), d4 + f(2)],
-        a2_one: [d2 * d2 + d2 + sigma + f(4), d3 * d3 + d3 + sigma + f(4), d4 * d4 + d4 + sigma + f(4)],
+        a2_one: [
+            d2 * d2 + d2 + sigma + f(4),
+            d3 * d3 + d3 + sigma + f(4),
+            d4 * d4 + d4 + sigma + f(4),
+        ],
         sum_a_one: sigma + f(6),
         closed_form,
         forward_vandermonde_lhs: fwd,

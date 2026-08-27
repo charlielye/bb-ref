@@ -3,12 +3,12 @@
 
 use super::flavor::{Ent, FlavorDesc, Layout, BUS_SPECS};
 use super::oink::PERMUTATION_ARGUMENT_VALUE_SEPARATOR;
-use rayon::prelude::*;
 use crate::base::field::{from_bytes_be, FieldLike, Fr};
 use crate::base::poly::Poly;
 use crate::base::vk::Vk;
 use crate::base::{Bn254, CommitmentKey, Rng};
 use crate::circuit::{BlockId, Builder, Kind, NUM_ZERO_ROWS};
+use rayon::prelude::*;
 use std::path::Path;
 
 const NUM_WIRES: usize = 4;
@@ -57,14 +57,21 @@ impl ProverInstance {
         let mut r: Vec<Fr> = self.polys.iter().map(|p| p.coeffs[i]).collect();
         for e in &self.layout.shifted {
             let p = self.poly(*e);
-            r.push(if i + 1 < p.len() { p.coeffs[i + 1] } else { Fr::from(0u64) });
+            r.push(if i + 1 < p.len() {
+                p.coeffs[i + 1]
+            } else {
+                Fr::from(0u64)
+            });
         }
         r
     }
     /// The verification key: commitments to the precomputed polynomials.
     pub fn compute_vk(&self, ck: &CommitmentKey) -> Vk<Bn254> {
         let m = self.layout.num_masking;
-        let comms = (m..m + self.layout.num_precomputed).into_par_iter().map(|i| ck.commit(&self.polys[i])).collect();
+        let comms = (m..m + self.layout.num_precomputed)
+            .into_par_iter()
+            .map(|i| ck.commit(&self.polys[i]))
+            .collect();
         Vk {
             log_circuit_size: Fr::from(self.log_n() as u64),
             num_public_inputs: Fr::from(self.public_inputs.len() as u64),
@@ -87,7 +94,13 @@ impl ProverInstance {
         let tables_end = blocks.get(BlockId::Lookup).trace_offset + tables_size;
         let trace_end = trace_offset + NUM_ZERO_ROWS + blocks.total_content_size();
         let dyadic_size = tables_end.max(trace_end).next_power_of_two();
-        let final_active_wire_idx = blocks.blocks.iter().filter(|b| !b.is_empty()).last().map(|b| b.trace_end() - 1).expect("empty circuit");
+        let final_active_wire_idx = blocks
+            .blocks
+            .iter()
+            .filter(|b| !b.is_empty())
+            .last()
+            .map(|b| b.trace_end() - 1)
+            .expect("empty circuit");
         let active_size = final_active_wire_idx + 1;
 
         let mut polys: Vec<Poly> = layout.unshifted.iter().map(|_| Poly::zero(dyadic_size)).collect();
@@ -106,7 +119,15 @@ impl ProverInstance {
                     polys[idx(*ent)].coeffs[i] = builder.get_variable(var);
                     cycles[real as usize].push((w, i));
                 }
-                for (ent, v) in [(Ent::q_m, row.q_m), (Ent::q_c, row.q_c), (Ent::q_l, row.q_1), (Ent::q_r, row.q_2), (Ent::q_o, row.q_3), (Ent::q_4, row.q_4), (Ent::q_5, row.q_5)] {
+                for (ent, v) in [
+                    (Ent::q_m, row.q_m),
+                    (Ent::q_c, row.q_c),
+                    (Ent::q_l, row.q_1),
+                    (Ent::q_r, row.q_2),
+                    (Ent::q_o, row.q_3),
+                    (Ent::q_4, row.q_4),
+                    (Ent::q_5, row.q_5),
+                ] {
                     if has(ent) {
                         polys[idx(ent)].coeffs[i] = v;
                     }
@@ -161,7 +182,12 @@ impl ProverInstance {
         if has(Ent::ecc_op_wire_1) {
             let b = blocks.get(BlockId::EccOp);
             let start = b.trace_offset - NUM_ZERO_ROWS;
-            let op_wires = [Ent::ecc_op_wire_1, Ent::ecc_op_wire_2, Ent::ecc_op_wire_3, Ent::ecc_op_wire_4];
+            let op_wires = [
+                Ent::ecc_op_wire_1,
+                Ent::ecc_op_wire_2,
+                Ent::ecc_op_wire_3,
+                Ent::ecc_op_wire_4,
+            ];
             for i in 0..b.len() {
                 for k in 0..NUM_WIRES {
                     polys[idx(op_wires[k])].coeffs[start + i] = polys[idx(wires[k])].coeffs[b.trace_offset + i];
@@ -215,7 +241,9 @@ impl ProverInstance {
             }
         }
 
-        let public_inputs = (0..num_public_inputs).map(|i| polys[idx(Ent::w_r)].coeffs[pub_inputs_offset + i]).collect();
+        let public_inputs = (0..num_public_inputs)
+            .map(|i| polys[idx(Ent::w_r)].coeffs[pub_inputs_offset + i])
+            .collect();
         let memory_offset = blocks.get(BlockId::Memory).trace_offset;
         let rebase = |v: &[u32]| v.iter().map(|i| *i as usize + memory_offset).collect();
         let mut max_end_index = active_size.max(tables_end);
@@ -252,10 +280,19 @@ impl ProverInstance {
         };
         let dyadic_size = get("dyadic_size");
         let read_frs = |name: &str| -> Vec<Fr> {
-            std::fs::read(dir.join(name)).unwrap_or_else(|e| panic!("missing {name}: {e}")).chunks(32).map(from_bytes_be::<Fr>).collect()
+            std::fs::read(dir.join(name))
+                .unwrap_or_else(|e| panic!("missing {name}: {e}"))
+                .chunks(32)
+                .map(from_bytes_be::<Fr>)
+                .collect()
         };
         let read_idx = |name: &str| -> Vec<usize> {
-            std::fs::read_to_string(dir.join(name)).unwrap_or_default().lines().filter(|l| !l.is_empty()).map(|l| l.trim().parse().unwrap()).collect()
+            std::fs::read_to_string(dir.join(name))
+                .unwrap_or_default()
+                .lines()
+                .filter(|l| !l.is_empty())
+                .map(|l| l.trim().parse().unwrap())
+                .collect()
         };
         let polys = layout
             .unshifted

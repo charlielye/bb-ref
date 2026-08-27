@@ -1,8 +1,8 @@
 //! Serialization of transcript objects into field elements (bb `FrCodec`) and conversion of raw
 //! challenge hashes into typed challenges.
 
-use super::field::{from_u256, u256, u256_low_bits, u256_num_bits, u256_shr, u256_to_u64, Fq, Fr, U256};
 use super::field::FieldLike as FL;
+use super::field::{from_u256, u256, u256_low_bits, u256_num_bits, u256_shr, u256_to_u64, Fq, Fr, U256};
 use super::group::{G1Affine, GrumpkinAffine};
 use ark_ec::AffineRepr;
 use ark_ff::BigInteger;
@@ -89,7 +89,10 @@ impl Transcriptable<Fr> for Fq {
     }
     fn to_fields(&self) -> Vec<Fr> {
         let v = u256(self);
-        vec![from_u256(u256_low_bits(v, LOWER_BITS)), from_u256(u256_shr(v, LOWER_BITS))]
+        vec![
+            from_u256(u256_low_bits(v, LOWER_BITS)),
+            from_u256(u256_shr(v, LOWER_BITS)),
+        ]
     }
     fn from_fields(f: &[Fr]) -> Self {
         let lo = u256(&f[0]);

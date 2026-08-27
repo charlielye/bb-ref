@@ -61,7 +61,11 @@ fn translator_matches_bb() {
         }
     }
     let result_limbs = circuit.accumulated_result_limbs();
-    assert_eq!(circuit.accumulated_result(), expected_result(&q, &v, &x), "accumulated result");
+    assert_eq!(
+        circuit.accumulated_result(),
+        expected_result(&q, &v, &x),
+        "accumulated result"
+    );
     let _ = (ACCUMULATORS_BINARY_LIMBS_0, RESULT_ROW);
 
     let masking = common::translator_fixture::read_masking(&dump);

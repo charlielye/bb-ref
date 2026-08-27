@@ -40,7 +40,12 @@ pub struct Reduction<C: Curve> {
 }
 
 /// bb `UltraVerifier_::reduce_to_pairing_check`. `proof` = public inputs followed by the Honk proof.
-pub fn reduce_to_pairing_check<C: Curve>(flavor: &FlavorDesc, vk: &Vk<C>, proof: &[C::TF], ctx: &<C::Fr as FieldLike>::Ctx) -> Reduction<C> {
+pub fn reduce_to_pairing_check<C: Curve>(
+    flavor: &FlavorDesc,
+    vk: &Vk<C>,
+    proof: &[C::TF],
+    ctx: &<C::Fr as FieldLike>::Ctx,
+) -> Reduction<C> {
     let layout = flavor.layout();
     let overhead = proof_length_without_public_inputs::<C>(flavor, &layout);
     assert!(proof.len() >= overhead, "proof too short: {} < {overhead}", proof.len());
@@ -56,7 +61,10 @@ pub fn reduce_to_pairing_check<C: Curve>(flavor: &FlavorDesc, vk: &Vk<C>, proof:
         libra_commitments.push(t.receive("Libra:concatenation_commitment"));
     }
     let sc = verify_sumcheck::<C>(
-        &HonkRelations { flavor, layout: &layout },
+        &HonkRelations {
+            flavor,
+            layout: &layout,
+        },
         &SumcheckSpec::honk(flavor, &layout),
         &mut t,
         &oink.alpha,
@@ -72,10 +80,19 @@ pub fn reduce_to_pairing_check<C: Curve>(flavor: &FlavorDesc, vk: &Vk<C>, proof:
     let batcher = ClaimBatcher::<C> {
         unshifted_comms: oink.commitments.clone(),
         unshifted_evals: sc.evals[..n_unshifted].to_vec(),
-        shifted_comms: layout.shifted.iter().map(|e| oink.commitments[layout.idx(*e)].clone()).collect(),
+        shifted_comms: layout
+            .shifted
+            .iter()
+            .map(|e| oink.commitments[layout.idx(*e)].clone())
+            .collect(),
         shifted_evals: sc.evals[n_unshifted..].to_vec(),
     };
-    let repeated: Vec<(usize, usize)> = layout.shifted.iter().enumerate().map(|(j, e)| (layout.idx(*e), n_unshifted + j)).collect();
+    let repeated: Vec<(usize, usize)> = layout
+        .shifted
+        .iter()
+        .enumerate()
+        .map(|(j, e)| (layout.idx(*e), n_unshifted + j))
+        .collect();
     let one = C::G::one(ctx);
     let shplemini = shplemini_verify::<C>(
         flavor.has_zk,
@@ -90,7 +107,8 @@ pub fn reduce_to_pairing_check<C: Curve>(flavor: &FlavorDesc, vk: &Vk<C>, proof:
         &[],
         &[],
     );
-    let pcs_pairing_points = kzg_reduce_verify_batch_opening_claim::<C>(shplemini.claim, &mut t, final_pcs_msm_size(flavor, &layout));
+    let pcs_pairing_points =
+        kzg_reduce_verify_batch_opening_claim::<C>(shplemini.claim, &mut t, final_pcs_msm_size(flavor, &layout));
     Reduction {
         public_inputs: oink.public_inputs,
         pcs_pairing_points,
@@ -105,13 +123,22 @@ where
 {
     let n = PairingPoints::<C>::num_fields();
     assert!(public_inputs.len() >= n, "public inputs too small for DefaultIO");
-    let fields: Vec<C::TF> = public_inputs[public_inputs.len() - n..].iter().flat_map(|f| f.to_fields()).collect();
+    let fields: Vec<C::TF> = public_inputs[public_inputs.len() - n..]
+        .iter()
+        .flat_map(|f| f.to_fields())
+        .collect();
     PairingPoints::from_fields(&fields)
 }
 
 /// Native UltraHonk verification. `public_inputs` are the user public inputs; `proof` is bb's proof
 /// (which starts with the pairing-point public inputs).
-pub fn verify_ultra(flavor: &FlavorDesc, vk: &Vk<Bn254>, public_inputs: &[crate::base::Fr], proof: &[crate::base::Fr], g2: &G2Points) -> bool {
+pub fn verify_ultra(
+    flavor: &FlavorDesc,
+    vk: &Vk<Bn254>,
+    public_inputs: &[crate::base::Fr],
+    proof: &[crate::base::Fr],
+    g2: &G2Points,
+) -> bool {
     let full: Vec<_> = [public_inputs, proof].concat();
     let r = reduce_to_pairing_check::<Bn254>(flavor, vk, &full, &());
     if !r.succeeded {

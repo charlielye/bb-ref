@@ -9,7 +9,10 @@ use super::*;
 use crate::base::field::FieldLike;
 use crate::base::{Grumpkin, GrumpkinKey, NativeTranscript};
 use crate::goblin::ipa::{rho_powers, TripleIpaClaim, TripleIpaClaims};
-use crate::honk::pcs::{check_libra_evaluations_consistency, eccvm_challenge_coeffs, shplonk_verify, small_ipa_check_consistency, small_ipa_verifier_claims, VerifierOpeningClaim};
+use crate::honk::pcs::{
+    check_libra_evaluations_consistency, eccvm_challenge_coeffs, shplonk_verify, small_ipa_check_consistency,
+    small_ipa_verifier_claims, VerifierOpeningClaim,
+};
 use crate::honk::sumcheck::verify_sumcheck;
 use ark_ec::{CurveGroup, VariableBaseMSM};
 
@@ -53,7 +56,8 @@ pub fn eccvm_verify(t: &mut NativeTranscript) -> EccvmVerifierOutput {
     let libra_r: Fq = t.challenge("Libra:small_ipa_evaluation_challenge");
     let libra_claims = small_ipa_verifier_claims::<Grumpkin>(&libra_commitments, &libra_r, "Libra:", t);
     let libra_evals: [Fq; 5] = std::array::from_fn(|i| libra_claims[i].evaluation);
-    let libra_ok = check_libra_evaluations_consistency::<Grumpkin>(&libra_evals, &libra_r, &sc.challenge, &sc.libra_evaluation);
+    let libra_ok =
+        check_libra_evaluations_consistency::<Grumpkin>(&libra_evals, &libra_r, &sc.challenge, &sc.libra_evaluation);
     claims.extend(libra_claims);
 
     // Translation
@@ -66,25 +70,48 @@ pub fn eccvm_verify(t: &mut NativeTranscript) -> EccvmVerifierOutput {
     translation_commitments[1] = t.receive("Translation:grand_sum_commitment");
     translation_commitments[2] = t.receive("Translation:quotient_commitment");
     let translation_r: Fq = t.challenge("Translation:small_ipa_evaluation_challenge");
-    let translation_claims = small_ipa_verifier_claims::<Grumpkin>(&translation_commitments, &translation_r, "Translation:", t);
+    let translation_claims =
+        small_ipa_verifier_claims::<Grumpkin>(&translation_commitments, &translation_r, "Translation:", t);
     let translation_evals: Vec<Fq> = translation_claims.iter().map(|c| c.evaluation).collect();
-    let translation_ok = small_ipa_check_consistency::<Grumpkin>(&translation_evals, &translation_r, &eccvm_challenge_coeffs::<Grumpkin>(&x, &v, NUM_TRANSLATION_EVALUATIONS, TRACE_OFFSET), &masking_term_eval);
+    let translation_ok = small_ipa_check_consistency::<Grumpkin>(
+        &translation_evals,
+        &translation_r,
+        &eccvm_challenge_coeffs::<Grumpkin>(&x, &v, NUM_TRANSLATION_EVALUATIONS, TRACE_OFFSET),
+        &masking_term_eval,
+    );
     claims.extend(translation_claims);
     let v_powers = rho_powers(&v, NUM_TRANSLATION_EVALUATIONS, 0);
     let batched_evaluation: Fq = translation_evaluations.iter().zip(&v_powers).map(|(a, b)| *a * b).sum();
-    let translation_column_commitments: Vec<GrumpkinAffine> = TRANSLATION_ENTITIES.iter().map(|e| commitments[*e as usize]).collect();
-    claims.push(VerifierOpeningClaim { commitment: msm(&translation_column_commitments, &v_powers), challenge: x, evaluation: batched_evaluation });
+    let translation_column_commitments: Vec<GrumpkinAffine> =
+        TRANSLATION_ENTITIES.iter().map(|e| commitments[*e as usize]).collect();
+    claims.push(VerifierOpeningClaim {
+        commitment: msm(&translation_column_commitments, &v_powers),
+        challenge: x,
+        evaluation: batched_evaluation,
+    });
 
     // Sumcheck round univariates at 0, 1, u_i
     for (i, comm) in sc.round_commitments.iter().enumerate() {
-        for (point, eval) in [(Fq::from(0u64), sc.round_evaluations[i][0]), (Fq::from(1u64), sc.round_evaluations[i][1]), (sc.challenge[i], sc.round_evaluations[i][2])] {
-            claims.push(VerifierOpeningClaim { commitment: *comm, challenge: point, evaluation: eval });
+        for (point, eval) in [
+            (Fq::from(0u64), sc.round_evaluations[i][0]),
+            (Fq::from(1u64), sc.round_evaluations[i][1]),
+            (sc.challenge[i], sc.round_evaluations[i][2]),
+        ] {
+            claims.push(VerifierOpeningClaim {
+                commitment: *comm,
+                challenge: point,
+                evaluation: eval,
+            });
         }
     }
     let mask_commitment: GrumpkinAffine = t.receive("TripleIPA:pow_mask_commitment");
     let mask_challenge: Fq = t.challenge("TripleIPA:pow_mask_challenge");
     let mask_evaluation: Fq = t.receive("TripleIPA:pow_mask_evaluation");
-    claims.push(VerifierOpeningClaim { commitment: mask_commitment, challenge: mask_challenge, evaluation: mask_evaluation });
+    claims.push(VerifierOpeningClaim {
+        commitment: mask_commitment,
+        challenge: mask_challenge,
+        evaluation: mask_evaluation,
+    });
 
     let g1_identity = GrumpkinKey::new(1).points[0];
     let batch = shplonk_verify::<Grumpkin>(&claims, g1_identity, t);
@@ -108,5 +135,11 @@ pub fn eccvm_verify(t: &mut NativeTranscript) -> EccvmVerifierOutput {
 
     let x_power = x.pow_u64(TRACE_OFFSET as u64 + 1);
     let accumulated_result = (batched_evaluation - masking_term_eval) * x_power.invert();
-    EccvmVerifierOutput { ok: sc.verified && libra_ok && translation_ok, triple_ipa_claim, evaluation_challenge_x: x, batching_challenge_v: v, accumulated_result }
+    EccvmVerifierOutput {
+        ok: sc.verified && libra_ok && translation_ok,
+        triple_ipa_claim,
+        evaluation_challenge_x: x,
+        batching_challenge_v: v,
+        accumulated_result,
+    }
 }

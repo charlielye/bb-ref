@@ -75,7 +75,13 @@ impl Builder {
         let add_accum_op_idx = self.put_constant_variable(Fr::from(EccOpCode::add().value() as u64));
         let mul_accum_op_idx = self.put_constant_variable(Fr::from(EccOpCode::mul().value() as u64));
         let equality_op_idx = self.put_constant_variable(Fr::from(EccOpCode::eq_reset().value() as u64));
-        self.mega = Some(MegaState { op_queue, databus: Default::default(), add_accum_op_idx, mul_accum_op_idx, equality_op_idx });
+        self.mega = Some(MegaState {
+            op_queue,
+            databus: Default::default(),
+            add_accum_op_idx,
+            mul_accum_op_idx,
+            equality_op_idx,
+        });
     }
     fn mega(&mut self) -> &mut MegaState {
         self.mega.as_mut().expect("not a Mega circuit")
@@ -231,14 +237,35 @@ impl Builder {
 
     /// The initial linear layer: the next row holds `M_E · wires`.
     pub fn create_poseidon2_initial_external_gate(&mut self, wires: [u32; 4]) {
-        self.append_row(BlockId::Poseidon2, GateRow { wires, kind: Kind::Poseidon2ExtInitial, gate_value: Fr::one(), ..Default::default() });
+        self.append_row(
+            BlockId::Poseidon2,
+            GateRow {
+                wires,
+                kind: Kind::Poseidon2ExtInitial,
+                gate_value: Fr::one(),
+                ..Default::default()
+            },
+        );
     }
 
     /// Four internal rounds per row: wires hold state[0] at rounds `start..start+4`; the selectors
     /// carry this quad's constants and (unless terminal) the next quad's first three.
-    pub fn create_poseidon2_quad_internal_gate(&mut self, wires: [u32; 4], start: usize, next_start: usize, is_terminal: bool) {
+    pub fn create_poseidon2_quad_internal_gate(
+        &mut self,
+        wires: [u32; 4],
+        start: usize,
+        next_start: usize,
+        is_terminal: bool,
+    ) {
         let rc = round_constants();
-        let mut row = GateRow { wires, q_1: rc[start][0], q_2: rc[start + 1][0], q_3: rc[start + 2][0], q_4: rc[start + 3][0], ..Default::default() };
+        let mut row = GateRow {
+            wires,
+            q_1: rc[start][0],
+            q_2: rc[start + 1][0],
+            q_3: rc[start + 2][0],
+            q_4: rc[start + 3][0],
+            ..Default::default()
+        };
         if is_terminal {
             row.kind = Kind::Poseidon2QuadIntTerminal;
         } else {
@@ -256,7 +283,15 @@ impl Builder {
         let rc = round_constants();
         self.append_row(
             BlockId::Poseidon2,
-            GateRow { wires, q_1: rc[start][0], q_2: rc[start + 1][0], q_3: rc[start + 2][0], kind: Kind::Poseidon2TransitionEntry, gate_value: Fr::one(), ..Default::default() },
+            GateRow {
+                wires,
+                q_1: rc[start][0],
+                q_2: rc[start + 1][0],
+                q_3: rc[start + 2][0],
+                kind: Kind::Poseidon2TransitionEntry,
+                gate_value: Fr::one(),
+                ..Default::default()
+            },
         );
     }
 }

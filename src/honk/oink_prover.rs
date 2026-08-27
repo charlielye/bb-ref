@@ -5,14 +5,14 @@ use super::flavor::{Ent, Rel, BUS_SPECS};
 use super::oink::compute_public_input_delta;
 use super::prover_instance::ProverInstance;
 use super::relations::{lookup_term, table_term, RelationParams, Row};
-use rayon::prelude::*;
-use crate::base::G1Affine;
 use crate::base::field::{batch_invert, grand_product, FieldLike, Fr};
 use crate::base::poly::Poly;
 use crate::base::rng::Rng;
 use crate::base::transcript::NativeTranscript;
 use crate::base::vk::Vk;
+use crate::base::G1Affine;
 use crate::base::{Bn254, CommitmentKey};
+use rayon::prelude::*;
 
 pub struct OinkProverOutput {
     pub params: RelationParams<Fr>,
@@ -22,7 +22,13 @@ pub struct OinkProverOutput {
 }
 
 /// Commit to the polynomials in parallel, then send them in transcript order.
-fn commit_and_send(inst: &ProverInstance, ck: &CommitmentKey, t: &mut NativeTranscript, ents: &[Ent], out: &mut [Option<G1Affine>]) {
+fn commit_and_send(
+    inst: &ProverInstance,
+    ck: &CommitmentKey,
+    t: &mut NativeTranscript,
+    ents: &[Ent],
+    out: &mut [Option<G1Affine>],
+) {
     let comms: Vec<_> = ents.par_iter().map(|e| ck.commit(inst.poly(*e))).collect();
     for (e, c) in ents.iter().zip(&comms) {
         t.send(e.name(), c);
@@ -30,7 +36,14 @@ fn commit_and_send(inst: &ProverInstance, ck: &CommitmentKey, t: &mut NativeTran
     }
 }
 
-pub fn prove_oink(inst: &mut ProverInstance, vk: &Vk<Bn254>, ck: &CommitmentKey, t: &mut NativeTranscript, rng: &mut dyn Rng, emit_alpha: bool) -> OinkProverOutput {
+pub fn prove_oink(
+    inst: &mut ProverInstance,
+    vk: &Vk<Bn254>,
+    ck: &CommitmentKey,
+    t: &mut NativeTranscript,
+    rng: &mut dyn Rng,
+    emit_alpha: bool,
+) -> OinkProverOutput {
     let flavor = inst.flavor;
     let mut comms: Vec<Option<G1Affine>> = vec![None; inst.layout.unshifted.len()];
     for (i, c) in vk.comms.iter().enumerate() {
@@ -49,7 +62,12 @@ pub fn prove_oink(inst: &mut ProverInstance, vk: &Vk<Bn254>, ck: &CommitmentKey,
     }
     first.extend([Ent::w_l, Ent::w_r, Ent::w_o]);
     if inst.layout.has(Ent::ecc_op_wire_1) {
-        first.extend([Ent::ecc_op_wire_1, Ent::ecc_op_wire_2, Ent::ecc_op_wire_3, Ent::ecc_op_wire_4]);
+        first.extend([
+            Ent::ecc_op_wire_1,
+            Ent::ecc_op_wire_2,
+            Ent::ecc_op_wire_3,
+            Ent::ecc_op_wire_4,
+        ]);
     }
     for b in inst.layout.buses() {
         first.extend([BUS_SPECS[b].value, BUS_SPECS[b].read_counts]);
@@ -94,14 +112,31 @@ pub fn prove_oink(inst: &mut ProverInstance, vk: &Vk<Bn254>, ck: &CommitmentKey,
     commit_and_send(inst, ck, t, &third, &mut comms);
     crate::base::timing::phase("    oink: inverse commits");
 
-    params.public_input_delta = compute_public_input_delta(&inst.public_inputs, &params.beta, &params.gamma, &Fr::from(inst.pub_inputs_offset as u64));
+    params.public_input_delta = compute_public_input_delta(
+        &inst.public_inputs,
+        &params.beta,
+        &params.gamma,
+        &Fr::from(inst.pub_inputs_offset as u64),
+    );
     compute_grand_product(inst, &params);
     crate::base::timing::phase("    oink: grand product");
     commit_and_send(inst, ck, t, &[Ent::z_perm], &mut comms);
 
-    let alpha: Fr = if emit_alpha { t.challenge("alpha") } else { Fr::from(0u64) };
-    let commitments = comms.into_iter().zip(&inst.layout.unshifted).map(|(c, e)| c.unwrap_or_else(|| panic!("no commitment for {}", e.name()))).collect();
-    OinkProverOutput { params, alpha, commitments }
+    let alpha: Fr = if emit_alpha {
+        t.challenge("alpha")
+    } else {
+        Fr::from(0u64)
+    };
+    let commitments = comms
+        .into_iter()
+        .zip(&inst.layout.unshifted)
+        .map(|(c, e)| c.unwrap_or_else(|| panic!("no commitment for {}", e.name())))
+        .collect();
+    OinkProverOutput {
+        params,
+        alpha,
+        commitments,
+    }
 }
 
 /// `w_4 = w_3 η³ + w_2 η² + w_1 η (+ 1 for writes)` at every memory access row.
@@ -109,7 +144,9 @@ fn add_ram_rom_memory_records_to_wire_4(inst: &mut ProverInstance, p: &RelationP
     let (reads, writes) = (inst.memory_read_records.clone(), inst.memory_write_records.clone());
     for (rows, is_write) in [(reads, false), (writes, true)] {
         for i in rows {
-            let v = inst.poly(Ent::w_o).coeffs[i] * p.eta_three + inst.poly(Ent::w_r).coeffs[i] * p.eta_two + inst.poly(Ent::w_l).coeffs[i] * p.eta;
+            let v = inst.poly(Ent::w_o).coeffs[i] * p.eta_three
+                + inst.poly(Ent::w_r).coeffs[i] * p.eta_two
+                + inst.poly(Ent::w_l).coeffs[i] * p.eta;
             inst.poly_mut(Ent::w_4).coeffs[i] = if is_write { v + Fr::from(1u64) } else { v };
         }
     }
@@ -118,7 +155,15 @@ fn add_ram_rom_memory_records_to_wire_4(inst: &mut ProverInstance, p: &RelationP
 /// `w_4 = 1 / (rom_logup_gamma + w_1 + η w_2 + η² q_c)` at every ROM-LogUp row.
 fn add_rom_logup_inverses_to_wire_4(inst: &mut ProverInstance, p: &RelationParams<Fr>) {
     let rows = inst.rom_logup_records.clone();
-    let mut d: Vec<Fr> = rows.iter().map(|&i| p.rom_logup_gamma + inst.poly(Ent::w_l).coeffs[i] + p.eta * inst.poly(Ent::w_r).coeffs[i] + p.eta_two * inst.poly(Ent::q_c).coeffs[i]).collect();
+    let mut d: Vec<Fr> = rows
+        .iter()
+        .map(|&i| {
+            p.rom_logup_gamma
+                + inst.poly(Ent::w_l).coeffs[i]
+                + p.eta * inst.poly(Ent::w_r).coeffs[i]
+                + p.eta_two * inst.poly(Ent::q_c).coeffs[i]
+        })
+        .collect();
     batch_invert(&mut d);
     for (i, d) in rows.into_iter().zip(d) {
         inst.poly_mut(Ent::w_4).coeffs[i] = d;
@@ -131,12 +176,16 @@ fn compute_logderivative_inverses(inst: &mut ProverInstance, p: &RelationParams<
     let denominators: Vec<Fr> = (inst.flavor.trace_offset..inst.dyadic_size)
         .into_par_iter()
         .map(|i| {
-            let active = inst.poly(Ent::q_lookup).coeffs[i] == Fr::from(1u64) || inst.poly(Ent::lookup_read_tags).coeffs[i] == Fr::from(1u64);
+            let active = inst.poly(Ent::q_lookup).coeffs[i] == Fr::from(1u64)
+                || inst.poly(Ent::lookup_read_tags).coeffs[i] == Fr::from(1u64);
             if !active {
                 return Fr::zero();
             }
             let vals = inst.row(i);
-            let row = Row { vals: &vals, layout: &inst.layout };
+            let row = Row {
+                vals: &vals,
+                layout: &inst.layout,
+            };
             lookup_term(&row, p) * table_term(&row, p)
         })
         .collect();

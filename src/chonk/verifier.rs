@@ -26,7 +26,10 @@ pub struct HidingKernelIo {
 
 impl HidingKernelIo {
     pub fn from_public_inputs(public_inputs: &[Fr]) -> Self {
-        assert!(public_inputs.len() >= HIDING_KERNEL_PUBLIC_INPUTS_SIZE, "public inputs too small for HidingKernelIO");
+        assert!(
+            public_inputs.len() >= HIDING_KERNEL_PUBLIC_INPUTS_SIZE,
+            "public inputs too small for HidingKernelIO"
+        );
         let tail = &public_inputs[public_inputs.len() - HIDING_KERNEL_PUBLIC_INPUTS_SIZE..];
         let point = |i: usize| <G1Affine as Transcriptable<Fr>>::from_fields(&tail[i..i + 4]);
         Self {
@@ -55,7 +58,15 @@ pub fn chonk_verify(hiding_vk: &Vk<Bn254>, proof: &ChonkProof, g2: &G2Points, gr
     }
     let num_public_inputs = proof.hiding_oink_proof.len() - overhead;
     let mut t = NativeTranscript::from_proof(&proof.hiding_oink_proof);
-    let oink = verify_oink::<Bn254>(&MEGA_ZK, &layout, hiding_vk, &hiding_vk.hash(), &mut t, num_public_inputs, false);
+    let oink = verify_oink::<Bn254>(
+        &MEGA_ZK,
+        &layout,
+        hiding_vk,
+        &hiding_vk.hash(),
+        &mut t,
+        num_public_inputs,
+        false,
+    );
     let io = HidingKernelIo::from_public_inputs(&oink.public_inputs);
     if !io.pairing_points.check(g2) {
         return false;
@@ -63,7 +74,16 @@ pub fn chonk_verify(hiding_vk: &Vk<Bn254>, proof: &ChonkProof, g2: &G2Points, gr
     if oink.commitments[layout.idx(Ent::kernel_calldata)] != io.kernel_return_data {
         return false;
     }
-    let ecc_op_wires: [G1Affine; 4] = std::array::from_fn(|k| oink.commitments[layout.idx([Ent::ecc_op_wire_1, Ent::ecc_op_wire_2, Ent::ecc_op_wire_3, Ent::ecc_op_wire_4][k])]);
+    let ecc_op_wires: [G1Affine; 4] = std::array::from_fn(|k| {
+        oink.commitments[layout.idx(
+            [
+                Ent::ecc_op_wire_1,
+                Ent::ecc_op_wire_2,
+                Ent::ecc_op_wire_3,
+                Ent::ecc_op_wire_4,
+            ][k],
+        )]
+    });
 
     t.load_proof(&proof.merge_proof);
     let merge = merge_verify::<Bn254>(
@@ -95,5 +115,9 @@ pub fn chonk_verify(hiding_vk: &Vk<Bn254>, proof: &ChonkProof, g2: &G2Points, gr
         return false;
     }
 
-    triple_ipa_verify(grumpkin, &eccvm.triple_ipa_claim, &mut NativeTranscript::from_proof(&proof.ipa_proof))
+    triple_ipa_verify(
+        grumpkin,
+        &eccvm.triple_ipa_claim,
+        &mut NativeTranscript::from_proof(&proof.ipa_proof),
+    )
 }

@@ -12,7 +12,13 @@ use std::sync::OnceLock;
 type Proj = ark_bn254::G1Projective;
 
 /// The five transcript columns the Translator consumes.
-pub const TRANSLATION_ENTITIES: [Ent; 5] = [transcript_op, transcript_Px, transcript_Py, transcript_z1, transcript_z2];
+pub const TRANSLATION_ENTITIES: [Ent; 5] = [
+    transcript_op,
+    transcript_Px,
+    transcript_Py,
+    transcript_z1,
+    transcript_z2,
+];
 
 /// bb `ECCVM_OFFSET_GENERATOR` (unscaled): the MSM accumulator's starting point.
 pub fn offset_generator_base() -> G1Affine {
@@ -33,7 +39,12 @@ pub fn offset_generator() -> G1Affine {
 pub fn fq_cube_root_of_unity() -> Fq {
     static B: OnceLock<Fq> = OnceLock::new();
     *B.get_or_init(|| {
-        let mont: Fq = from_u256(U256::new([0x71930c11d782e155, 0xa6bb947cffbe3323, 0xaa303344d4741444, 0x2c3b3f0d26594943]));
+        let mont: Fq = from_u256(U256::new([
+            0x71930c11d782e155,
+            0xa6bb947cffbe3323,
+            0xaa303344d4741444,
+            0x2c3b3f0d26594943,
+        ]));
         mont * Fq::from(2u64).pow_u64(256).invert()
     })
 }
@@ -229,7 +240,13 @@ pub fn compute_transcript_rows(ops: &[EccvmOp], total_muls: u32) -> Vec<Transcri
     let n = ops.len();
     let offset = offset_generator().into_group();
     let mut rows = vec![TranscriptRow::default(); n + 2];
-    let mut state = VmState { pc: total_muls, count: 0, accumulator: Proj::zero(), msm_accumulator: offset, is_accumulator_empty: true };
+    let mut state = VmState {
+        pc: total_muls,
+        count: 0,
+        accumulator: Proj::zero(),
+        msm_accumulator: offset,
+        is_accumulator_empty: true,
+    };
 
     let mut acc_trace = vec![Proj::zero(); n];
     let mut msm_acc_trace = vec![Proj::zero(); n];
@@ -269,12 +286,20 @@ pub fn compute_transcript_rows(ops: &[EccvmOp], total_muls: u32) -> Vec<Transcri
         }
         let row = &mut rows[i + 1];
         if is_msm_transition {
-            updated.accumulator = if state.is_accumulator_empty { updated.msm_accumulator - offset } else { state.accumulator + updated.msm_accumulator - offset };
+            updated.accumulator = if state.is_accumulator_empty {
+                updated.msm_accumulator - offset
+            } else {
+                state.accumulator + updated.msm_accumulator - offset
+            };
             updated.is_accumulator_empty = updated.accumulator.is_zero();
             row.msm_infinity = (updated.msm_accumulator - offset).is_zero();
         }
         if is_add {
-            updated.accumulator = if state.is_accumulator_empty { entry.base_point.into_group() } else { state.accumulator + entry.base_point };
+            updated.accumulator = if state.is_accumulator_empty {
+                entry.base_point.into_group()
+            } else {
+                state.accumulator + entry.base_point
+            };
             updated.is_accumulator_empty = updated.accumulator.is_zero();
         }
         let active = entry.op_code.add || entry.op_code.mul || entry.op_code.eq;
@@ -287,19 +312,43 @@ pub fn compute_transcript_rows(ops: &[EccvmOp], total_muls: u32) -> Vec<Transcri
         row.pc = state.pc;
         row.msm_count = state.count;
         row.msm_count_zero_at_transition = state.count + muls == 0 && entry.op_code.mul && next_not_msm;
-        (row.base_x, row.base_y) = if active && !base_infinity { affine_xy(&entry.base_point) } else { (Fq::from(0u64), Fq::from(0u64)) };
+        (row.base_x, row.base_y) = if active && !base_infinity {
+            affine_xy(&entry.base_point)
+        } else {
+            (Fq::from(0u64), Fq::from(0u64))
+        };
         row.base_infinity = active && base_infinity;
-        row.z1 = if entry.op_code.mul { from_u256(entry.z1) } else { Fq::from(0u64) };
-        row.z2 = if entry.op_code.mul { from_u256(entry.z2) } else { Fq::from(0u64) };
+        row.z1 = if entry.op_code.mul {
+            from_u256(entry.z1)
+        } else {
+            Fq::from(0u64)
+        };
+        row.z2 = if entry.op_code.mul {
+            from_u256(entry.z2)
+        } else {
+            Fq::from(0u64)
+        };
         row.z1_zero = entry.z1.is_zero();
         row.z2_zero = entry.z2.is_zero();
         row.opcode = entry.op_code.value();
         let _ = (z1_zero, z2_zero);
 
-        count_inverse[i] = if state.count + muls == 0 { Fq::from(0u64) } else { Fq::from((state.count + muls) as u64) };
+        count_inverse[i] = if state.count + muls == 0 {
+            Fq::from(0u64)
+        } else {
+            Fq::from((state.count + muls) as u64)
+        };
         acc_trace[i] = state.accumulator;
-        msm_acc_trace[i] = if is_msm_transition { updated.msm_accumulator } else { Proj::zero() };
-        intermediate_trace[i] = if is_msm_transition { updated.msm_accumulator - offset } else { Proj::zero() };
+        msm_acc_trace[i] = if is_msm_transition {
+            updated.msm_accumulator
+        } else {
+            Proj::zero()
+        };
+        intermediate_trace[i] = if is_msm_transition {
+            updated.msm_accumulator - offset
+        } else {
+            Proj::zero()
+        };
         state = updated;
         if is_mul && next_not_msm {
             state.msm_accumulator = offset;
@@ -326,14 +375,26 @@ pub fn compute_transcript_rows(ops: &[EccvmOp], total_muls: u32) -> Vec<Transcri
             count_inverse[i] = Fq::from(0u64);
             continue;
         }
-        row.msm_x_inverse = if row.msm_infinity || msm_acc_trace[i].is_zero() { Fq::from(0u64) } else { xy(&msm_acc_trace[i]).0 - offset_x };
-        let (lhs_x, lhs_y) = if is_msm_transition { xy(&intermediate_trace[i]) } else { (row.base_x, row.base_y) };
+        row.msm_x_inverse = if row.msm_infinity || msm_acc_trace[i].is_zero() {
+            Fq::from(0u64)
+        } else {
+            xy(&msm_acc_trace[i]).0 - offset_x
+        };
+        let (lhs_x, lhs_y) = if is_msm_transition {
+            xy(&intermediate_trace[i])
+        } else {
+            (row.base_x, row.base_y)
+        };
         let (rhs_x, rhs_y) = xy(&acc_trace[i]);
         row.base_x_inverse = invert_or_zero(lhs_x - rhs_x);
         row.base_y_inverse = invert_or_zero(lhs_y - rhs_y);
         row.msm_x_inverse = invert_or_zero(row.msm_x_inverse);
 
-        let vm_point = if is_add { ops[i].base_point.into_group() } else { intermediate_trace[i] };
+        let vm_point = if is_add {
+            ops[i].base_point.into_group()
+        } else {
+            intermediate_trace[i]
+        };
         let vm_infinity = vm_point.is_zero();
         let acc_infinity = acc_trace[i].is_zero();
         let (vm_x, vm_y) = xy(&vm_point);
@@ -393,13 +454,17 @@ pub fn compute_precompute_rows(muls: &[ScalarMul]) -> Vec<PrecomputeRow> {
             let last_row = i == ROWS_PER_SCALAR - 1;
             row.skew = last_row && entry.wnaf_skew;
             row.scalar_sum = scalar_sum as u128;
-            let row_chunk = d[3] as i128 + (d[2] as i128) * (1 << 4) + (d[1] as i128) * (1 << 8) + (d[0] as i128) * (1 << 12);
+            let row_chunk =
+                d[3] as i128 + (d[2] as i128) * (1 << 4) + (d[1] as i128) * (1 << 8) + (d[0] as i128) * (1 << 12);
             scalar_sum = (scalar_sum << (NUM_WNAF_DIGIT_BITS as usize * WNAF_DIGITS_PER_ROW)) + row_chunk;
             row.round = i as u32;
             row.point_transition = last_row;
             row.pc = entry.pc;
             if last_row {
-                assert_eq!(entry.scalar.0[0] as u128 | ((entry.scalar.0[1] as u128) << 64), (scalar_sum - entry.wnaf_skew as i128) as u128);
+                assert_eq!(
+                    entry.scalar.0[0] as u128 | ((entry.scalar.0[1] as u128) << 64),
+                    (scalar_sum - entry.wnaf_skew as i128) as u128
+                );
             }
             row.precompute_double = affine_xy(&entry.precomputed_table[POINT_TABLE_SIZE]);
             row.precompute_accumulator = affine_xy(&entry.precomputed_table[POINT_TABLE_SIZE - 1 - i]);
@@ -440,7 +505,10 @@ pub struct MsmRow {
 /// bb `ECCVMMSMMBuilder::compute_rows`: the Straus rows of every MSM plus the point-table read
 /// counts (`[0]`: positive slices, `[1]`: negative slices) indexed by `8 * mul_index + table_index`.
 pub fn compute_msm_rows(msms: &[Vec<ScalarMul>], total_muls: u32, num_rows: usize) -> (Vec<MsmRow>, [Vec<u64>; 2]) {
-    let mut read_counts = [vec![0u64; total_muls as usize * (POINT_TABLE_SIZE / 2)], vec![0u64; total_muls as usize * (POINT_TABLE_SIZE / 2)]];
+    let mut read_counts = [
+        vec![0u64; total_muls as usize * (POINT_TABLE_SIZE / 2)],
+        vec![0u64; total_muls as usize * (POINT_TABLE_SIZE / 2)],
+    ];
     let mut update_read_count = |point_idx: usize, slice: i32| {
         let offset = point_idx * 8;
         if slice < 0 {
@@ -455,7 +523,13 @@ pub fn compute_msm_rows(msms: &[Vec<ScalarMul>], total_muls: u32, num_rows: usiz
     }
     assert_eq!(*pc_values.last().unwrap(), 0);
     let rows_per_digit = |size: usize| size.div_ceil(ADDITIONS_PER_ROW);
-    let points_in_row = |size: usize, row_idx: usize| if (row_idx + 1) * ADDITIONS_PER_ROW > size { size % ADDITIONS_PER_ROW } else { ADDITIONS_PER_ROW };
+    let points_in_row = |size: usize, row_idx: usize| {
+        if (row_idx + 1) * ADDITIONS_PER_ROW > size {
+            size % ADDITIONS_PER_ROW
+        } else {
+            ADDITIONS_PER_ROW
+        }
+    };
 
     for (msm_idx, msm) in msms.iter().enumerate() {
         let pc = pc_values[msm_idx];
@@ -463,14 +537,20 @@ pub fn compute_msm_rows(msms: &[Vec<ScalarMul>], total_muls: u32, num_rows: usiz
             for row_idx in 0..rows_per_digit(msm.len()) {
                 for p in 0..points_in_row(msm.len(), row_idx) {
                     let point_idx = row_idx * ADDITIONS_PER_ROW + p;
-                    update_read_count(total_muls as usize - pc + point_idx, msm[point_idx].wnaf_digits[digit_idx]);
+                    update_read_count(
+                        total_muls as usize - pc + point_idx,
+                        msm[point_idx].wnaf_digits[digit_idx],
+                    );
                 }
             }
             if digit_idx == NUM_WNAF_DIGITS_PER_SCALAR - 1 {
                 for row_idx in 0..rows_per_digit(msm.len()) {
                     for p in 0..points_in_row(msm.len(), row_idx) {
                         let point_idx = row_idx * ADDITIONS_PER_ROW + p;
-                        update_read_count(total_muls as usize - pc + point_idx, if msm[point_idx].wnaf_skew { -1 } else { -15 });
+                        update_read_count(
+                            total_muls as usize - pc + point_idx,
+                            if msm[point_idx].wnaf_skew { -1 } else { -15 },
+                        );
                     }
                 }
             }
@@ -500,14 +580,26 @@ pub fn compute_msm_rows(msms: &[Vec<ScalarMul>], total_muls: u32, num_rows: usiz
                 for p in 0..ADDITIONS_PER_ROW {
                     let st = &mut row.add_state[p];
                     st.add = points_in_row(size, row_idx) > p;
-                    let slice = if st.add { msm[offset_idx + p].wnaf_digits[digit_idx] } else { 0 };
+                    let slice = if st.add {
+                        msm[offset_idx + p].wnaf_digits[digit_idx]
+                    } else {
+                        0
+                    };
                     st.slice = if st.add { (slice + 15) / 2 } else { 0 };
-                    st.point = if st.add { affine_xy(&msm[offset_idx + p].precomputed_table[st.slice as usize]) } else { (Fq::from(0u64), Fq::from(0u64)) };
+                    st.point = if st.add {
+                        affine_xy(&msm[offset_idx + p].precomputed_table[st.slice as usize])
+                    } else {
+                        (Fq::from(0u64), Fq::from(0u64))
+                    };
                     let p1 = accumulator;
                     if st.add {
                         accumulator += msm[offset_idx + p].precomputed_table[st.slice as usize];
                     }
-                    ops.push(Op { p1, p2: st.point, is_double: false });
+                    ops.push(Op {
+                        p1,
+                        p2: st.point,
+                        is_double: false,
+                    });
                 }
                 accumulator_trace[row_index] = accumulator;
                 row.q_add = true;
@@ -526,7 +618,11 @@ pub fn compute_msm_rows(msms: &[Vec<ScalarMul>], total_muls: u32, num_rows: usiz
                 for _ in 0..ADDITIONS_PER_ROW {
                     let p1 = accumulator;
                     accumulator = accumulator.double();
-                    ops.push(Op { p1, p2: (Fq::from(0u64), Fq::from(0u64)), is_double: true });
+                    ops.push(Op {
+                        p1,
+                        p2: (Fq::from(0u64), Fq::from(0u64)),
+                        is_double: true,
+                    });
                 }
                 accumulator_trace[row_index] = accumulator;
                 row_index += 1;
@@ -538,13 +634,21 @@ pub fn compute_msm_rows(msms: &[Vec<ScalarMul>], total_muls: u32, num_rows: usiz
                         let st = &mut row.add_state[p];
                         st.add = points_in_row(size, row_idx) > p;
                         st.slice = if st.add && msm[offset_idx + p].wnaf_skew { 7 } else { 0 };
-                        st.point = if st.add { affine_xy(&msm[offset_idx + p].precomputed_table[st.slice as usize]) } else { (Fq::from(0u64), Fq::from(0u64)) };
+                        st.point = if st.add {
+                            affine_xy(&msm[offset_idx + p].precomputed_table[st.slice as usize])
+                        } else {
+                            (Fq::from(0u64), Fq::from(0u64))
+                        };
                         let add_predicate = st.add && msm[offset_idx + p].wnaf_skew;
                         let p1 = accumulator;
                         if add_predicate {
                             accumulator += msm[offset_idx + p].precomputed_table[st.slice as usize];
                         }
-                        ops.push(Op { p1, p2: st.point, is_double: false });
+                        ops.push(Op {
+                            p1,
+                            p2: st.point,
+                            is_double: false,
+                        });
                     }
                     row.q_skew = true;
                     row.msm_round = digit_idx as u32 + 1;
@@ -572,9 +676,17 @@ pub fn compute_msm_rows(msms: &[Vec<ScalarMul>], total_muls: u32, num_rows: usiz
                 st.collision_inverse = Fq::from(0u64);
             } else {
                 let inverse = invert_or_zero(op.p2.0 - x1);
-                let active = if skew_row { st.add && st.slice == 7 } else { add_row && st.add };
+                let active = if skew_row {
+                    st.add && st.slice == 7
+                } else {
+                    add_row && st.add
+                };
                 st.collision_inverse = if active { inverse } else { Fq::from(0u64) };
-                st.lambda = if active { (op.p2.1 - y1) * inverse } else { Fq::from(0u64) };
+                st.lambda = if active {
+                    (op.p2.1 - y1) * inverse
+                } else {
+                    Fq::from(0u64)
+                };
             }
         }
     }
@@ -591,8 +703,13 @@ pub fn compute_msm_rows(msms: &[Vec<ScalarMul>], total_muls: u32, num_rows: usiz
 impl EccOpQueue {
     /// The ECCVM's op list: the hiding op followed by every merged subtable's ops (bb `get_eccvm_ops`).
     pub fn get_eccvm_ops(&self) -> Vec<EccvmOp> {
-        let hiding = self.hiding_op.clone().expect("the hiding op must be set before building the ECCVM");
-        std::iter::once(hiding).chain(self.eccvm_ops.tables.iter().flatten().cloned()).collect()
+        let hiding = self
+            .hiding_op
+            .clone()
+            .expect("the hiding op must be set before building the ECCVM");
+        std::iter::once(hiding)
+            .chain(self.eccvm_ops.tables.iter().flatten().cloned())
+            .collect()
     }
 }
 
@@ -624,7 +741,13 @@ impl EccvmPolys {
         set(lagrange_first, 0, Fq::one());
         set(lagrange_second, 1, Fq::one());
         set(lagrange_third, 2, Fq::one());
-        let round_minus_31_inv = |round: u32| if round as u64 == LAST_ADDITION_ROUND { Fq::from(0u64) } else { (Fq::from(round as u64) - Fq::from(LAST_ADDITION_ROUND)).invert() };
+        let round_minus_31_inv = |round: u32| {
+            if round as u64 == LAST_ADDITION_ROUND {
+                Fq::from(0u64)
+            } else {
+                (Fq::from(round as u64) - Fq::from(LAST_ADDITION_ROUND)).invert()
+            }
+        };
         for i in 0..read_counts[0].len() {
             set(lookup_read_counts_0, i + 1, Fq::from(read_counts[0][i]));
             set(lookup_read_counts_1, i + 1, Fq::from(read_counts[1][i]));
@@ -659,8 +782,16 @@ impl EccvmPolys {
             set(transcript_msm_intermediate_y, i, r.msm_intermediate_y);
             set(transcript_msm_infinity, i, b(r.msm_infinity));
             set(transcript_msm_x_inverse, i, r.msm_x_inverse);
-            set(transcript_msm_count_zero_at_transition, i, b(r.msm_count_zero_at_transition));
-            set(transcript_msm_count_at_transition_inverse, i, r.msm_count_at_transition_inverse);
+            set(
+                transcript_msm_count_zero_at_transition,
+                i,
+                b(r.msm_count_zero_at_transition),
+            );
+            set(
+                transcript_msm_count_at_transition_inverse,
+                i,
+                r.msm_count_at_transition_inverse,
+            );
         }
         for (i, r) in precompute_rows.iter().enumerate() {
             set(precompute_select, i, b(i != 0));

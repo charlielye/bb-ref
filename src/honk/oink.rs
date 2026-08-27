@@ -39,7 +39,15 @@ pub fn compute_public_input_delta<F: FieldLike>(public_inputs: &[F], beta: &F, g
 
 /// `vk_hash` is the hash the verifier was handed (bb `VKAndHash`); it is checked against the hash
 /// recomputed from `vk` (natively an assertion, in-circuit a copy constraint).
-pub fn verify_oink<C: Curve>(flavor: &FlavorDesc, layout: &Layout, vk: &Vk<C>, vk_hash: &C::TF, t: &mut Transcript<C::TF, C::Hash>, num_public_inputs: usize, emit_alpha: bool) -> OinkOutput<C> {
+pub fn verify_oink<C: Curve>(
+    flavor: &FlavorDesc,
+    layout: &Layout,
+    vk: &Vk<C>,
+    vk_hash: &C::TF,
+    t: &mut Transcript<C::TF, C::Hash>,
+    num_public_inputs: usize,
+    emit_alpha: bool,
+) -> OinkOutput<C> {
     crate::circuit::builder::trace_phase("oink: start");
     let computed_vk_hash = vk.hash();
     crate::circuit::builder::trace_phase("oink: vk hashed");
@@ -47,11 +55,21 @@ pub fn verify_oink<C: Curve>(flavor: &FlavorDesc, layout: &Layout, vk: &Vk<C>, v
     assert_eq!(vk_hash.value(), computed_vk_hash.value(), "VK hash mismatch");
     vk_hash.assert_equal(&computed_vk_hash);
     let num_public_inputs_field = C::Fr::from_u64(num_public_inputs as u64);
-    assert_eq!(vk.num_public_inputs.value(), num_public_inputs_field.value(), "num_public_inputs mismatch with VK");
+    assert_eq!(
+        vk.num_public_inputs.value(),
+        num_public_inputs_field.value(),
+        "num_public_inputs mismatch with VK"
+    );
     vk.num_public_inputs.assert_equal(&num_public_inputs_field);
-    assert_eq!(vk.comms.len(), layout.num_precomputed, "VK commitment count does not match flavor");
+    assert_eq!(
+        vk.comms.len(),
+        layout.num_precomputed,
+        "VK commitment count does not match flavor"
+    );
 
-    let public_inputs: Vec<C::Fr> = (0..num_public_inputs).map(|i| t.receive(&format!("public_input_{i}"))).collect();
+    let public_inputs: Vec<C::Fr> = (0..num_public_inputs)
+        .map(|i| t.receive(&format!("public_input_{i}")))
+        .collect();
 
     let mut comms: Vec<Option<C::G>> = vec![None; layout.num_unshifted()];
     for (i, e) in layout.unshifted.iter().enumerate() {
@@ -72,7 +90,12 @@ pub fn verify_oink<C: Curve>(flavor: &FlavorDesc, layout: &Layout, vk: &Vk<C>, v
     recv(t, &mut comms, Ent::w_r);
     recv(t, &mut comms, Ent::w_o);
     if layout.has(Ent::ecc_op_wire_1) {
-        for e in [Ent::ecc_op_wire_1, Ent::ecc_op_wire_2, Ent::ecc_op_wire_3, Ent::ecc_op_wire_4] {
+        for e in [
+            Ent::ecc_op_wire_1,
+            Ent::ecc_op_wire_2,
+            Ent::ecc_op_wire_3,
+            Ent::ecc_op_wire_4,
+        ] {
             recv(t, &mut comms, e);
         }
     }
@@ -107,10 +130,15 @@ pub fn verify_oink<C: Curve>(flavor: &FlavorDesc, layout: &Layout, vk: &Vk<C>, v
         recv(t, &mut comms, BUS_SPECS[b].inverses);
     }
 
-    params.public_input_delta = compute_public_input_delta(&public_inputs, &params.beta, &params.gamma, &vk.pub_inputs_offset);
+    params.public_input_delta =
+        compute_public_input_delta(&public_inputs, &params.beta, &params.gamma, &vk.pub_inputs_offset);
     recv(t, &mut comms, Ent::z_perm);
 
-    let alpha: C::Fr = if emit_alpha { t.challenge("alpha") } else { C::Fr::zero() };
+    let alpha: C::Fr = if emit_alpha {
+        t.challenge("alpha")
+    } else {
+        C::Fr::zero()
+    };
     crate::circuit::builder::trace_phase("oink: done");
 
     let commitments = comms

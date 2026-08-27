@@ -34,12 +34,21 @@ fn check_bb_proof(dir: &Path) {
     let vk = read_vk(&dir.join("vk"));
     let fields = decode_fields(&std::fs::read(dir.join("proof_fields.bin")).unwrap());
     let proof = ChonkProof::from_fields(&fields);
-    assert_eq!(ChonkProof::from_msgpack(&std::fs::read(dir.join("proof.msgpack")).unwrap()), proof, "msgpack layout");
-    assert_eq!(proof.to_msgpack(), std::fs::read(dir.join("proof.msgpack")).unwrap(), "msgpack bytes");
+    assert_eq!(
+        ChonkProof::from_msgpack(&std::fs::read(dir.join("proof.msgpack")).unwrap()),
+        proof,
+        "msgpack layout"
+    );
+    assert_eq!(
+        proof.to_msgpack(),
+        std::fs::read(dir.join("proof.msgpack")).unwrap(),
+        "msgpack bytes"
+    );
     assert!(verify(&vk, &proof), "bb Chonk proof rejected");
     // the kernel return data commitment in the hiding kernel's IO (databus consistency)
     let mut bad = proof.clone();
-    let pi_start = bad.hiding_oink_proof.len() - mega_zk_oink_length_without_public_inputs() - HIDING_KERNEL_PUBLIC_INPUTS_SIZE;
+    let pi_start =
+        bad.hiding_oink_proof.len() - mega_zk_oink_length_without_public_inputs() - HIDING_KERNEL_PUBLIC_INPUTS_SIZE;
     tamper_point(&mut bad.hiding_oink_proof, pi_start + 8);
     assert!(!verify(&vk, &bad), "tampered hiding kernel public input accepted");
 }

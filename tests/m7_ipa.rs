@@ -10,7 +10,9 @@ fn input(log_n: usize, ck: &GrumpkinKey) -> TripleIpaInput {
     let n = 1 << log_n;
     let u: Vec<Fq> = (0..log_n).map(|i| Fq::from(7 + i as u64)).collect();
     let eq = eq_table(&u, log_n);
-    let polys: Vec<Polynomial<Fq>> = (0..5).map(|k| Polynomial::from_coeffs((0..n).map(|i| Fq::from(((k + 1) * 1000 + i + 1) as u64)).collect())).collect();
+    let polys: Vec<Polynomial<Fq>> = (0..5)
+        .map(|k| Polynomial::from_coeffs((0..n).map(|i| Fq::from(((k + 1) * 1000 + i + 1) as u64)).collect()))
+        .collect();
     let evaluations: Vec<Fq> = polys.iter().map(|p| p.evaluate_mle(&u)).collect();
     let commitments = polys.iter().map(|p| ck.commit(p)).collect::<Vec<_>>();
     let shifted_eval = |p: &Polynomial<Fq>| (0..n - 1).map(|i| eq[i] * p.coeffs[i + 1]).sum::<Fq>();
@@ -48,12 +50,24 @@ fn check(log_n: usize) {
     let mut t = NativeTranscript::new();
     triple_ipa_prove(&ck, &input, &mut t);
     let proof = t.export_proof();
-    assert_eq!(proof, decode_fields(&std::fs::read(dump.join("triple_ipa_proof.bin")).unwrap()), "TripleIPA proof");
+    assert_eq!(
+        proof,
+        decode_fields(&std::fs::read(dump.join("triple_ipa_proof.bin")).unwrap()),
+        "TripleIPA proof"
+    );
     let claim = input.claims.batch();
-    assert!(triple_ipa_verify(&ck, &claim, &mut NativeTranscript::from_proof(&proof)));
+    assert!(triple_ipa_verify(
+        &ck,
+        &claim,
+        &mut NativeTranscript::from_proof(&proof)
+    ));
     let mut tampered = proof.clone();
     tampered[5] += bb_ref::base::Fr::from(1u64);
-    assert!(!triple_ipa_verify(&ck, &claim, &mut NativeTranscript::from_proof(&tampered)));
+    assert!(!triple_ipa_verify(
+        &ck,
+        &claim,
+        &mut NativeTranscript::from_proof(&tampered)
+    ));
 }
 
 #[test]

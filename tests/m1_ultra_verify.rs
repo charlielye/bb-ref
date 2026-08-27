@@ -13,13 +13,19 @@ fn check(prog: &str, mode: &str) {
     let proof = decode_fields(&common::read(&format!("ultra/{prog}/{mode}/proof")));
     let public_inputs = decode_fields(&common::read(&format!("ultra/{prog}/{mode}/public_inputs")));
     let g2 = bn254_g2();
-    assert!(verify_ultra(flavor, &vk, &public_inputs, &proof, &g2), "{prog}/{mode}: bb proof rejected");
+    assert!(
+        verify_ultra(flavor, &vk, &public_inputs, &proof, &g2),
+        "{prog}/{mode}: bb proof rejected"
+    );
 
     // Tampering with a sumcheck evaluation must be caught by the relation check.
     let mut bad = proof.clone();
     let idx = bad.len() / 2;
     bad[idx] += &bb_ref::base::Fr::one();
-    assert!(!verify_ultra(flavor, &vk, &public_inputs, &bad, &g2), "{prog}/{mode}: tampered proof accepted");
+    assert!(
+        !verify_ultra(flavor, &vk, &public_inputs, &bad, &g2),
+        "{prog}/{mode}: tampered proof accepted"
+    );
 }
 
 macro_rules! fixture_tests {

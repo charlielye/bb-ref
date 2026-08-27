@@ -136,6 +136,9 @@ mod tests {
         // crypto/poseidon2/poseidon2.test.cpp HashConsistencyCheck
         let a = from_hex::<Fr>("0x9a807b615c4d3e2fa0b1c2d3e4f56789fedcba9876543210abcdef0123456789");
         let r = Poseidon2::hash(&[a, a, a, a]);
-        assert_eq!(r, from_hex::<Fr>("0x2f43a0f83b51a6f5fc839dea0ecec74947637802a579fa9841930a25a0bcec11"));
+        assert_eq!(
+            r,
+            from_hex::<Fr>("0x2f43a0f83b51a6f5fc839dea0ecec74947637802a579fa9841930a25a0bcec11")
+        );
     }
 }

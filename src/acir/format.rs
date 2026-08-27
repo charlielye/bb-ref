@@ -32,7 +32,10 @@ pub enum BlackBoxFuncCall {
     AES128Encrypt(IgnoredAny),
     AND(IgnoredAny),
     XOR(IgnoredAny),
-    RANGE { input: FunctionInput, num_bits: u32 },
+    RANGE {
+        input: FunctionInput,
+        num_bits: u32,
+    },
     Blake2s(IgnoredAny),
     Blake3(IgnoredAny),
     EcdsaSecp256k1(IgnoredAny),
@@ -41,7 +44,10 @@ pub enum BlackBoxFuncCall {
     EmbeddedCurveAdd(EmbeddedCurveAdd),
     Keccakf1600(IgnoredAny),
     RecursiveAggregation(RecursiveAggregation),
-    Poseidon2Permutation { inputs: Vec<FunctionInput>, outputs: Vec<Witness> },
+    Poseidon2Permutation {
+        inputs: Vec<FunctionInput>,
+        outputs: Vec<Witness>,
+    },
     Sha256Compression(IgnoredAny),
 }
 
@@ -92,8 +98,15 @@ pub struct MemOp {
 pub enum Opcode {
     AssertZero(Expression),
     BlackBoxFuncCall(BlackBoxFuncCall),
-    MemoryOp { block_id: u32, op: MemOp },
-    MemoryInit { block_id: u32, init: Vec<Witness>, block_type: BlockType },
+    MemoryOp {
+        block_id: u32,
+        op: MemOp,
+    },
+    MemoryInit {
+        block_id: u32,
+        init: Vec<Witness>,
+        block_type: BlockType,
+    },
     BrilligCall(IgnoredAny),
     Call(IgnoredAny),
 }
@@ -134,13 +147,18 @@ pub fn field(bytes: &[u8]) -> Fr {
 
 fn gunzip(data: &[u8]) -> Vec<u8> {
     let mut out = vec![];
-    flate2::read::GzDecoder::new(data).read_to_end(&mut out).expect("gzip decode");
+    flate2::read::GzDecoder::new(data)
+        .read_to_end(&mut out)
+        .expect("gzip decode");
     out
 }
 
 /// Strip the 1-byte format marker and msgpack-decode the payload.
 fn decode_msgpack<T: for<'a> Deserialize<'a>>(buf: &[u8]) -> T {
-    assert!(matches!(buf.first(), Some(2 | 3)), "expected msgpack ACIR format marker 2 or 3");
+    assert!(
+        matches!(buf.first(), Some(2 | 3)),
+        "expected msgpack ACIR format marker 2 or 3"
+    );
     rmp_serde::from_slice(&buf[1..]).expect("msgpack decode")
 }
 

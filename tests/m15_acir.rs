@@ -49,7 +49,11 @@ fn mock_protocol_vks_match_bb() {
         assert_eq!(vk, in_artifact, "{name}: VK differs from the artifact's");
         let fixture = common::fixture_dir(&format!("acir/vks/{name}.vk"));
         if fixture.exists() {
-            assert_eq!(vk, std::fs::read(fixture).unwrap(), "{name}: VK differs from bb write_vk's");
+            assert_eq!(
+                vk,
+                std::fs::read(fixture).unwrap(),
+                "{name}: VK differs from bb write_vk's"
+            );
         }
     }
 }
@@ -69,7 +73,11 @@ fn mock_flows_bb_proofs_verify() {
         assert!(verify(&vk, &proof), "{flow}: bb proof rejected");
         if let Ok(inputs) = std::fs::read(dir.join("ivc-inputs.msgpack")) {
             let steps = decode_steps(&inputs, &mut OsRng);
-            assert_eq!(steps.last().unwrap().vk.to_bytes(), vk.to_bytes(), "{flow}: pinned hiding VK vs bb's output VK");
+            assert_eq!(
+                steps.last().unwrap().vk.to_bytes(),
+                vk.to_bytes(),
+                "{flow}: pinned hiding VK vs bb's output VK"
+            );
         }
         n += 1;
     }
@@ -101,7 +109,11 @@ fn mock_flow_byte_exact_with_tape() {
     let mut tape = TapeRng::from_bytes(std::fs::read(dir.join("rng_tape.bin")).unwrap());
     let steps = decode_steps(&common::read("acir/mock_1_1/ivc-inputs.msgpack"), &mut tape);
     let (proof, vk) = prove_steps(&steps, CommitmentKey::new(1 << 17), &mut tape, true);
-    assert_eq!(vk.to_bytes(), std::fs::read(dir.join("vk")).unwrap(), "hiding kernel VK");
+    assert_eq!(
+        vk.to_bytes(),
+        std::fs::read(dir.join("vk")).unwrap(),
+        "hiding kernel VK"
+    );
     let expected = decode_fields(&std::fs::read(dir.join("proof")).unwrap());
     let fields = proof.to_fields();
     let first_diff = fields.iter().zip(&expected).position(|(a, b)| a != b);

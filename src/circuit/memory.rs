@@ -71,23 +71,46 @@ impl Builder {
     // ---- ROM (single-value cells, LogUp) ----
 
     pub fn create_rom_array(&mut self, size: usize) -> usize {
-        self.memory.rom_arrays.push(RomTranscript { state: vec![[UNINITIALIZED; 2]; size], records: vec![], use_logup: None });
+        self.memory.rom_arrays.push(RomTranscript {
+            state: vec![[UNINITIALIZED; 2]; size],
+            records: vec![],
+            use_logup: None,
+        });
         self.memory.rom_arrays.len() - 1
     }
 
     fn rom_scheme(&mut self, rom_id: usize, logup: bool) {
         let rom = &mut self.memory.rom_arrays[rom_id];
-        assert_ne!(rom.use_logup, Some(!logup), "ROM array mixes single-value and pair accesses");
+        assert_ne!(
+            rom.use_logup,
+            Some(!logup),
+            "ROM array mixes single-value and pair accesses"
+        );
         rom.use_logup = Some(logup);
     }
 
     /// Initialize cell `index` (a circuit constant) to `value_witness`. Each cell exactly once.
     pub fn set_rom_element(&mut self, rom_id: usize, index: usize, value_witness: u32) {
         self.rom_scheme(rom_id, true);
-        let index_witness = if index == 0 { self.zero_idx() } else { self.put_constant_variable(Fr::from(index as u64)) };
-        assert_eq!(self.memory.rom_arrays[rom_id].state[index][0], UNINITIALIZED, "ROM cell initialized twice");
+        let index_witness = if index == 0 {
+            self.zero_idx()
+        } else {
+            self.put_constant_variable(Fr::from(index as u64))
+        };
+        assert_eq!(
+            self.memory.rom_arrays[rom_id].state[index][0], UNINITIALIZED,
+            "ROM cell initialized twice"
+        );
         let z = self.zero_idx();
-        let record = RomRecord { index_witness, value_witness, value2_witness: z, index: index as u32, access_type: RomAccess::TableEntry, record_witness: 0, gate_index: 0 };
+        let record = RomRecord {
+            index_witness,
+            value_witness,
+            value2_witness: z,
+            index: index as u32,
+            access_type: RomAccess::TableEntry,
+            record_witness: 0,
+            gate_index: 0,
+        };
         self.memory.rom_arrays[rom_id].state[index] = [value_witness, z];
         let record = self.create_rom_logup_gate(record, rom_id, false);
         self.memory.rom_arrays[rom_id].records.push(record);
@@ -101,7 +124,15 @@ impl Builder {
         assert_ne!(cell, UNINITIALIZED, "ROM read of uninitialized cell");
         let value_witness = self.add_variable(self.get_variable(cell));
         let z = self.zero_idx();
-        let record = RomRecord { index_witness, value_witness, value2_witness: z, index: index as u32, access_type: RomAccess::Read, record_witness: 0, gate_index: 0 };
+        let record = RomRecord {
+            index_witness,
+            value_witness,
+            value2_witness: z,
+            index: index as u32,
+            access_type: RomAccess::Read,
+            record_witness: 0,
+            gate_index: 0,
+        };
         let record = self.create_rom_logup_gate(record, rom_id, true);
         self.memory.rom_arrays[rom_id].records.push(record);
         value_witness
@@ -113,7 +144,10 @@ impl Builder {
     pub fn set_rom_element_pair(&mut self, rom_id: usize, index: usize, values: [u32; 2]) {
         self.rom_scheme(rom_id, false);
         let index_witness = self.put_constant_variable(Fr::from(index as u64));
-        assert_eq!(self.memory.rom_arrays[rom_id].state[index][0], UNINITIALIZED, "ROM cell initialized twice");
+        assert_eq!(
+            self.memory.rom_arrays[rom_id].state[index][0], UNINITIALIZED,
+            "ROM cell initialized twice"
+        );
         let record = RomRecord {
             index_witness,
             value_witness: values[0],
@@ -133,8 +167,14 @@ impl Builder {
         self.rom_scheme(rom_id, false);
         let index = Self::low_u64(&self.get_variable(index_witness)) as usize;
         let cell = self.memory.rom_arrays[rom_id].state[index];
-        assert!(cell[0] != UNINITIALIZED && cell[1] != UNINITIALIZED, "ROM read of uninitialized cell");
-        let values = [self.add_variable(self.get_variable(cell[0])), self.add_variable(self.get_variable(cell[1]))];
+        assert!(
+            cell[0] != UNINITIALIZED && cell[1] != UNINITIALIZED,
+            "ROM read of uninitialized cell"
+        );
+        let values = [
+            self.add_variable(self.get_variable(cell[0])),
+            self.add_variable(self.get_variable(cell[1])),
+        ];
         let record = RomRecord {
             index_witness,
             value_witness: values[0],
@@ -152,7 +192,12 @@ impl Builder {
     fn create_rom_gate(&mut self, mut record: RomRecord, selector: MemorySelector) -> RomRecord {
         record.record_witness = self.add_variable(Fr::zero());
         let mut row = self.memory_selectors_row(selector);
-        row.wires = [record.index_witness, record.value_witness, record.value2_witness, record.record_witness];
+        row.wires = [
+            record.index_witness,
+            record.value_witness,
+            record.value2_witness,
+            record.record_witness,
+        ];
         let block = self.blocks.get_mut(BlockId::Memory);
         block.rows.push(row);
         record.gate_index = block.len() - 1;
@@ -167,7 +212,10 @@ impl Builder {
         let sorted_list_tag = self.get_new_tag();
         self.set_tau_transposition(read_tag, sorted_list_tag);
         let rom = self.memory.rom_arrays[rom_id].clone();
-        assert!(rom.state.iter().all(|c| c[0] != UNINITIALIZED && c[1] != UNINITIALIZED), "ROM array has uninitialized cells");
+        assert!(
+            rom.state.iter().all(|c| c[0] != UNINITIALIZED && c[1] != UNINITIALIZED),
+            "ROM array has uninitialized cells"
+        );
         let mut records = rom.records.clone();
         records.sort_by_key(|r| (r.index, r.gate_index));
         let size = rom.state.len();
@@ -181,7 +229,14 @@ impl Builder {
             };
             let value_witness = self.add_variable(self.get_variable(record.value_witness));
             let value2_witness = self.add_variable(self.get_variable(record.value2_witness));
-            let sorted = RomRecord { index_witness, value_witness, value2_witness, record_witness: 0, gate_index: 0, ..*record };
+            let sorted = RomRecord {
+                index_witness,
+                value_witness,
+                value2_witness,
+                record_witness: 0,
+                gate_index: 0,
+                ..*record
+            };
             let sorted = self.create_rom_gate(sorted, MemorySelector::RomConsistencyCheck);
             self.assign_tag(record.record_witness, read_tag);
             self.assign_tag(sorted.record_witness, sorted_list_tag);
@@ -211,8 +266,17 @@ impl Builder {
     /// (filled by the prover once `eta`/`rom_logup_gamma` are known); `q_c` carries the array id.
     fn create_rom_logup_gate(&mut self, mut record: RomRecord, rom_id: usize, is_read: bool) -> RomRecord {
         let inverse_witness = self.add_variable(Fr::zero());
-        let mut row = self.memory_selectors_row(if is_read { MemorySelector::RomLogupRead } else { MemorySelector::RomLogupTable });
-        row.wires = [record.index_witness, record.value_witness, self.zero_idx(), inverse_witness];
+        let mut row = self.memory_selectors_row(if is_read {
+            MemorySelector::RomLogupRead
+        } else {
+            MemorySelector::RomLogupTable
+        });
+        row.wires = [
+            record.index_witness,
+            record.value_witness,
+            self.zero_idx(),
+            inverse_witness,
+        ];
         row.q_c = Fr::from(rom_id as u64);
         let block = self.blocks.get_mut(BlockId::Memory);
         block.rows.push(row);
@@ -225,7 +289,10 @@ impl Builder {
     /// Point each table row's `w_o` at a witness holding that cell's read count. Emits no gates.
     fn process_rom_logup_array(&mut self, rom_id: usize) {
         let rom = self.memory.rom_arrays[rom_id].clone();
-        assert!(rom.state.iter().all(|c| c[0] != UNINITIALIZED), "ROM array has uninitialized cells");
+        assert!(
+            rom.state.iter().all(|c| c[0] != UNINITIALIZED),
+            "ROM array has uninitialized cells"
+        );
         let mut table_row_gate = vec![0usize; rom.state.len()];
         let mut read_counts = vec![0u64; rom.state.len()];
         for r in &rom.records {
@@ -252,13 +319,24 @@ impl Builder {
     // ---- RAM ----
 
     pub fn create_ram_array(&mut self, size: usize) -> usize {
-        self.memory.ram_arrays.push(RamTranscript { state: vec![UNINITIALIZED; size], records: vec![], access_count: 0 });
+        self.memory.ram_arrays.push(RamTranscript {
+            state: vec![UNINITIALIZED; size],
+            records: vec![],
+            access_count: 0,
+        });
         self.memory.ram_arrays.len() - 1
     }
 
     pub fn init_ram_element(&mut self, ram_id: usize, index: usize, value_witness: u32) {
-        let index_witness = if index == 0 { self.zero_idx() } else { self.put_constant_variable(Fr::from(index as u64)) };
-        assert_eq!(self.memory.ram_arrays[ram_id].state[index], UNINITIALIZED, "RAM cell initialized twice");
+        let index_witness = if index == 0 {
+            self.zero_idx()
+        } else {
+            self.put_constant_variable(Fr::from(index as u64))
+        };
+        assert_eq!(
+            self.memory.ram_arrays[ram_id].state[index], UNINITIALIZED,
+            "RAM cell initialized twice"
+        );
         let timestamp = self.memory.ram_arrays[ram_id].access_count;
         let timestamp_witness = self.put_constant_variable(Fr::from(timestamp as u64));
         let record = RamRecord {
@@ -304,7 +382,10 @@ impl Builder {
 
     pub fn write_ram_array(&mut self, ram_id: usize, index_witness: u32, value_witness: u32) {
         let index = Self::low_u64(&self.get_variable(index_witness)) as usize;
-        assert_ne!(self.memory.ram_arrays[ram_id].state[index], UNINITIALIZED, "RAM write to uninitialized cell");
+        assert_ne!(
+            self.memory.ram_arrays[ram_id].state[index], UNINITIALIZED,
+            "RAM write to uninitialized cell"
+        );
         let timestamp = self.memory.ram_arrays[ram_id].access_count;
         let timestamp_witness = self.put_constant_variable(Fr::from(timestamp as u64));
         let record = RamRecord {
@@ -326,7 +407,12 @@ impl Builder {
 
     fn push_memory_row(&mut self, mut row: crate::circuit::GateRow, record: &mut RamRecord) {
         record.record_witness = self.add_variable(Fr::zero());
-        row.wires = [record.index_witness, record.timestamp_witness, record.value_witness, record.record_witness];
+        row.wires = [
+            record.index_witness,
+            record.timestamp_witness,
+            record.value_witness,
+            record.record_witness,
+        ];
         let block = self.blocks.get_mut(BlockId::Memory);
         block.rows.push(row);
         record.gate_index = block.len() - 1;
@@ -334,7 +420,11 @@ impl Builder {
     }
 
     fn create_ram_gate(&mut self, mut record: RamRecord) -> RamRecord {
-        let row = self.memory_selectors_row(if record.access_type == RamAccess::Read { MemorySelector::RamRead } else { MemorySelector::RamWrite });
+        let row = self.memory_selectors_row(if record.access_type == RamAccess::Read {
+            MemorySelector::RamRead
+        } else {
+            MemorySelector::RamWrite
+        });
         self.push_memory_row(row, &mut record);
         record
     }
@@ -349,7 +439,15 @@ impl Builder {
     fn create_final_sorted_ram_gate(&mut self, record: &mut RamRecord, ram_size: usize) {
         record.record_witness = self.add_variable(Fr::zero());
         record.gate_index = self.blocks.get(BlockId::Memory).len();
-        self.create_unconstrained_gate(BlockId::Memory, [record.index_witness, record.timestamp_witness, record.value_witness, record.record_witness]);
+        self.create_unconstrained_gate(
+            BlockId::Memory,
+            [
+                record.index_witness,
+                record.timestamp_witness,
+                record.value_witness,
+                record.record_witness,
+            ],
+        );
         let z = self.zero_idx();
         self.create_big_add_gate(
             AddQuad {
@@ -372,16 +470,30 @@ impl Builder {
         let sorted_list_tag = self.get_new_tag();
         self.set_tau_transposition(access_tag, sorted_list_tag);
         let ram = self.memory.ram_arrays[ram_id].clone();
-        assert!(ram.state.iter().all(|c| *c != UNINITIALIZED), "RAM array has uninitialized cells");
+        assert!(
+            ram.state.iter().all(|c| *c != UNINITIALIZED),
+            "RAM array has uninitialized cells"
+        );
         let mut records = ram.records.clone();
         records.sort_by_key(|r| (r.index, r.timestamp));
 
         let mut sorted = vec![];
         for (i, record) in records.iter().enumerate() {
-            let index_witness = if i == 0 { self.zero_idx() } else { self.add_variable(Fr::from(record.index as u64)) };
+            let index_witness = if i == 0 {
+                self.zero_idx()
+            } else {
+                self.add_variable(Fr::from(record.index as u64))
+            };
             let timestamp_witness = self.add_variable(Fr::from(record.timestamp as u64));
             let value_witness = self.add_variable(self.get_variable(record.value_witness));
-            let mut s = RamRecord { index_witness, timestamp_witness, value_witness, record_witness: 0, gate_index: 0, ..*record };
+            let mut s = RamRecord {
+                index_witness,
+                timestamp_witness,
+                value_witness,
+                record_witness: 0,
+                gate_index: 0,
+                ..*record
+            };
             if i < records.len() - 1 {
                 self.create_sorted_ram_gate(&mut s);
             } else {
@@ -404,7 +516,11 @@ impl Builder {
         let mut timestamp_deltas = vec![];
         for w in sorted.windows(2) {
             let (cur, next) = (&w[0], &w[1]);
-            let delta = if cur.index == next.index { Fr::from((next.timestamp - cur.timestamp) as u64) } else { Fr::zero() };
+            let delta = if cur.index == next.index {
+                Fr::from((next.timestamp - cur.timestamp) as u64)
+            } else {
+                Fr::zero()
+            };
             let delta_witness = self.add_variable(delta);
             let mut row = self.memory_selectors_row(MemorySelector::RamTimestampCheck);
             row.wires = [cur.index_witness, cur.timestamp_witness, delta_witness, self.zero_idx()];

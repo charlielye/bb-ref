@@ -71,7 +71,10 @@ fn eccvm_prove_and_verify() {
 #[test]
 fn verify_bb_eccvm_proof() {
     let dump = common::fixture_dir("instance/eccvm_proof/base");
-    let (Some(proof), Some(ipa_proof)) = (read_proof(&dump.join("eccvm_proof.bin")), read_proof(&dump.join("ipa_proof.bin"))) else {
+    let (Some(proof), Some(ipa_proof)) = (
+        read_proof(&dump.join("eccvm_proof.bin")),
+        read_proof(&dump.join("ipa_proof.bin")),
+    ) else {
         eprintln!("skipping: no bb ECCVM proof dump");
         return;
     };
@@ -95,8 +98,15 @@ fn eccvm_proof_byte_exact_with_tape() {
     let proof = t.export_proof();
     let expected = decode_fields(&std::fs::read(dir.join("eccvm_proof.bin")).unwrap());
     let first_diff = proof.iter().zip(&expected).position(|(a, b)| a != b);
-    assert_eq!(first_diff, None, "ECCVM proof differs from bb's (first differing field index)");
+    assert_eq!(
+        first_diff, None,
+        "ECCVM proof differs from bb's (first differing field index)"
+    );
     assert_eq!(proof.len(), expected.len(), "ECCVM proof length");
-    assert_eq!(out.ipa_proof, decode_fields(&std::fs::read(dir.join("ipa_proof.bin")).unwrap()), "IPA proof");
+    assert_eq!(
+        out.ipa_proof,
+        decode_fields(&std::fs::read(dir.join("ipa_proof.bin")).unwrap()),
+        "IPA proof"
+    );
     assert_eq!(tape.remaining(), 0, "unconsumed tape bytes");
 }

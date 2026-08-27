@@ -11,8 +11,12 @@ use crate::circuit::op_queue::{EccOpQueue, HIDING_KERNEL_ULTRA_OPS};
 use crate::honk::pcs::{kzg_open, kzg_reduce_verify_batch_opening_claim, BatchOpeningClaim, ProverClaim};
 
 const NUM_WIRES: usize = 4;
-const DEGREE_LABELS: [&str; NUM_WIRES] =
-    ["LEFT_TABLE_DEGREE_CHECK_0", "LEFT_TABLE_DEGREE_CHECK_1", "LEFT_TABLE_DEGREE_CHECK_2", "LEFT_TABLE_DEGREE_CHECK_3"];
+const DEGREE_LABELS: [&str; NUM_WIRES] = [
+    "LEFT_TABLE_DEGREE_CHECK_0",
+    "LEFT_TABLE_DEGREE_CHECK_1",
+    "LEFT_TABLE_DEGREE_CHECK_2",
+    "LEFT_TABLE_DEGREE_CHECK_3",
+];
 const SHPLONK_LABELS: [&str; 3 * NUM_WIRES + 1] = [
     "SHPLONK_MERGE_BATCHING_CHALLENGE_0",
     "SHPLONK_MERGE_BATCHING_CHALLENGE_1",
@@ -39,7 +43,11 @@ pub fn fixed_shift_size() -> usize {
 /// Merge the current (hiding kernel) subtable at the fixed offset and prove the merge on `t`.
 /// `ck` must cover the merged table (`num_ultra_rows + ZK_ULTRA_OPS` points).
 pub fn merge_prove(q: &mut EccOpQueue, ck: &CommitmentKey, t: &mut NativeTranscript) {
-    assert_eq!(q.current_subtable_size(), HIDING_KERNEL_ULTRA_OPS, "the hiding kernel subtable has a fixed size");
+    assert_eq!(
+        q.current_subtable_size(),
+        HIDING_KERNEL_ULTRA_OPS,
+        "the hiding kernel subtable has a fixed size"
+    );
     let append_offset = q.append_offset_for_prover();
     let shift = EccOpQueue::compute_fixed_append_offset(append_offset, true);
     q.merge_fixed_append(append_offset);
@@ -96,8 +104,20 @@ pub fn merge_prove(q: &mut EccOpQueue, ck: &CommitmentKey, t: &mut NativeTranscr
     }
     let mut g_minus = g;
     g_minus.coeffs[0] -= g_eval;
-    partial.add_scaled(&g_minus, &(betas[3 * NUM_WIRES] * (z - kappa) * (z - kappa_inv).invert()));
-    kzg_open(ProverClaim { poly: partial, challenge: z, evaluation: Fr::zero(), gemini_fold: false }, ck, t);
+    partial.add_scaled(
+        &g_minus,
+        &(betas[3 * NUM_WIRES] * (z - kappa) * (z - kappa_inv).invert()),
+    );
+    kzg_open(
+        ProverClaim {
+            poly: partial,
+            challenge: z,
+            evaluation: Fr::zero(),
+            gemini_fold: false,
+        },
+        ck,
+        t,
+    );
 }
 
 /// Commitments the merge verifier gets from its caller (bound to the transcript by the preceding Oink).
@@ -116,13 +136,22 @@ pub struct MergeOutput<C: Curve> {
 }
 
 /// bb `MergeVerifier_::reduce_to_pairing_check`.
-pub fn merge_verify<C: Curve>(inputs: &MergeInputs<C>, t: &mut Transcript<C::TF, C::Hash>, ctx: &<C::Fr as FieldLike>::Ctx) -> MergeOutput<C>
+pub fn merge_verify<C: Curve>(
+    inputs: &MergeInputs<C>,
+    t: &mut Transcript<C::TF, C::Hash>,
+    ctx: &<C::Fr as FieldLike>::Ctx,
+) -> MergeOutput<C>
 where
     C::TF: ChallengeField,
 {
     let shift = fixed_shift_size();
     // [L_1..4], [R_1..4], [M_1..4], [G]
-    let mut commitments: Vec<C::G> = inputs.t_prev_commitments.iter().chain(&inputs.t_commitments).cloned().collect();
+    let mut commitments: Vec<C::G> = inputs
+        .t_prev_commitments
+        .iter()
+        .chain(&inputs.t_commitments)
+        .cloned()
+        .collect();
     let merged_commitments: [C::G; NUM_WIRES] = std::array::from_fn(|j| t.receive(&format!("MERGED_TABLE_{j}")));
     commitments.extend(merged_commitments.iter().cloned());
     let alphas: Vec<C::Fr> = t.challenges(&DEGREE_LABELS);
@@ -171,7 +200,15 @@ where
     }
     constant -= betas[3 * NUM_WIRES].clone() * &evals[3 * NUM_WIRES] * &ratio;
     scalars.push(constant);
-    let claim = BatchOpeningClaim { commitments: msm_commitments, scalars, evaluation_point: z };
+    let claim = BatchOpeningClaim {
+        commitments: msm_commitments,
+        scalars,
+        evaluation_point: z,
+    };
     let pairing_points = kzg_reduce_verify_batch_opening_claim(claim, t, 3 * NUM_WIRES + 4);
-    MergeOutput { pairing_points, merged_commitments, ok }
+    MergeOutput {
+        pairing_points,
+        merged_commitments,
+        ok,
+    }
 }

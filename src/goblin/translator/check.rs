@@ -3,14 +3,20 @@
 use super::builder::split_fq_into_limbs;
 use super::relations::{permutation_denominator, permutation_numerator, TranslatorRel, TRANSLATOR_RELATIONS};
 use super::{Ent, TranslatorPolys, CIRCUIT_SIZE};
-use rayon::prelude::*;
 use crate::base::field::{from_u256, grand_product, u256, FieldLike};
 use crate::base::{Fq, Fr};
 use crate::honk::relations::RelationParams;
+use rayon::prelude::*;
 
 /// The Translator's relation parameters: the limbs of `x` and `v..v⁴`, the claimed result limbs,
 /// and the permutation challenges (bb `TranslatorProver`/`TranslatorCircuitChecker`).
-pub fn translator_relation_params(v: &Fq, x: &Fq, accumulated_result: [Fr; 4], beta: Fr, gamma: Fr) -> RelationParams<Fr> {
+pub fn translator_relation_params(
+    v: &Fq,
+    x: &Fq,
+    accumulated_result: [Fr; 4],
+    beta: Fr,
+    gamma: Fr,
+) -> RelationParams<Fr> {
     let native = |f: &Fq| from_u256::<Fr>(u256(f));
     let with_native = |f: &Fq| {
         let l = split_fq_into_limbs(f);

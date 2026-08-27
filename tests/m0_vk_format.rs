@@ -10,7 +10,11 @@ fn ultra_vk_roundtrip_and_hash() {
             let bytes = common::read(&format!("ultra/{prog}/{mode}/vk"));
             assert_eq!(bytes.len(), 3680);
             let vk = Vk::<Bn254>::from_bytes(&bytes, 28);
-            assert_eq!(vk.to_bytes(), bytes, "{prog}/{mode}: VK does not re-serialize identically");
+            assert_eq!(
+                vk.to_bytes(),
+                bytes,
+                "{prog}/{mode}: VK does not re-serialize identically"
+            );
             let expected_hash: Fr = from_bytes_be(&common::read(&format!("ultra/{prog}/{mode}/vk_hash")));
             assert_eq!(vk.hash(), expected_hash, "{prog}/{mode}: VK hash mismatch");
         }

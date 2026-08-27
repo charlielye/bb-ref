@@ -28,7 +28,12 @@ fn fr(i: i64) -> Fr {
 
 impl BoolT {
     fn build(ctx: Option<Ctx>, witness_index: u32, witness_bool: bool, witness_inverted: bool) -> Self {
-        Self { ctx, witness_index: Cell::new(witness_index), witness_bool: Cell::new(witness_bool), witness_inverted: Cell::new(witness_inverted) }
+        Self {
+            ctx,
+            witness_index: Cell::new(witness_index),
+            witness_bool: Cell::new(witness_bool),
+            witness_inverted: Cell::new(witness_inverted),
+        }
     }
     pub fn witness_index(&self) -> u32 {
         self.witness_index.get()
@@ -49,15 +54,25 @@ impl BoolT {
     pub fn from_field(f: &FieldT) -> Self {
         if f.is_constant() {
             let v = f.get_value();
-            assert!(v.is_zero() || v == Fr::one(), "bool_t from a constant that is not 0 or 1");
+            assert!(
+                v.is_zero() || v == Fr::one(),
+                "bool_t from a constant that is not 0 or 1"
+            );
             return Self::constant(v == Fr::one());
         }
         let ctx = f.ctx.clone().unwrap();
         let plain = f.additive_constant.is_zero() && f.multiplicative_constant == Fr::one();
         let inverted = f.additive_constant == Fr::one() && f.multiplicative_constant == -Fr::one();
-        let witness_index = if plain || inverted { f.witness_index } else { f.normalize().witness_index };
+        let witness_index = if plain || inverted {
+            f.witness_index
+        } else {
+            f.normalize().witness_index
+        };
         let witness = ctx.borrow().get_variable(witness_index);
-        assert!(witness.is_zero() || witness == Fr::one(), "bool_t from a witness that is not 0 or 1");
+        assert!(
+            witness.is_zero() || witness == Fr::one(),
+            "bool_t from a witness that is not 0 or 1"
+        );
         ctx.borrow_mut().create_bool_gate(witness_index);
         Self::build(Some(ctx), witness_index, witness == Fr::one(), inverted)
     }
@@ -76,7 +91,11 @@ impl BoolT {
             ctx: self.ctx.clone(),
             witness_index: self.witness_index.get(),
             additive_constant: Fr::from(self.witness_inverted.get() as u64),
-            multiplicative_constant: if self.witness_inverted.get() { -Fr::one() } else { Fr::one() },
+            multiplicative_constant: if self.witness_inverted.get() {
+                -Fr::one()
+            } else {
+                Fr::one()
+            },
         }
     }
 
@@ -100,11 +119,29 @@ impl BoolT {
         let value = self.get_value() && other.get_value();
         if !self.is_constant() && !other.is_constant() {
             let (a, b) = (self.witness_inverted.get() as i64, other.witness_inverted.get() as i64);
-            self.gate(other, value, [1 - 2 * b - 2 * a + 4 * a * b, b * (1 - 2 * a), a * (1 - 2 * b), -1, a * b])
+            self.gate(
+                other,
+                value,
+                [
+                    1 - 2 * b - 2 * a + 4 * a * b,
+                    b * (1 - 2 * a),
+                    a * (1 - 2 * b),
+                    -1,
+                    a * b,
+                ],
+            )
         } else if !self.is_constant() {
-            if other.witness_bool.get() { self.clone() } else { other.clone() }
+            if other.witness_bool.get() {
+                self.clone()
+            } else {
+                other.clone()
+            }
         } else if !other.is_constant() {
-            if self.witness_bool.get() { other.clone() } else { self.clone() }
+            if self.witness_bool.get() {
+                other.clone()
+            } else {
+                self.clone()
+            }
         } else {
             Self::constant(value)
         }
@@ -113,11 +150,29 @@ impl BoolT {
         let value = self.get_value() || other.get_value();
         if !self.is_constant() && !other.is_constant() {
             let (a, b) = (self.witness_inverted.get() as i64, other.witness_inverted.get() as i64);
-            self.gate(other, value, [-(1 - 2 * b) * (1 - 2 * a), (1 - 2 * a) * (1 - b), (1 - a) * (1 - 2 * b), -1, b + a - b * a])
+            self.gate(
+                other,
+                value,
+                [
+                    -(1 - 2 * b) * (1 - 2 * a),
+                    (1 - 2 * a) * (1 - b),
+                    (1 - a) * (1 - 2 * b),
+                    -1,
+                    b + a - b * a,
+                ],
+            )
         } else if !self.is_constant() {
-            if other.witness_bool.get() { other.clone() } else { self.clone() }
+            if other.witness_bool.get() {
+                other.clone()
+            } else {
+                self.clone()
+            }
         } else if !other.is_constant() {
-            if self.witness_bool.get() { self.clone() } else { other.clone() }
+            if self.witness_bool.get() {
+                self.clone()
+            } else {
+                other.clone()
+            }
         } else {
             Self::constant(value)
         }
@@ -129,9 +184,17 @@ impl BoolT {
             let p = (1 - 2 * b) * (1 - 2 * a);
             self.gate(other, value, [-2 * p, p, p, -1, a + b - 2 * b * a])
         } else if !self.is_constant() {
-            if other.witness_bool.get() { self.not() } else { self.clone() }
+            if other.witness_bool.get() {
+                self.not()
+            } else {
+                self.clone()
+            }
         } else if !other.is_constant() {
-            if self.witness_bool.get() { other.not() } else { other.clone() }
+            if self.witness_bool.get() {
+                other.not()
+            } else {
+                other.clone()
+            }
         } else {
             Self::constant(value)
         }
@@ -152,22 +215,42 @@ impl BoolT {
             let p = (1 - 2 * b) * (1 - 2 * a);
             self.gate(other, value, [2 * p, -p, -p, -1, 1 - a - b + 2 * b * a])
         } else if !self.is_constant() {
-            if other.witness_bool.get() { self.clone() } else { self.not() }
+            if other.witness_bool.get() {
+                self.clone()
+            } else {
+                self.not()
+            }
         } else if !other.is_constant() {
-            if self.witness_bool.get() { other.clone() } else { other.not() }
+            if self.witness_bool.get() {
+                other.clone()
+            } else {
+                other.not()
+            }
         } else {
             Self::constant(value)
         }
     }
     pub fn assert_equal(&self, rhs: &Self) {
         if self.is_constant() && rhs.is_constant() {
-            assert_eq!(self.get_value(), rhs.get_value(), "bool_t::assert_equal: constants differ");
+            assert_eq!(
+                self.get_value(),
+                rhs.get_value(),
+                "bool_t::assert_equal: constants differ"
+            );
         } else if self.is_constant() {
             let v = self.witness_bool.get() ^ rhs.witness_inverted.get();
-            rhs.ctx.as_ref().unwrap().borrow_mut().assert_equal_constant(rhs.witness_index.get(), Fr::from(v as u64));
+            rhs.ctx
+                .as_ref()
+                .unwrap()
+                .borrow_mut()
+                .assert_equal_constant(rhs.witness_index.get(), Fr::from(v as u64));
         } else if rhs.is_constant() {
             let v = rhs.witness_bool.get() ^ self.witness_inverted.get();
-            self.ctx.as_ref().unwrap().borrow_mut().assert_equal_constant(self.witness_index.get(), Fr::from(v as u64));
+            self.ctx
+                .as_ref()
+                .unwrap()
+                .borrow_mut()
+                .assert_equal_constant(self.witness_index.get(), Fr::from(v as u64));
         } else {
             let ctx = same_ctx(&self.ctx, &rhs.ctx).unwrap();
             let (mut left, mut right) = (self.clone(), rhs.clone());
@@ -175,12 +258,17 @@ impl BoolT {
                 left = left.normalize();
                 right = right.normalize();
             }
-            ctx.borrow_mut().assert_equal(left.witness_index.get(), right.witness_index.get());
+            ctx.borrow_mut()
+                .assert_equal(left.witness_index.get(), right.witness_index.get());
         }
     }
     pub fn conditional_assign(predicate: &Self, lhs: &Self, rhs: &Self) -> Self {
         if predicate.is_constant() {
-            return if predicate.get_value() { lhs.normalize() } else { rhs.normalize() };
+            return if predicate.get_value() {
+                lhs.normalize()
+            } else {
+                rhs.normalize()
+            };
         }
         let same = lhs.witness_index.get() == rhs.witness_index.get();
         let witness_same = same && !lhs.is_constant() && lhs.witness_inverted.get() == rhs.witness_inverted.get();

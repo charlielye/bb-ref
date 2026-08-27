@@ -2,14 +2,14 @@
 pub mod codec;
 pub mod field;
 pub mod generators;
-pub mod timing;
 pub mod group;
 pub mod io;
-pub mod poseidon2;
 pub mod poly;
+pub mod poseidon2;
 pub mod poseidon2_params;
 pub mod rng;
 pub mod srs;
+pub mod timing;
 pub mod transcript;
 pub mod vk;
 

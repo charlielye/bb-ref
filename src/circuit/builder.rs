@@ -221,7 +221,12 @@ impl Builder {
         b
     }
 
-    pub fn from_acir_mega(op_queue: Rc<RefCell<EccOpQueue>>, witness: &[Fr], public_inputs: Vec<u32>, is_write_vk_mode: bool) -> Self {
+    pub fn from_acir_mega(
+        op_queue: Rc<RefCell<EccOpQueue>>,
+        witness: &[Fr],
+        public_inputs: Vec<u32>,
+        is_write_vk_mode: bool,
+    ) -> Self {
         let mut b = Self::empty(is_write_vk_mode, true);
         for v in witness {
             b.add_variable(*v);
@@ -246,7 +251,10 @@ impl Builder {
     }
     pub fn add_public_variable(&mut self, v: Fr) -> u32 {
         let index = self.add_variable(v);
-        assert!(!self.public_inputs_finalized, "cannot add public inputs after they were finalized");
+        assert!(
+            !self.public_inputs_finalized,
+            "cannot add public inputs after they were finalized"
+        );
         self.public_inputs.push(index);
         index
     }
@@ -255,7 +263,10 @@ impl Builder {
             self.failure("attempted to set a public input that is already public");
             return 0;
         }
-        assert!(!self.public_inputs_finalized, "cannot add public inputs after they were finalized");
+        assert!(
+            !self.public_inputs_finalized,
+            "cannot add public inputs after they were finalized"
+        );
         self.public_inputs.push(witness_index);
         (self.public_inputs.len() - 1) as u32
     }
@@ -285,7 +296,10 @@ impl Builder {
         self.increment_num_gates();
     }
     fn increment_num_gates(&mut self) {
-        assert!(!self.circuit_finalized, "cannot add gates after the circuit is finalized");
+        assert!(
+            !self.circuit_finalized,
+            "cannot add gates after the circuit is finalized"
+        );
         self.num_gates += 1;
         GLOBAL_GATE_COUNT.with(|c| c.set(c.get() + 1));
     }
@@ -321,7 +335,10 @@ impl Builder {
         let a_start = self.get_first_variable_in_class(a);
         self.next_var_index[b_real as usize] = a_start;
         self.prev_var_index[a_start as usize] = b_real;
-        let (ta, tb) = (self.real_variable_tags[a_real as usize], self.real_variable_tags[b_real as usize]);
+        let (ta, tb) = (
+            self.real_variable_tags[a_real as usize],
+            self.real_variable_tags[b_real as usize],
+        );
         if !(ta == DEFAULT_TAG || tb == DEFAULT_TAG || ta == tb) {
             self.failure("assert_equal: tag clash");
         }
@@ -424,7 +441,11 @@ impl Builder {
     /// With `include_next_gate_w_4`, `q_arith = 2` scales the linear terms by 2, so the quadratic
     /// term is scaled here to compensate.
     pub fn create_big_mul_add_gate(&mut self, g: &MulQuad, include_next_gate_w_4: bool) {
-        let mul_scaling = if include_next_gate_w_4 { g.mul_scaling * Fr::from(2u64) } else { g.mul_scaling };
+        let mul_scaling = if include_next_gate_w_4 {
+            g.mul_scaling * Fr::from(2u64)
+        } else {
+            g.mul_scaling
+        };
         self.append(
             BlockId::Arithmetic,
             GateRow {
@@ -456,7 +477,13 @@ impl Builder {
                 last.gate_value = Fr::one();
             }
             _ => {
-                block.rows.push(GateRow { wires: [z, g.x1, g.y1, z], q_1: q_sign, kind: Kind::Elliptic, gate_value: Fr::one(), ..Default::default() });
+                block.rows.push(GateRow {
+                    wires: [z, g.x1, g.y1, z],
+                    q_1: q_sign,
+                    kind: Kind::Elliptic,
+                    gate_value: Fr::one(),
+                    ..Default::default()
+                });
                 self.increment_num_gates();
             }
         }
@@ -473,7 +500,13 @@ impl Builder {
                 last.gate_value = Fr::one();
             }
             _ => {
-                block.rows.push(GateRow { wires: [z, g.x1, g.y1, z], q_m: Fr::one(), kind: Kind::Elliptic, gate_value: Fr::one(), ..Default::default() });
+                block.rows.push(GateRow {
+                    wires: [z, g.x1, g.y1, z],
+                    q_m: Fr::one(),
+                    kind: Kind::Elliptic,
+                    gate_value: Fr::one(),
+                    ..Default::default()
+                });
                 self.increment_num_gates();
             }
         }
@@ -542,7 +575,11 @@ impl Builder {
             kind: Kind::Memory,
             ..Default::default()
         };
-        row.gate_value = if matches!(t, MemorySelector::None) { Fr::zero() } else { one };
+        row.gate_value = if matches!(t, MemorySelector::None) {
+            Fr::zero()
+        } else {
+            one
+        };
         match t {
             MemorySelector::None => {}
             MemorySelector::RomConsistencyCheck => {
@@ -607,7 +644,10 @@ impl Builder {
             self.create_bool_gate(variable_index);
         } else if num_bits <= DEFAULT_PLOOKUP_RANGE_BITNUM {
             // Ensure the variable appears in a wire (see `create_small_range_constraint`).
-            self.create_unconstrained_gate(BlockId::Arithmetic, [variable_index, self.zero_idx, self.zero_idx, self.zero_idx]);
+            self.create_unconstrained_gate(
+                BlockId::Arithmetic,
+                [variable_index, self.zero_idx, self.zero_idx, self.zero_idx],
+            );
             self.create_small_range_constraint(variable_index, (1u64 << num_bits) - 1);
         } else {
             self.create_limbed_range_constraint(variable_index, num_bits, DEFAULT_PLOOKUP_RANGE_BITNUM);
@@ -633,11 +673,20 @@ impl Builder {
         }
         if existing_tag == DEFAULT_TAG {
             self.assign_tag(variable_index, range_tag);
-            self.range_lists.get_mut(&target_range).unwrap().variable_indices.push(variable_index);
+            self.range_lists
+                .get_mut(&target_range)
+                .unwrap()
+                .variable_indices
+                .push(variable_index);
             return;
         }
         // Already constrained to another range: keep it if tighter, else constrain an arithmetic copy.
-        let existing_range = self.range_lists.iter().find(|(_, l)| l.range_tag == existing_tag).map(|(r, _)| *r).expect("tag without range list");
+        let existing_range = self
+            .range_lists
+            .iter()
+            .find(|(_, l)| l.range_tag == existing_tag)
+            .map(|(r, _)| *r)
+            .expect("tag without range list");
         if existing_range < target_range {
             return;
         }
@@ -678,7 +727,12 @@ impl Builder {
 
     /// Decompose into `target_range_bitnum`-bit limbs, range-constrain each, and prove the
     /// reconstruction three limbs per gate. Returns the limb witnesses.
-    pub fn create_limbed_range_constraint(&mut self, variable_index: u32, num_bits: u64, target_range_bitnum: u64) -> Vec<u32> {
+    pub fn create_limbed_range_constraint(
+        &mut self,
+        variable_index: u32,
+        num_bits: u64,
+        target_range_bitnum: u64,
+    ) -> Vec<u32> {
         assert!(num_bits > 0 && num_bits <= MAX_NUM_BITS_RANGE_CONSTRAINT);
         let val = u256(&self.get_variable(variable_index));
         if u256_num_bits(&val) as u64 > num_bits {
@@ -697,7 +751,11 @@ impl Builder {
             acc = u256_shr(acc, target_range_bitnum as u32);
         }
         let mut sublimb_indices = vec![];
-        let num_full_limbs = if has_remainder_bits { sublimbs.len() - 1 } else { sublimbs.len() };
+        let num_full_limbs = if has_remainder_bits {
+            sublimbs.len() - 1
+        } else {
+            sublimbs.len()
+        };
         for &limb in &sublimbs[..num_full_limbs] {
             let idx = self.add_variable(Fr::from(limb));
             sublimb_indices.push(idx);
@@ -717,7 +775,13 @@ impl Builder {
             let last = i as u64 == num_limb_triples - 1;
             let real = |k: u64| !(last && leftovers < k + 1);
             let limb_val = |k: usize| if real(k as u64) { sublimbs[3 * i + k] } else { 0 };
-            let limb_idx = |k: usize| if real(k as u64) { sublimb_indices[3 * i + k] } else { self.zero_idx };
+            let limb_idx = |k: usize| {
+                if real(k as u64) {
+                    sublimb_indices[3 * i + k]
+                } else {
+                    self.zero_idx
+                }
+            };
             let shift = |k: u64| target_range_bitnum * (3 * i as u64 + k);
             let pow2 = |k: u64| Fr::from(2u64).pow_u64(shift(k));
             let mut new_accumulator = accumulator;
@@ -753,7 +817,11 @@ impl Builder {
         }
         list.variable_indices.sort_unstable();
         list.variable_indices.dedup();
-        let mut sorted_list: Vec<u32> = list.variable_indices.iter().map(|i| Self::low_u64(&self.get_variable(*i)) as u32).collect();
+        let mut sorted_list: Vec<u32> = list
+            .variable_indices
+            .iter()
+            .map(|i| Self::low_u64(&self.get_variable(*i)) as u32)
+            .collect();
         sorted_list.sort_unstable();
 
         let mut padding = (NUM_WIRES - list.variable_indices.len() % NUM_WIRES) % NUM_WIRES;
@@ -819,7 +887,10 @@ impl Builder {
         self.process_ram_arrays();
         self.process_range_lists();
         for idx in self.public_inputs.clone() {
-            self.blocks.get_mut(BlockId::PubInputs).rows.push(GateRow::wires([idx, idx, self.zero_idx, self.zero_idx]));
+            self.blocks
+                .get_mut(BlockId::PubInputs)
+                .rows
+                .push(GateRow::wires([idx, idx, self.zero_idx, self.zero_idx]));
         }
         self.circuit_finalized = true;
     }

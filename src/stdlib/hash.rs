@@ -9,8 +9,14 @@ use crate::base::Fr;
 const RATE: usize = 3;
 
 pub fn hash(input: &[FieldT]) -> FieldT {
-    let ctx: Ctx = input.iter().find_map(|f| f.ctx.clone()).expect("sponge inputs must include a witness");
-    assert!(input.iter().all(|f| !f.is_constant()), "sponge inputs should not be stdlib constants");
+    let ctx: Ctx = input
+        .iter()
+        .find_map(|f| f.ctx.clone())
+        .expect("sponge inputs must include a witness");
+    assert!(
+        input.iter().all(|f| !f.is_constant()),
+        "sponge inputs should not be stdlib constants"
+    );
     let mut iv = FieldT::constant(Fr::from((input.len() as u128) << 64));
     iv.convert_constant_to_fixed_witness(&ctx);
     let zero = || FieldT::constant(Fr::zero());

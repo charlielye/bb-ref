@@ -2,7 +2,7 @@
 //! `FieldLike` in bb's operation order. A row is the slice of all 190 entity values (`Ent` order).
 
 use super::builder::negative_modulus_limbs;
-use super::{Ent, NUM_LIMB_BITS, MICRO_LIMB_BITS};
+use super::{Ent, MICRO_LIMB_BITS, NUM_LIMB_BITS};
 use crate::base::field::{FieldLike, NativeField};
 use crate::base::Fr;
 use crate::honk::relations::RelationParams;
@@ -90,7 +90,15 @@ impl<T: FieldLike<Native = Fr>> RelationSet<T> for TranslatorRelations {
     fn skip_row(&self, row0: &[T], row1: &[T]) -> bool {
         let at = |r: &[T], e: Ent| r[e as usize].clone();
         [row0, row1].iter().all(|r| {
-            [ordered_range_constraints_0_shift, ordered_range_constraints_1_shift, ordered_range_constraints_2_shift, ordered_range_constraints_3_shift, ordered_range_constraints_4_shift].iter().all(|e| at(r, *e).is_zero())
+            [
+                ordered_range_constraints_0_shift,
+                ordered_range_constraints_1_shift,
+                ordered_range_constraints_2_shift,
+                ordered_range_constraints_3_shift,
+                ordered_range_constraints_4_shift,
+            ]
+            .iter()
+            .all(|e| at(r, *e).is_zero())
                 && (at(r, z_perm) - &at(r, z_perm_shift)).is_zero()
                 && at(r, lagrange_last).is_zero()
         })
@@ -101,14 +109,35 @@ impl<T: FieldLike<Native = Fr>> RelationSet<T> for TranslatorRelations {
         match TRANSLATOR_RELATIONS[r] {
             TranslatorRel::Permutation => both(&|r: &[T]| (at(r, z_perm) - &at(r, z_perm_shift)).is_zero()),
             TranslatorRel::DeltaRange => both(&|r: &[T]| {
-                [(ordered_range_constraints_0, ordered_range_constraints_0_shift), (ordered_range_constraints_1, ordered_range_constraints_1_shift), (ordered_range_constraints_2, ordered_range_constraints_2_shift), (ordered_range_constraints_3, ordered_range_constraints_3_shift), (ordered_range_constraints_4, ordered_range_constraints_4_shift)]
-                    .iter()
-                    .all(|(e, es)| (at(r, *es) - &at(r, *e)).is_zero())
+                [
+                    (ordered_range_constraints_0, ordered_range_constraints_0_shift),
+                    (ordered_range_constraints_1, ordered_range_constraints_1_shift),
+                    (ordered_range_constraints_2, ordered_range_constraints_2_shift),
+                    (ordered_range_constraints_3, ordered_range_constraints_3_shift),
+                    (ordered_range_constraints_4, ordered_range_constraints_4_shift),
+                ]
+                .iter()
+                .all(|(e, es)| (at(r, *es) - &at(r, *e)).is_zero())
             }),
-            TranslatorRel::Opcode => both(&|r: &[T]| (at(r, lagrange_even_in_minicircuit) + &at(r, lagrange_odd_in_minicircuit)).is_zero()),
-            TranslatorRel::AccumulatorTransfer => both(&|r: &[T]| (at(r, lagrange_odd_in_minicircuit) + &at(r, lagrange_last_in_minicircuit) + &at(r, lagrange_result_row)).is_zero()),
-            TranslatorRel::Decomposition | TranslatorRel::NonNativeField => both(&|r: &[T]| at(r, lagrange_even_in_minicircuit).is_zero()),
-            TranslatorRel::ZeroConstraints => both(&|r: &[T]| (at(r, lagrange_odd_in_minicircuit) + &at(r, lagrange_even_in_minicircuit) + &at(r, lagrange_mini_masking) - &T::one()).is_zero()),
+            TranslatorRel::Opcode => {
+                both(&|r: &[T]| (at(r, lagrange_even_in_minicircuit) + &at(r, lagrange_odd_in_minicircuit)).is_zero())
+            }
+            TranslatorRel::AccumulatorTransfer => both(&|r: &[T]| {
+                (at(r, lagrange_odd_in_minicircuit)
+                    + &at(r, lagrange_last_in_minicircuit)
+                    + &at(r, lagrange_result_row))
+                    .is_zero()
+            }),
+            TranslatorRel::Decomposition | TranslatorRel::NonNativeField => {
+                both(&|r: &[T]| at(r, lagrange_even_in_minicircuit).is_zero())
+            }
+            TranslatorRel::ZeroConstraints => both(&|r: &[T]| {
+                (at(r, lagrange_odd_in_minicircuit)
+                    + &at(r, lagrange_even_in_minicircuit)
+                    + &at(r, lagrange_mini_masking)
+                    - &T::one())
+                    .is_zero()
+            }),
             TranslatorRel::ShiftableFirstCoeffZero => both(&|r: &[T]| at(r, lagrange_first).is_zero()),
         }
     }
@@ -150,13 +179,27 @@ pub fn permutation_denominator<T: FieldLike<Native = Fr>>(r: &[T], p: &RelationP
 
 fn permutation<T: FieldLike<Native = Fr>>(acc: &mut [T], r: &[T], p: &RelationParams<T>, scaling: &T) {
     let v = |e: Ent| r[e as usize].clone();
-    acc[0] += ((v(z_perm) + &v(lagrange_first)) * permutation_numerator(r, p) - &((v(z_perm_shift) + &v(lagrange_last)) * permutation_denominator(r, p))) * scaling;
+    acc[0] += ((v(z_perm) + &v(lagrange_first)) * permutation_numerator(r, p)
+        - &((v(z_perm_shift) + &v(lagrange_last)) * permutation_denominator(r, p)))
+        * scaling;
     acc[1] += (v(lagrange_last) * &v(z_perm_shift)) * scaling;
     acc[2] += (v(lagrange_first) * &v(z_perm)) * scaling;
 }
 
-const ORDERED: [Ent; 5] = [ordered_range_constraints_0, ordered_range_constraints_1, ordered_range_constraints_2, ordered_range_constraints_3, ordered_range_constraints_4];
-const ORDERED_SHIFT: [Ent; 5] = [ordered_range_constraints_0_shift, ordered_range_constraints_1_shift, ordered_range_constraints_2_shift, ordered_range_constraints_3_shift, ordered_range_constraints_4_shift];
+const ORDERED: [Ent; 5] = [
+    ordered_range_constraints_0,
+    ordered_range_constraints_1,
+    ordered_range_constraints_2,
+    ordered_range_constraints_3,
+    ordered_range_constraints_4,
+];
+const ORDERED_SHIFT: [Ent; 5] = [
+    ordered_range_constraints_0_shift,
+    ordered_range_constraints_1_shift,
+    ordered_range_constraints_2_shift,
+    ordered_range_constraints_3_shift,
+    ordered_range_constraints_4_shift,
+];
 
 fn delta_range<T: FieldLike<Native = Fr>>(acc: &mut [T], r: &[T], scaling: &T) {
     let v = |e: Ent| r[e as usize].clone();
@@ -177,8 +220,18 @@ fn delta_range<T: FieldLike<Native = Fr>>(acc: &mut [T], r: &[T], scaling: &T) {
     }
 }
 
-const ACC: [Ent; 4] = [accumulators_binary_limbs_0, accumulators_binary_limbs_1, accumulators_binary_limbs_2, accumulators_binary_limbs_3];
-const ACC_SHIFT: [Ent; 4] = [accumulators_binary_limbs_0_shift, accumulators_binary_limbs_1_shift, accumulators_binary_limbs_2_shift, accumulators_binary_limbs_3_shift];
+const ACC: [Ent; 4] = [
+    accumulators_binary_limbs_0,
+    accumulators_binary_limbs_1,
+    accumulators_binary_limbs_2,
+    accumulators_binary_limbs_3,
+];
+const ACC_SHIFT: [Ent; 4] = [
+    accumulators_binary_limbs_0_shift,
+    accumulators_binary_limbs_1_shift,
+    accumulators_binary_limbs_2_shift,
+    accumulators_binary_limbs_3_shift,
+];
 
 fn opcode<T: FieldLike<Native = Fr>>(acc: &mut [T], r: &[T], scaling: &T) {
     let v = |e: Ent| r[e as usize].clone();
@@ -226,31 +279,181 @@ fn accumulator_transfer<T: FieldLike<Native = Fr>>(acc: &mut [T], r: &[T], p: &R
 }
 
 const RC: [[Ent; 6]; 10] = [
-    [p_x_low_limbs_range_constraint_0, p_x_low_limbs_range_constraint_1, p_x_low_limbs_range_constraint_2, p_x_low_limbs_range_constraint_3, p_x_low_limbs_range_constraint_4, p_x_low_limbs_range_constraint_tail],
-    [p_x_high_limbs_range_constraint_0, p_x_high_limbs_range_constraint_1, p_x_high_limbs_range_constraint_2, p_x_high_limbs_range_constraint_3, p_x_high_limbs_range_constraint_4, p_x_high_limbs_range_constraint_tail],
-    [p_y_low_limbs_range_constraint_0, p_y_low_limbs_range_constraint_1, p_y_low_limbs_range_constraint_2, p_y_low_limbs_range_constraint_3, p_y_low_limbs_range_constraint_4, p_y_low_limbs_range_constraint_tail],
-    [p_y_high_limbs_range_constraint_0, p_y_high_limbs_range_constraint_1, p_y_high_limbs_range_constraint_2, p_y_high_limbs_range_constraint_3, p_y_high_limbs_range_constraint_4, p_y_high_limbs_range_constraint_tail],
-    [z_low_limbs_range_constraint_0, z_low_limbs_range_constraint_1, z_low_limbs_range_constraint_2, z_low_limbs_range_constraint_3, z_low_limbs_range_constraint_4, z_low_limbs_range_constraint_tail],
-    [z_high_limbs_range_constraint_0, z_high_limbs_range_constraint_1, z_high_limbs_range_constraint_2, z_high_limbs_range_constraint_3, z_high_limbs_range_constraint_4, z_high_limbs_range_constraint_tail],
-    [accumulator_low_limbs_range_constraint_0, accumulator_low_limbs_range_constraint_1, accumulator_low_limbs_range_constraint_2, accumulator_low_limbs_range_constraint_3, accumulator_low_limbs_range_constraint_4, accumulator_low_limbs_range_constraint_tail],
-    [accumulator_high_limbs_range_constraint_0, accumulator_high_limbs_range_constraint_1, accumulator_high_limbs_range_constraint_2, accumulator_high_limbs_range_constraint_3, accumulator_high_limbs_range_constraint_4, accumulator_high_limbs_range_constraint_tail],
-    [quotient_low_limbs_range_constraint_0, quotient_low_limbs_range_constraint_1, quotient_low_limbs_range_constraint_2, quotient_low_limbs_range_constraint_3, quotient_low_limbs_range_constraint_4, quotient_low_limbs_range_constraint_tail],
-    [quotient_high_limbs_range_constraint_0, quotient_high_limbs_range_constraint_1, quotient_high_limbs_range_constraint_2, quotient_high_limbs_range_constraint_3, quotient_high_limbs_range_constraint_4, quotient_high_limbs_range_constraint_tail],
+    [
+        p_x_low_limbs_range_constraint_0,
+        p_x_low_limbs_range_constraint_1,
+        p_x_low_limbs_range_constraint_2,
+        p_x_low_limbs_range_constraint_3,
+        p_x_low_limbs_range_constraint_4,
+        p_x_low_limbs_range_constraint_tail,
+    ],
+    [
+        p_x_high_limbs_range_constraint_0,
+        p_x_high_limbs_range_constraint_1,
+        p_x_high_limbs_range_constraint_2,
+        p_x_high_limbs_range_constraint_3,
+        p_x_high_limbs_range_constraint_4,
+        p_x_high_limbs_range_constraint_tail,
+    ],
+    [
+        p_y_low_limbs_range_constraint_0,
+        p_y_low_limbs_range_constraint_1,
+        p_y_low_limbs_range_constraint_2,
+        p_y_low_limbs_range_constraint_3,
+        p_y_low_limbs_range_constraint_4,
+        p_y_low_limbs_range_constraint_tail,
+    ],
+    [
+        p_y_high_limbs_range_constraint_0,
+        p_y_high_limbs_range_constraint_1,
+        p_y_high_limbs_range_constraint_2,
+        p_y_high_limbs_range_constraint_3,
+        p_y_high_limbs_range_constraint_4,
+        p_y_high_limbs_range_constraint_tail,
+    ],
+    [
+        z_low_limbs_range_constraint_0,
+        z_low_limbs_range_constraint_1,
+        z_low_limbs_range_constraint_2,
+        z_low_limbs_range_constraint_3,
+        z_low_limbs_range_constraint_4,
+        z_low_limbs_range_constraint_tail,
+    ],
+    [
+        z_high_limbs_range_constraint_0,
+        z_high_limbs_range_constraint_1,
+        z_high_limbs_range_constraint_2,
+        z_high_limbs_range_constraint_3,
+        z_high_limbs_range_constraint_4,
+        z_high_limbs_range_constraint_tail,
+    ],
+    [
+        accumulator_low_limbs_range_constraint_0,
+        accumulator_low_limbs_range_constraint_1,
+        accumulator_low_limbs_range_constraint_2,
+        accumulator_low_limbs_range_constraint_3,
+        accumulator_low_limbs_range_constraint_4,
+        accumulator_low_limbs_range_constraint_tail,
+    ],
+    [
+        accumulator_high_limbs_range_constraint_0,
+        accumulator_high_limbs_range_constraint_1,
+        accumulator_high_limbs_range_constraint_2,
+        accumulator_high_limbs_range_constraint_3,
+        accumulator_high_limbs_range_constraint_4,
+        accumulator_high_limbs_range_constraint_tail,
+    ],
+    [
+        quotient_low_limbs_range_constraint_0,
+        quotient_low_limbs_range_constraint_1,
+        quotient_low_limbs_range_constraint_2,
+        quotient_low_limbs_range_constraint_3,
+        quotient_low_limbs_range_constraint_4,
+        quotient_low_limbs_range_constraint_tail,
+    ],
+    [
+        quotient_high_limbs_range_constraint_0,
+        quotient_high_limbs_range_constraint_1,
+        quotient_high_limbs_range_constraint_2,
+        quotient_high_limbs_range_constraint_3,
+        quotient_high_limbs_range_constraint_4,
+        quotient_high_limbs_range_constraint_tail,
+    ],
 ];
 const RC_SHIFT: [[Ent; 6]; 10] = [
-    [p_x_low_limbs_range_constraint_0_shift, p_x_low_limbs_range_constraint_1_shift, p_x_low_limbs_range_constraint_2_shift, p_x_low_limbs_range_constraint_3_shift, p_x_low_limbs_range_constraint_4_shift, p_x_low_limbs_range_constraint_tail_shift],
-    [p_x_high_limbs_range_constraint_0_shift, p_x_high_limbs_range_constraint_1_shift, p_x_high_limbs_range_constraint_2_shift, p_x_high_limbs_range_constraint_3_shift, p_x_high_limbs_range_constraint_4_shift, p_x_high_limbs_range_constraint_tail_shift],
-    [p_y_low_limbs_range_constraint_0_shift, p_y_low_limbs_range_constraint_1_shift, p_y_low_limbs_range_constraint_2_shift, p_y_low_limbs_range_constraint_3_shift, p_y_low_limbs_range_constraint_4_shift, p_y_low_limbs_range_constraint_tail_shift],
-    [p_y_high_limbs_range_constraint_0_shift, p_y_high_limbs_range_constraint_1_shift, p_y_high_limbs_range_constraint_2_shift, p_y_high_limbs_range_constraint_3_shift, p_y_high_limbs_range_constraint_4_shift, p_y_high_limbs_range_constraint_tail_shift],
-    [z_low_limbs_range_constraint_0_shift, z_low_limbs_range_constraint_1_shift, z_low_limbs_range_constraint_2_shift, z_low_limbs_range_constraint_3_shift, z_low_limbs_range_constraint_4_shift, z_low_limbs_range_constraint_tail_shift],
-    [z_high_limbs_range_constraint_0_shift, z_high_limbs_range_constraint_1_shift, z_high_limbs_range_constraint_2_shift, z_high_limbs_range_constraint_3_shift, z_high_limbs_range_constraint_4_shift, z_high_limbs_range_constraint_tail_shift],
-    [accumulator_low_limbs_range_constraint_0_shift, accumulator_low_limbs_range_constraint_1_shift, accumulator_low_limbs_range_constraint_2_shift, accumulator_low_limbs_range_constraint_3_shift, accumulator_low_limbs_range_constraint_4_shift, accumulator_low_limbs_range_constraint_tail_shift],
-    [accumulator_high_limbs_range_constraint_0_shift, accumulator_high_limbs_range_constraint_1_shift, accumulator_high_limbs_range_constraint_2_shift, accumulator_high_limbs_range_constraint_3_shift, accumulator_high_limbs_range_constraint_4_shift, accumulator_high_limbs_range_constraint_tail_shift],
-    [quotient_low_limbs_range_constraint_0_shift, quotient_low_limbs_range_constraint_1_shift, quotient_low_limbs_range_constraint_2_shift, quotient_low_limbs_range_constraint_3_shift, quotient_low_limbs_range_constraint_4_shift, quotient_low_limbs_range_constraint_tail_shift],
-    [quotient_high_limbs_range_constraint_0_shift, quotient_high_limbs_range_constraint_1_shift, quotient_high_limbs_range_constraint_2_shift, quotient_high_limbs_range_constraint_3_shift, quotient_high_limbs_range_constraint_4_shift, quotient_high_limbs_range_constraint_tail_shift],
+    [
+        p_x_low_limbs_range_constraint_0_shift,
+        p_x_low_limbs_range_constraint_1_shift,
+        p_x_low_limbs_range_constraint_2_shift,
+        p_x_low_limbs_range_constraint_3_shift,
+        p_x_low_limbs_range_constraint_4_shift,
+        p_x_low_limbs_range_constraint_tail_shift,
+    ],
+    [
+        p_x_high_limbs_range_constraint_0_shift,
+        p_x_high_limbs_range_constraint_1_shift,
+        p_x_high_limbs_range_constraint_2_shift,
+        p_x_high_limbs_range_constraint_3_shift,
+        p_x_high_limbs_range_constraint_4_shift,
+        p_x_high_limbs_range_constraint_tail_shift,
+    ],
+    [
+        p_y_low_limbs_range_constraint_0_shift,
+        p_y_low_limbs_range_constraint_1_shift,
+        p_y_low_limbs_range_constraint_2_shift,
+        p_y_low_limbs_range_constraint_3_shift,
+        p_y_low_limbs_range_constraint_4_shift,
+        p_y_low_limbs_range_constraint_tail_shift,
+    ],
+    [
+        p_y_high_limbs_range_constraint_0_shift,
+        p_y_high_limbs_range_constraint_1_shift,
+        p_y_high_limbs_range_constraint_2_shift,
+        p_y_high_limbs_range_constraint_3_shift,
+        p_y_high_limbs_range_constraint_4_shift,
+        p_y_high_limbs_range_constraint_tail_shift,
+    ],
+    [
+        z_low_limbs_range_constraint_0_shift,
+        z_low_limbs_range_constraint_1_shift,
+        z_low_limbs_range_constraint_2_shift,
+        z_low_limbs_range_constraint_3_shift,
+        z_low_limbs_range_constraint_4_shift,
+        z_low_limbs_range_constraint_tail_shift,
+    ],
+    [
+        z_high_limbs_range_constraint_0_shift,
+        z_high_limbs_range_constraint_1_shift,
+        z_high_limbs_range_constraint_2_shift,
+        z_high_limbs_range_constraint_3_shift,
+        z_high_limbs_range_constraint_4_shift,
+        z_high_limbs_range_constraint_tail_shift,
+    ],
+    [
+        accumulator_low_limbs_range_constraint_0_shift,
+        accumulator_low_limbs_range_constraint_1_shift,
+        accumulator_low_limbs_range_constraint_2_shift,
+        accumulator_low_limbs_range_constraint_3_shift,
+        accumulator_low_limbs_range_constraint_4_shift,
+        accumulator_low_limbs_range_constraint_tail_shift,
+    ],
+    [
+        accumulator_high_limbs_range_constraint_0_shift,
+        accumulator_high_limbs_range_constraint_1_shift,
+        accumulator_high_limbs_range_constraint_2_shift,
+        accumulator_high_limbs_range_constraint_3_shift,
+        accumulator_high_limbs_range_constraint_4_shift,
+        accumulator_high_limbs_range_constraint_tail_shift,
+    ],
+    [
+        quotient_low_limbs_range_constraint_0_shift,
+        quotient_low_limbs_range_constraint_1_shift,
+        quotient_low_limbs_range_constraint_2_shift,
+        quotient_low_limbs_range_constraint_3_shift,
+        quotient_low_limbs_range_constraint_4_shift,
+        quotient_low_limbs_range_constraint_tail_shift,
+    ],
+    [
+        quotient_high_limbs_range_constraint_0_shift,
+        quotient_high_limbs_range_constraint_1_shift,
+        quotient_high_limbs_range_constraint_2_shift,
+        quotient_high_limbs_range_constraint_3_shift,
+        quotient_high_limbs_range_constraint_4_shift,
+        quotient_high_limbs_range_constraint_tail_shift,
+    ],
 ];
-const RC_WIDE: [Ent; 4] = [relation_wide_limbs_range_constraint_0, relation_wide_limbs_range_constraint_1, relation_wide_limbs_range_constraint_2, relation_wide_limbs_range_constraint_3];
-const RC_WIDE_SHIFT: [Ent; 4] = [relation_wide_limbs_range_constraint_0_shift, relation_wide_limbs_range_constraint_1_shift, relation_wide_limbs_range_constraint_2_shift, relation_wide_limbs_range_constraint_3_shift];
+const RC_WIDE: [Ent; 4] = [
+    relation_wide_limbs_range_constraint_0,
+    relation_wide_limbs_range_constraint_1,
+    relation_wide_limbs_range_constraint_2,
+    relation_wide_limbs_range_constraint_3,
+];
+const RC_WIDE_SHIFT: [Ent; 4] = [
+    relation_wide_limbs_range_constraint_0_shift,
+    relation_wide_limbs_range_constraint_1_shift,
+    relation_wide_limbs_range_constraint_2_shift,
+    relation_wide_limbs_range_constraint_3_shift,
+];
 const P_X_LOW: usize = 0;
 const P_X_HIGH: usize = 1;
 const P_Y_LOW: usize = 2;
@@ -265,7 +468,14 @@ const Q_HIGH: usize = 9;
 fn decomposition<T: FieldLike<Native = Fr>>(acc: &mut [T], r: &[T], scaling: &T) {
     let v = |e: Ent| r[e as usize].clone();
     let shift: T = c(1u64 << MICRO_LIMB_BITS);
-    let shifts = [T::one(), shift.clone(), shift.sqr(), shift.sqr() * &shift, shift.sqr().sqr(), shift.sqr().sqr() * &shift];
+    let shifts = [
+        T::one(),
+        shift.clone(),
+        shift.sqr(),
+        shift.sqr() * &shift,
+        shift.sqr().sqr(),
+        shift.sqr().sqr() * &shift,
+    ];
     let even = v(lagrange_even_in_minicircuit);
     let opv = v(Ent::op);
     // Σ_i micro_i · 2^{14 i} − limb, over the given micro-limb entities.
@@ -311,9 +521,26 @@ fn decomposition<T: FieldLike<Native = Fr>>(acc: &mut [T], r: &[T], scaling: &T)
     push(16, recompose(&RC[Q_LOW][..5], v(quotient_low_binary_limbs)));
     push(17, recompose(&RC_SHIFT[Q_LOW][..5], v(quotient_low_binary_limbs_shift)));
     push(18, recompose(&RC[Q_HIGH][..5], v(quotient_high_binary_limbs)));
-    push(19, recompose(&RC_SHIFT[Q_HIGH][..4], v(quotient_high_binary_limbs_shift)));
-    let wide_lo = [RC_WIDE[0], RC_WIDE[1], RC_WIDE[2], RC_WIDE[3], p_x_high_limbs_range_constraint_tail_shift, accumulator_high_limbs_range_constraint_tail_shift];
-    let wide_hi = [RC_WIDE_SHIFT[0], RC_WIDE_SHIFT[1], RC_WIDE_SHIFT[2], RC_WIDE_SHIFT[3], p_y_high_limbs_range_constraint_tail_shift, quotient_high_limbs_range_constraint_tail_shift];
+    push(
+        19,
+        recompose(&RC_SHIFT[Q_HIGH][..4], v(quotient_high_binary_limbs_shift)),
+    );
+    let wide_lo = [
+        RC_WIDE[0],
+        RC_WIDE[1],
+        RC_WIDE[2],
+        RC_WIDE[3],
+        p_x_high_limbs_range_constraint_tail_shift,
+        accumulator_high_limbs_range_constraint_tail_shift,
+    ];
+    let wide_hi = [
+        RC_WIDE_SHIFT[0],
+        RC_WIDE_SHIFT[1],
+        RC_WIDE_SHIFT[2],
+        RC_WIDE_SHIFT[3],
+        p_y_high_limbs_range_constraint_tail_shift,
+        quotient_high_limbs_range_constraint_tail_shift,
+    ];
     push(20, recompose(&wide_lo, v(relation_wide_limbs)));
     push(21, recompose(&wide_hi, v(relation_wide_limbs_shift)));
     // stricter top micro-limb checks (subrelations 22..41): top chunk · 2^{14 - bits} == tail
@@ -357,34 +584,114 @@ fn non_native_field<T: FieldLike<Native = Fr>>(acc: &mut [T], r: &[T], p: &Relat
     let shiftx3: T = T::constant(LIMB_SHIFTS[2]);
     let neg: [T; 5] = std::array::from_fn(|i| T::constant(NEG_MODULUS_LIMBS[i]));
     let x = &p.evaluation_input_x;
-    let (v1, v2, v3, v4) = (&p.batching_challenge_v[0], &p.batching_challenge_v[1], &p.batching_challenge_v[2], &p.batching_challenge_v[3]);
+    let (v1, v2, v3, v4) = (
+        &p.batching_challenge_v[0],
+        &p.batching_challenge_v[1],
+        &p.batching_challenge_v[2],
+        &p.batching_challenge_v[3],
+    );
     let opv = v(Ent::op);
-    let (px0, px1, px2, px3) = (v(p_x_low_limbs), v(p_x_low_limbs_shift), v(p_x_high_limbs), v(p_x_high_limbs_shift));
-    let (py0, py1, py2, py3) = (v(p_y_low_limbs), v(p_y_low_limbs_shift), v(p_y_high_limbs), v(p_y_high_limbs_shift));
+    let (px0, px1, px2, px3) = (
+        v(p_x_low_limbs),
+        v(p_x_low_limbs_shift),
+        v(p_x_high_limbs),
+        v(p_x_high_limbs_shift),
+    );
+    let (py0, py1, py2, py3) = (
+        v(p_y_low_limbs),
+        v(p_y_low_limbs_shift),
+        v(p_y_high_limbs),
+        v(p_y_high_limbs_shift),
+    );
     let (a0, a1, a2, a3) = (v(ACC[0]), v(ACC[1]), v(ACC[2]), v(ACC[3]));
     let (pa0, pa1, pa2, pa3) = (v(ACC_SHIFT[0]), v(ACC_SHIFT[1]), v(ACC_SHIFT[2]), v(ACC_SHIFT[3]));
     let (z10, z11) = (v(z_low_limbs), v(z_high_limbs));
     let (z20, z21) = (v(z_low_limbs_shift), v(z_high_limbs_shift));
-    let (q0, q1, q2, q3) = (v(quotient_low_binary_limbs), v(quotient_low_binary_limbs_shift), v(quotient_high_binary_limbs), v(quotient_high_binary_limbs_shift));
+    let (q0, q1, q2, q3) = (
+        v(quotient_low_binary_limbs),
+        v(quotient_low_binary_limbs_shift),
+        v(quotient_high_binary_limbs),
+        v(quotient_high_binary_limbs_shift),
+    );
     let (wide_lo, wide_hi) = (v(relation_wide_limbs), v(relation_wide_limbs_shift));
     let even = v(lagrange_even_in_minicircuit);
 
-    let mut tmp = pa0.clone() * &x[0] + &opv + &(px0.clone() * &v1[0]) + &(py0.clone() * &v2[0]) + &(z10.clone() * &v3[0]) + &(z20.clone() * &v4[0]) + &(q0.clone() * &neg[0]) - &a0;
-    tmp += &((pa1.clone() * &x[0] + &(pa0.clone() * &x[1]) + &(px0.clone() * &v1[1]) + &(px1.clone() * &v1[0]) + &(py0.clone() * &v2[1]) + &(py1.clone() * &v2[0]) + &(z10.clone() * &v3[1]) + &(z11.clone() * &v3[0]) + &(z20.clone() * &v4[1]) + &(z21.clone() * &v4[0]) + &(q0.clone() * &neg[1]) + &(q1.clone() * &neg[0]) - &a1) * &shift);
+    let mut tmp = pa0.clone() * &x[0]
+        + &opv
+        + &(px0.clone() * &v1[0])
+        + &(py0.clone() * &v2[0])
+        + &(z10.clone() * &v3[0])
+        + &(z20.clone() * &v4[0])
+        + &(q0.clone() * &neg[0])
+        - &a0;
+    tmp += &((pa1.clone() * &x[0]
+        + &(pa0.clone() * &x[1])
+        + &(px0.clone() * &v1[1])
+        + &(px1.clone() * &v1[0])
+        + &(py0.clone() * &v2[1])
+        + &(py1.clone() * &v2[0])
+        + &(z10.clone() * &v3[1])
+        + &(z11.clone() * &v3[0])
+        + &(z20.clone() * &v4[1])
+        + &(z21.clone() * &v4[0])
+        + &(q0.clone() * &neg[1])
+        + &(q1.clone() * &neg[0])
+        - &a1)
+        * &shift);
     tmp -= &(wide_lo.clone() * &shiftx2);
     tmp *= &(even.clone() * &opv);
     tmp *= scaling;
     acc[0] += tmp;
 
-    let mut tmp = wide_lo + &(pa2.clone() * &x[0]) + &(pa1.clone() * &x[1]) + &(pa0.clone() * &x[2]) + &(px2.clone() * &v1[0]) + &(px1.clone() * &v1[1]) + &(px0.clone() * &v1[2]) + &(py2.clone() * &v2[0]) + &(py1.clone() * &v2[1]) + &(py0.clone() * &v2[2]) + &(z11.clone() * &v3[1]) + &(z10.clone() * &v3[2]) + &(z21.clone() * &v4[1]) + &(z20.clone() * &v4[2]) + &(q2.clone() * &neg[0]) + &(q1.clone() * &neg[1]) + &(q0.clone() * &neg[2]) - &a2;
-    tmp += &((pa3.clone() * &x[0] + &(pa2.clone() * &x[1]) + &(pa1.clone() * &x[2]) + &(pa0.clone() * &x[3]) + &(px3.clone() * &v1[0]) + &(px2.clone() * &v1[1]) + &(px1.clone() * &v1[2]) + &(px0.clone() * &v1[3]) + &(py3.clone() * &v2[0]) + &(py2.clone() * &v2[1]) + &(py1.clone() * &v2[2]) + &(py0.clone() * &v2[3]) + &(z11.clone() * &v3[2]) + &(z10.clone() * &v3[3]) + &(z21.clone() * &v4[2]) + &(z20.clone() * &v4[3]) + &(q3.clone() * &neg[0]) + &(q2.clone() * &neg[1]) + &(q1.clone() * &neg[2]) + &(q0.clone() * &neg[3]) - &a3) * &shift);
+    let mut tmp = wide_lo
+        + &(pa2.clone() * &x[0])
+        + &(pa1.clone() * &x[1])
+        + &(pa0.clone() * &x[2])
+        + &(px2.clone() * &v1[0])
+        + &(px1.clone() * &v1[1])
+        + &(px0.clone() * &v1[2])
+        + &(py2.clone() * &v2[0])
+        + &(py1.clone() * &v2[1])
+        + &(py0.clone() * &v2[2])
+        + &(z11.clone() * &v3[1])
+        + &(z10.clone() * &v3[2])
+        + &(z21.clone() * &v4[1])
+        + &(z20.clone() * &v4[2])
+        + &(q2.clone() * &neg[0])
+        + &(q1.clone() * &neg[1])
+        + &(q0.clone() * &neg[2])
+        - &a2;
+    tmp += &((pa3.clone() * &x[0]
+        + &(pa2.clone() * &x[1])
+        + &(pa1.clone() * &x[2])
+        + &(pa0.clone() * &x[3])
+        + &(px3.clone() * &v1[0])
+        + &(px2.clone() * &v1[1])
+        + &(px1.clone() * &v1[2])
+        + &(px0.clone() * &v1[3])
+        + &(py3.clone() * &v2[0])
+        + &(py2.clone() * &v2[1])
+        + &(py1.clone() * &v2[2])
+        + &(py0.clone() * &v2[3])
+        + &(z11.clone() * &v3[2])
+        + &(z10.clone() * &v3[3])
+        + &(z21.clone() * &v4[2])
+        + &(z20.clone() * &v4[3])
+        + &(q3.clone() * &neg[0])
+        + &(q2.clone() * &neg[1])
+        + &(q1.clone() * &neg[2])
+        + &(q0.clone() * &neg[3])
+        - &a3)
+        * &shift);
     tmp -= &(wide_hi * &shiftx2);
     tmp *= &(even.clone() * &opv);
     tmp *= scaling;
     acc[1] += tmp;
 
     let from_two = |l0: &T, l1: &T| l0.clone() + &(l1.clone() * &shift);
-    let from_four = |l0: &T, l1: &T, l2: &T, l3: &T| l0.clone() + &(l1.clone() * &shift) + &(l2.clone() * &shiftx2) + &(l3.clone() * &shiftx3);
+    let from_four = |l0: &T, l1: &T, l2: &T, l3: &T| {
+        l0.clone() + &(l1.clone() * &shift) + &(l2.clone() * &shiftx2) + &(l3.clone() * &shiftx3)
+    };
     let p_x = from_four(&px0, &px1, &px2, &px3);
     let p_y = from_four(&py0, &py1, &py2, &py3);
     let prev = from_four(&pa0, &pa1, &pa2, &pa3);
@@ -392,7 +699,14 @@ fn non_native_field<T: FieldLike<Native = Fr>>(acc: &mut [T], r: &[T], p: &Relat
     let z1 = from_two(&z10, &z11);
     let z2 = from_two(&z20, &z21);
     let quotient = from_four(&q0, &q1, &q2, &q3);
-    let mut tmp = prev * &x[4] + &opv + &(p_x * &v1[4]) + &(p_y * &v2[4]) + &(z1 * &v3[4]) + &(z2 * &v4[4]) + &(quotient * &neg[4]) - &current;
+    let mut tmp = prev * &x[4]
+        + &opv
+        + &(p_x * &v1[4])
+        + &(p_y * &v2[4])
+        + &(z1 * &v3[4])
+        + &(z2 * &v4[4])
+        + &(quotient * &neg[4])
+        - &current;
     tmp *= &(even * &opv);
     tmp *= scaling;
     acc[2] += tmp;
@@ -416,7 +730,9 @@ fn zero_constraint_entities() -> Vec<Ent> {
 
 fn zero_constraints<T: FieldLike<Native = Fr>>(acc: &mut [T], r: &[T], scaling: &T) {
     let v = |e: Ent| r[e as usize].clone();
-    let not_in_minicircuit_or_masked = (v(lagrange_odd_in_minicircuit) + &v(lagrange_even_in_minicircuit) + &v(lagrange_mini_masking) - &T::one()) * scaling;
+    let not_in_minicircuit_or_masked =
+        (v(lagrange_odd_in_minicircuit) + &v(lagrange_even_in_minicircuit) + &v(lagrange_mini_masking) - &T::one())
+            * scaling;
     for (i, e) in ZERO_CONSTRAINT_ENTITIES.iter().enumerate() {
         acc[i] += v(*e) * &not_in_minicircuit_or_masked;
     }

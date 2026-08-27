@@ -26,17 +26,27 @@ pub struct ChonkProof {
 
 impl ChonkProof {
     pub fn to_fields(&self) -> Vec<Fr> {
-        [&self.hiding_oink_proof, &self.merge_proof, &self.eccvm_proof, &self.ipa_proof, &self.joint_proof]
-            .into_iter()
-            .flatten()
-            .copied()
-            .collect()
+        [
+            &self.hiding_oink_proof,
+            &self.merge_proof,
+            &self.eccvm_proof,
+            &self.ipa_proof,
+            &self.joint_proof,
+        ]
+        .into_iter()
+        .flatten()
+        .copied()
+        .collect()
     }
 
     /// The Oink proof takes whatever is not accounted for by the fixed-size sub-proofs.
     pub fn from_fields(fields: &[Fr]) -> Self {
         let fixed = MERGE_PROOF_SIZE + ECCVM_PROOF_LENGTH + TRIPLE_IPA_PROOF_LENGTH + JOINT_PROOF_LENGTH;
-        assert!(fields.len() >= fixed, "Chonk proof too short: {} < {fixed}", fields.len());
+        assert!(
+            fields.len() >= fixed,
+            "Chonk proof too short: {} < {fixed}",
+            fields.len()
+        );
         let mut rest = fields;
         let mut take = |n: usize| {
             let (head, tail) = rest.split_at(n);

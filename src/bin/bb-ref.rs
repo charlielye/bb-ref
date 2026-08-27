@@ -9,13 +9,13 @@
 //!   bb-ref verify   --scheme chonk -k <vk> -p <proof>
 
 use bb_ref::acir::{build_circuit, build_circuit_mega, decode_program, decode_steps, decode_witness, prove_steps};
-use bb_ref::chonk::proof::ChonkProof;
-use bb_ref::chonk::verifier::chonk_verify;
-use bb_ref::goblin::eccvm::FIXED_SIZE as ECCVM_FIXED_SIZE;
 use bb_ref::base::field::{to_bytes_be, Fr};
 use bb_ref::base::io::{decode_fields, encode_fields};
 use bb_ref::base::srs::bn254_g2;
 use bb_ref::base::{Bn254, CommitmentKey, GrumpkinKey, OsRng, Vk};
+use bb_ref::chonk::proof::ChonkProof;
+use bb_ref::chonk::verifier::chonk_verify;
+use bb_ref::goblin::eccvm::FIXED_SIZE as ECCVM_FIXED_SIZE;
 use bb_ref::honk::prover_instance::ProverInstance;
 use bb_ref::honk::ultra_prover::prove_ultra;
 use bb_ref::honk::ultra_verifier::verify_ultra;
@@ -59,7 +59,10 @@ fn chonk(cmd: &str, flags: &HashMap<String, String>) {
             println!("VK saved to {}", out.display());
         }
         "prove" => {
-            let steps = decode_steps(&std::fs::read(get("--ivc_inputs_path")).expect("ivc inputs"), &mut OsRng);
+            let steps = decode_steps(
+                &std::fs::read(get("--ivc_inputs_path")).expect("ivc inputs"),
+                &mut OsRng,
+            );
             let check_vks = flags.get("--vk_policy").is_some_and(|v| v == "check");
             let (proof, vk) = prove_steps(&steps, CommitmentKey::new(1 << 17), &mut OsRng, check_vks);
             let out = out_dir(flags);
@@ -71,7 +74,14 @@ fn chonk(cmd: &str, flags: &HashMap<String, String>) {
             let vk = Vk::<Bn254>::from_bytes(&std::fs::read(get("-k")).unwrap(), MEGA_ZK.layout().num_precomputed);
             let proof = ChonkProof::from_fields(&decode_fields(&std::fs::read(get("-p")).unwrap()));
             let ok = chonk_verify(&vk, &proof, &bn254_g2(), &GrumpkinKey::new(ECCVM_FIXED_SIZE));
-            println!("{}", if ok { "Proof verified successfully" } else { "Proof verification failed" });
+            println!(
+                "{}",
+                if ok {
+                    "Proof verified successfully"
+                } else {
+                    "Proof verification failed"
+                }
+            );
             std::process::exit(if ok { 0 } else { 1 });
         }
         _ => {
@@ -91,7 +101,10 @@ fn main() {
     // windows; oversubscription costs more than it gains); RAYON_NUM_THREADS still overrides.
     if std::env::var_os("RAYON_NUM_THREADS").is_none() {
         let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(48);
-        rayon::ThreadPoolBuilder::new().num_threads(threads).build_global().expect("rayon pool");
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build_global()
+            .expect("rayon pool");
     }
     let args: Vec<String> = std::env::args().collect();
     let cmd = args.get(1).map(String::as_str).unwrap_or("");
@@ -113,7 +126,11 @@ fn main() {
     }
     let get = |k: &str| flags.get(k).cloned().unwrap_or_else(|| panic!("missing {k}"));
     let scheme = flags.get("--scheme").cloned().unwrap_or_else(|| "ultra_honk".into());
-    let flavor = if flags.contains_key("--disable_zk") { &ULTRA } else { &ULTRA_ZK };
+    let flavor = if flags.contains_key("--disable_zk") {
+        &ULTRA
+    } else {
+        &ULTRA_ZK
+    };
 
     if scheme == "chonk" {
         chonk(cmd, &flags);
@@ -127,7 +144,14 @@ fn main() {
             let proof = decode_fields(&std::fs::read(get("-p")).unwrap());
             let pis = decode_fields(&std::fs::read(get("-i")).unwrap());
             let ok = verify_ultra(flavor, &vk, &pis, &proof, &bn254_g2());
-            println!("{}", if ok { "Proof verified successfully" } else { "Proof verification failed" });
+            println!(
+                "{}",
+                if ok {
+                    "Proof verified successfully"
+                } else {
+                    "Proof verification failed"
+                }
+            );
             std::process::exit(if ok { 0 } else { 1 });
         }
         "prove" => {

@@ -2,21 +2,21 @@
 //! pairing-point aggregation, kernel IO) emit exactly bb's gates: every polynomial and the VK of
 //! each `BbRefDump.Stdlib` program match.
 mod common;
+use ark_ec::{AffineRepr, CurveGroup};
 use bb_ref::base::field::from_hex;
 use bb_ref::base::group::{GroupLike, PairingPoints};
 use bb_ref::base::transcript::Transcript;
 use bb_ref::base::{CommitmentKey, Fq, Fr, GrumpkinAffine, NativeTranscript, OsRng};
+use bb_ref::circuit::{Builder, EccOpQueue};
 use bb_ref::honk::circuit_checker::check_circuit;
 use bb_ref::honk::oink_prover::prove_oink;
-use bb_ref::circuit::{Builder, EccOpQueue};
 use bb_ref::honk::prover_instance::ProverInstance;
 use bb_ref::honk::MEGA_KERNEL;
+use bb_ref::stdlib::cycle_group::{CycleGroup, CycleScalar};
 use bb_ref::stdlib::field::split_unique;
 use bb_ref::stdlib::hash::StdPoseidon2;
 use bb_ref::stdlib::io::{AppIo, DataBusDepot, HidingKernelIo, KernelIo, MAX_APPS_PER_KERNEL};
-use bb_ref::stdlib::cycle_group::{CycleGroup, CycleScalar};
 use bb_ref::stdlib::{BoolT, Ctx, FieldT, GoblinElement, StdBn254};
-use ark_ec::{AffineRepr, CurveGroup};
 use common::eccvm_ops::g1_times;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -43,7 +43,19 @@ fn field_ops(ctx: &Ctx) {
     let k = e.div(&b);
     let l = cc.inverse();
     let m = d.pow_u32(5);
-    let n = FieldT::accumulate(&[a.clone(), b.clone(), cc.clone(), d.clone(), e.clone(), c(4), f.clone(), g.clone(), h.clone(), i.clone(), j.clone()]);
+    let n = FieldT::accumulate(&[
+        a.clone(),
+        b.clone(),
+        cc.clone(),
+        d.clone(),
+        e.clone(),
+        c(4),
+        f.clone(),
+        g.clone(),
+        h.clone(),
+        i.clone(),
+        j.clone(),
+    ]);
     let p = &(&m * &c(3)) + &c(1);
     let r = FieldT::from_witness(ctx, p.get_value());
     p.assert_equal(&r);
@@ -58,7 +70,10 @@ fn field_ops(ctx: &Ctx) {
     a.create_range_constraint(8);
     e.create_range_constraint(20);
     (&d * &c(1000)).create_range_constraint(68);
-    let t = FieldT::from_witness(ctx, from_hex("0x00000000000000000123456789abcdef0123456789abcdef0123456789abcdef"));
+    let t = FieldT::from_witness(
+        ctx,
+        from_hex("0x00000000000000000123456789abcdef0123456789abcdef0123456789abcdef"),
+    );
     let (lo, hi) = split_unique(&t, 127);
     let mut u = c(9);
     u.convert_constant_to_fixed_witness(ctx);
@@ -117,7 +132,10 @@ fn kernel_io_set(ctx: &Ctx) {
     let mut depot = DataBusDepot::default();
     depot.set_app_return_data_commitment(point(ctx, 5));
     depot.set_kernel_return_data_commitment(point(ctx, 6));
-    let pairing_inputs = PairingPoints { p0: point(ctx, 1), p1: point(ctx, 2) };
+    let pairing_inputs = PairingPoints {
+        p0: point(ctx, 1),
+        p1: point(ctx, 2),
+    };
     let kernel_return_data = depot.get_kernel_return_data_commitment(ctx);
     let app_return_data = std::array::from_fn(|i| depot.get_app_return_data_commitment(ctx, i));
     let io = KernelIo {
@@ -133,7 +151,10 @@ fn kernel_io_set(ctx: &Ctx) {
 
 fn hiding_io_set(ctx: &Ctx) {
     let io = HidingKernelIo {
-        pairing_inputs: PairingPoints { p0: point(ctx, 1), p1: point(ctx, 2) },
+        pairing_inputs: PairingPoints {
+            p0: point(ctx, 1),
+            p1: point(ctx, 2),
+        },
         kernel_return_data: point(ctx, 3),
         ecc_op_tables: std::array::from_fn(|i| point(ctx, 10 + i as u64)),
     };
@@ -246,7 +267,18 @@ fn cycle_group_add(ctx: &Ctx) {
     z.assert_equal(&mut p);
     let ca = CycleGroup::conditional_assign(&wb(ctx, true), &p, &q);
     let cb = CycleGroup::conditional_assign(&BoolT::constant(false), &p, &q);
-    let terms = [pc.x, cp.y, cc.x, ucp.y, pn.x, u.x, n.y, ca.x, cb.y, pn.is_infinity.to_field()];
+    let terms = [
+        pc.x,
+        cp.y,
+        cc.x,
+        ucp.y,
+        pn.x,
+        u.x,
+        n.y,
+        ca.x,
+        cb.y,
+        pn.is_infinity.to_field(),
+    ];
     let sum = terms[1..].iter().fold(terms[0].clone(), |acc, t| &acc + t);
     sum.assert_equal(&FieldT::from_witness(ctx, sum.get_value()));
 }
@@ -329,7 +361,9 @@ fn check(name: &str) {
         eprintln!("skipping stdlib/{name}: no dump");
         return;
     }
-    let ctx = Rc::new(RefCell::new(Builder::new_mega(Rc::new(RefCell::new(EccOpQueue::new())))));
+    let ctx = Rc::new(RefCell::new(Builder::new_mega(Rc::new(
+        RefCell::new(EccOpQueue::new()),
+    ))));
     run(&ctx, name);
     let mut builder = Rc::try_unwrap(ctx).ok().unwrap().into_inner();
     assert!(builder.failed.is_none(), "{name}: builder failure {:?}", builder.failed);
@@ -340,14 +374,20 @@ fn check(name: &str) {
     let compare: Vec<usize> = (0..inst.layout.num_unshifted()).collect();
     common::assert_polys_equal(name, &inst, &expected, &builder, &compare);
     let ck = CommitmentKey::new(inst.max_end_index);
-    assert_eq!(inst.compute_vk(&ck).to_bytes(), std::fs::read(dump.join("vk")).unwrap(), "{name}: VK");
+    assert_eq!(
+        inst.compute_vk(&ck).to_bytes(),
+        std::fs::read(dump.join("vk")).unwrap(),
+        "{name}: VK"
+    );
 }
 
 /// Every program builds a circuit all MegaKernel relations vanish on (bb-independent).
 #[test]
 fn stdlib_programs_are_satisfied() {
     for name in PROGRAMS {
-        let ctx = Rc::new(RefCell::new(Builder::new_mega(Rc::new(RefCell::new(EccOpQueue::new())))));
+        let ctx = Rc::new(RefCell::new(Builder::new_mega(Rc::new(
+            RefCell::new(EccOpQueue::new()),
+        ))));
         run(&ctx, name);
         let mut builder = Rc::try_unwrap(ctx).ok().unwrap().into_inner();
         assert!(builder.failed.is_none(), "{name}: builder failure {:?}", builder.failed);

@@ -5,7 +5,6 @@
 
 use super::lower::{io_public_inputs_size, RecursionConstraint, HN, HN_FINAL, OINK};
 use crate::base::codec::Transcriptable;
-use ark_ec::AffineRepr;
 use crate::base::rng::Rng;
 use crate::base::vk::Vk;
 use crate::base::{Bn254, CommitmentKey, Fr, G1Affine};
@@ -17,6 +16,7 @@ use crate::honk::hypernova::VerifierClaim;
 use crate::honk::multilinear_batching::{UNIVARIATE_LENGTH, VIRTUAL_LOG_N as MLB_LOG_N};
 use crate::stdlib::io::{AppIo, KernelIo, MAX_APPS_PER_KERNEL};
 use crate::stdlib::Ctx;
+use ark_ec::AffineRepr;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -38,7 +38,12 @@ fn push_random(out: &mut Vec<Fr>, n: usize, rng: &mut dyn Rng) {
 /// bb `create_mock_oink_proof`: the default IO as public inputs (verified circuits have no ACIR
 /// public inputs), then one commitment per witness entity.
 fn mock_oink_proof(kind: CircuitKind) -> Vec<Fr> {
-    let ctx: Ctx = Rc::new(RefCell::new(Builder::from_acir_mega(Rc::new(RefCell::new(EccOpQueue::new())), &[], vec![], false)));
+    let ctx: Ctx = Rc::new(RefCell::new(Builder::from_acir_mega(
+        Rc::new(RefCell::new(EccOpQueue::new())),
+        &[],
+        vec![],
+        false,
+    )));
     match kind {
         CircuitKind::App => AppIo::add_default(&ctx),
         CircuitKind::Kernel => KernelIo::add_default(&ctx),
@@ -54,7 +59,11 @@ fn mock_oink_proof(kind: CircuitKind) -> Vec<Fr> {
 fn mock_sumcheck_proof(flavor: &FlavorDesc, rng: &mut dyn Rng) -> Vec<Fr> {
     let layout = flavor.layout();
     let mut proof = vec![];
-    push_random(&mut proof, flavor.virtual_log_n * layout.batched_len + layout.num_all(), rng);
+    push_random(
+        &mut proof,
+        flavor.virtual_log_n * layout.batched_len + layout.num_all(),
+        rng,
+    );
     proof
 }
 
@@ -118,8 +127,16 @@ fn mock_accumulation(ivc: &mut Chonk, is_kernel: bool, is_hiding: bool, rng: &mu
         non_shifted_commitment: <G1Affine as AffineRepr>::generator(),
         shifted_commitment: <G1Affine as AffineRepr>::generator(),
     });
-    let kind = if is_kernel { CircuitKind::Kernel } else { CircuitKind::App };
-    ivc.verification_queue.push(VerifierInputs { proof: mock_instance_proof(kind, rng), vk: mock_vk(kind), kind });
+    let kind = if is_kernel {
+        CircuitKind::Kernel
+    } else {
+        CircuitKind::App
+    };
+    ivc.verification_queue.push(VerifierInputs {
+        proof: mock_instance_proof(kind, rng),
+        vk: mock_vk(kind),
+        kind,
+    });
     let is_init = ivc.verification_queue[0].kind == CircuitKind::App;
     let num_claims = ivc.verification_queue.len() + (!is_init) as usize;
     if num_claims >= 2 {
@@ -137,22 +154,43 @@ fn mock_accumulation(ivc: &mut Chonk, is_kernel: bool, is_hiding: bool, rng: &mu
 /// first: init kernel; HN_FINAL: hiding kernel; otherwise a kernel proof then app proofs) and mock
 /// the accumulation of its group.
 pub fn mock_chonk_from_constraints(constraints: &[RecursionConstraint], rng: &mut dyn Rng) -> Chonk {
-    assert!(!constraints.is_empty(), "at least one recursion constraint is required to determine the IVC state");
+    assert!(
+        !constraints.is_empty(),
+        "at least one recursion constraint is required to determine the IVC state"
+    );
     let types: Vec<u32> = constraints.iter().map(|c| c.proof_type).collect();
     let is_init = types[0] == OINK;
     let is_hiding = types.len() == 1 && types[0] == HN_FINAL;
-    assert!(types.len() <= MAX_APPS_PER_KERNEL + (!is_init) as usize, "too many recursion constraints");
+    assert!(
+        types.len() <= MAX_APPS_PER_KERNEL + (!is_init) as usize,
+        "too many recursion constraints"
+    );
     let tail = [CircuitKind::Kernel, CircuitKind::Kernel, CircuitKind::HidingKernel];
     let (group, kinds, target): (Vec<(bool, bool)>, Vec<CircuitKind>, usize) = if is_init {
-        assert!(types[1..].iter().all(|t| *t == HN), "subsequent constraints in an init kernel must be HN");
+        assert!(
+            types[1..].iter().all(|t| *t == HN),
+            "subsequent constraints in an init kernel must be HN"
+        );
         let mut kinds = vec![CircuitKind::App; types.len()];
         kinds.extend(tail);
         (vec![(false, false); types.len()], kinds, types.len())
     } else if is_hiding {
         // the group is the tail kernel (index 2); the target is the hiding kernel
-        (vec![(true, true)], vec![CircuitKind::App, CircuitKind::Kernel, CircuitKind::Kernel, CircuitKind::HidingKernel], 3)
+        (
+            vec![(true, true)],
+            vec![
+                CircuitKind::App,
+                CircuitKind::Kernel,
+                CircuitKind::Kernel,
+                CircuitKind::HidingKernel,
+            ],
+            3,
+        )
     } else {
-        assert!(types.iter().all(|t| *t == HN), "constraints in an inner/reset/tail kernel must be HN");
+        assert!(
+            types.iter().all(|t| *t == HN),
+            "constraints in an inner/reset/tail kernel must be HN"
+        );
         let mut group = vec![(true, false)];
         group.extend(vec![(false, false); types.len() - 1]);
         let mut kinds = vec![CircuitKind::App, CircuitKind::Kernel];

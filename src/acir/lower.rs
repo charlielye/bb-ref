@@ -4,7 +4,9 @@
 //! logic), and finally the default (infinity) pairing points as public inputs for circuits that
 //! verify nothing.
 
-use super::format::{field, BlackBoxFuncCall, BlockType, Circuit, EmbeddedCurveAdd, FunctionInput, MultiScalarMul, Opcode, Witness};
+use super::format::{
+    field, BlackBoxFuncCall, BlockType, Circuit, EmbeddedCurveAdd, FunctionInput, MultiScalarMul, Opcode, Witness,
+};
 use super::mock::mock_chonk_from_constraints;
 use crate::base::field::FieldLike;
 use crate::base::rng::Rng;
@@ -15,8 +17,8 @@ use crate::chonk::kernel::{complete_kernel_circuit_logic, VkWitnesses};
 use crate::circuit::builder::MulQuad;
 use crate::circuit::mega::BilinearBatchedEqGate;
 use crate::circuit::{Builder, EccOpQueue, IS_CONSTANT};
-use crate::stdlib::io::{AppIo, KernelIo, MAX_APPS_PER_KERNEL};
 use crate::stdlib::cycle_group::{CycleGroup, CycleScalar};
+use crate::stdlib::io::{AppIo, KernelIo, MAX_APPS_PER_KERNEL};
 use crate::stdlib::memory::{RamTable, RomTable};
 use crate::stdlib::{poseidon2, BoolT, Ctx, FieldT, StdBn254};
 use ark_ec::AffineRepr;
@@ -132,7 +134,18 @@ fn is_single_arithmetic_gate(e: &super::format::Expression, lin: &BTreeMap<u32, 
 
 fn empty_quad() -> MulQuad {
     let z = Fr::zero();
-    MulQuad { a: IS_CONSTANT, b: IS_CONSTANT, c: IS_CONSTANT, d: IS_CONSTANT, mul_scaling: z, a_scaling: z, b_scaling: z, c_scaling: z, d_scaling: z, const_scaling: z }
+    MulQuad {
+        a: IS_CONSTANT,
+        b: IS_CONSTANT,
+        c: IS_CONSTANT,
+        d: IS_CONSTANT,
+        mul_scaling: z,
+        a_scaling: z,
+        b_scaling: z,
+        c_scaling: z,
+        d_scaling: z,
+        const_scaling: z,
+    }
 }
 
 /// bb `split_into_mul_quad_gates`: one gate per product, linear terms filled into free wires in
@@ -146,7 +159,12 @@ fn split_into_mul_quad_gates(e: &super::format::Expression, lin: &mut BTreeMap<u
     };
     let mut result = vec![];
     for (c, a, b) in &e.mul_terms {
-        let mut q = MulQuad { a: a.0, b: b.0, mul_scaling: field(c), ..empty_quad() };
+        let mut q = MulQuad {
+            a: a.0,
+            b: b.0,
+            mul_scaling: field(c),
+            ..empty_quad()
+        };
         if let Some(c) = lin.remove(&q.a) {
             q.a_scaling += c;
         }
@@ -170,7 +188,11 @@ fn split_into_mul_quad_gates(e: &super::format::Expression, lin: &mut BTreeMap<u
     }
     while !lin.is_empty() {
         let mut q = empty_quad();
-        for (idx, s) in [(&mut q.a, &mut q.a_scaling), (&mut q.b, &mut q.b_scaling), (&mut q.c, &mut q.c_scaling)] {
+        for (idx, s) in [
+            (&mut q.a, &mut q.a_scaling),
+            (&mut q.b, &mut q.b_scaling),
+            (&mut q.c, &mut q.c_scaling),
+        ] {
             if !lin.is_empty() {
                 take(idx, s, lin);
             }
@@ -209,7 +231,9 @@ fn is_bilinear(e: &super::format::Expression, lin: &BTreeMap<u32, Fr>) -> bool {
     if e.mul_terms.len() != 2 {
         return false;
     }
-    let Some((w_l, w_r, w_o)) = resolve_shared_wire_products(e) else { return false };
+    let Some((w_l, w_r, w_o)) = resolve_shared_wire_products(e) else {
+        return false;
+    };
     lin.keys().filter(|w| **w != w_l && **w != w_r && **w != w_o).count() <= 1
 }
 
@@ -249,7 +273,13 @@ fn batched_eq_entry(e: &super::format::Expression, lin: &BTreeMap<u32, Fr>) -> B
     let mut it = lin.iter();
     let (w1, c1) = it.next().unwrap();
     let (w2, c2) = it.next().map(|(w, c)| (*w, *c)).unwrap_or((IS_CONSTANT, Fr::zero()));
-    BatchedEqEntry { w1: *w1, w2, c1: *c1, c2, q_c: field(&e.q_c) }
+    BatchedEqEntry {
+        w1: *w1,
+        w2,
+        c1: *c1,
+        c2,
+        q_c: field(&e.q_c),
+    }
 }
 
 /// Pair consecutive batched-eq entries into rows; an odd last entry gets an empty second half.
@@ -280,7 +310,12 @@ fn pair_batched_eq(entries: &[BatchedEqEntry]) -> Vec<BilinearBatchedEqGate> {
 fn classify(circuit: &Circuit, is_mega: bool) -> (Constraints, Vec<u32>) {
     let mut c = Constraints::default();
     let mut batched_eq_entries = vec![];
-    let public_inputs: Vec<u32> = circuit.public_parameters.iter().chain(&circuit.return_values).map(|w| c.note(*w)).collect();
+    let public_inputs: Vec<u32> = circuit
+        .public_parameters
+        .iter()
+        .chain(&circuit.return_values)
+        .map(|w| c.note(*w))
+        .collect();
     for op in &circuit.opcodes {
         match op {
             Opcode::AssertZero(e) => {
@@ -325,14 +360,22 @@ fn classify(circuit: &Circuit, is_mega: bool) -> (Constraints, Vec<u32>) {
                 }
                 BlackBoxFuncCall::MultiScalarMul(m) => {
                     assert_eq!(m.points.len(), m.scalars.len(), "MultiScalarMul input size mismatch");
-                    m.points.iter().chain(&m.scalars).chain([&m.predicate]).for_each(|i| c.note_input(i));
+                    m.points
+                        .iter()
+                        .chain(&m.scalars)
+                        .chain([&m.predicate])
+                        .for_each(|i| c.note_input(i));
                     m.outputs.iter().for_each(|w| {
                         c.note(*w);
                     });
                     c.msm.push(m.clone());
                 }
                 BlackBoxFuncCall::EmbeddedCurveAdd(e) => {
-                    e.input1.iter().chain(&e.input2).chain([&e.predicate]).for_each(|i| c.note_input(i));
+                    e.input1
+                        .iter()
+                        .chain(&e.input2)
+                        .chain([&e.predicate])
+                        .for_each(|i| c.note_input(i));
                     e.outputs.iter().for_each(|w| {
                         c.note(*w);
                     });
@@ -346,23 +389,48 @@ fn classify(circuit: &Circuit, is_mega: bool) -> (Constraints, Vec<u32>) {
                             c.note(*w);
                         }
                     }
-                    assert!(r.proof.is_empty() && r.public_inputs.is_empty(), "HyperNova recursion constraints carry no proof or public inputs");
-                    assert!(matches!(r.proof_type, OINK | HN | HN_FINAL), "unsupported proof type {}", r.proof_type);
+                    assert!(
+                        r.proof.is_empty() && r.public_inputs.is_empty(),
+                        "HyperNova recursion constraints carry no proof or public inputs"
+                    );
+                    assert!(
+                        matches!(r.proof_type, OINK | HN | HN_FINAL),
+                        "unsupported proof type {}",
+                        r.proof_type
+                    );
                     let key = r.verification_key.iter().map(|i| c.input(i)).collect();
                     let key_hash = c.input(&r.key_hash);
-                    c.hn_recursion.push(RecursionConstraint { key, key_hash, proof_type: r.proof_type });
+                    c.hn_recursion.push(RecursionConstraint {
+                        key,
+                        key_hash,
+                        proof_type: r.proof_type,
+                    });
                 }
                 other => panic!("unsupported black box function: {other:?}"),
             },
-            Opcode::MemoryInit { block_id, init, block_type } => {
+            Opcode::MemoryInit {
+                block_id,
+                init,
+                block_type,
+            } => {
                 let kind = match block_type {
                     BlockType::Memory => BlockKind::Rom,
                     BlockType::CallData(id) => BlockKind::CallData(*id as usize),
                     BlockType::ReturnData => BlockKind::ReturnData,
                 };
-                assert!(is_mega || matches!(kind, BlockKind::Rom), "databus blocks need a Mega circuit");
+                assert!(
+                    is_mega || matches!(kind, BlockKind::Rom),
+                    "databus blocks need a Mega circuit"
+                );
                 let init = init.iter().map(|w| c.note(*w)).collect();
-                c.blocks.insert(*block_id, BlockConstraint { init, trace: vec![], kind });
+                c.blocks.insert(
+                    *block_id,
+                    BlockConstraint {
+                        init,
+                        trace: vec![],
+                        kind,
+                    },
+                );
             }
             Opcode::MemoryOp { block_id, op } => {
                 let (index, value) = (c.note(op.index), c.note(op.value));
@@ -373,7 +441,11 @@ fn classify(circuit: &Circuit, is_mega: bool) -> (Constraints, Vec<u32>) {
                     BlockKind::ReturnData => panic!("return data has no operations"),
                     _ => {}
                 }
-                block.trace.push(MemOp { write: op.read, index, value });
+                block.trace.push(MemOp {
+                    write: op.read,
+                    index,
+                    value,
+                });
             }
             Opcode::BrilligCall(_) => {}
             Opcode::Call(_) => panic!("Call opcode is not supported"),
@@ -386,7 +458,11 @@ fn classify(circuit: &Circuit, is_mega: bool) -> (Constraints, Vec<u32>) {
 /// Unused wires hold the constant zero (bb `set_zero_idx`).
 fn resolve_zero(b: &Builder, q: &mut MulQuad) {
     assert_ne!(q.a, IS_CONSTANT, "wire a of a mul_quad must be a witness");
-    for (idx, s) in [(&mut q.b, q.b_scaling), (&mut q.c, q.c_scaling), (&mut q.d, q.d_scaling)] {
+    for (idx, s) in [
+        (&mut q.b, q.b_scaling),
+        (&mut q.c, q.c_scaling),
+        (&mut q.d, q.d_scaling),
+    ] {
         if *idx == IS_CONSTANT {
             assert!(s.is_zero());
             *idx = b.zero_idx();
@@ -396,7 +472,12 @@ fn resolve_zero(b: &Builder, q: &mut MulQuad) {
 
 fn quad_value(b: &Builder, q: &MulQuad) -> Fr {
     let v = |i: u32| b.get_variable(i);
-    v(q.a) * v(q.b) * q.mul_scaling + v(q.a) * q.a_scaling + v(q.b) * q.b_scaling + v(q.c) * q.c_scaling + v(q.d) * q.d_scaling + q.const_scaling
+    v(q.a) * v(q.b) * q.mul_scaling
+        + v(q.a) * q.a_scaling
+        + v(q.b) * q.b_scaling
+        + v(q.c) * q.c_scaling
+        + v(q.d) * q.d_scaling
+        + q.const_scaling
 }
 
 /// bb `create_big_quad_constraint`: chain gates through `w_4_shift`, each carrying the negated
@@ -497,7 +578,10 @@ fn to_grumpkin_point(ctx: &Ctx, x: &FunctionInput, y: &FunctionInput, predicate:
 fn to_grumpkin_scalar(ctx: &Ctx, lo: &FunctionInput, hi: &FunctionInput, predicate: &BoolT) -> CycleScalar {
     let mut lo_field = to_field_ct(ctx, lo);
     let mut hi_field = to_field_ct(ctx, hi);
-    assert!(!(matches!(lo, FunctionInput::Constant(_)) && matches!(hi, FunctionInput::Witness(_))), "scalar lo is constant while hi is not");
+    assert!(
+        !(matches!(lo, FunctionInput::Constant(_)) && matches!(hi, FunctionInput::Witness(_))),
+        "scalar lo is constant while hi is not"
+    );
     if ctx.borrow().is_write_vk_mode {
         set_witness(ctx, lo, Fr::one());
         set_witness(ctx, hi, Fr::zero());
@@ -564,9 +648,18 @@ pub(super) fn io_public_inputs_size(kind: CircuitKind) -> usize {
 /// bb `process_hn_recursion_constraints`: hand the queued proofs' VKs, already witnesses of the
 /// circuit, to the kernel logic. Without a witness (write-VK mode) those witnesses are set to the
 /// queued VKs first so the circuit is satisfiable.
-fn process_hn_recursion_constraints(ctx: &Ctx, constraints: &[RecursionConstraint], ivc: &mut Chonk, rng: &mut dyn Rng) {
+fn process_hn_recursion_constraints(
+    ctx: &Ctx,
+    constraints: &[RecursionConstraint],
+    ivc: &mut Chonk,
+    rng: &mut dyn Rng,
+) {
     let queue = &ivc.verification_queue;
-    assert_eq!(constraints.len(), queue.len(), "mismatch in number of recursive verifications during kernel creation");
+    assert_eq!(
+        constraints.len(),
+        queue.len(),
+        "mismatch in number of recursive verifications during kernel creation"
+    );
     if ctx.borrow().is_write_vk_mode {
         let mut b = ctx.borrow_mut();
         for (c, e) in constraints.iter().zip(queue) {
@@ -587,14 +680,35 @@ fn process_hn_recursion_constraints(ctx: &Ctx, constraints: &[RecursionConstrain
         } else {
             HN
         };
-        assert_eq!(c.proof_type, expected_type, "ACIR proof_type disagrees with the IVC state");
-        let expected_kind = if i == 0 && !is_init { CircuitKind::Kernel } else { CircuitKind::App };
-        assert_eq!(e.kind, expected_kind, "queued circuit kind disagrees with its position in the group");
-        assert_eq!(e.vk.num_public_inputs_usize(), io_public_inputs_size(e.kind), "IO size mismatch with VK num_public_inputs");
+        assert_eq!(
+            c.proof_type, expected_type,
+            "ACIR proof_type disagrees with the IVC state"
+        );
+        let expected_kind = if i == 0 && !is_init {
+            CircuitKind::Kernel
+        } else {
+            CircuitKind::App
+        };
+        assert_eq!(
+            e.kind, expected_kind,
+            "queued circuit kind disagrees with its position in the group"
+        );
+        assert_eq!(
+            e.vk.num_public_inputs_usize(),
+            io_public_inputs_size(e.kind),
+            "IO size mismatch with VK num_public_inputs"
+        );
         let num_comms = e.kind.flavor().layout().num_precomputed;
-        assert_eq!(c.key.len(), Vk::<StdBn254>::num_fields(num_comms), "verification key has the wrong number of fields");
+        assert_eq!(
+            c.key.len(),
+            Vk::<StdBn254>::num_fields(num_comms),
+            "verification key has the wrong number of fields"
+        );
         let fields: Vec<FieldT> = c.key.iter().map(|w| FieldT::from_witness_index(ctx, *w)).collect();
-        keys.push((Vk::from_fields(&fields, num_comms), FieldT::from_witness_index(ctx, c.key_hash)));
+        keys.push((
+            Vk::from_fields(&fields, num_comms),
+            FieldT::from_witness_index(ctx, c.key_hash),
+        ));
     }
     complete_kernel_circuit_logic(ivc, ctx, rng, Some(keys));
 }
@@ -623,7 +737,12 @@ pub fn build_circuit(circuit: &Circuit, witness: Option<&[Fr]>) -> Builder {
 /// opcodes that fit the bilinear / batched-eq gate use it, the op queue is the IVC's, and a
 /// kernel's recursion constraints run the kernel logic against the IVC state. Without an IVC a
 /// kernel is built against bb's mocked state (write-VK mode), which yields the same circuit.
-pub fn build_circuit_mega(circuit: &Circuit, witness: Option<&[Fr]>, ivc: Option<&mut Chonk>, rng: &mut dyn Rng) -> Builder {
+pub fn build_circuit_mega(
+    circuit: &Circuit,
+    witness: Option<&[Fr]>,
+    ivc: Option<&mut Chonk>,
+    rng: &mut dyn Rng,
+) -> Builder {
     let (mut c, public_inputs) = classify(circuit, true);
     let hn_recursion = std::mem::take(&mut c.hn_recursion);
     let mut mock;
@@ -635,8 +754,15 @@ pub fn build_circuit_mega(circuit: &Circuit, witness: Option<&[Fr]>, ivc: Option
             Some(&mut mock)
         }
     };
-    let op_queue = ivc.as_ref().map_or_else(|| Rc::new(RefCell::new(EccOpQueue::new())), |ivc| ivc.op_queue.clone());
-    let builder = Builder::from_acir_mega(op_queue, &witness_or_zeros(witness, &c), public_inputs, witness.is_none());
+    let op_queue = ivc
+        .as_ref()
+        .map_or_else(|| Rc::new(RefCell::new(EccOpQueue::new())), |ivc| ivc.op_queue.clone());
+    let builder = Builder::from_acir_mega(
+        op_queue,
+        &witness_or_zeros(witness, &c),
+        public_inputs,
+        witness.is_none(),
+    );
     let ctx = lower(builder, c);
     if hn_recursion.is_empty() {
         add_default_pairing_points(&mut ctx.borrow_mut());
@@ -649,7 +775,10 @@ pub fn build_circuit_mega(circuit: &Circuit, witness: Option<&[Fr]>, ivc: Option
 fn witness_or_zeros(witness: Option<&[Fr]>, c: &Constraints) -> Vec<Fr> {
     match witness {
         Some(w) => {
-            assert!(w.len() > c.max_witness_index as usize, "witness vector shorter than the circuit's witnesses");
+            assert!(
+                w.len() > c.max_witness_index as usize,
+                "witness vector shorter than the circuit's witnesses"
+            );
             w.to_vec()
         }
         None => vec![Fr::zero(); c.max_witness_index as usize + 1],

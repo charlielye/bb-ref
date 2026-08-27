@@ -16,7 +16,9 @@ pub fn sorted_steps() -> Vec<u64> {
 impl TranslatorPolys {
     /// Random masking for the last `NUM_MASKED_ROWS_END` rows of the mini-circuit wires.
     pub fn random_masking(rng: &mut dyn Rng) -> Vec<[Fr; NUM_MASKED_ROWS_END]> {
-        (0..NUM_MINICIRCUIT_WIRES).map(|_| std::array::from_fn(|_| random_field(rng))).collect()
+        (0..NUM_MINICIRCUIT_WIRES)
+            .map(|_| std::array::from_fn(|_| random_field(rng)))
+            .collect()
     }
 
     /// bb `TranslatorProvingKey(circuit)` with the given masking values for wires `4..81`.
@@ -30,7 +32,8 @@ impl TranslatorPolys {
             }
             if w >= NUM_OP_QUEUE_WIRES {
                 for k in 0..NUM_MASKED_ROWS_END {
-                    p.cols[FIRST_WIRE + w].coeffs[MINI_CIRCUIT_SIZE - NUM_MASKED_ROWS_END + k] = masking[w - NUM_OP_QUEUE_WIRES][k];
+                    p.cols[FIRST_WIRE + w].coeffs[MINI_CIRCUIT_SIZE - NUM_MASKED_ROWS_END + k] =
+                        masking[w - NUM_OP_QUEUE_WIRES][k];
                 }
             }
         }
@@ -84,7 +87,11 @@ impl TranslatorPolys {
         let steps = sorted_steps();
         for shift in 0..NUM_CONCATENATED_POLYS {
             for (i, s) in steps.iter().enumerate() {
-                self.set(Ent::ordered_extra_range_constraints_numerator, shift + i * NUM_CONCATENATED_POLYS, Fr::from(*s));
+                self.set(
+                    Ent::ordered_extra_range_constraints_numerator,
+                    shift + i * NUM_CONCATENATED_POLYS,
+                    Fr::from(*s),
+                );
             }
         }
     }

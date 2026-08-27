@@ -22,7 +22,10 @@ pub struct GoblinField {
 
 fn split(v: &Fq) -> (Fr, Fr) {
     let u = u256(v);
-    (from_u256(u256_low_bits(u, LOWER_BITS)), from_u256(u256_shr(u, LOWER_BITS)))
+    (
+        from_u256(u256_low_bits(u, LOWER_BITS)),
+        from_u256(u256_shr(u, LOWER_BITS)),
+    )
 }
 
 impl GoblinField {
@@ -87,7 +90,12 @@ fn coordinates(p: &G1Affine) -> (Fq, Fq) {
 
 impl GoblinElement {
     pub fn ctx(&self) -> Ctx {
-        self.x.limbs.iter().chain(&self.y.limbs).find_map(|l| l.ctx.clone()).expect("constant point without a builder")
+        self.x
+            .limbs
+            .iter()
+            .chain(&self.y.limbs)
+            .find_map(|l| l.ctx.clone())
+            .expect("constant point without a builder")
     }
     pub fn constant_infinity() -> Self {
         Self {
@@ -119,8 +127,12 @@ impl GoblinElement {
     fn from_op_wires(ctx: &Ctx, w: [u32; 4]) -> Self {
         let f = |i: u32| FieldT::from_witness_index(ctx, i);
         Self {
-            x: GoblinField { limbs: [f(w[0]), f(w[1])] },
-            y: GoblinField { limbs: [f(w[2]), f(w[3])] },
+            x: GoblinField {
+                limbs: [f(w[0]), f(w[1])],
+            },
+            y: GoblinField {
+                limbs: [f(w[2]), f(w[3])],
+            },
         }
     }
     fn assert_op_wires_equal(ctx: &Ctx, w: [u32; 4], p: &Self) {
@@ -191,7 +203,10 @@ impl GroupLike<FieldT> for GoblinElement {
         Self::constant_infinity().sub(self)
     }
     fn add(&self, other: &Self) -> Self {
-        Self::batch_mul(&[self.clone(), other.clone()], &[FieldT::constant(Fr::one()), FieldT::constant(Fr::one())])
+        Self::batch_mul(
+            &[self.clone(), other.clone()],
+            &[FieldT::constant(Fr::one()), FieldT::constant(Fr::one())],
+        )
     }
     fn scalar_mul(&self, s: &FieldT) -> Self {
         Self::batch_mul(&[self.clone()], &[s.clone()])
@@ -235,12 +250,21 @@ impl Transcriptable<FieldT> for GoblinElement {
         4
     }
     fn to_fields(&self) -> Vec<FieldT> {
-        vec![self.x.limbs[0].clone(), self.x.limbs[1].clone(), self.y.limbs[0].clone(), self.y.limbs[1].clone()]
+        vec![
+            self.x.limbs[0].clone(),
+            self.x.limbs[1].clone(),
+            self.y.limbs[0].clone(),
+            self.y.limbs[1].clone(),
+        ]
     }
     fn from_fields(f: &[FieldT]) -> Self {
         Self {
-            x: GoblinField { limbs: [f[0].clone(), f[1].clone()] },
-            y: GoblinField { limbs: [f[2].clone(), f[3].clone()] },
+            x: GoblinField {
+                limbs: [f[0].clone(), f[1].clone()],
+            },
+            y: GoblinField {
+                limbs: [f[2].clone(), f[3].clone()],
+            },
         }
     }
 }
@@ -255,6 +279,8 @@ impl Transcriptable<FieldT> for GoblinField {
         self.limbs.to_vec()
     }
     fn from_fields(f: &[FieldT]) -> Self {
-        Self { limbs: [f[0].clone(), f[1].clone()] }
+        Self {
+            limbs: [f[0].clone(), f[1].clone()],
+        }
     }
 }

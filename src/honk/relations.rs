@@ -138,7 +138,9 @@ fn permutation<T: FieldLike>(acc: &mut [T], r: &Row<T>, p: &RelationParams<T>, s
 
 /// `table_1 + γ + table_2 β + table_3 β² + table_4 β³`
 pub fn table_term<T: FieldLike>(r: &Row<T>, p: &RelationParams<T>) -> T {
-    let mut t = (r.e(table_2).clone() * &p.beta) + &(r.e(table_3).clone() * &p.beta_sqr) + &(r.e(table_4).clone() * &p.beta_cube);
+    let mut t = (r.e(table_2).clone() * &p.beta)
+        + &(r.e(table_3).clone() * &p.beta_sqr)
+        + &(r.e(table_4).clone() * &p.beta_cube);
     t += r.e(table_1);
     t += &p.gamma;
     t
@@ -177,12 +179,17 @@ fn logderiv_lookup<T: FieldLike>(acc: &mut [T], r: &Row<T>, p: &RelationParams<T
 // relations/ultra_arithmetic_relation.hpp
 fn arithmetic<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: &T) {
     // -1/2 in T's native field, computed once (an inversion per call dominated the relation)
-    static NEG_HALF_FR: std::sync::LazyLock<crate::base::Fr> = std::sync::LazyLock::new(|| -(crate::base::Fr::from(2u64)).inverse().unwrap());
+    static NEG_HALF_FR: std::sync::LazyLock<crate::base::Fr> =
+        std::sync::LazyLock::new(|| -(crate::base::Fr::from(2u64)).inverse().unwrap());
     let neg_half = k::<T>(*NEG_HALF_FR);
     let q_arith_sub_1 = r.e(q_arith).clone() - &c(1);
     let scaled_q_arith = r.e(q_arith).clone() * scaling;
     let tmp0 = (r.e(w_r).clone() * r.e(w_l) * &neg_half) * &((r.e(q_arith).clone() - &c(3)) * r.e(q_m));
-    let mut tmp1 = (r.e(q_l).clone() * r.e(w_l)) + &(r.e(q_r).clone() * r.e(w_r)) + &(r.e(q_o).clone() * r.e(w_o)) + &(r.e(q_4).clone() * r.e(w_4)) + r.e(q_c);
+    let mut tmp1 = (r.e(q_l).clone() * r.e(w_l))
+        + &(r.e(q_r).clone() * r.e(w_r))
+        + &(r.e(q_o).clone() * r.e(w_o))
+        + &(r.e(q_4).clone() * r.e(w_4))
+        + r.e(q_c);
     tmp1 += &(q_arith_sub_1.clone() * r.s(w_4));
     acc[0] += &((tmp0 + &tmp1) * &scaled_q_arith);
 
@@ -195,7 +202,12 @@ fn arithmetic<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: &T) {
 // relations/delta_range_constraint_relation.hpp
 fn delta_range<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: &T) {
     let qs = r.e(q_delta_range).clone() * scaling;
-    let deltas = [r.e(w_r).clone() - r.e(w_l), r.e(w_o).clone() - r.e(w_r), r.e(w_4).clone() - r.e(w_o), r.s(w_l).clone() - r.e(w_4)];
+    let deltas = [
+        r.e(w_r).clone() - r.e(w_l),
+        r.e(w_o).clone() - r.e(w_r),
+        r.e(w_4).clone() - r.e(w_o),
+        r.s(w_l).clone() - r.e(w_4),
+    ];
     for (i, d) in deltas.iter().enumerate() {
         // T = (D - 3) * D;  T * (T + 2) == D(D-1)(D-2)(D-3)
         let mut tmp = (d.clone() - &c(3)) * d;
@@ -226,7 +238,8 @@ fn elliptic<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: &T) {
     let y2_sqr = y_2.sqr();
     let y1_sqr = y_1.sqr();
     let y2_mul_q_sign = y_2.clone() * q_sign;
-    let x_add_identity = x3_plus_x2_plus_x1 * &x2_sub_x1.sqr() - &(y2_sqr + &y1_sqr) + &((y2_mul_q_sign.clone() + &y2_mul_q_sign) * y_1);
+    let x_add_identity =
+        x3_plus_x2_plus_x1 * &x2_sub_x1.sqr() - &(y2_sqr + &y1_sqr) + &((y2_mul_q_sign.clone() + &y2_mul_q_sign) * y_1);
 
     let q_elliptic_by_scaling = r.e(q_elliptic).clone() * scaling;
     let q_elliptic_q_double_scaling = q_elliptic_by_scaling.clone() * q_is_double;
@@ -286,10 +299,12 @@ fn memory<T: FieldLike>(acc: &mut [T], r: &Row<T>, p: &RelationParams<T>, scalin
     neg_next_gate_access_type += &(w_1s.clone() * &p.eta);
     neg_next_gate_access_type = neg_next_gate_access_type - w_4s;
     let value_delta = w_3s.clone() - w_3;
-    let adjacent_values_match_if_adjacent_indices_match_and_next_access_is_a_read_operation = (index_delta_is_zero.clone() * &value_delta) * &(neg_next_gate_access_type.clone() + &c(1));
+    let adjacent_values_match_if_adjacent_indices_match_and_next_access_is_a_read_operation =
+        (index_delta_is_zero.clone() * &value_delta) * &(neg_next_gate_access_type.clone() + &c(1));
     let next_gate_access_type_is_boolean = neg_next_gate_access_type.sqr() + &neg_next_gate_access_type;
     let q_3_by_memory_and_scaling = q_3.clone() * &q_memory_by_scaling;
-    acc[3] += &(adjacent_values_match_if_adjacent_indices_match_and_next_access_is_a_read_operation * &q_3_by_memory_and_scaling);
+    acc[3] += &(adjacent_values_match_if_adjacent_indices_match_and_next_access_is_a_read_operation
+        * &q_3_by_memory_and_scaling);
     acc[4] += &(index_increases_by_zero_or_one * &q_3_by_memory_and_scaling);
     acc[5] += &(next_gate_access_type_is_boolean * &q_3_by_memory_and_scaling);
     let ram_consistency_check_identity = access_check * &q_3_by_memory_and_scaling;
@@ -445,12 +460,14 @@ fn bilinear_batched_eq<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: &T) {
     let two_minus_q_cp = -q_cp.clone() + c::<T>(2);
     let q_cp_minus_1 = q_cp.clone() - c::<T>(1);
     let bilinear_gate = q_cp.clone() * &two_minus_q_cp;
-    static HALF: std::sync::LazyLock<crate::base::Fr> = std::sync::LazyLock::new(|| crate::base::Fr::from(2u64).invert());
+    static HALF: std::sync::LazyLock<crate::base::Fr> =
+        std::sync::LazyLock::new(|| crate::base::Fr::from(2u64).invert());
     let batched_eq_gate = q_cp.clone() * &q_cp_minus_1 * &k::<T>(*HALF);
     let scaled_bilinear_gate = bilinear_gate * scaling;
     let scaled_batched_eq_gate = batched_eq_gate * scaling;
     let products = r.e(q_m).clone() * w1 * w2 + r.e(q_5).clone() * w1 * w3;
-    let linears = r.e(q_l).clone() * w1 + r.e(q_r).clone() * w2 + r.e(q_o).clone() * w3 + r.e(q_4).clone() * w4 + r.e(q_c);
+    let linears =
+        r.e(q_l).clone() * w1 + r.e(q_r).clone() * w2 + r.e(q_o).clone() * w3 + r.e(q_4).clone() * w4 + r.e(q_c);
     let bilinear = products + &linears;
     let batched_eq_half_1 = r.e(q_l).clone() * w1 + r.e(q_r).clone() * w2 + r.e(q_c);
     acc[0] += scaled_bilinear_gate * &bilinear + scaled_batched_eq_gate.clone() * &batched_eq_half_1;
@@ -477,7 +494,10 @@ fn ecc_op_queue<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: &T) {
 
 /// bb `MegaEccOpBoundaryRelation`: the op wires vanish on the offset rows (applied with the `L` factor).
 fn mega_ecc_op_boundary<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: &T) {
-    for (i, e) in [ecc_op_wire_1, ecc_op_wire_2, ecc_op_wire_3, ecc_op_wire_4].iter().enumerate() {
+    for (i, e) in [ecc_op_wire_1, ecc_op_wire_2, ecc_op_wire_3, ecc_op_wire_4]
+        .iter()
+        .enumerate()
+    {
         acc[i] += r.e(*e).clone() * scaling;
     }
 }
@@ -543,8 +563,15 @@ fn poseidon2_quad_internal<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: &T)
     let u_0_next_d1 = u_0_next.clone() * &d1;
     let cf0 = &qp.closed_form[0];
     let [l0, l1, l2] = &qp.forward_vandermonde_lhs;
-    let wires = |row: &[crate::base::Fr; 7]| wr.clone() * &k::<T>(row[0]) + wo.clone() * &k::<T>(row[1]) + w4.clone() * &k::<T>(row[2]);
-    let us = |row: &[crate::base::Fr; 7]| u_0.clone() * &k::<T>(row[3]) + u_1.clone() * &k::<T>(row[4]) + u_2.clone() * &k::<T>(row[5]) + u_3.clone() * &k::<T>(row[6]);
+    let wires = |row: &[crate::base::Fr; 7]| {
+        wr.clone() * &k::<T>(row[0]) + wo.clone() * &k::<T>(row[1]) + w4.clone() * &k::<T>(row[2])
+    };
+    let us = |row: &[crate::base::Fr; 7]| {
+        u_0.clone() * &k::<T>(row[3])
+            + u_1.clone() * &k::<T>(row[4])
+            + u_2.clone() * &k::<T>(row[5])
+            + u_3.clone() * &k::<T>(row[6])
+    };
     let wp0_full = wires(cf0) - wl_s;
     let wp1_full = wires(l0) - wr_s;
     let wp2_full = wires(l1) - wo_s + wr_s + wr_s;
@@ -554,9 +581,13 @@ fn poseidon2_quad_internal<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: &T)
     acc[0] += q_times_scaling.clone() * &a0_body;
     let a1_body = us(l0) + &u_0_next_d1 + &wp1_full;
     acc[1] += q_times_scaling.clone() * &a1_body;
-    let a2_body = us(l1) - (u_0_next_d1.clone() + &u_0_next_d1) + (u_0_next.clone() + &u_0_next + &u_0_next) + u_1_next.clone() * &d1 + &wp2_full;
+    let a2_body = us(l1) - (u_0_next_d1.clone() + &u_0_next_d1)
+        + (u_0_next.clone() + &u_0_next + &u_0_next)
+        + u_1_next.clone() * &d1
+        + &wp2_full;
     acc[2] += q_times_scaling.clone() * &a2_body;
-    let a3_body = us(l2) - u_0_next * &k::<T>(qp.b3_u0_coef) - u_1_next * &k::<T>(qp.d1_minus_3) + u_2_next * &d1 + &wp3_full;
+    let a3_body =
+        us(l2) - u_0_next * &k::<T>(qp.b3_u0_coef) - u_1_next * &k::<T>(qp.d1_minus_3) + u_2_next * &d1 + &wp3_full;
     acc[3] += q_times_scaling * &a3_body;
 }
 
@@ -573,13 +604,23 @@ fn poseidon2_quad_internal_terminal<T: FieldLike>(acc: &mut [T], r: &Row<T>, sca
     let shifts = [r.s(w_l), r.s(w_r), r.s(w_o), r.s(w_4)];
     // bb's order: all wire terms, the selector scaling, all bodies, then the accumulations
     let wps: Vec<T> = (0..4)
-        .map(|j| wr.clone() * &k::<T>(cf[j][0]) + wo.clone() * &k::<T>(cf[j][1]) + w4.clone() * &k::<T>(cf[j][2]) - shifts[j])
+        .map(|j| {
+            wr.clone() * &k::<T>(cf[j][0]) + wo.clone() * &k::<T>(cf[j][1]) + w4.clone() * &k::<T>(cf[j][2]) - shifts[j]
+        })
         .collect();
     let q_by_scaling = r.e(q_poseidon2_quad_internal_terminal).clone() * scaling;
     let bodies: Vec<T> = (0..4)
         .map(|j| {
-            let u3_term = if j == 0 { u_3.clone() * &k::<T>(cf[0][6]) } else { u_3.clone() };
-            u_0.clone() * &k::<T>(cf[j][3]) + u_1.clone() * &k::<T>(cf[j][4]) + u_2.clone() * &k::<T>(cf[j][5]) + u3_term + &wps[j]
+            let u3_term = if j == 0 {
+                u_3.clone() * &k::<T>(cf[0][6])
+            } else {
+                u_3.clone()
+            };
+            u_0.clone() * &k::<T>(cf[j][3])
+                + u_1.clone() * &k::<T>(cf[j][4])
+                + u_2.clone() * &k::<T>(cf[j][5])
+                + u3_term
+                + &wps[j]
         })
         .collect();
     for j in 0..4 {
@@ -599,8 +640,12 @@ fn poseidon2_transition_entry<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: 
     let u_2 = pow5(wo_s.clone() + r.e(q_o));
     let q_by_scaling = r.e(q_poseidon2_transition_entry).clone() * scaling;
     let wp_0 = wr.clone() + wo + w4 - wr_s;
-    let wp_1 = wr.clone() * &k::<T>(qp.a_one[0]) + wo.clone() * &k::<T>(qp.a_one[1]) + w4.clone() * &k::<T>(qp.a_one[2]) - wo_s;
-    let wp_2 = wr.clone() * &k::<T>(qp.a2_one[0]) + wo.clone() * &k::<T>(qp.a2_one[1]) + w4.clone() * &k::<T>(qp.a2_one[2]) - w4_s;
+    let wp_1 =
+        wr.clone() * &k::<T>(qp.a_one[0]) + wo.clone() * &k::<T>(qp.a_one[1]) + w4.clone() * &k::<T>(qp.a_one[2])
+            - wo_s;
+    let wp_2 =
+        wr.clone() * &k::<T>(qp.a2_one[0]) + wo.clone() * &k::<T>(qp.a2_one[1]) + w4.clone() * &k::<T>(qp.a2_one[2])
+            - w4_s;
     let a0_body = u_0.clone() * &d1 + &wp_0;
     acc[0] += q_by_scaling.clone() * &a0_body;
     let a1_body = u_1.clone() * &d1 + u_0.clone() * &c::<T>(3) + &wp_1;

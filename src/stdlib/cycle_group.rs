@@ -54,7 +54,10 @@ impl CycleScalar {
     }
     pub fn constant(v: Fq) -> Self {
         let v = u256(&v);
-        Self { lo: FieldT::constant(from_u256(U256::new([v.0[0], v.0[1], 0, 0]))), hi: FieldT::constant(from_u256(U256::new([v.0[2], v.0[3], 0, 0]))) }
+        Self {
+            lo: FieldT::constant(from_u256(U256::new([v.0[0], v.0[1], 0, 0]))),
+            hi: FieldT::constant(from_u256(U256::new([v.0[2], v.0[3], 0, 0]))),
+        }
     }
     pub fn is_constant(&self) -> bool {
         self.lo.is_constant() && self.hi.is_constant()
@@ -111,7 +114,10 @@ impl CycleGroup {
     }
     /// bb `cycle_group(x, y, is_infinity, assert_on_curve)`.
     pub fn from_xyi(x: FieldT, y: FieldT, is_infinity: BoolT, assert_on_curve: bool) -> Self {
-        assert!(!(x.is_constant() && y.is_constant() && !is_infinity.is_constant()), "constant coordinates with a non-constant infinity flag");
+        assert!(
+            !(x.is_constant() && y.is_constant() && !is_infinity.is_constant()),
+            "constant coordinates with a non-constant infinity flag"
+        );
         Self::finish(x, y, is_infinity, assert_on_curve)
     }
     fn finish(mut x: FieldT, mut y: FieldT, is_infinity: BoolT, assert_on_curve: bool) -> Self {
@@ -133,19 +139,34 @@ impl CycleGroup {
     }
     pub fn constant(p: GrumpkinAffine) -> Self {
         let (x, y) = p.xy().unwrap_or((Fr::zero(), Fr::zero()));
-        Self { x: FieldT::constant(x), y: FieldT::constant(y), is_infinity: BoolT::constant(p.is_zero()), ctx: None }
+        Self {
+            x: FieldT::constant(x),
+            y: FieldT::constant(y),
+            is_infinity: BoolT::constant(p.is_zero()),
+            ctx: None,
+        }
     }
     /// bb `from_constant_witness`: fixed witnesses holding a constant point.
     pub fn from_constant_witness(ctx: &Ctx, p: GrumpkinAffine) -> Self {
         if p.is_zero() {
-            return Self { x: FieldT::constant(Fr::zero()), y: FieldT::constant(Fr::zero()), is_infinity: BoolT::constant(true), ctx: Some(ctx.clone()) };
+            return Self {
+                x: FieldT::constant(Fr::zero()),
+                y: FieldT::constant(Fr::zero()),
+                is_infinity: BoolT::constant(true),
+                ctx: Some(ctx.clone()),
+            };
         }
         let (px, py) = p.xy().unwrap();
         let x = FieldT::from_witness(ctx, px);
         let y = FieldT::from_witness(ctx, py);
         x.assert_equal(&FieldT::constant(px));
         y.assert_equal(&FieldT::constant(py));
-        Self { x, y, is_infinity: BoolT::constant(false), ctx: Some(ctx.clone()) }
+        Self {
+            x,
+            y,
+            is_infinity: BoolT::constant(false),
+            ctx: Some(ctx.clone()),
+        }
     }
     pub fn ctx(&self) -> Option<Ctx> {
         self.ctx.clone()
@@ -166,7 +187,9 @@ impl CycleGroup {
     pub fn validate_on_curve(&self) {
         let xx = &self.x * &self.x;
         let xxx = &xx * &self.x;
-        let res = self.y.madd(&self.y, &(&FieldT::neg(&xxx) - &FieldT::constant(curve_b())));
+        let res = self
+            .y
+            .madd(&self.y, &(&FieldT::neg(&xxx) - &FieldT::constant(curve_b())));
         let res = &res * &self.is_infinity.not().to_field();
         res.assert_is_zero();
     }
@@ -195,10 +218,20 @@ impl CycleGroup {
             }
         };
         if self.is_constant() {
-            return Self::from_xyi(FieldT::constant(x3), FieldT::constant(y3), self.is_infinity.clone(), false);
+            return Self::from_xyi(
+                FieldT::constant(x3),
+                FieldT::constant(y3),
+                self.is_infinity.clone(),
+                false,
+            );
         }
         let ctx = self.ctx.clone().unwrap();
-        let result = Self::from_xyi(FieldT::from_witness(&ctx, x3), FieldT::from_witness(&ctx, y3), self.is_infinity.clone(), false);
+        let result = Self::from_xyi(
+            FieldT::from_witness(&ctx, x3),
+            FieldT::from_witness(&ctx, y3),
+            self.is_infinity.clone(),
+            false,
+        );
         ctx.borrow_mut().create_ecc_dbl_gate(EccDblGate {
             x1: self.x.get_witness_index(),
             y1: modified_y.get_witness_index(),
@@ -230,10 +263,20 @@ impl CycleGroup {
             }
         };
         if lhs_constant && rhs_constant {
-            return Self::from_xyi(FieldT::constant(x3), FieldT::constant(y3), BoolT::constant(false), false);
+            return Self::from_xyi(
+                FieldT::constant(x3),
+                FieldT::constant(y3),
+                BoolT::constant(false),
+                false,
+            );
         }
         let ctx = ctx.unwrap();
-        let result = Self::from_xyi(FieldT::from_witness(&ctx, x3), FieldT::from_witness(&ctx, y3), BoolT::constant(false), false);
+        let result = Self::from_xyi(
+            FieldT::from_witness(&ctx, x3),
+            FieldT::from_witness(&ctx, y3),
+            BoolT::constant(false),
+            false,
+        );
         ctx.borrow_mut().create_ecc_add_gate(EccAddGate {
             x1: self.x.get_witness_index(),
             y1: self.y.get_witness_index(),
@@ -379,7 +422,10 @@ impl CycleGroup {
                     b.create_limbed_range_constraint(scalar.hi.get_witness_index(), HI_BITS as u64, TABLE_BITS as u64);
                     continue;
                 }
-                assert!(!fixed_base.contains(&point.get_value()), "fixed-base plookup tables are not ported");
+                assert!(
+                    !fixed_base.contains(&point.get_value()),
+                    "fixed-base plookup tables are not ported"
+                );
                 variable_base_scalars.push(scalar.clone());
                 variable_base_points.push(point.clone());
                 has_non_constant_component = true;
@@ -395,7 +441,12 @@ impl CycleGroup {
         }
         let mut offset_accumulator = -constant_acc;
         let offset_generators = derive_generators(b"cycle_group_offset_generator", variable_base_points.len() + 1, 0);
-        let (mut result, offset_generator_delta) = Self::variable_base_batch_mul_internal(&variable_base_scalars, &variable_base_points, &offset_generators, can_unconditional_add);
+        let (mut result, offset_generator_delta) = Self::variable_base_batch_mul_internal(
+            &variable_base_scalars,
+            &variable_base_points,
+            &offset_generators,
+            can_unconditional_add,
+        );
         offset_accumulator += offset_generator_delta;
         if constant_acc != Element::ZERO && can_unconditional_add {
             result = result.unconditional_add(&Self::constant(affine(-offset_accumulator)), None);
@@ -407,18 +458,34 @@ impl CycleGroup {
 
     /// bb `_variable_base_batch_mul_internal`: Straus with 4-bit windows; the native transcript
     /// supplies the addition/doubling results as hints.
-    fn variable_base_batch_mul_internal(scalars: &[CycleScalar], points: &[Self], offset_generators: &[GrumpkinAffine], unconditional_add: bool) -> (Self, GrumpkinAffine) {
+    fn variable_base_batch_mul_internal(
+        scalars: &[CycleScalar],
+        points: &[Self],
+        offset_generators: &[GrumpkinAffine],
+        unconditional_add: bool,
+    ) -> (Self, GrumpkinAffine) {
         let num_points = scalars.len();
         assert_eq!(offset_generators.len(), num_points + 1);
-        let ctx = scalars.iter().find_map(|s| s.ctx()).or_else(|| points.iter().find_map(|p| p.ctx())).unwrap();
+        let ctx = scalars
+            .iter()
+            .find_map(|s| s.ctx())
+            .or_else(|| points.iter().find_map(|p| p.ctx()))
+            .unwrap();
         let num_rounds = NUM_BITS.div_ceil(TABLE_BITS);
-        let scalar_slices: Vec<StrausScalarSlices> = scalars.iter().map(|s| StrausScalarSlices::new(&ctx, s, TABLE_BITS)).collect();
+        let scalar_slices: Vec<StrausScalarSlices> = scalars
+            .iter()
+            .map(|s| StrausScalarSlices::new(&ctx, s, TABLE_BITS))
+            .collect();
         let mut operation_transcript: Vec<Element> = vec![];
         let mut offset_generator_accumulator: Element = offset_generators[0].into_group();
         {
             let mut native_tables: Vec<Vec<Element>> = vec![];
             for (i, point) in points.iter().enumerate() {
-                let table = StrausLookupTable::compute_native_table(point.get_value().into_group(), offset_generators[i + 1].into_group(), TABLE_BITS);
+                let table = StrausLookupTable::compute_native_table(
+                    point.get_value().into_group(),
+                    offset_generators[i + 1].into_group(),
+                    TABLE_BITS,
+                );
                 operation_transcript.extend_from_slice(&table[1..]);
                 native_tables.push(table);
             }
@@ -442,7 +509,15 @@ impl CycleGroup {
         let hints: Vec<GrumpkinAffine> = Element::normalize_batch(&operation_transcript);
         let hints_per_table = (1usize << TABLE_BITS) - 1;
         let point_tables: Vec<StrausLookupTable> = (0..num_points)
-            .map(|i| StrausLookupTable::new(&ctx, &points[i], &Self::constant(offset_generators[i + 1]), TABLE_BITS, Some(&hints[i * hints_per_table..(i + 1) * hints_per_table])))
+            .map(|i| {
+                StrausLookupTable::new(
+                    &ctx,
+                    &points[i],
+                    &Self::constant(offset_generators[i + 1]),
+                    TABLE_BITS,
+                    Some(&hints[i * hints_per_table..(i + 1) * hints_per_table]),
+                )
+            })
             .collect();
         let mut hint_ptr = num_points * hints_per_table;
         let mut accumulator = Self::constant(offset_generators[0]);
@@ -493,7 +568,11 @@ impl StrausScalarSlices {
             }
             return (slices, native);
         }
-        let indices = ctx.borrow_mut().create_limbed_range_constraint(scalar.get_witness_index(), num_bits as u64, table_bits as u64);
+        let indices = ctx.borrow_mut().create_limbed_range_constraint(
+            scalar.get_witness_index(),
+            num_bits as u64,
+            table_bits as u64,
+        );
         let slices: Vec<FieldT> = indices.iter().map(|i| FieldT::from_witness_index(ctx, *i)).collect();
         let native = slices.iter().map(|s| u256(&s.get_value()).0[0]).collect();
         (slices, native)
@@ -522,7 +601,13 @@ impl StrausLookupTable {
         }
         table
     }
-    pub fn new(ctx: &Ctx, base_point: &CycleGroup, offset_generator: &CycleGroup, table_bits: usize, hints: Option<&[GrumpkinAffine]>) -> Self {
+    pub fn new(
+        ctx: &Ctx,
+        base_point: &CycleGroup,
+        offset_generator: &CycleGroup,
+        table_bits: usize,
+        hints: Option<&[GrumpkinAffine]>,
+    ) -> Self {
         let table_size = 1usize << table_bits;
         let fallback = CycleGroup::constant(one());
         let modded_x = FieldT::conditional_assign(&base_point.is_infinity, &fallback.x, &base_point.x);
@@ -532,7 +617,11 @@ impl StrausLookupTable {
         let hint = |i: usize| if hints_available { Some(hints.unwrap()[i]) } else { None };
         let mut point_table: Vec<CycleGroup> = Vec::with_capacity(table_size);
         if base_point.is_constant() && !base_point.is_infinity.get_value() {
-            assert_ne!(base_point.get_value(), offset_generator.get_value(), "straus table: base point coincides with the offset generator");
+            assert_ne!(
+                base_point.get_value(),
+                offset_generator.get_value(),
+                "straus table: base point coincides with the offset generator"
+            );
             modded_base_point = CycleGroup::from_constant_witness(ctx, modded_base_point.get_value());
             point_table.push(CycleGroup::from_constant_witness(ctx, offset_generator.get_value()));
             for i in 1..table_size {
@@ -550,7 +639,8 @@ impl StrausLookupTable {
             }
             coordinate_check_product.assert_is_not_zero();
             for i in 1..table_size {
-                point_table[i] = CycleGroup::conditional_assign(&base_point.is_infinity, offset_generator, &point_table[i]);
+                point_table[i] =
+                    CycleGroup::conditional_assign(&base_point.is_infinity, offset_generator, &point_table[i]);
             }
         }
         let rom_id = ctx.borrow_mut().create_rom_array(table_size);
@@ -558,12 +648,20 @@ impl StrausLookupTable {
             if p.is_constant() {
                 *p = CycleGroup::from_constant_witness(ctx, p.get_value());
             }
-            ctx.borrow_mut().set_rom_element_pair(rom_id, i, [p.x.get_witness_index(), p.y.get_witness_index()]);
+            ctx.borrow_mut()
+                .set_rom_element_pair(rom_id, i, [p.x.get_witness_index(), p.y.get_witness_index()]);
         }
-        Self { ctx: ctx.clone(), rom_id, table_bits }
+        Self {
+            ctx: ctx.clone(),
+            rom_id,
+            table_bits,
+        }
     }
     pub fn read(&self, index: &FieldT) -> CycleGroup {
-        assert!(u256(&index.get_value()).0[0] < (1u64 << self.table_bits), "straus table: index out of range");
+        assert!(
+            u256(&index.get_value()).0[0] < (1u64 << self.table_bits),
+            "straus table: index out of range"
+        );
         let index = if index.is_constant() {
             let w = FieldT::from_witness(&self.ctx, index.get_value());
             w.assert_equal(index);
@@ -571,7 +669,15 @@ impl StrausLookupTable {
         } else {
             index.clone()
         };
-        let [x_idx, y_idx] = self.ctx.borrow_mut().read_rom_array_pair(self.rom_id, index.get_witness_index());
-        CycleGroup::from_xyi(FieldT::from_witness_index(&self.ctx, x_idx), FieldT::from_witness_index(&self.ctx, y_idx), BoolT::constant(false), false)
+        let [x_idx, y_idx] = self
+            .ctx
+            .borrow_mut()
+            .read_rom_array_pair(self.rom_id, index.get_witness_index());
+        CycleGroup::from_xyi(
+            FieldT::from_witness_index(&self.ctx, x_idx),
+            FieldT::from_witness_index(&self.ctx, y_idx),
+            BoolT::constant(false),
+            false,
+        )
     }
 }

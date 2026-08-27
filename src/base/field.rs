@@ -21,7 +21,8 @@ macro_rules! native_field {
     ($F:ty, $from_fr:expr) => {
         impl NativeField for $F {
             fn small(v: u64) -> Self {
-                static SMALL: std::sync::LazyLock<[$F; 64]> = std::sync::LazyLock::new(|| std::array::from_fn(|i| <$F>::from(i as u64)));
+                static SMALL: std::sync::LazyLock<[$F; 64]> =
+                    std::sync::LazyLock::new(|| std::array::from_fn(|i| <$F>::from(i as u64)));
                 match SMALL.get(v as usize) {
                     Some(x) => *x,
                     None => Self::from(v),

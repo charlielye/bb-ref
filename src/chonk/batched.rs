@@ -3,7 +3,6 @@
 //! Shplemini/KZG opening of all their polynomials. The MegaZK polynomials are zero-extended from
 //! `2^16` to `2^17` variables.
 
-use rayon::prelude::*;
 use crate::base::codec::Transcriptable;
 use crate::base::field::FieldLike;
 use crate::base::group::{GroupLike, PairingPoints};
@@ -15,18 +14,24 @@ use crate::goblin::translator::builder::{split_fq_into_limbs, ACCUMULATORS_BINAR
 use crate::goblin::translator::check::translator_relation_params;
 use crate::goblin::translator::relations::TranslatorRelations;
 use crate::goblin::translator::{
-    complete_evaluations, fixed_vk, fixed_vk_hash, minicircuit_entities, Ent as TEnt, TranslatorPolys, CIRCUIT_SIZE, CONST_TRANSLATOR_LOG_N, FIRST_WIRE, FULL_CIRCUIT_ENTITIES, LOG_MINI_CIRCUIT_SIZE,
-    NUM_MINICIRCUIT_EVALUATIONS, NUM_OP_QUEUE_WIRES, PCS_SHIFTED, PCS_TO_BE_SHIFTED, PCS_UNSHIFTED, RESULT_ROW,
+    complete_evaluations, fixed_vk, fixed_vk_hash, minicircuit_entities, Ent as TEnt, TranslatorPolys, CIRCUIT_SIZE,
+    CONST_TRANSLATOR_LOG_N, FIRST_WIRE, FULL_CIRCUIT_ENTITIES, LOG_MINI_CIRCUIT_SIZE, NUM_MINICIRCUIT_EVALUATIONS,
+    NUM_OP_QUEUE_WIRES, PCS_SHIFTED, PCS_TO_BE_SHIFTED, PCS_UNSHIFTED, RESULT_ROW,
 };
 use crate::honk::flavor::MEGA_ZK;
 use crate::honk::oink::OinkOutput;
 use crate::honk::oink_prover::build_gemini_masking_poly;
-use crate::honk::pcs::{kzg_open, kzg_reduce_verify_batch_opening_claim, shplemini_prove, shplemini_verify, small_subgroup_ipa_prove, sumcheck_round_claims, ClaimBatcher};
+use crate::honk::pcs::{
+    kzg_open, kzg_reduce_verify_batch_opening_claim, shplemini_prove, shplemini_verify, small_subgroup_ipa_prove,
+    sumcheck_round_claims, ClaimBatcher,
+};
 use crate::honk::prover_instance::ProverInstance;
 use crate::honk::relations::RelationParams;
 use crate::honk::sumcheck::{
-    alpha_powers, evaluate_univariate, full_relation_value, gate_separator_factor, row_disabling_main_factor, CommittedRounds, HonkRelations, RelationSet, RoundProver, ZkData,
+    alpha_powers, evaluate_univariate, full_relation_value, gate_separator_factor, row_disabling_main_factor,
+    CommittedRounds, HonkRelations, RelationSet, RoundProver, ZkData,
 };
+use rayon::prelude::*;
 
 pub const JOINT_LOG_N: usize = CONST_TRANSLATOR_LOG_N;
 
@@ -48,11 +53,23 @@ const ORDERED_LABELS: [&str; 5] = [
 /// The translator's part of the joint proof before sumcheck (bb `TranslatorProver::execute_preamble_round`,
 /// `execute_wire_and_sorted_constraints_commitments_round`, `execute_grand_product_computation_round`).
 /// Fills in the Gemini masking polynomial, `z_perm` and the shifts.
-pub fn translator_oink_prove(polys: &mut TranslatorPolys, v: &Fq, x: &Fq, ck: &CommitmentKey, t: &mut NativeTranscript, rng: &mut dyn Rng) -> RelationParams<Fr> {
+pub fn translator_oink_prove(
+    polys: &mut TranslatorPolys,
+    v: &Fq,
+    x: &Fq,
+    ck: &CommitmentKey,
+    t: &mut NativeTranscript,
+    rng: &mut dyn Rng,
+) -> RelationParams<Fr> {
     t.add_to_hash_buffer("vk_hash", &fixed_vk_hash());
-    let result_limbs: [Fr; 4] = std::array::from_fn(|i| polys.cols[FIRST_WIRE + ACCUMULATORS_BINARY_LIMBS_0 + i].coeffs[RESULT_ROW]);
-    polys.cols[TEnt::gemini_masking_poly as usize] = build_gemini_masking_poly(CONST_TRANSLATOR_LOG_N, CIRCUIT_SIZE, CIRCUIT_SIZE, rng);
-    t.send("Gemini:masking_poly_comm", &ck.commit(polys.col(TEnt::gemini_masking_poly)));
+    let result_limbs: [Fr; 4] =
+        std::array::from_fn(|i| polys.cols[FIRST_WIRE + ACCUMULATORS_BINARY_LIMBS_0 + i].coeffs[RESULT_ROW]);
+    polys.cols[TEnt::gemini_masking_poly as usize] =
+        build_gemini_masking_poly(CONST_TRANSLATOR_LOG_N, CIRCUIT_SIZE, CIRCUIT_SIZE, rng);
+    t.send(
+        "Gemini:masking_poly_comm",
+        &ck.commit(polys.col(TEnt::gemini_masking_poly)),
+    );
     let cols: Vec<usize> = (0..CONCATENATED_LABELS.len())
         .map(|g| TEnt::concatenated_range_constraints_0 as usize + g)
         .chain((0..ORDERED_LABELS.len()).map(|k| TEnt::ordered_range_constraints_0 as usize + k))
@@ -71,11 +88,23 @@ pub fn translator_oink_prove(polys: &mut TranslatorPolys, v: &Fq, x: &Fq, ck: &C
 
 /// bb `BatchedHonkTranslatorProver::prove`: the translator Oink, the joint sumcheck and the joint PCS.
 /// The MegaZK Oink (`prove_oink` with `emit_alpha = false`) must already have run on `t`.
-pub fn joint_prove(mega: &ProverInstance, mega_params: &RelationParams<Fr>, trans: &mut TranslatorPolys, v: &Fq, x: &Fq, ck: &CommitmentKey, t: &mut NativeTranscript, rng: &mut dyn Rng) {
+pub fn joint_prove(
+    mega: &ProverInstance,
+    mega_params: &RelationParams<Fr>,
+    trans: &mut TranslatorPolys,
+    v: &Fq,
+    x: &Fq,
+    ck: &CommitmentKey,
+    t: &mut NativeTranscript,
+    rng: &mut dyn Rng,
+) {
     let trans_params = translator_oink_prove(trans, v, x, ck, t, rng);
     crate::base::timing::phase("  joint: translator oink");
     let layout = &mega.layout;
-    let mega_rels = HonkRelations { flavor: &MEGA_ZK, layout };
+    let mega_rels = HonkRelations {
+        flavor: &MEGA_ZK,
+        layout,
+    };
     let trans_rels = TranslatorRelations;
 
     // --- joint sumcheck ---
@@ -98,7 +127,11 @@ pub fn joint_prove(mega: &ProverInstance, mega_params: &RelationParams<Fr>, tran
         let t1 = std::time::Instant::now();
         let u_t = trans_state.univariate(&trans_rels, &trans_params, &betas, &partial_eval, &trans_alphas, d);
         if crate::honk::sumcheck::relation_stats_enabled() {
-            eprintln!("[joint round {round}] mega {:.1} ms, translator {:.1} ms", (t1 - t0).as_secs_f64() * 1e3, t1.elapsed().as_secs_f64() * 1e3);
+            eprintln!(
+                "[joint round {round}] mega {:.1} ms, translator {:.1} ms",
+                (t1 - t0).as_secs_f64() * 1e3,
+                t1.elapsed().as_secs_f64() * 1e3
+            );
         }
         let libra = zk.round_univariate(round, d);
         for k in 0..d {
@@ -111,7 +144,11 @@ pub fn joint_prove(mega: &ProverInstance, mega_params: &RelationParams<Fr>, tran
         let t3 = std::time::Instant::now();
         trans_state.partially_evaluate(&u);
         if crate::honk::sumcheck::relation_stats_enabled() {
-            eprintln!("[joint round {round}] fold mega {:.1} ms, translator {:.1} ms", (t3 - t2).as_secs_f64() * 1e3, t3.elapsed().as_secs_f64() * 1e3);
+            eprintln!(
+                "[joint round {round}] fold mega {:.1} ms, translator {:.1} ms",
+                (t3 - t2).as_secs_f64() * 1e3,
+                t3.elapsed().as_secs_f64() * 1e3
+            );
         }
         if round == LOG_MINI_CIRCUIT_SIZE - 1 {
             let mini: Vec<Fr> = minicircuit_entities().map(|e| trans_state.current(e)).collect();
@@ -130,11 +167,28 @@ pub fn joint_prove(mega: &ProverInstance, mega_params: &RelationParams<Fr>, tran
 
     // --- joint PCS ---
     let libra = small_subgroup_ipa_prove::<Bn254>(&zk, &challenge, &libra_evaluation, ck, t, rng);
-    let unshifted: Vec<&Poly> = PCS_UNSHIFTED.iter().map(|e| &trans.cols[*e]).chain(mega.polys.iter()).collect();
-    let to_be_shifted: Vec<&Poly> = layout.shifted.iter().map(|e| mega.poly(*e)).chain(PCS_TO_BE_SHIFTED.iter().map(|e| &trans.cols[*e])).collect();
+    let unshifted: Vec<&Poly> = PCS_UNSHIFTED
+        .iter()
+        .map(|e| &trans.cols[*e])
+        .chain(mega.polys.iter())
+        .collect();
+    let to_be_shifted: Vec<&Poly> = layout
+        .shifted
+        .iter()
+        .map(|e| mega.poly(*e))
+        .chain(PCS_TO_BE_SHIFTED.iter().map(|e| &trans.cols[*e]))
+        .collect();
     let round_claims = sumcheck_round_claims(&committed.univariates, &committed.evaluations, &challenge);
     crate::base::timing::phase("  joint: sumcheck");
-    let claim = shplemini_prove(&unshifted, &to_be_shifted, &challenge, ck, t, Some(&libra), &round_claims);
+    let claim = shplemini_prove(
+        &unshifted,
+        &to_be_shifted,
+        &challenge,
+        ck,
+        t,
+        Some(&libra),
+        &round_claims,
+    );
     kzg_open(claim, ck, t);
     crate::base::timing::phase("  joint: shplemini + kzg");
 }
@@ -156,10 +210,19 @@ pub struct JointVerification {
 
 /// bb `BatchedHonkTranslatorVerifier_::verify`. `mega_oink` is the output of `verify_oink` with
 /// `emit_alpha = false` on the same transcript `t`; `joint_proof` is loaded here.
-pub fn joint_verify(mega_vk: &Vk<Bn254>, mega_oink: &OinkOutput<Bn254>, joint_proof: &[Fr], inputs: &JointVerifierInputs, t: &mut NativeTranscript) -> JointVerification {
+pub fn joint_verify(
+    mega_vk: &Vk<Bn254>,
+    mega_oink: &OinkOutput<Bn254>,
+    joint_proof: &[Fr],
+    inputs: &JointVerifierInputs,
+    t: &mut NativeTranscript,
+) -> JointVerification {
     t.load_proof(joint_proof);
     let layout = MEGA_ZK.layout();
-    let mega_rels = HonkRelations { flavor: &MEGA_ZK, layout: &layout };
+    let mega_rels = HonkRelations {
+        flavor: &MEGA_ZK,
+        layout: &layout,
+    };
     let trans_rels = TranslatorRelations;
     let _ = mega_vk;
 
@@ -170,7 +233,13 @@ pub fn joint_verify(mega_vk: &Vk<Bn254>, mega_oink: &OinkOutput<Bn254>, joint_pr
     let ordered: Vec<G1Affine> = ORDERED_LABELS.iter().map(|l| t.receive(l)).collect();
     let beta: Fr = t.challenge("beta");
     let gamma: Fr = t.challenge("gamma");
-    let trans_params = translator_relation_params(&inputs.batching_challenge_v, &inputs.evaluation_input_x, split_fq_into_limbs(&inputs.accumulated_result), beta, gamma);
+    let trans_params = translator_relation_params(
+        &inputs.batching_challenge_v,
+        &inputs.evaluation_input_x,
+        split_fq_into_limbs(&inputs.accumulated_result),
+        beta,
+        gamma,
+    );
     let z_perm: G1Affine = t.receive("Z_PERM");
     let opq = &inputs.op_queue_wire_commitments;
     // bb `get_pcs_unshifted` / `get_pcs_to_be_shifted` in commitment form
@@ -220,8 +289,24 @@ pub fn joint_verify(mega_vk: &Vk<Bn254>, mega_oink: &OinkOutput<Bn254>, joint_pr
 
     let main_factor = row_disabling_main_factor(&challenge);
     let offset_factor = Fr::one() - main_factor;
-    let frv_mega = full_relation_value(&mega_rels, &mega_evals, &mega_oink.params, &partial_eval, &mega_alphas, &main_factor, &offset_factor);
-    let frv_trans = full_relation_value(&trans_rels, &trans_evals, &trans_params, &partial_eval, &trans_alphas, &Fr::one(), &Fr::zero());
+    let frv_mega = full_relation_value(
+        &mega_rels,
+        &mega_evals,
+        &mega_oink.params,
+        &partial_eval,
+        &mega_alphas,
+        &main_factor,
+        &offset_factor,
+    );
+    let frv_trans = full_relation_value(
+        &trans_rels,
+        &trans_evals,
+        &trans_params,
+        &partial_eval,
+        &trans_alphas,
+        &Fr::one(),
+        &Fr::zero(),
+    );
     let mut full_value = frv_mega + alpha_kh * frv_trans;
     let libra_evaluation: Fr = t.receive("Libra:claimed_evaluation");
     libra_commitments.push(t.receive("Libra:grand_sum_commitment"));
@@ -239,16 +324,41 @@ pub fn joint_verify(mega_vk: &Vk<Bn254>, mega_oink: &OinkOutput<Bn254>, joint_pr
     let n_mega_unshifted = layout.num_unshifted();
     let trans_shifted_evals = PCS_SHIFTED.iter().map(|e| trans_evals[*e]).chain(concat_shift_evals);
     let batcher = ClaimBatcher::<Bn254> {
-        unshifted_comms: trans_unshifted.iter().copied().chain(mega_oink.commitments.iter().copied()).collect(),
-        unshifted_evals: PCS_UNSHIFTED.iter().map(|e| trans_evals[*e]).chain(mega_evals[..n_mega_unshifted].iter().copied()).collect(),
-        shifted_comms: layout.shifted.iter().map(|e| mega_oink.commitments[layout.idx(*e)]).chain(trans_to_be_shifted).collect(),
-        shifted_evals: mega_evals[n_mega_unshifted..].iter().copied().chain(trans_shifted_evals).collect(),
+        unshifted_comms: trans_unshifted
+            .iter()
+            .copied()
+            .chain(mega_oink.commitments.iter().copied())
+            .collect(),
+        unshifted_evals: PCS_UNSHIFTED
+            .iter()
+            .map(|e| trans_evals[*e])
+            .chain(mega_evals[..n_mega_unshifted].iter().copied())
+            .collect(),
+        shifted_comms: layout
+            .shifted
+            .iter()
+            .map(|e| mega_oink.commitments[layout.idx(*e)])
+            .chain(trans_to_be_shifted)
+            .collect(),
+        shifted_evals: mega_evals[n_mega_unshifted..]
+            .iter()
+            .copied()
+            .chain(trans_shifted_evals)
+            .collect(),
     };
     // bb `REPEATED_COMMITMENTS`: indices into [unshifted..., shifted...]
     let n_unshifted = batcher.unshifted_comms.len();
     let n_mega_shifted = layout.shifted.len();
-    let mut repeated: Vec<(usize, usize)> = (0..PCS_TO_BE_SHIFTED.len()).map(|j| (2 + 1 + j, n_unshifted + n_mega_shifted + j)).collect();
-    repeated.extend(layout.shifted.iter().enumerate().map(|(j, e)| (PCS_UNSHIFTED.len() + layout.idx(*e), n_unshifted + j)));
+    let mut repeated: Vec<(usize, usize)> = (0..PCS_TO_BE_SHIFTED.len())
+        .map(|j| (2 + 1 + j, n_unshifted + n_mega_shifted + j))
+        .collect();
+    repeated.extend(
+        layout
+            .shifted
+            .iter()
+            .enumerate()
+            .map(|(j, e)| (PCS_UNSHIFTED.len() + layout.idx(*e), n_unshifted + j)),
+    );
     let shplemini = shplemini_verify::<Bn254>(
         true,
         true,

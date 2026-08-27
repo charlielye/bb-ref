@@ -59,7 +59,11 @@ impl DataBusDepot {
         self.kernel_return_data = Some(c);
     }
     pub fn set_app_return_data_commitment(&mut self, c: GoblinElement) {
-        let slot = self.app_return_data.iter_mut().find(|s| s.is_none()).expect("DataBusDepot has no free app return-data slot");
+        let slot = self
+            .app_return_data
+            .iter_mut()
+            .find(|s| s.is_none())
+            .expect("DataBusDepot has no free app return-data slot");
         *slot = Some(c);
     }
     pub fn app_return_data_slots_are_empty(&self) -> bool {
@@ -69,10 +73,14 @@ impl DataBusDepot {
         fixed_witness_point(ctx, G1Affine::identity())
     }
     pub fn get_kernel_return_data_commitment(&mut self, ctx: &Ctx) -> GoblinElement {
-        self.kernel_return_data.take().unwrap_or_else(|| Self::construct_default_commitment(ctx))
+        self.kernel_return_data
+            .take()
+            .unwrap_or_else(|| Self::construct_default_commitment(ctx))
     }
     pub fn get_app_return_data_commitment(&mut self, ctx: &Ctx, idx: usize) -> GoblinElement {
-        self.app_return_data[idx].take().unwrap_or_else(|| Self::construct_default_commitment(ctx))
+        self.app_return_data[idx]
+            .take()
+            .unwrap_or_else(|| Self::construct_default_commitment(ctx))
     }
 }
 
@@ -104,7 +112,10 @@ impl KernelIo {
     pub const PUBLIC_INPUTS_SIZE: usize = 8 + 4 + 4 * MAX_APPS_PER_KERNEL + 2;
 
     pub fn reconstruct_from_public(public_inputs: &[FieldT]) -> Self {
-        assert!(public_inputs.len() >= Self::PUBLIC_INPUTS_SIZE, "public inputs too small for KernelIO");
+        assert!(
+            public_inputs.len() >= Self::PUBLIC_INPUTS_SIZE,
+            "public inputs too small for KernelIO"
+        );
         let mut i = public_inputs.len() - Self::PUBLIC_INPUTS_SIZE;
         let pairing_inputs = read_pairing_points(public_inputs, &mut i);
         let kernel_return_data = read(public_inputs, &mut i);
@@ -120,7 +131,11 @@ impl KernelIo {
         }
     }
     pub fn set_public(&self) {
-        let ctx = self.output_hn_accum_hash.ctx.clone().expect("KernelIO without a builder");
+        let ctx = self
+            .output_hn_accum_hash
+            .ctx
+            .clone()
+            .expect("KernelIO without a builder");
         set_pairing_points_public(&self.pairing_inputs);
         self.kernel_return_data.set_public();
         for c in &self.app_return_data {
@@ -134,7 +149,8 @@ impl KernelIo {
     /// (all members are constructed before any is made public).
     pub fn add_default(ctx: &Ctx) {
         let kernel_return_data = DataBusDepot::construct_default_commitment(ctx);
-        let app_return_data: [GoblinElement; MAX_APPS_PER_KERNEL] = std::array::from_fn(|_| DataBusDepot::construct_default_commitment(ctx));
+        let app_return_data: [GoblinElement; MAX_APPS_PER_KERNEL] =
+            std::array::from_fn(|_| DataBusDepot::construct_default_commitment(ctx));
         let ecc_op_hash = FieldT::from_witness(ctx, Fr::zero());
         let output_hn_accum_hash = FieldT::from_witness(ctx, Fr::zero());
         set_default_pairing_points_public(ctx);
@@ -160,7 +176,10 @@ impl HidingKernelIo {
     pub const PUBLIC_INPUTS_SIZE: usize = 8 + 4 + 4 * NUM_ECC_OP_TABLES;
 
     pub fn reconstruct_from_public(public_inputs: &[FieldT]) -> Self {
-        assert!(public_inputs.len() >= Self::PUBLIC_INPUTS_SIZE, "public inputs too small for HidingKernelIO");
+        assert!(
+            public_inputs.len() >= Self::PUBLIC_INPUTS_SIZE,
+            "public inputs too small for HidingKernelIO"
+        );
         let mut i = public_inputs.len() - Self::PUBLIC_INPUTS_SIZE;
         let pairing_inputs = read_pairing_points(public_inputs, &mut i);
         let kernel_return_data = read(public_inputs, &mut i);
@@ -184,7 +203,8 @@ impl HidingKernelIo {
     /// (all members are constructed before any is made public).
     pub fn add_default(ctx: &Ctx) {
         let kernel_return_data = fixed_witness_point(ctx, default_ecc_commitment());
-        let ecc_op_tables: [GoblinElement; NUM_ECC_OP_TABLES] = std::array::from_fn(|_| fixed_witness_point(ctx, default_ecc_commitment()));
+        let ecc_op_tables: [GoblinElement; NUM_ECC_OP_TABLES] =
+            std::array::from_fn(|_| fixed_witness_point(ctx, default_ecc_commitment()));
         set_default_pairing_points_public(ctx);
         kernel_return_data.set_public();
         for c in &ecc_op_tables {

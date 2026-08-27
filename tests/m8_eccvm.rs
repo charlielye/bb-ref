@@ -3,9 +3,9 @@
 mod common;
 use bb_ref::base::field::from_bytes_be;
 use bb_ref::base::Fq;
-use common::eccvm_ops::build_ops;
 use bb_ref::goblin::eccvm::check::{check_circuit, eccvm_relation_params};
-use bb_ref::goblin::eccvm::{Ent, EccvmPolys, FIRST_SHIFTED, NUM_ALL_ENTITIES, TRACE_OFFSET};
+use bb_ref::goblin::eccvm::{EccvmPolys, Ent, FIRST_SHIFTED, NUM_ALL_ENTITIES, TRACE_OFFSET};
+use common::eccvm_ops::build_ops;
 
 fn check(kind: &str) {
     let q = build_ops(kind);
@@ -17,9 +17,15 @@ fn check(kind: &str) {
     let dump = common::fixture_dir(&format!("instance/eccvm/{kind}"));
     if let Ok(bytes) = std::fs::read(dump.join("eccvm_columns.bin")) {
         let num_rows = u32::from_be_bytes(bytes[..4].try_into().unwrap()) as usize;
-        let at = |e: usize, r: usize| from_bytes_be::<Fq>(&bytes[4 + 32 * (e * num_rows + r)..4 + 32 * (e * num_rows + r) + 32]);
+        let at = |e: usize, r: usize| {
+            from_bytes_be::<Fq>(&bytes[4 + 32 * (e * num_rows + r)..4 + 32 * (e * num_rows + r) + 32])
+        };
         for e in 0..NUM_ALL_ENTITIES {
-            let first_row = if e >= FIRST_SHIFTED { TRACE_OFFSET - 1 } else { TRACE_OFFSET };
+            let first_row = if e >= FIRST_SHIFTED {
+                TRACE_OFFSET - 1
+            } else {
+                TRACE_OFFSET
+            };
             for r in (0..1).chain(first_row..num_rows) {
                 if e < FIRST_SHIFTED && r == 0 || r >= first_row {
                     assert_eq!(polys.cols[e].coeffs[r], at(e, r), "{kind}: entity {e} row {r}");

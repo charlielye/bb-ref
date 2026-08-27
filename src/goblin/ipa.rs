@@ -3,11 +3,11 @@
 //! claim and a univariate claim with a single inner-product proof. Native only: Chonk's client verifier
 //! runs the ECCVM verifier natively, and Grumpkin openings are discharged as accumulators.
 
-use rayon::prelude::*;
 use crate::base::field::FieldLike;
 use crate::base::poly::{eq_table, Polynomial};
 use crate::base::{Fq, GrumpkinAffine, GrumpkinKey, NativeTranscript};
 use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
+use rayon::prelude::*;
 
 type P = Polynomial<Fq>;
 type Proj = ark_grumpkin::Projective;
@@ -73,10 +73,19 @@ pub fn inner_product_prove(ck: &GrumpkinKey, witness: &P, mut b: Vec<Fq>, t: &mu
         let u_inv = u.invert();
         challenge_product *= u;
         let (a_lo, a_hi) = a.split_at_mut(half);
-        a_lo.par_iter_mut().zip(&a_hi[..half]).for_each(|(lo, hi)| *lo = u_inv * *lo + hi);
+        a_lo.par_iter_mut()
+            .zip(&a_hi[..half])
+            .for_each(|(lo, hi)| *lo = u_inv * *lo + hi);
         let (b_lo, b_hi) = b.split_at_mut(half);
-        b_lo.par_iter_mut().zip(&b_hi[..half]).for_each(|(lo, hi)| *lo = u * *lo + hi);
-        g = Proj::normalize_batch(&(0..half).into_par_iter().map(|i| g[i] * u + g[half + i]).collect::<Vec<_>>());
+        b_lo.par_iter_mut()
+            .zip(&b_hi[..half])
+            .for_each(|(lo, hi)| *lo = u * *lo + hi);
+        g = Proj::normalize_batch(
+            &(0..half)
+                .into_par_iter()
+                .map(|i| g[i] * u + g[half + i])
+                .collect::<Vec<_>>(),
+        );
     }
     t.send("IPA:G_0", &(g[0] * challenge_product.invert()).into_affine());
     t.send("IPA:a_0", &(a[0] * challenge_product));
@@ -92,7 +101,13 @@ pub struct IpaAccumulator {
 
 /// bb `IPA::read_inner_product_transcript_data` + the group relation of `reduce_to_accumulator_internal`:
 /// checks `C + v U + Σ (u_j^{-1} L_j + u_j R_j) == a_0 G_0 + a_0 b_0 U` with `b_0 = b_zero(u_inv)`.
-pub fn inner_product_reduce_to_accumulator(commitment: &GrumpkinAffine, evaluation: &Fq, b_zero: impl Fn(&[Fq]) -> Fq, log_n: usize, t: &mut NativeTranscript) -> IpaAccumulator {
+pub fn inner_product_reduce_to_accumulator(
+    commitment: &GrumpkinAffine,
+    evaluation: &Fq,
+    b_zero: impl Fn(&[Fq]) -> Fq,
+    log_n: usize,
+    t: &mut NativeTranscript,
+) -> IpaAccumulator {
     let gen_challenge: Fq = t.challenge("IPA:generator_challenge");
     assert!(!gen_challenge.is_zero(), "the generator challenge can't be zero");
     let aux_generator = GrumpkinAffine::generator() * gen_challenge;
@@ -111,7 +126,11 @@ pub fn inner_product_reduce_to_accumulator(commitment: &GrumpkinAffine, evaluati
     let g_zero: GrumpkinAffine = t.receive("IPA:G_0");
     let a_zero: Fq = t.receive("IPA:a_0");
     let rhs = g_zero * a_zero + aux_generator * (a_zero * b_zero);
-    IpaAccumulator { u_challenges_inv: u_inv, claimed_commitment: g_zero, relation_succeeded: c_zero == rhs }
+    IpaAccumulator {
+        u_challenges_inv: u_inv,
+        claimed_commitment: g_zero,
+        relation_succeeded: c_zero == rhs,
+    }
 }
 
 /// bb `IPA::batch_verify_accumulators`: one SRS MSM settles every accumulator's claimed `G_0`.
@@ -223,7 +242,11 @@ impl OpeningVector {
     fn tensor(&self, eq: &[Fq]) -> Vec<Fq> {
         let n = eq.len();
         let pow = powers_tensor(&self.univariate_challenge, n);
-        (0..n).map(|i| self.zeta[0] * eq[i] + if i > 0 { self.zeta[1] * eq[i - 1] } else { Fq::zero() } + self.zeta[2] * pow[i]).collect()
+        (0..n)
+            .map(|i| {
+                self.zeta[0] * eq[i] + if i > 0 { self.zeta[1] * eq[i - 1] } else { Fq::zero() } + self.zeta[2] * pow[i]
+            })
+            .collect()
     }
     /// The tensor folded by the IPA round challenges (bb `IpaOpeningVector::evaluate_folded`).
     fn evaluate_folded(&self, u_inv: &[Fq]) -> Fq {
@@ -242,13 +265,24 @@ impl OpeningVector {
         for i in (0..log_n - 1).rev() {
             upper_suffix[i] = upper_suffix[i + 1] * eq_factor(i + 1);
         }
-        let shift_folded: Fq = (0..log_n).map(|i| lower_prefix[i] * (Fq::one() - point[i]) * fold(i) * upper_suffix[i]).sum();
-        self.zeta[0] * eq_folded + self.zeta[1] * shift_folded + self.zeta[2] * evaluate_challenge_poly(u_inv, &self.univariate_challenge)
+        let shift_folded: Fq = (0..log_n)
+            .map(|i| lower_prefix[i] * (Fq::one() - point[i]) * fold(i) * upper_suffix[i])
+            .sum();
+        self.zeta[0] * eq_folded
+            + self.zeta[1] * shift_folded
+            + self.zeta[2] * evaluate_challenge_poly(u_inv, &self.univariate_challenge)
     }
 }
 
 fn combined_inner_product(diagonal: [Fq; 3], zeta: &[Fq; 3], cross: &[Fq; 3]) -> Fq {
-    let weights = [zeta[0].sqr(), zeta[1].sqr(), zeta[2].sqr(), zeta[0] * zeta[1], zeta[0] * zeta[2], zeta[1] * zeta[2]];
+    let weights = [
+        zeta[0].sqr(),
+        zeta[1].sqr(),
+        zeta[2].sqr(),
+        zeta[0] * zeta[1],
+        zeta[0] * zeta[2],
+        zeta[1] * zeta[2],
+    ];
     let values = [diagonal[0], diagonal[1], diagonal[2], cross[0], cross[1], cross[2]];
     dot(&values, &weights)
 }
@@ -267,17 +301,44 @@ fn add_claim_to_hash_buffer(claim: &TripleIpaClaim, t: &mut NativeTranscript) {
 }
 
 /// Batch the three claims into one IPA claim `(C, b, v)` after the cross sums are on the transcript.
-fn combine(claim: &TripleIpaClaim, zeta: [Fq; 3], cross: &[Fq; 3], t: &mut NativeTranscript) -> (GrumpkinAffine, OpeningVector, Fq) {
-    let commitment = msm(&[claim.unshifted_commitment, claim.shifted_commitment, claim.univariate_commitment], &zeta).into_affine();
-    let evaluation = combined_inner_product([claim.unshifted_evaluation, claim.shifted_evaluation, claim.univariate_evaluation], &zeta, cross);
+fn combine(
+    claim: &TripleIpaClaim,
+    zeta: [Fq; 3],
+    cross: &[Fq; 3],
+    t: &mut NativeTranscript,
+) -> (GrumpkinAffine, OpeningVector, Fq) {
+    let commitment = msm(
+        &[
+            claim.unshifted_commitment,
+            claim.shifted_commitment,
+            claim.univariate_commitment,
+        ],
+        &zeta,
+    )
+    .into_affine();
+    let evaluation = combined_inner_product(
+        [
+            claim.unshifted_evaluation,
+            claim.shifted_evaluation,
+            claim.univariate_evaluation,
+        ],
+        &zeta,
+        cross,
+    );
     t.add_to_hash_buffer("TripleIPA:combined:commitment", &commitment);
     t.add_to_hash_buffer("TripleIPA:combined:evaluation", &evaluation);
-    let vector = OpeningVector { multilinear_challenge: claim.multilinear_challenge.clone(), univariate_challenge: claim.univariate_challenge, zeta };
+    let vector = OpeningVector {
+        multilinear_challenge: claim.multilinear_challenge.clone(),
+        univariate_challenge: claim.univariate_challenge,
+        zeta,
+    };
     (commitment, vector, evaluation)
 }
 
 fn zeta_challenges(t: &mut NativeTranscript) -> [Fq; 3] {
-    t.challenges::<Fq>(&["TripleIPA:zeta_F", "TripleIPA:zeta_shift", "TripleIPA:zeta_P"]).try_into().unwrap()
+    t.challenges::<Fq>(&["TripleIPA:zeta_F", "TripleIPA:zeta_shift", "TripleIPA:zeta_P"])
+        .try_into()
+        .unwrap()
 }
 
 /// bb `TripleIPA::compute_opening_proof`.
@@ -321,10 +382,20 @@ pub fn triple_ipa_prove(ck: &GrumpkinKey, input: &TripleIpaInput, t: &mut Native
 /// bb `TripleIPA::reduce_to_accumulator`.
 pub fn triple_ipa_reduce_to_accumulator(claim: &TripleIpaClaim, t: &mut NativeTranscript) -> IpaAccumulator {
     add_claim_to_hash_buffer(claim, t);
-    let cross = [t.receive("TripleIPA:cross_F_shift"), t.receive("TripleIPA:cross_F_P"), t.receive("TripleIPA:cross_shift_P")];
+    let cross = [
+        t.receive("TripleIPA:cross_F_shift"),
+        t.receive("TripleIPA:cross_F_P"),
+        t.receive("TripleIPA:cross_shift_P"),
+    ];
     let zeta = zeta_challenges(t);
     let (commitment, vector, evaluation) = combine(claim, zeta, &cross, t);
-    inner_product_reduce_to_accumulator(&commitment, &evaluation, |u_inv| vector.evaluate_folded(u_inv), claim.multilinear_challenge.len(), t)
+    inner_product_reduce_to_accumulator(
+        &commitment,
+        &evaluation,
+        |u_inv| vector.evaluate_folded(u_inv),
+        claim.multilinear_challenge.len(),
+        t,
+    )
 }
 
 /// bb `TripleIPA::reduce_verify` (native).

@@ -7,7 +7,6 @@ use super::check::eccvm_relation_params;
 use super::relations::EccvmRelations;
 use super::trace::TRANSLATION_ENTITIES;
 use super::*;
-use rayon::prelude::*;
 use crate::base::field::FieldLike;
 use crate::base::group::Curve;
 use crate::base::poly::Polynomial;
@@ -16,13 +15,21 @@ use crate::base::{Grumpkin, GrumpkinKey, NativeTranscript};
 use crate::circuit::op_queue::EccOpQueue;
 use crate::goblin::ipa::{rho_powers, triple_ipa_prove, TripleIpaClaims, TripleIpaInput};
 use crate::honk::pcs::{
-    eccvm_challenge_coeffs, shplonk_batch_claim, shplonk_prove, small_ipa_prover_claims, small_subgroup_ipa_prove, small_subgroup_ipa_prove_core, LibraPolys, ProverClaim, VerifierOpeningClaim,
+    eccvm_challenge_coeffs, shplonk_batch_claim, shplonk_prove, small_ipa_prover_claims, small_subgroup_ipa_prove,
+    small_subgroup_ipa_prove_core, LibraPolys, ProverClaim, VerifierOpeningClaim,
 };
 use crate::honk::sumcheck::{interpolate_on_subgroup, prove_sumcheck, subgroup_domain, SumcheckSpec, ZkData};
 use ark_ec::{CurveGroup, VariableBaseMSM};
+use rayon::prelude::*;
 
 pub const NUM_TRANSLATION_EVALUATIONS: usize = 5;
-pub const TRANSLATION_LABELS: [&str; NUM_TRANSLATION_EVALUATIONS] = ["Translation:op", "Translation:Px", "Translation:Py", "Translation:z1", "Translation:z2"];
+pub const TRANSLATION_LABELS: [&str; NUM_TRANSLATION_EVALUATIONS] = [
+    "Translation:op",
+    "Translation:Px",
+    "Translation:Py",
+    "Translation:z1",
+    "Translation:z2",
+];
 const POW_MASK_SIZE: usize = 8;
 
 pub fn sumcheck_spec() -> SumcheckSpec {
@@ -50,9 +57,11 @@ pub struct EccvmProverOutput {
 /// and MSM wires, lookup read counts, the to-be-shifted wires by group, the accumulators, `z_perm`,
 /// `lookup_inverses` (bb `ECCVMFlavor::ProverPolynomials` constructor).
 const MASKING_ORDER: [usize; 88] = [
-    5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 50, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, // transcript wires
+    5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 50, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63,
+    64, // transcript wires
     17, 18, 19, 20, 21, 22, 23, 24, 25, // precompute wires
-    26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 65, // msm wires
+    26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
+    65, // msm wires
     51, 52, // lookup read counts
     66, 67, 85, // shifted transcript wires
     68, 69, 70, 71, 72, 73, 84, 86, 87, // shifted precompute wires
@@ -80,18 +89,27 @@ fn msm(points: &[GrumpkinAffine], scalars: &[Fq]) -> GrumpkinAffine {
 /// bb `ECCVMProver::construct_proof` on `t`; the TripleIPA proof is returned separately.
 pub fn eccvm_prove(q: &EccOpQueue, ck: &GrumpkinKey, t: &mut NativeTranscript, rng: &mut dyn Rng) -> EccvmProverOutput {
     let mut polys = EccvmPolys::from_op_queue(q);
-    crate::base::timing::phase(&format!("  eccvm: trace polys ({} of {} rows)", polys.num_rows, polys.size()));
+    crate::base::timing::phase(&format!(
+        "  eccvm: trace polys ({} of {} rows)",
+        polys.num_rows,
+        polys.size()
+    ));
     polys.add_masking(rng);
     let n = FIXED_SIZE;
 
     t.add_to_hash_buffer("vk_hash", &fixed_vk_hash());
-    polys.cols[Ent::gemini_masking_poly as usize] = Polynomial::from_coeffs((0..n).map(|_| random_field(rng)).collect());
+    polys.cols[Ent::gemini_masking_poly as usize] =
+        Polynomial::from_coeffs((0..n).map(|_| random_field(rng)).collect());
     let mut commitments: Vec<GrumpkinAffine> = vec![GrumpkinAffine::identity(); FIRST_SHIFTED];
     commitments[0] = ck.commit(polys.col(Ent::gemini_masking_poly));
     t.send("Gemini:masking_poly_comm", &commitments[0]);
     commitments[1..=NUM_PRECOMPUTED].copy_from_slice(&fixed_vk());
     let witness_range = NUM_PRECOMPUTED + 1..FIRST_SHIFTED - 2;
-    let comms: Vec<GrumpkinAffine> = witness_range.clone().into_par_iter().map(|e| ck.commit(&polys.cols[e])).collect();
+    let comms: Vec<GrumpkinAffine> = witness_range
+        .clone()
+        .into_par_iter()
+        .map(|e| ck.commit(&polys.cols[e]))
+        .collect();
     for (e, c) in witness_range.zip(comms) {
         commitments[e] = c;
         t.send(&label(ent(e)), &commitments[e]);
@@ -111,15 +129,33 @@ pub fn eccvm_prove(q: &EccOpQueue, ck: &GrumpkinKey, t: &mut NativeTranscript, r
     crate::base::timing::phase("  eccvm: oink commits + derived polys");
     let mut spec = sumcheck_spec();
     spec.active_prefix_end = Some(polys.num_rows);
-    let sc = prove_sumcheck::<Grumpkin>(&EccvmRelations, &spec, &polys.cols, t, &alpha, &gate_challenges, &params, Some(&mut zk), Some(ck));
+    let sc = prove_sumcheck::<Grumpkin>(
+        &EccvmRelations,
+        &spec,
+        &polys.cols,
+        t,
+        &alpha,
+        &gate_challenges,
+        &params,
+        Some(&mut zk),
+        Some(ck),
+    );
     crate::base::timing::phase("  eccvm: sumcheck");
 
     // Every univariate opening claim, paired with the commitment the verifier holds for it.
     let mut claims: Vec<ProverClaim<Fq>> = Vec::new();
     let mut claim_commitments: Vec<GrumpkinAffine> = Vec::new();
-    let add_small_ipa_claims = |polys: &LibraPolys<Fq>, r: &Fq, prefix: &str, t: &mut NativeTranscript, claims: &mut Vec<ProverClaim<Fq>>, comms: &mut Vec<GrumpkinAffine>| {
+    let add_small_ipa_claims = |polys: &LibraPolys<Fq>,
+                                r: &Fq,
+                                prefix: &str,
+                                t: &mut NativeTranscript,
+                                claims: &mut Vec<ProverClaim<Fq>>,
+                                comms: &mut Vec<GrumpkinAffine>| {
         let witness_commitments: [GrumpkinAffine; 3] = std::array::from_fn(|i| ck.commit(&polys.0[i]));
-        for (i, claim) in small_ipa_prover_claims::<Grumpkin>(polys, r, prefix, t).into_iter().enumerate() {
+        for (i, claim) in small_ipa_prover_claims::<Grumpkin>(polys, r, prefix, t)
+            .into_iter()
+            .enumerate()
+        {
             comms.push(witness_commitments[crate::honk::pcs::small_ipa_commitment_index(i)]);
             claims.push(claim);
         }
@@ -146,7 +182,10 @@ pub fn eccvm_prove(q: &EccOpQueue, ck: &GrumpkinKey, t: &mut NativeTranscript, r
         concatenated.coeffs[i] -= m;
         concatenated.coeffs[subgroup_size + i] += m;
     }
-    t.send("Translation:concatenated_masking_term_commitment", &ck.commit(&concatenated));
+    t.send(
+        "Translation:concatenated_masking_term_commitment",
+        &ck.commit(&concatenated),
+    );
     let x: Fq = t.challenge("Translation:evaluation_challenge_x");
     let translation_evaluations: Vec<Fq> = TRANSLATION_ENTITIES
         .iter()
@@ -161,9 +200,25 @@ pub fn eccvm_prove(q: &EccOpQueue, ck: &GrumpkinKey, t: &mut NativeTranscript, r
     let f_lagrange = eccvm_challenge_coeffs::<Grumpkin>(&x, &v, NUM_TRANSLATION_EVALUATIONS, TRACE_OFFSET);
     let claimed_inner_product: Fq = concatenated_lagrange.iter().zip(&f_lagrange).map(|(a, b)| *a * b).sum();
     t.send("Translation:masking_term_eval", &claimed_inner_product);
-    let translation_polys = small_subgroup_ipa_prove_core::<Grumpkin>(&concatenated, &concatenated_lagrange, &f_lagrange, &claimed_inner_product, "Translation:", ck, t, rng);
+    let translation_polys = small_subgroup_ipa_prove_core::<Grumpkin>(
+        &concatenated,
+        &concatenated_lagrange,
+        &f_lagrange,
+        &claimed_inner_product,
+        "Translation:",
+        ck,
+        t,
+        rng,
+    );
     let translation_r: Fq = t.challenge("Translation:small_ipa_evaluation_challenge");
-    add_small_ipa_claims(&translation_polys, &translation_r, "Translation:", t, &mut claims, &mut claim_commitments);
+    add_small_ipa_claims(
+        &translation_polys,
+        &translation_r,
+        "Translation:",
+        t,
+        &mut claims,
+        &mut claim_commitments,
+    );
     let v_powers = rho_powers(&v, NUM_TRANSLATION_EVALUATIONS, 0);
     let mut batched_translation = Polynomial::zero(n);
     for (e, s) in TRANSLATION_ENTITIES.iter().zip(&v_powers) {
@@ -176,7 +231,8 @@ pub fn eccvm_prove(q: &EccOpQueue, ck: &GrumpkinKey, t: &mut NativeTranscript, r
         evaluation: batched_evaluation,
         gemini_fold: false,
     });
-    let translation_commitments: Vec<GrumpkinAffine> = TRANSLATION_ENTITIES.iter().map(|e| commitments[*e as usize]).collect();
+    let translation_commitments: Vec<GrumpkinAffine> =
+        TRANSLATION_ENTITIES.iter().map(|e| commitments[*e as usize]).collect();
     claim_commitments.push(msm(&translation_commitments, &v_powers));
 
     // Sumcheck round univariates at 0, 1, u_i
@@ -222,7 +278,13 @@ pub fn eccvm_prove(q: &EccOpQueue, ck: &GrumpkinKey, t: &mut NativeTranscript, r
         })
         .collect();
     let shplonk = shplonk_prove::<Grumpkin>(0, &claims, &[], &[], ck, t);
-    let batch = shplonk_batch_claim::<Grumpkin>(&verifier_claims, shplonk.quotient_commitment, &shplonk.nu, &shplonk.z, ck.points[0]);
+    let batch = shplonk_batch_claim::<Grumpkin>(
+        &verifier_claims,
+        shplonk.quotient_commitment,
+        &shplonk.nu,
+        &shplonk.z,
+        ck.points[0],
+    );
     let univariate_commitment = msm(&batch.commitments, &batch.scalars);
 
     // TripleIPA on its own transcript

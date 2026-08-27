@@ -13,7 +13,9 @@ pub type Poly = Polynomial<Fr>;
 
 impl<F: FieldLike> Polynomial<F> {
     pub fn zero(size: usize) -> Self {
-        Self { coeffs: vec![F::zero(); size] }
+        Self {
+            coeffs: vec![F::zero(); size],
+        }
     }
     pub fn from_coeffs(coeffs: Vec<F>) -> Self {
         Self { coeffs }
@@ -30,7 +32,10 @@ impl<F: FieldLike> Polynomial<F> {
     }
     /// The left shift `p(X) / X`, valid only when `coeffs[0] == 0` (bb "shiftable" polynomials).
     pub fn shifted(&self) -> Self {
-        assert!(self.coeffs.first().map_or(true, FieldLike::is_zero), "shifting a polynomial with non-zero constant term");
+        assert!(
+            self.coeffs.first().map_or(true, FieldLike::is_zero),
+            "shifting a polynomial with non-zero constant term"
+        );
         let mut c = self.coeffs[1..].to_vec();
         c.push(F::zero());
         Self { coeffs: c }
@@ -55,7 +60,10 @@ impl<F: FieldLike> Polynomial<F> {
         assert_eq!(self.coeffs.len(), 1 << u.len());
         let mut vals = self.coeffs.clone();
         for u_j in u {
-            vals = vals.chunks(2).map(|c| c[0].clone() + (c[1].clone() - &c[0]) * u_j).collect();
+            vals = vals
+                .chunks(2)
+                .map(|c| c[0].clone() + (c[1].clone() - &c[0]) * u_j)
+                .collect();
         }
         vals.pop().unwrap()
     }
@@ -79,7 +87,10 @@ impl<F: FieldLike> Polynomial<F> {
             carry = self.coeffs[i].clone() + &(root.clone() * &carry);
             q[i - 1] = carry.clone();
         }
-        assert!((self.coeffs[0].clone() + &(root.clone() * &carry)).is_zero(), "factor_root: not a root");
+        assert!(
+            (self.coeffs[0].clone() + &(root.clone() * &carry)).is_zero(),
+            "factor_root: not a root"
+        );
         self.coeffs = q;
     }
 

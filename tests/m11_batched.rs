@@ -7,7 +7,9 @@ use bb_ref::base::io::{decode_fields, encode_fields};
 use bb_ref::base::rng::TapeRng;
 use bb_ref::base::srs::bn254_g2;
 use bb_ref::base::{CommitmentKey, Fq, Fr, G1Affine, NativeTranscript, OsRng};
-use bb_ref::chonk::batched::{joint_prove, joint_verify, mega_zk_oink_length_without_public_inputs, JointVerifierInputs, JOINT_LOG_N};
+use bb_ref::chonk::batched::{
+    joint_prove, joint_verify, mega_zk_oink_length_without_public_inputs, JointVerifierInputs, JOINT_LOG_N,
+};
 use bb_ref::circuit::{Builder, EccOpQueue};
 use bb_ref::goblin::translator::builder::TranslatorCircuit;
 use bb_ref::goblin::translator::{Ent, TranslatorPolys, NUM_OP_QUEUE_WIRES};
@@ -26,7 +28,12 @@ fn read_points(bytes: &[u8]) -> Vec<G1Affine> {
         .collect()
 }
 
-fn verify(vk: &bb_ref::base::vk::Vk<bb_ref::base::Bn254>, oink_proof: &[Fr], joint_proof: &[Fr], inputs: &JointVerifierInputs) -> bool {
+fn verify(
+    vk: &bb_ref::base::vk::Vk<bb_ref::base::Bn254>,
+    oink_proof: &[Fr],
+    joint_proof: &[Fr],
+    inputs: &JointVerifierInputs,
+) -> bool {
     let layout = MEGA_ZK.layout();
     let num_public_inputs = oink_proof.len() - mega_zk_oink_length_without_public_inputs();
     let mut t = NativeTranscript::from_proof(oink_proof);
@@ -45,8 +52,11 @@ fn batched_matches_bb() {
     let ck = CommitmentKey::new(1 << JOINT_LOG_N);
 
     // MegaZK circuit from the script, VK equal to bb's
-    let text = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/scripts/mega_zk.txt")).unwrap();
-    let ctx = Rc::new(RefCell::new(Builder::new_mega(Rc::new(RefCell::new(EccOpQueue::new())))));
+    let text = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/scripts/mega_zk.txt"))
+        .unwrap();
+    let ctx = Rc::new(RefCell::new(Builder::new_mega(Rc::new(
+        RefCell::new(EccOpQueue::new()),
+    ))));
     common::script::run_script(&ctx, &text);
     let mut builder = Rc::try_unwrap(ctx).ok().unwrap().into_inner();
     let mut inst = ProverInstance::from_builder(&MEGA_ZK, &mut builder, &mut OsRng);
@@ -65,7 +75,8 @@ fn batched_matches_bb() {
         std::fs::read(dump.join("accumulated_result.bin")).unwrap(),
         "accumulated result"
     );
-    let op_queue_wire_commitments: [G1Affine; NUM_OP_QUEUE_WIRES] = std::array::from_fn(|i| ck.commit(&polys.cols[Ent::op as usize + i]));
+    let op_queue_wire_commitments: [G1Affine; NUM_OP_QUEUE_WIRES] =
+        std::array::from_fn(|i| ck.commit(&polys.cols[Ent::op as usize + i]));
     assert_eq!(
         op_queue_wire_commitments.to_vec(),
         read_points(&std::fs::read(dump.join("op_queue_wires.bin")).unwrap()),
@@ -91,7 +102,10 @@ fn batched_matches_bb() {
     joint_prove(&inst, &oink.params, &mut polys, &v, &x, &ck, &mut t, &mut OsRng);
     let rust_joint = t.export_proof();
     assert_eq!(rust_joint.len(), bb_joint.len(), "joint proof length");
-    assert!(verify(&vk, &rust_oink, &rust_joint, &inputs), "Rust joint proof rejected");
+    assert!(
+        verify(&vk, &rust_oink, &rust_joint, &inputs),
+        "Rust joint proof rejected"
+    );
     let out = dump.join("rust");
     std::fs::create_dir_all(&out).unwrap();
     std::fs::write(out.join("oink_proof.bin"), encode_fields(&rust_oink)).unwrap();
@@ -108,7 +122,10 @@ fn batched_matches_bb() {
         accumulated_result: accumulated_result + Fq::from(1u64),
         ..inputs
     };
-    assert!(!verify(&vk, &rust_oink, &rust_joint, &bad_inputs), "wrong accumulated result accepted");
+    assert!(
+        !verify(&vk, &rust_oink, &rust_joint, &bad_inputs),
+        "wrong accumulated result accepted"
+    );
 }
 
 /// With bb's CSPRNG tape replayed (instance masking, ZK prefix, random ops, translator masking,
@@ -122,8 +139,11 @@ fn batched_byte_exact_with_tape() {
     }
     let mut tape = TapeRng::from_bytes(std::fs::read(dump.join("rng_tape.bin")).unwrap());
     let ck = CommitmentKey::new(1 << JOINT_LOG_N);
-    let text = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/scripts/mega_zk.txt")).unwrap();
-    let ctx = Rc::new(RefCell::new(Builder::new_mega(Rc::new(RefCell::new(EccOpQueue::new())))));
+    let text = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/scripts/mega_zk.txt"))
+        .unwrap();
+    let ctx = Rc::new(RefCell::new(Builder::new_mega(Rc::new(
+        RefCell::new(EccOpQueue::new()),
+    ))));
     common::script::run_script(&ctx, &text);
     let mut builder = Rc::try_unwrap(ctx).ok().unwrap().into_inner();
     let mut inst = ProverInstance::from_builder(&MEGA_ZK, &mut builder, &mut tape);
@@ -133,14 +153,22 @@ fn batched_byte_exact_with_tape() {
     let x = Fq::from(13u64).invert();
     let circuit = TranslatorCircuit::new(v, x, &q);
     let masking = TranslatorPolys::random_masking(&mut tape);
-    assert_eq!(masking, common::translator_fixture::read_masking(&dump), "translator masking values");
+    assert_eq!(
+        masking,
+        common::translator_fixture::read_masking(&dump),
+        "translator masking values"
+    );
     let mut polys = TranslatorPolys::from_circuit(&circuit, &masking);
 
     let mut t = NativeTranscript::new();
     let oink = prove_oink(&mut inst, &vk, &ck, &mut t, &mut tape, false);
     let rust_oink = t.export_proof();
     let bb_oink = decode_fields(&std::fs::read(dump.join("oink_proof.bin")).unwrap());
-    assert_eq!(rust_oink.iter().zip(&bb_oink).position(|(a, b)| a != b), None, "Oink proof differs from bb's (first differing field)");
+    assert_eq!(
+        rust_oink.iter().zip(&bb_oink).position(|(a, b)| a != b),
+        None,
+        "Oink proof differs from bb's (first differing field)"
+    );
     joint_prove(&inst, &oink.params, &mut polys, &v, &x, &ck, &mut t, &mut tape);
     let rust_joint = t.export_proof();
     let bb_joint = decode_fields(&std::fs::read(dump.join("joint_proof.bin")).unwrap());

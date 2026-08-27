@@ -13,10 +13,17 @@ use crate::base::Fr;
 pub fn check_circuit(inst: &ProverInstance, params: &RelationParams<Fr>) -> Option<(Rel, usize, Option<usize>)> {
     let flavor = inst.flavor;
     let one = Fr::one();
-    let mut sums: Vec<Vec<Fr>> = flavor.relations.iter().map(|r| vec![Fr::zero(); r.num_subrelations()]).collect();
+    let mut sums: Vec<Vec<Fr>> = flavor
+        .relations
+        .iter()
+        .map(|r| vec![Fr::zero(); r.num_subrelations()])
+        .collect();
     for i in 0..inst.dyadic_size {
         let vals = inst.row(i);
-        let row = Row { vals: &vals, layout: &inst.layout };
+        let row = Row {
+            vals: &vals,
+            layout: &inst.layout,
+        };
         let disabled = flavor.has_zk && i < flavor.trace_offset;
         for (ri, rel) in flavor.relations.iter().enumerate() {
             let spec = rel.spec();

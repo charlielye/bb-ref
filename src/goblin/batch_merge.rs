@@ -10,7 +10,9 @@ use crate::base::group::{Curve, GroupLike, PairingPoints};
 use crate::base::poseidon2::Hasher;
 use crate::base::{Bn254, CommitmentKey, Fr, G1Affine, NativeTranscript, Poly, Transcript};
 use crate::circuit::op_queue::{EccOpQueue, CONST_OP_QUEUE_LOG_SIZE, ZK_ULTRA_OPS};
-use crate::honk::pcs::{kzg_open, kzg_reduce_verify_batch_opening_claim, shplonk_prove, shplonk_verify, ProverClaim, VerifierOpeningClaim};
+use crate::honk::pcs::{
+    kzg_open, kzg_reduce_verify_batch_opening_claim, shplonk_prove, shplonk_verify, ProverClaim, VerifierOpeningClaim,
+};
 
 const NUM_WIRES: usize = 4;
 /// `CHONK_MAX_NUM_APPS + kernels + reset-tail + hiding`: the slots of a production batch merge.
@@ -88,8 +90,15 @@ pub fn batch_merge_prove(q: &EccOpQueue, max_subtables: usize, ck: &CommitmentKe
     let mut flattened = flattened.into_iter();
     for idx in 0..(m + 1) * NUM_WIRES {
         // Padding slots (and empty columns) open the zero polynomial.
-        let poly = flattened.next().filter(|p| !p.is_empty()).unwrap_or_else(|| Poly::zero(1));
-        let evaluation = if poly.len() == 1 && poly.coeffs[0].is_zero() { Fr::zero() } else { evals[idx] };
+        let poly = flattened
+            .next()
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| Poly::zero(1));
+        let evaluation = if poly.len() == 1 && poly.coeffs[0].is_zero() {
+            Fr::zero()
+        } else {
+            evals[idx]
+        };
         claims.push(ProverClaim {
             poly,
             challenge: kappa,
@@ -133,7 +142,12 @@ pub struct BatchMergeOutput<C: Curve> {
 }
 
 /// bb `BatchMergeVerifier_::reduce_to_pairing_check`; `hash` is the running hash from accumulation.
-pub fn batch_merge_verify<C: Curve>(proof: &[C::TF], hash: &C::Fr, max_subtables: usize, ctx: &<C::Fr as FieldLike>::Ctx) -> BatchMergeOutput<C> {
+pub fn batch_merge_verify<C: Curve>(
+    proof: &[C::TF],
+    hash: &C::Fr,
+    max_subtables: usize,
+    ctx: &<C::Fr as FieldLike>::Ctx,
+) -> BatchMergeOutput<C> {
     let m = max_subtables;
     let mut t = Transcript::<C::TF, C::Hash>::from_proof(proof);
     let mut flattened: Vec<C::G> = Vec::with_capacity((m + 1) * NUM_WIRES);
@@ -161,7 +175,9 @@ pub fn batch_merge_verify<C: Curve>(proof: &[C::TF], hash: &C::Fr, max_subtables
     assert!(!num_subtables.is_zero());
     // bb `compute_indicator_array`: indicator[i] = (i < N), range-checked to LOG_MAX_MERGE_SIZE + 1 bits
     let log_max_merge_size = usize::BITS - 1 - m.leading_zeros();
-    let indicator: Vec<C::Fr> = (0..m).map(|i| C::Fr::from_u64(i as u64).ranged_less_than(&num_subtables, log_max_merge_size + 1)).collect();
+    let indicator: Vec<C::Fr> = (0..m)
+        .map(|i| C::Fr::from_u64(i as u64).ranged_less_than(&num_subtables, log_max_merge_size + 1))
+        .collect();
     crate::circuit::builder::trace_phase("batch merge: indicator");
     let mut shift_sizes = vec![C::Fr::from_u64(ZK_ULTRA_OPS as u64)];
     for i in 0..m {
@@ -177,13 +193,18 @@ pub fn batch_merge_verify<C: Curve>(proof: &[C::TF], hash: &C::Fr, max_subtables
     let g_commitment: C::G = t.receive("DEGREE_CHECK_POLY");
     let kappa: C::Fr = t.challenge("KAPPA");
     let kappa_inv = kappa.invert();
-    let powers_of_kappa: Vec<C::Fr> = shift_sizes.iter().map(|s| kappa.pow_field(s, CONST_OP_QUEUE_LOG_SIZE as u32 + 1)).collect();
+    let powers_of_kappa: Vec<C::Fr> = shift_sizes
+        .iter()
+        .map(|s| kappa.pow_field(s, CONST_OP_QUEUE_LOG_SIZE as u32 + 1))
+        .collect();
     crate::circuit::builder::trace_phase("batch merge: kappa powers");
     let powers_of_kappa_inv: Vec<C::Fr> = powers_of_kappa.iter().map(FieldLike::invert).collect();
     crate::circuit::builder::trace_phase("batch merge: kappa inverses");
 
     let num_column_evals = (m + 1) * NUM_WIRES;
-    let mut evals: Vec<C::Fr> = (0..num_column_evals).map(|i| t.receive(&format!("C_EVAL_{i}"))).collect();
+    let mut evals: Vec<C::Fr> = (0..num_column_evals)
+        .map(|i| t.receive(&format!("C_EVAL_{i}")))
+        .collect();
     for col in 0..NUM_WIRES {
         evals.push(t.receive(&format!("MERGED_EVAL_{col}")));
     }
@@ -214,7 +235,16 @@ pub fn batch_merge_verify<C: Curve>(proof: &[C::TF], hash: &C::Fr, max_subtables
     degree_diff.assert_equal(&C::Fr::zero());
     // The hash after subtable N-1 must equal the running hash: select it with dirac[i] = (i == N-1)
     // (bb `compute_dirac_array` first, then `check_hash_consistency`).
-    let dirac: Vec<C::Fr> = (0..m).map(|i| indicator[i].clone() - if i + 1 < m { indicator[i + 1].clone() } else { C::Fr::zero() }).collect();
+    let dirac: Vec<C::Fr> = (0..m)
+        .map(|i| {
+            indicator[i].clone()
+                - if i + 1 < m {
+                    indicator[i + 1].clone()
+                } else {
+                    C::Fr::zero()
+                }
+        })
+        .collect();
     let mut expected_hash = dirac[0].clone() * &calculated_hashes[0];
     for i in 1..m {
         expected_hash += calculated_hashes[i].clone() * &dirac[i];

@@ -57,13 +57,55 @@ pub struct BusSpec {
 
 pub const NUM_BUS_COLUMNS: usize = 7;
 pub const BUS_SPECS: [BusSpec; NUM_BUS_COLUMNS] = [
-    BusSpec { value: Ent::kernel_calldata, read_counts: Ent::kernel_calldata_read_counts, inverses: Ent::kernel_calldata_inverses, indicator: Ent::kernel_calldata_indicator, selector: Ent::q_l },
-    BusSpec { value: Ent::first_app_calldata, read_counts: Ent::first_app_calldata_read_counts, inverses: Ent::first_app_calldata_inverses, indicator: Ent::first_app_calldata_indicator, selector: Ent::q_r },
-    BusSpec { value: Ent::second_app_calldata, read_counts: Ent::second_app_calldata_read_counts, inverses: Ent::second_app_calldata_inverses, indicator: Ent::second_app_calldata_indicator, selector: Ent::q_o },
-    BusSpec { value: Ent::third_app_calldata, read_counts: Ent::third_app_calldata_read_counts, inverses: Ent::third_app_calldata_inverses, indicator: Ent::third_app_calldata_indicator, selector: Ent::q_4 },
-    BusSpec { value: Ent::fourth_app_calldata, read_counts: Ent::fourth_app_calldata_read_counts, inverses: Ent::fourth_app_calldata_inverses, indicator: Ent::fourth_app_calldata_indicator, selector: Ent::q_5 },
-    BusSpec { value: Ent::fifth_app_calldata, read_counts: Ent::fifth_app_calldata_read_counts, inverses: Ent::fifth_app_calldata_inverses, indicator: Ent::fifth_app_calldata_indicator, selector: Ent::q_c },
-    BusSpec { value: Ent::return_data, read_counts: Ent::return_data_read_counts, inverses: Ent::return_data_inverses, indicator: Ent::return_data_indicator, selector: Ent::q_m },
+    BusSpec {
+        value: Ent::kernel_calldata,
+        read_counts: Ent::kernel_calldata_read_counts,
+        inverses: Ent::kernel_calldata_inverses,
+        indicator: Ent::kernel_calldata_indicator,
+        selector: Ent::q_l,
+    },
+    BusSpec {
+        value: Ent::first_app_calldata,
+        read_counts: Ent::first_app_calldata_read_counts,
+        inverses: Ent::first_app_calldata_inverses,
+        indicator: Ent::first_app_calldata_indicator,
+        selector: Ent::q_r,
+    },
+    BusSpec {
+        value: Ent::second_app_calldata,
+        read_counts: Ent::second_app_calldata_read_counts,
+        inverses: Ent::second_app_calldata_inverses,
+        indicator: Ent::second_app_calldata_indicator,
+        selector: Ent::q_o,
+    },
+    BusSpec {
+        value: Ent::third_app_calldata,
+        read_counts: Ent::third_app_calldata_read_counts,
+        inverses: Ent::third_app_calldata_inverses,
+        indicator: Ent::third_app_calldata_indicator,
+        selector: Ent::q_4,
+    },
+    BusSpec {
+        value: Ent::fourth_app_calldata,
+        read_counts: Ent::fourth_app_calldata_read_counts,
+        inverses: Ent::fourth_app_calldata_inverses,
+        indicator: Ent::fourth_app_calldata_indicator,
+        selector: Ent::q_5,
+    },
+    BusSpec {
+        value: Ent::fifth_app_calldata,
+        read_counts: Ent::fifth_app_calldata_read_counts,
+        inverses: Ent::fifth_app_calldata_inverses,
+        indicator: Ent::fifth_app_calldata_indicator,
+        selector: Ent::q_c,
+    },
+    BusSpec {
+        value: Ent::return_data,
+        read_counts: Ent::return_data_read_counts,
+        inverses: Ent::return_data_inverses,
+        indicator: Ent::return_data_indicator,
+        selector: Ent::q_m,
+    },
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -121,7 +163,16 @@ const ALL_TRUE: &[bool] = &[true; 8];
 
 impl Rel {
     pub fn spec(self) -> RelSpec {
-        const DEFAULT: RelSpec = RelSpec { entities: &[], shifted: &[], subsets: &[], partial_lengths: &[], lin_indep: ALL_TRUE, gate_block: None, structural: false, offset_only: false };
+        const DEFAULT: RelSpec = RelSpec {
+            entities: &[],
+            shifted: &[],
+            subsets: &[],
+            partial_lengths: &[],
+            lin_indep: ALL_TRUE,
+            gate_block: None,
+            structural: false,
+            offset_only: false,
+        };
         macro_rules! spec {
             ($($k:ident : $v:expr),* $(,)?) => { RelSpec { $($k: $v,)* ..DEFAULT } };
         }
@@ -358,8 +409,17 @@ pub struct FlavorDesc {
 
 pub static ULTRA: FlavorDesc = FlavorDesc {
     name: "UltraFlavor",
-    relations: &[Rel::Permutation, Rel::LogDerivLookup, Rel::Arithmetic, Rel::DeltaRange, Rel::Elliptic, Rel::Memory,
-        Rel::NonNativeField, Rel::Poseidon2External, Rel::Poseidon2Internal],
+    relations: &[
+        Rel::Permutation,
+        Rel::LogDerivLookup,
+        Rel::Arithmetic,
+        Rel::DeltaRange,
+        Rel::Elliptic,
+        Rel::Memory,
+        Rel::NonNativeField,
+        Rel::Poseidon2External,
+        Rel::Poseidon2Internal,
+    ],
     has_zk: false,
     has_gemini_masking: false,
     virtual_log_n: 25,
@@ -369,8 +429,18 @@ pub static ULTRA: FlavorDesc = FlavorDesc {
 
 pub static ULTRA_ZK: FlavorDesc = FlavorDesc {
     name: "UltraZKFlavor",
-    relations: &[Rel::Permutation, Rel::LogDerivLookup, Rel::Arithmetic, Rel::DeltaRange, Rel::Elliptic, Rel::Memory,
-        Rel::NonNativeField, Rel::Poseidon2External, Rel::Poseidon2Internal, Rel::Masking],
+    relations: &[
+        Rel::Permutation,
+        Rel::LogDerivLookup,
+        Rel::Arithmetic,
+        Rel::DeltaRange,
+        Rel::Elliptic,
+        Rel::Memory,
+        Rel::NonNativeField,
+        Rel::Poseidon2External,
+        Rel::Poseidon2Internal,
+        Rel::Masking,
+    ],
     has_zk: true,
     has_gemini_masking: true,
     virtual_log_n: 25,
@@ -378,14 +448,34 @@ pub static ULTRA_ZK: FlavorDesc = FlavorDesc {
     batched_len_extra: 2,
 };
 
-const MEGA_POSEIDON2: [Rel; 5] = [Rel::Poseidon2External, Rel::Poseidon2InitialExternal, Rel::Poseidon2QuadInternal, Rel::Poseidon2QuadInternalTerminal, Rel::Poseidon2TransitionEntry];
+const MEGA_POSEIDON2: [Rel; 5] = [
+    Rel::Poseidon2External,
+    Rel::Poseidon2InitialExternal,
+    Rel::Poseidon2QuadInternal,
+    Rel::Poseidon2QuadInternalTerminal,
+    Rel::Poseidon2TransitionEntry,
+];
 
 /// Chonk app circuits: Mega minus the calldata buses (bb `mega_app.ts`).
 pub static MEGA_APP: FlavorDesc = FlavorDesc {
     name: "MegaAppFlavor",
-    relations: &[Rel::Permutation, Rel::LogDerivLookup, Rel::Arithmetic, Rel::BilinearBatchedEq, Rel::DeltaRange, Rel::Elliptic,
-        Rel::Memory, Rel::NonNativeField, Rel::EccOpQueue, Rel::Bus(6),
-        MEGA_POSEIDON2[0], MEGA_POSEIDON2[1], MEGA_POSEIDON2[2], MEGA_POSEIDON2[3], MEGA_POSEIDON2[4]],
+    relations: &[
+        Rel::Permutation,
+        Rel::LogDerivLookup,
+        Rel::Arithmetic,
+        Rel::BilinearBatchedEq,
+        Rel::DeltaRange,
+        Rel::Elliptic,
+        Rel::Memory,
+        Rel::NonNativeField,
+        Rel::EccOpQueue,
+        Rel::Bus(6),
+        MEGA_POSEIDON2[0],
+        MEGA_POSEIDON2[1],
+        MEGA_POSEIDON2[2],
+        MEGA_POSEIDON2[3],
+        MEGA_POSEIDON2[4],
+    ],
     has_zk: false,
     has_gemini_masking: false,
     virtual_log_n: CONST_FOLDING_LOG_N,
@@ -396,9 +486,27 @@ pub static MEGA_APP: FlavorDesc = FlavorDesc {
 /// Chonk kernel circuits: no lookups or non-native-field gates, all seven buses (bb `mega_kernel.ts`).
 pub static MEGA_KERNEL: FlavorDesc = FlavorDesc {
     name: "MegaKernelFlavor",
-    relations: &[Rel::Arithmetic, Rel::BilinearBatchedEq, Rel::Permutation, Rel::DeltaRange, Rel::Elliptic, Rel::Memory,
-        Rel::EccOpQueue, Rel::Bus(0), Rel::Bus(1), Rel::Bus(2), Rel::Bus(3), Rel::Bus(4), Rel::Bus(5), Rel::Bus(6),
-        MEGA_POSEIDON2[0], MEGA_POSEIDON2[1], MEGA_POSEIDON2[2], MEGA_POSEIDON2[3], MEGA_POSEIDON2[4]],
+    relations: &[
+        Rel::Arithmetic,
+        Rel::BilinearBatchedEq,
+        Rel::Permutation,
+        Rel::DeltaRange,
+        Rel::Elliptic,
+        Rel::Memory,
+        Rel::EccOpQueue,
+        Rel::Bus(0),
+        Rel::Bus(1),
+        Rel::Bus(2),
+        Rel::Bus(3),
+        Rel::Bus(4),
+        Rel::Bus(5),
+        Rel::Bus(6),
+        MEGA_POSEIDON2[0],
+        MEGA_POSEIDON2[1],
+        MEGA_POSEIDON2[2],
+        MEGA_POSEIDON2[3],
+        MEGA_POSEIDON2[4],
+    ],
     has_zk: false,
     has_gemini_masking: false,
     virtual_log_n: CONST_FOLDING_LOG_N,
@@ -409,9 +517,20 @@ pub static MEGA_KERNEL: FlavorDesc = FlavorDesc {
 /// The Chonk hiding kernel: ZK sumcheck, only the kernel calldata bus (bb `mega_zk.ts`).
 pub static MEGA_ZK: FlavorDesc = FlavorDesc {
     name: "MegaZKFlavor",
-    relations: &[Rel::Arithmetic, Rel::BilinearBatchedEq, Rel::Permutation, Rel::DeltaRange, Rel::EccOpQueue,
-        Rel::MegaEccOpBoundary, Rel::Bus(0),
-        MEGA_POSEIDON2[0], MEGA_POSEIDON2[1], MEGA_POSEIDON2[2], MEGA_POSEIDON2[3], MEGA_POSEIDON2[4]],
+    relations: &[
+        Rel::Arithmetic,
+        Rel::BilinearBatchedEq,
+        Rel::Permutation,
+        Rel::DeltaRange,
+        Rel::EccOpQueue,
+        Rel::MegaEccOpBoundary,
+        Rel::Bus(0),
+        MEGA_POSEIDON2[0],
+        MEGA_POSEIDON2[1],
+        MEGA_POSEIDON2[2],
+        MEGA_POSEIDON2[3],
+        MEGA_POSEIDON2[4],
+    ],
     has_zk: true,
     has_gemini_masking: false,
     virtual_log_n: HIDING_KERNEL_LOG_N,
@@ -469,7 +588,11 @@ impl Layout {
         (0..NUM_BUS_COLUMNS).filter(|b| self.has(BUS_SPECS[*b].value)).collect()
     }
     pub fn subset(&self, name: &str) -> &[Ent] {
-        self.subsets.iter().find(|(n, _)| *n == name).map(|(_, v)| v.as_slice()).unwrap_or(&[])
+        self.subsets
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, v)| v.as_slice())
+            .unwrap_or(&[])
     }
 }
 
@@ -487,7 +610,11 @@ impl FlavorDesc {
             let s = r.spec();
             for (e, k) in s.entities {
                 let slot = &mut kind_of[*e as usize];
-                assert!(slot.is_none() || *slot == Some(*k), "conflicting kinds for {}", e.name());
+                assert!(
+                    slot.is_none() || *slot == Some(*k),
+                    "conflicting kinds for {}",
+                    e.name()
+                );
                 *slot = Some(*k);
             }
             shifted_set.extend(s.shifted.iter().copied());
@@ -544,7 +671,12 @@ impl FlavorDesc {
                 }
             }
         }
-        let max_partial_len = self.relations.iter().flat_map(|r| r.spec().partial_lengths.iter().copied()).max().unwrap();
+        let max_partial_len = self
+            .relations
+            .iter()
+            .flat_map(|r| r.spec().partial_lengths.iter().copied())
+            .max()
+            .unwrap();
         Layout {
             num_precomputed: count(Precomputed),
             num_witness: count(Witness),
@@ -576,7 +708,10 @@ mod tests {
         let expected: Vec<&str> = "sigma_1 sigma_2 sigma_3 sigma_4 id_1 id_2 id_3 id_4 lagrange_first lagrange_last q_lookup table_1 table_2 table_3 table_4 q_m q_r q_o q_c q_l q_4 q_arith q_delta_range q_elliptic q_memory q_nnf q_poseidon2_external q_poseidon2_internal w_l w_r w_o w_4 z_perm lookup_inverses lookup_read_counts lookup_read_tags".split(' ').collect();
         assert_eq!(names(&l.unshifted), expected);
         assert_eq!(names(&l.shifted), ["w_l", "w_r", "w_o", "w_4", "z_perm"]);
-        assert_eq!((l.num_precomputed, l.num_witness, l.num_masking, l.num_all()), (28, 8, 0, 41));
+        assert_eq!(
+            (l.num_precomputed, l.num_witness, l.num_masking, l.num_all()),
+            (28, 8, 0, 41)
+        );
         assert_eq!((l.num_subrelations, l.max_partial_len, l.batched_len), (31, 7, 8));
         assert_eq!(l.shift_idx(Ent::w_l), 36);
     }
@@ -600,7 +735,10 @@ mod tests {
         assert_eq!(names(&l.unshifted), expected);
         assert_eq!((l.num_precomputed, l.num_witness, l.num_all()), (37, 30, 72));
         assert_eq!(l.shift_idx(Ent::z_perm), 71);
-        assert_eq!(names(l.subset("databus_selectors")), ["q_l", "q_r", "q_o", "q_4", "q_5", "q_c", "q_m"]);
+        assert_eq!(
+            names(l.subset("databus_selectors")),
+            ["q_l", "q_r", "q_o", "q_4", "q_5", "q_c", "q_m"]
+        );
     }
 
     /// Pinned against `mega_zk_flavor_generated.hpp`.
@@ -609,7 +747,10 @@ mod tests {
         let l = MEGA_ZK.layout();
         let expected: Vec<&str> = "q_m q_l q_r q_o q_4 q_c q_arith q_bilinear_batched_eq sigma_1 sigma_2 sigma_3 sigma_4 id_1 id_2 id_3 id_4 lagrange_first lagrange_last q_delta_range lagrange_ecc_op q_busread kernel_calldata_indicator databus_id q_poseidon2_external q_poseidon2_external_initial q_poseidon2_quad_internal q_5 q_poseidon2_quad_internal_terminal q_poseidon2_transition_entry w_l w_r w_o w_4 z_perm ecc_op_wire_1 ecc_op_wire_2 ecc_op_wire_3 ecc_op_wire_4 kernel_calldata kernel_calldata_read_counts kernel_calldata_inverses".split(' ').collect();
         assert_eq!(names(&l.unshifted), expected);
-        assert_eq!((l.num_precomputed, l.num_witness, l.num_masking, l.num_all()), (29, 12, 0, 46));
+        assert_eq!(
+            (l.num_precomputed, l.num_witness, l.num_masking, l.num_all()),
+            (29, 12, 0, 46)
+        );
         assert_eq!(l.batched_len, l.max_partial_len + 2);
         assert_eq!(l.shift_idx(Ent::w_l), 41);
     }
@@ -620,7 +761,10 @@ mod tests {
         let l = ULTRA_ZK.layout();
         assert_eq!(l.unshifted[0], Ent::gemini_masking_poly);
         assert_eq!(l.idx(Ent::w_l), 29);
-        assert_eq!((l.num_precomputed, l.num_witness, l.num_masking, l.num_all()), (28, 8, 1, 42));
+        assert_eq!(
+            (l.num_precomputed, l.num_witness, l.num_masking, l.num_all()),
+            (28, 8, 1, 42)
+        );
         assert_eq!(l.batched_len, 9);
         assert_eq!(l.shift_idx(Ent::z_perm), 41);
     }

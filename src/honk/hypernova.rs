@@ -58,7 +58,11 @@ impl<C: Curve> VerifierClaim<C> {
         C::G: GroupLike<C::Fr, Native = <N::G as GroupLike<N::Fr>>::Native>,
     {
         Self {
-            challenge: native.challenge.iter().map(|c| C::Fr::from_witness(ctx, c.value())).collect(),
+            challenge: native
+                .challenge
+                .iter()
+                .map(|c| C::Fr::from_witness(ctx, c.value()))
+                .collect(),
             non_shifted_evaluation: C::Fr::from_witness(ctx, native.non_shifted_evaluation.value()),
             shifted_evaluation: C::Fr::from_witness(ctx, native.shifted_evaluation.value()),
             non_shifted_commitment: C::G::from_witness(ctx, native.non_shifted_commitment.value()),
@@ -110,7 +114,11 @@ where
 }
 
 /// bb `get_hypernova_batching_challenges`: `n - 1` short challenges with an implicit leading 1.
-pub fn batching_challenges<C: Curve>(t: &mut Transcript<C::TF, C::Hash>, num_unshifted: usize, num_shifted: usize) -> (Vec<C::Fr>, Vec<C::Fr>)
+pub fn batching_challenges<C: Curve>(
+    t: &mut Transcript<C::TF, C::Hash>,
+    num_unshifted: usize,
+    num_shifted: usize,
+) -> (Vec<C::Fr>, Vec<C::Fr>)
 where
     C::TF: ChallengeField,
 {
@@ -136,14 +144,23 @@ pub fn instance_proof_length_without_pis<C: Curve>(flavor: &FlavorDesc) -> usize
 
 /// Oink + sumcheck on an instance, then batch its polynomials into one claim
 /// (bb `HypernovaFoldingProver::instance_to_accumulator`).
-pub fn instance_to_accumulator(inst: &mut ProverInstance, vk: &Vk<Bn254>, ck: &CommitmentKey, t: &mut NativeTranscript, rng: &mut dyn Rng) -> ProverClaim {
+pub fn instance_to_accumulator(
+    inst: &mut ProverInstance,
+    vk: &Vk<Bn254>,
+    ck: &CommitmentKey,
+    t: &mut NativeTranscript,
+    rng: &mut dyn Rng,
+) -> ProverClaim {
     let flavor = inst.flavor;
     let oink = prove_oink(inst, vk, ck, t, rng, true);
     crate::base::timing::phase("  fold: oink");
     let betas: Vec<Fr> = t.dyadic_powers("HypernovaFoldingProver:gate_challenge", flavor.virtual_log_n);
     let polys = inst.all_polys();
     let sc = prove_sumcheck::<Bn254>(
-        &HonkRelations { flavor, layout: &inst.layout },
+        &HonkRelations {
+            flavor,
+            layout: &inst.layout,
+        },
         &SumcheckSpec::honk(flavor, &inst.layout).with_witness_end(inst.max_end_index),
         &polys,
         t,
@@ -170,7 +187,11 @@ pub fn instance_to_accumulator(inst: &mut ProverInstance, vk: &Vk<Bn254>, ck: &C
         shifted_evaluation += sc.evals[layout.num_unshifted() + j] * c;
     }
     // Batching the commitments equals committing to the batched polynomials.
-    let to_be_shifted: Vec<G1Affine> = layout.shifted.iter().map(|e| oink.commitments[layout.idx(*e)]).collect();
+    let to_be_shifted: Vec<G1Affine> = layout
+        .shifted
+        .iter()
+        .map(|e| oink.commitments[layout.idx(*e)])
+        .collect();
     ProverClaim {
         challenge: sc.challenge,
         non_shifted_evaluation,
@@ -198,7 +219,17 @@ where
     let layout = flavor.layout();
     let oink = verify_oink::<C>(flavor, &layout, vk, vk_hash, t, num_public_inputs, true);
     let betas: Vec<C::Fr> = t.dyadic_powers("HypernovaFoldingProver:gate_challenge", flavor.virtual_log_n);
-    let sc = verify_sumcheck::<C>(&HonkRelations { flavor, layout: &layout }, &SumcheckSpec::honk(flavor, &layout), t, &oink.alpha, &oink.params, &betas);
+    let sc = verify_sumcheck::<C>(
+        &HonkRelations {
+            flavor,
+            layout: &layout,
+        },
+        &SumcheckSpec::honk(flavor, &layout),
+        t,
+        &oink.alpha,
+        &oink.params,
+        &betas,
+    );
     crate::circuit::builder::trace_phase("hypernova: sumcheck verified");
     let (uc, sh) = batching_challenges::<C>(t, layout.num_unshifted(), layout.num_shifted());
     crate::circuit::builder::trace_phase("hypernova: batching challenges");
@@ -211,7 +242,11 @@ where
         shifted_evaluation += &(sc.evals[layout.num_unshifted() + j].clone() * c);
     }
     crate::circuit::builder::trace_phase("hypernova: batched evaluations");
-    let to_be_shifted: Vec<C::G> = layout.shifted.iter().map(|e| oink.commitments[layout.idx(*e)].clone()).collect();
+    let to_be_shifted: Vec<C::G> = layout
+        .shifted
+        .iter()
+        .map(|e| oink.commitments[layout.idx(*e)].clone())
+        .collect();
     let claim = VerifierClaim {
         challenge: sc.challenge,
         non_shifted_evaluation,
@@ -238,7 +273,13 @@ impl FoldingProver {
         }
     }
     /// Returns the instance's proof slice (Oink + sumcheck).
-    pub fn accumulate_instance(&mut self, inst: &mut ProverInstance, vk: &Vk<Bn254>, ck: &CommitmentKey, rng: &mut dyn Rng) -> Vec<Fr> {
+    pub fn accumulate_instance(
+        &mut self,
+        inst: &mut ProverInstance,
+        vk: &Vk<Bn254>,
+        ck: &CommitmentKey,
+        rng: &mut dyn Rng,
+    ) -> Vec<Fr> {
         let claim = instance_to_accumulator(inst, vk, ck, &mut self.transcript, rng);
         self.cached.push(claim);
         self.transcript.export_proof()
@@ -278,14 +319,25 @@ where
             cached: vec![],
         }
     }
-    pub fn accumulate_instance(&mut self, flavor: &FlavorDesc, vk: &Vk<C>, vk_hash: &C::TF, proof: &[C::TF]) -> (bool, OinkOutput<C>) {
+    pub fn accumulate_instance(
+        &mut self,
+        flavor: &FlavorDesc,
+        vk: &Vk<C>,
+        vk_hash: &C::TF,
+        proof: &[C::TF],
+    ) -> (bool, OinkOutput<C>) {
         let num_public_inputs = proof.len() - instance_proof_length_without_pis::<C>(flavor);
         self.transcript.load_proof(proof);
-        let (verified, claim, oink) = verify_instance_to_accumulator::<C>(flavor, vk, vk_hash, num_public_inputs, &mut self.transcript);
+        let (verified, claim, oink) =
+            verify_instance_to_accumulator::<C>(flavor, vk, vk_hash, num_public_inputs, &mut self.transcript);
         self.cached.push(claim);
         (verified, oink)
     }
-    pub fn finalize(&mut self, batching_proof: &[C::TF], previous: Option<VerifierClaim<C>>) -> (bool, VerifierClaim<C>) {
+    pub fn finalize(
+        &mut self,
+        batching_proof: &[C::TF],
+        previous: Option<VerifierClaim<C>>,
+    ) -> (bool, VerifierClaim<C>) {
         let mut claims: Vec<VerifierClaim<C>> = previous.into_iter().collect();
         claims.append(&mut self.cached);
         assert!(!claims.is_empty(), "nothing to fold");

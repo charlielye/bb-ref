@@ -10,7 +10,7 @@ pub mod io;
 pub mod memory;
 pub mod poseidon2;
 
-pub use curve::StdBn254;
 pub use bool::BoolT;
+pub use curve::StdBn254;
 pub use field::{Ctx, FieldT};
 pub use goblin::{GoblinElement, GoblinField};

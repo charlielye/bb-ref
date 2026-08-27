@@ -92,7 +92,12 @@ impl<TF: FieldLike, H: Hasher<TF>> Transcript<TF, H> {
 
     fn record(&mut self, kind: ManifestKind, label: &str, num_fields: usize) {
         if let Some(m) = &mut self.manifest {
-            m.entries.push(ManifestEntry { round: self.round_index, kind, label: label.to_string(), num_fields });
+            m.entries.push(ManifestEntry {
+                round: self.round_index,
+                kind,
+                label: label.to_string(),
+                num_fields,
+            });
         }
     }
 
@@ -107,7 +112,10 @@ impl<TF: FieldLike, H: Hasher<TF>> Transcript<TF, H> {
         let mut buffer = Vec::with_capacity(self.round_data.len() + 1);
         match &self.prev_challenge {
             Some(c) => buffer.push(c.clone()),
-            None => assert!(!self.round_data.is_empty(), "first challenge requested before any data was sent"),
+            None => assert!(
+                !self.round_data.is_empty(),
+                "first challenge requested before any data was sent"
+            ),
         }
         buffer.append(&mut self.round_data);
         let c = H::hash(&buffer);
@@ -145,11 +153,16 @@ impl<TF: FieldLike, H: Hasher<TF>> Transcript<TF, H> {
     pub fn receive_vec<T: Transcriptable<TF>>(&mut self, label: &str, count: usize) -> Vec<T> {
         let n = T::num_fields();
         let fields = self.receive_fields(label, count * n);
-        (0..count).map(|i| T::from_fields(&fields[i * n..(i + 1) * n])).collect()
+        (0..count)
+            .map(|i| T::from_fields(&fields[i * n..(i + 1) * n]))
+            .collect()
     }
 
     fn receive_fields(&mut self, label: &str, n: usize) -> Vec<TF> {
-        assert!(self.num_read + n <= self.proof_data.len(), "transcript: proof too short at '{label}'");
+        assert!(
+            self.num_read + n <= self.proof_data.len(),
+            "transcript: proof too short at '{label}'"
+        );
         self.begin_data_phase();
         let fields = self.proof_data[self.num_read..self.num_read + n].to_vec();
         self.num_read += n;

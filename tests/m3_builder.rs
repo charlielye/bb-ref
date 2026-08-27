@@ -16,9 +16,9 @@ use bb_ref::honk::{FlavorDesc, ULTRA, ULTRA_ZK};
 use std::path::PathBuf;
 
 fn acir_tests_dir() -> PathBuf {
-    std::env::var("ACIR_TESTS_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../aztec-packages2/barretenberg/acir_tests/acir_tests"))
+    std::env::var("ACIR_TESTS_DIR").map(PathBuf::from).unwrap_or_else(|_| {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../aztec-packages2/barretenberg/acir_tests/acir_tests")
+    })
 }
 
 fn build(prog: &str, flavor: &'static FlavorDesc) -> ProverInstance {
@@ -40,13 +40,28 @@ fn check_nozk(prog: &str) {
     let mut inst = build(prog, &ULTRA);
     let expected = ProverInstance::load_dump(&ULTRA, &dump);
     assert_eq!(inst.dyadic_size, expected.dyadic_size, "{prog}: dyadic size");
-    assert_eq!(inst.final_active_wire_idx, expected.final_active_wire_idx, "{prog}: final active wire");
+    assert_eq!(
+        inst.final_active_wire_idx, expected.final_active_wire_idx,
+        "{prog}: final active wire"
+    );
     assert_eq!(inst.max_end_index, expected.max_end_index, "{prog}: max end index");
-    assert_eq!(inst.pub_inputs_offset, expected.pub_inputs_offset, "{prog}: pub inputs offset");
+    assert_eq!(
+        inst.pub_inputs_offset, expected.pub_inputs_offset,
+        "{prog}: pub inputs offset"
+    );
     assert_eq!(inst.public_inputs, expected.public_inputs, "{prog}: public inputs");
-    assert_eq!(inst.memory_read_records, expected.memory_read_records, "{prog}: memory reads");
-    assert_eq!(inst.memory_write_records, expected.memory_write_records, "{prog}: memory writes");
-    assert_eq!(inst.rom_logup_records, expected.rom_logup_records, "{prog}: rom logup records");
+    assert_eq!(
+        inst.memory_read_records, expected.memory_read_records,
+        "{prog}: memory reads"
+    );
+    assert_eq!(
+        inst.memory_write_records, expected.memory_write_records,
+        "{prog}: memory writes"
+    );
+    assert_eq!(
+        inst.rom_logup_records, expected.rom_logup_records,
+        "{prog}: rom logup records"
+    );
     for (e, (a, b)) in inst.layout.unshifted.iter().zip(inst.polys.iter().zip(&expected.polys)) {
         if let Some(i) = a.coeffs.iter().zip(&b.coeffs).position(|(x, y)| x != y) {
             panic!("{prog}: polynomial {} differs at row {i}", e.name());
@@ -77,7 +92,10 @@ fn check_zk(prog: &str) {
     let num_pi = inst.public_inputs.len();
     let proof = prove_ultra(&mut inst, &vk, &mut OsRng);
     let (pis, rest): (&[Fr], &[Fr]) = proof.split_at(num_pi - 8);
-    assert!(verify_ultra(&ULTRA_ZK, &vk, pis, rest, &bn254_g2()), "{prog}: ZK proof rejected");
+    assert!(
+        verify_ultra(&ULTRA_ZK, &vk, pis, rest, &bn254_g2()),
+        "{prog}: ZK proof rejected"
+    );
 }
 
 macro_rules! builder_tests {
@@ -99,7 +117,10 @@ builder_tests! {
 #[test]
 fn vk_hash_sweep() {
     let dir = common::fixture_dir("vk_hash");
-    let mut entries: Vec<_> = std::fs::read_dir(&dir).expect("vk_hash fixtures").map(|e| e.unwrap().path()).collect();
+    let mut entries: Vec<_> = std::fs::read_dir(&dir)
+        .expect("vk_hash fixtures")
+        .map(|e| e.unwrap().path())
+        .collect();
     entries.sort();
     let mut failures = vec![];
     for path in &entries {
@@ -115,5 +136,10 @@ fn vk_hash_sweep() {
         }
     }
     assert!(!entries.is_empty());
-    assert!(failures.is_empty(), "VK hash mismatch for {} of {} programs: {failures:?}", failures.len(), entries.len());
+    assert!(
+        failures.is_empty(),
+        "VK hash mismatch for {} of {} programs: {failures:?}",
+        failures.len(),
+        entries.len()
+    );
 }

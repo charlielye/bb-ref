@@ -10,7 +10,9 @@ use crate::goblin::batch_merge::{batch_merge_verify, ecc_op_hash_step, CHONK_MAX
 use crate::honk::decider::decider_verify;
 use crate::honk::flavor::Ent;
 use crate::honk::hypernova::{FoldingVerifier, VerifierClaim};
-use crate::stdlib::io::{proof_to_witnesses, vk_to_witnesses, DataBusDepot, HidingKernelIo, KernelIo, MAX_APPS_PER_KERNEL};
+use crate::stdlib::io::{
+    proof_to_witnesses, vk_to_witnesses, DataBusDepot, HidingKernelIo, KernelIo, MAX_APPS_PER_KERNEL,
+};
 use crate::stdlib::{Ctx, FieldT, GoblinElement, StdBn254};
 
 const APP_CALLDATA: [Ent; MAX_APPS_PER_KERNEL] = [
@@ -20,7 +22,12 @@ const APP_CALLDATA: [Ent; MAX_APPS_PER_KERNEL] = [
     Ent::fourth_app_calldata,
     Ent::fifth_app_calldata,
 ];
-const ECC_OP_WIRES: [Ent; 4] = [Ent::ecc_op_wire_1, Ent::ecc_op_wire_2, Ent::ecc_op_wire_3, Ent::ecc_op_wire_4];
+const ECC_OP_WIRES: [Ent; 4] = [
+    Ent::ecc_op_wire_1,
+    Ent::ecc_op_wire_2,
+    Ent::ecc_op_wire_3,
+    Ent::ecc_op_wire_4,
+];
 
 /// A queue entry as circuit witnesses (bb `instantiate_stdlib_verification_queue`): the proof, then
 /// the VK, then its hash.
@@ -34,7 +41,11 @@ struct StdlibVerifierInputs {
 /// A verification key already in the circuit (an ACIR kernel receives it as witnesses) with its hash.
 pub type VkWitnesses = (Vk<StdBn254>, FieldT);
 
-fn instantiate_stdlib_verification_queue(ctx: &Ctx, queue: Vec<VerifierInputs>, keys: Option<Vec<VkWitnesses>>) -> Vec<StdlibVerifierInputs> {
+fn instantiate_stdlib_verification_queue(
+    ctx: &Ctx,
+    queue: Vec<VerifierInputs>,
+    keys: Option<Vec<VkWitnesses>>,
+) -> Vec<StdlibVerifierInputs> {
     let mut keys = keys.map(|k| {
         assert_eq!(k.len(), queue.len(), "one verification key per queued proof");
         k.into_iter()
@@ -47,7 +58,12 @@ fn instantiate_stdlib_verification_queue(ctx: &Ctx, queue: Vec<VerifierInputs>, 
                 Some(keys) => keys.next().unwrap(),
                 None => (vk_to_witnesses(ctx, &e.vk), FieldT::from_witness(ctx, e.vk.hash())),
             };
-            StdlibVerifierInputs { proof, vk, vk_hash, kind: e.kind }
+            StdlibVerifierInputs {
+                proof,
+                vk,
+                vk_hash,
+                kind: e.kind,
+            }
         })
         .collect()
 }
@@ -80,7 +96,10 @@ pub fn complete_kernel_circuit_logic(ivc: &mut Chonk, ctx: &Ctx, rng: &mut dyn R
     let mut prev_accumulator: Option<VerifierClaim<StdBn254>> = None;
     let mut prev_accum_hash: Option<FieldT> = None;
     if !is_init {
-        let native = ivc.recursive_verifier_native_accum.as_ref().expect("no previous kernel accumulator");
+        let native = ivc
+            .recursive_verifier_native_accum
+            .as_ref()
+            .expect("no previous kernel accumulator");
         let claim = VerifierClaim::<StdBn254>::from_native(ctx, native);
         prev_accum_hash = Some(claim.hash());
         prev_accumulator = Some(claim);
@@ -99,13 +118,18 @@ pub fn complete_kernel_circuit_logic(ivc: &mut Chonk, ctx: &Ctx, rng: &mut dyn R
         let pairing_points = match entry.kind {
             CircuitKind::Kernel => {
                 let io = KernelIo::reconstruct_from_public(&oink.public_inputs);
-                io.kernel_return_data.incomplete_assert_equal(&commitment(Ent::kernel_calldata));
+                io.kernel_return_data
+                    .incomplete_assert_equal(&commitment(Ent::kernel_calldata));
                 for (i, app) in io.app_return_data.iter().enumerate() {
                     app.incomplete_assert_equal(&commitment(APP_CALLDATA[i]));
                 }
-                io.output_hn_accum_hash.assert_equal(prev_accum_hash.as_ref().expect("kernel verified in an init group"));
+                io.output_hn_accum_hash
+                    .assert_equal(prev_accum_hash.as_ref().expect("kernel verified in an init group"));
                 depot.set_kernel_return_data_commitment(commitment(Ent::return_data));
-                assert!(running_ecc_op_hash.is_none(), "a kernel must be the first entry of its group");
+                assert!(
+                    running_ecc_op_hash.is_none(),
+                    "a kernel must be the first entry of its group"
+                );
                 running_ecc_op_hash = Some(io.ecc_op_hash);
                 io.pairing_inputs
             }
@@ -120,7 +144,10 @@ pub fn complete_kernel_circuit_logic(ivc: &mut Chonk, ctx: &Ctx, rng: &mut dyn R
         crate::circuit::builder::trace_phase("kernel: io processed");
         points_accumulator.push(pairing_points);
         let ecc_op_wires: Vec<GoblinElement> = ECC_OP_WIRES.iter().map(|e| commitment(*e)).collect();
-        running_ecc_op_hash = Some(ecc_op_hash_step::<StdBn254>(&ecc_op_wires, running_ecc_op_hash.as_ref()));
+        running_ecc_op_hash = Some(ecc_op_hash_step::<StdBn254>(
+            &ecc_op_wires,
+            running_ecc_op_hash.as_ref(),
+        ));
     }
     let running_ecc_op_hash = running_ecc_op_hash.unwrap();
 
@@ -134,10 +161,15 @@ pub fn complete_kernel_circuit_logic(ivc: &mut Chonk, ctx: &Ctx, rng: &mut dyn R
         let decider_proof = proof_to_witnesses(ctx, &ivc.decider_proof);
         folding.transcript.load_proof(&decider_proof);
         crate::circuit::builder::trace_phase("hiding: decider start");
-        points_accumulator.push(decider_verify::<StdBn254>(&output_accumulator, &mut folding.transcript, ctx));
+        points_accumulator.push(decider_verify::<StdBn254>(
+            &output_accumulator,
+            &mut folding.transcript,
+            ctx,
+        ));
         crate::circuit::builder::trace_phase("hiding: decider verified");
         let batch_merge_proof = proof_to_witnesses(ctx, &ivc.batch_merge_proof);
-        let merge = batch_merge_verify::<StdBn254>(&batch_merge_proof, &running_ecc_op_hash, CHONK_MAX_NUM_CIRCUITS, ctx);
+        let merge =
+            batch_merge_verify::<StdBn254>(&batch_merge_proof, &running_ecc_op_hash, CHONK_MAX_NUM_CIRCUITS, ctx);
         crate::circuit::builder::trace_phase("hiding: batch merge verified");
         points_accumulator.push(merge.pairing_points);
         let pairing_inputs = PairingPoints::aggregate_multiple(&points_accumulator);

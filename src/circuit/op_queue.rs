@@ -18,7 +18,8 @@ const ECC_NUM_RANDOM_OPS_START: usize = 3;
 const ECC_NUM_NO_OPS_START: usize = 1;
 const ECC_NUM_HIDING_OPS_START: usize = 1;
 /// Rows of the ZK prefix (1 no-op, 3 random ops, 1 hiding op) that masks the merged Chonk table.
-pub const ZK_ULTRA_OPS: usize = (ECC_NUM_RANDOM_OPS_START + ECC_NUM_NO_OPS_START + ECC_NUM_HIDING_OPS_START) * NUM_ROWS_PER_OP;
+pub const ZK_ULTRA_OPS: usize =
+    (ECC_NUM_RANDOM_OPS_START + ECC_NUM_NO_OPS_START + ECC_NUM_HIDING_OPS_START) * NUM_ROWS_PER_OP;
 /// Leading zero rows of a fixed-location appended subtable (matches the sumcheck-disabled rows of the appender).
 pub const APPEND_TRACE_OFFSET: usize = super::TRACE_OFFSET;
 pub const CONST_OP_QUEUE_LOG_SIZE: usize = 12;
@@ -42,13 +43,23 @@ pub struct EccOpCode {
 
 impl EccOpCode {
     pub fn add() -> Self {
-        Self { add: true, ..Default::default() }
+        Self {
+            add: true,
+            ..Default::default()
+        }
     }
     pub fn mul() -> Self {
-        Self { mul: true, ..Default::default() }
+        Self {
+            mul: true,
+            ..Default::default()
+        }
     }
     pub fn eq_reset() -> Self {
-        Self { eq: true, reset: true, ..Default::default() }
+        Self {
+            eq: true,
+            reset: true,
+            ..Default::default()
+        }
     }
     /// `add*8 + mul*4 + eq*2 + reset`
     pub fn value(&self) -> u32 {
@@ -72,7 +83,12 @@ pub struct UltraOp {
 impl UltraOp {
     pub fn random(rng: &mut dyn Rng) -> Self {
         UltraOp {
-            op_code: EccOpCode { is_random_op: true, random_value_1: rng.fr(), random_value_2: rng.fr(), ..Default::default() },
+            op_code: EccOpCode {
+                is_random_op: true,
+                random_value_1: rng.fr(),
+                random_value_2: rng.fr(),
+                ..Default::default()
+            },
             x_lo: rng.fr(),
             x_hi: rng.fr(),
             y_lo: rng.fr(),
@@ -90,7 +106,10 @@ impl UltraOp {
         } else {
             (Fr::from(self.op_code.value() as u64), Fr::zero())
         };
-        [[op_0, self.x_lo, self.x_hi, self.y_lo], [op_1, self.y_hi, self.z_1, self.z_2]]
+        [
+            [op_0, self.x_lo, self.x_hi, self.y_lo],
+            [op_1, self.y_hi, self.z_1, self.z_2],
+        ]
     }
 }
 
@@ -112,7 +131,10 @@ pub struct SubTables<T> {
 
 impl<T> Default for SubTables<T> {
     fn default() -> Self {
-        Self { tables: vec![], current: vec![] }
+        Self {
+            tables: vec![],
+            current: vec![],
+        }
     }
 }
 
@@ -154,7 +176,10 @@ impl EccOpQueue {
     }
     /// Called by every new circuit; the previous circuit's subtable must have been merged.
     pub fn initialize_new_subtable(&mut self) {
-        assert!(self.ultra_ops.current.is_empty() && self.eccvm_ops.current.is_empty(), "previous subtable not merged");
+        assert!(
+            self.ultra_ops.current.is_empty() && self.eccvm_ops.current.is_empty(),
+            "previous subtable not merged"
+        );
     }
     pub fn num_subtables(&self) -> usize {
         self.ultra_ops.tables.len()
@@ -163,7 +188,10 @@ impl EccOpQueue {
         self.ultra_ops.current.len()
     }
     pub fn merge(&mut self) {
-        assert!(self.fixed_append_offset.is_none(), "cannot merge after the fixed-location append");
+        assert!(
+            self.fixed_append_offset.is_none(),
+            "cannot merge after the fixed-location append"
+        );
         self.eccvm_ops.merge();
         self.ultra_ops.merge();
     }
@@ -173,19 +201,37 @@ impl EccOpQueue {
 
     pub fn add_accumulate(&mut self, point: G1Affine) -> UltraOp {
         self.accumulator += point;
-        self.eccvm_ops.current.push(EccvmOp { op_code: EccOpCode::add(), base_point: point, z1: U256::zero(), z2: U256::zero(), mul_scalar_full: Fr::zero() });
+        self.eccvm_ops.current.push(EccvmOp {
+            op_code: EccOpCode::add(),
+            base_point: point,
+            z1: U256::zero(),
+            z2: U256::zero(),
+            mul_scalar_full: Fr::zero(),
+        });
         self.construct_and_populate_ultra_op(EccOpCode::add(), point, Fr::zero())
     }
     pub fn mul_accumulate(&mut self, point: G1Affine, scalar: Fr) -> UltraOp {
         self.accumulator += point * scalar;
         let op = self.construct_and_populate_ultra_op(EccOpCode::mul(), point, scalar);
-        self.eccvm_ops.current.push(EccvmOp { op_code: EccOpCode::mul(), base_point: point, z1: u256(&op.z_1), z2: u256(&op.z_2), mul_scalar_full: scalar });
+        self.eccvm_ops.current.push(EccvmOp {
+            op_code: EccOpCode::mul(),
+            base_point: point,
+            z1: u256(&op.z_1),
+            z2: u256(&op.z_2),
+            mul_scalar_full: scalar,
+        });
         op
     }
     pub fn eq_and_reset(&mut self) -> UltraOp {
         let expected = self.get_accumulator();
         self.accumulator = ark_bn254::G1Projective::default();
-        self.eccvm_ops.current.push(EccvmOp { op_code: EccOpCode::eq_reset(), base_point: expected, z1: U256::zero(), z2: U256::zero(), mul_scalar_full: Fr::zero() });
+        self.eccvm_ops.current.push(EccvmOp {
+            op_code: EccOpCode::eq_reset(),
+            base_point: expected,
+            z1: U256::zero(),
+            z2: U256::zero(),
+            mul_scalar_full: Fr::zero(),
+        });
         self.construct_and_populate_ultra_op(EccOpCode::eq_reset(), expected, Fr::zero())
     }
     /// Two zero rows in the Ultra table only (the Translator needs shiftable columns).
@@ -210,8 +256,23 @@ impl EccOpQueue {
     pub fn make_hiding_op_pair(px: Fq, py: Fq) -> (UltraOp, EccvmOp) {
         let (x_lo, x_hi) = split_coordinate(&px);
         let (y_lo, y_hi) = split_coordinate(&py);
-        let ultra = UltraOp { op_code: EccOpCode::eq_reset(), x_lo, x_hi, y_lo, y_hi, z_1: Fr::zero(), z_2: Fr::zero(), return_is_infinity: false };
-        let eccvm = EccvmOp { op_code: EccOpCode::eq_reset(), base_point: G1Affine::new_unchecked(px, py), z1: U256::zero(), z2: U256::zero(), mul_scalar_full: Fr::zero() };
+        let ultra = UltraOp {
+            op_code: EccOpCode::eq_reset(),
+            x_lo,
+            x_hi,
+            y_lo,
+            y_hi,
+            z_1: Fr::zero(),
+            z_2: Fr::zero(),
+            return_is_infinity: false,
+        };
+        let eccvm = EccvmOp {
+            op_code: EccOpCode::eq_reset(),
+            base_point: G1Affine::new_unchecked(px, py),
+            z1: U256::zero(),
+            z2: U256::zero(),
+            mul_scalar_full: Fr::zero(),
+        };
         (ultra, eccvm)
     }
 
@@ -232,8 +293,14 @@ impl EccOpQueue {
     }
     /// Merge the current subtable at a fixed op slot (the hiding kernel's final merge).
     pub fn merge_fixed_append(&mut self, offset: usize) {
-        assert!(self.fixed_append_offset.is_none(), "the fixed-location append happens once");
-        assert!(self.ultra_ops.num_ops() <= offset, "the tables before the fixed append do not fit");
+        assert!(
+            self.fixed_append_offset.is_none(),
+            "the fixed-location append happens once"
+        );
+        assert!(
+            self.ultra_ops.num_ops() <= offset,
+            "the tables before the fixed append do not fit"
+        );
         self.fixed_append_offset = Some(offset);
         self.eccvm_ops.merge();
         self.ultra_ops.merge();
@@ -242,13 +309,20 @@ impl EccOpQueue {
     pub fn num_ultra_rows(&self) -> usize {
         match self.fixed_append_offset {
             None => self.ultra_ops.num_ops() * NUM_ROWS_PER_OP,
-            Some(off) => Self::compute_fixed_append_offset(off, false) + APPEND_TRACE_OFFSET + self.ultra_ops.tables.last().unwrap().len() * NUM_ROWS_PER_OP,
+            Some(off) => {
+                Self::compute_fixed_append_offset(off, false)
+                    + APPEND_TRACE_OFFSET
+                    + self.ultra_ops.tables.last().unwrap().len() * NUM_ROWS_PER_OP
+            }
         }
     }
     /// Rows of the table up to and including the tail subtable (all but the last), excluding the ZK prefix.
     pub fn ultra_table_size_up_to_tail(&self) -> usize {
         assert!(self.ultra_ops.current.is_empty() && self.num_subtables() > 1);
-        self.ultra_ops.tables[..self.num_subtables() - 1].iter().map(|t| t.len() * NUM_ROWS_PER_OP).sum()
+        self.ultra_ops.tables[..self.num_subtables() - 1]
+            .iter()
+            .map(|t| t.len() * NUM_ROWS_PER_OP)
+            .sum()
     }
 
     /// bb `get_zk_reconstructed_ultra_ops`: the ZK prefix, every merged subtable, and — under a
@@ -274,8 +348,10 @@ impl EccOpQueue {
     /// Build the ZK prefix (1 no-op, 3 random ops, 1 hiding op) and return its columns.
     pub fn construct_zk_columns(&mut self, rng: &mut dyn Rng) -> Columns {
         assert!(self.zk_ops.is_empty(), "ZK ops are constructed once");
-        self.zk_ops.extend((0..ECC_NUM_NO_OPS_START).map(|_| UltraOp::default()));
-        self.zk_ops.extend((0..ECC_NUM_RANDOM_OPS_START).map(|_| UltraOp::random(rng)));
+        self.zk_ops
+            .extend((0..ECC_NUM_NO_OPS_START).map(|_| UltraOp::default()));
+        self.zk_ops
+            .extend((0..ECC_NUM_RANDOM_OPS_START).map(|_| UltraOp::random(rng)));
         let (px, py) = (rng.fq(), rng.fq());
         let (ultra, eccvm) = Self::make_hiding_op_pair(px, py);
         self.hiding_op = Some(eccvm);
@@ -292,22 +368,40 @@ impl EccOpQueue {
     }
     /// Columns of every merged subtable, in append order.
     pub fn construct_subtable_columns(&self) -> Vec<Columns> {
-        (0..self.num_subtables()).map(|i| self.columns_in_range(self.ultra_ops.tables[i].len() * NUM_ROWS_PER_OP, i, i + 1, false, None)).collect()
+        (0..self.num_subtables())
+            .map(|i| self.columns_in_range(self.ultra_ops.tables[i].len() * NUM_ROWS_PER_OP, i, i + 1, false, None))
+            .collect()
     }
     /// Columns of the full merged table (ZK prefix, subtables, and the fixed-location final subtable if set).
     pub fn construct_ultra_ops_table_columns(&self, include_zk_ops: bool) -> Columns {
-        self.columns_in_range(self.num_ultra_rows(), 0, self.num_subtables(), include_zk_ops, self.fixed_append_offset)
+        self.columns_in_range(
+            self.num_ultra_rows(),
+            0,
+            self.num_subtables(),
+            include_zk_ops,
+            self.fixed_append_offset,
+        )
     }
     /// Columns of the aggregate table up to and including the tail subtable (with the ZK prefix).
     pub fn construct_table_columns_up_to_tail(&self) -> Columns {
         assert!(!self.zk_ops.is_empty());
-        self.columns_in_range(self.ultra_table_size_up_to_tail(), 0, self.num_subtables() - 1, true, None)
+        self.columns_in_range(
+            self.ultra_table_size_up_to_tail(),
+            0,
+            self.num_subtables() - 1,
+            true,
+            None,
+        )
     }
     /// Columns of the most recently merged subtable; under a fixed-location append they carry the
     /// `APPEND_TRACE_OFFSET` leading zero rows so that they match the appender's ecc op wires.
     pub fn construct_current_subtable_columns(&self) -> Columns {
         let subtable = self.ultra_ops.tables.last().expect("no merged subtable");
-        let leading_zeros = if self.fixed_append_offset.is_some() { APPEND_TRACE_OFFSET } else { 0 };
+        let leading_zeros = if self.fixed_append_offset.is_some() {
+            APPEND_TRACE_OFFSET
+        } else {
+            0
+        };
         let mut cols = std::array::from_fn(|_| Poly::zero(leading_zeros + subtable.len() * NUM_ROWS_PER_OP));
         for (i, op) in subtable.iter().enumerate() {
             Self::write_op(&mut cols, op, leading_zeros + i * NUM_ROWS_PER_OP);
@@ -317,7 +411,14 @@ impl EccOpQueue {
 
     /// Columns of subtables `[start, end)` laid out sequentially after the optional ZK prefix; with
     /// `fixed_last`, the last subtable in range is instead placed at that op slot (plus the preamble).
-    fn columns_in_range(&self, poly_size: usize, start: usize, end: usize, include_zk_ops: bool, fixed_last: Option<usize>) -> Columns {
+    fn columns_in_range(
+        &self,
+        poly_size: usize,
+        start: usize,
+        end: usize,
+        include_zk_ops: bool,
+        fixed_last: Option<usize>,
+    ) -> Columns {
         let size = poly_size + if include_zk_ops { ZK_ULTRA_OPS } else { 0 };
         let mut cols = std::array::from_fn(|_| Poly::zero(size));
         let mut row = 0;
@@ -352,7 +453,11 @@ impl EccOpQueue {
 
     fn construct_and_populate_ultra_op(&mut self, op_code: EccOpCode, point: G1Affine, scalar: Fr) -> UltraOp {
         let return_is_infinity = point.is_zero();
-        let (x, y) = if return_is_infinity { (Fq::zero(), Fq::zero()) } else { (point.x, point.y) };
+        let (x, y) = if return_is_infinity {
+            (Fq::zero(), Fq::zero())
+        } else {
+            (point.x, point.y)
+        };
         let (x_lo, x_hi) = split_coordinate(&x);
         let (y_lo, y_hi) = split_coordinate(&y);
         let k = u256(&scalar);
@@ -362,7 +467,16 @@ impl EccOpQueue {
             let (k1, k2) = split_into_endomorphism_scalars(k);
             (from_u256(k1), from_u256(k2))
         };
-        let op = UltraOp { op_code, x_lo, x_hi, y_lo, y_hi, z_1, z_2, return_is_infinity };
+        let op = UltraOp {
+            op_code,
+            x_lo,
+            x_hi,
+            y_lo,
+            y_hi,
+            z_1,
+            z_2,
+            return_is_infinity,
+        };
         self.ultra_ops.current.push(op.clone());
         op
     }
@@ -371,7 +485,10 @@ impl EccOpQueue {
 /// A base-field coordinate as two scalar-field limbs split at bit 136.
 fn split_coordinate(c: &Fq) -> (Fr, Fr) {
     let v = u256(c);
-    (from_u256(u256_low_bits(v, CHUNK_BITS)), from_u256(u256_shr(v, CHUNK_BITS)))
+    (
+        from_u256(u256_low_bits(v, CHUNK_BITS)),
+        from_u256(u256_shr(v, CHUNK_BITS)),
+    )
 }
 
 fn mul_wide(a: &[u64; 4], b: &[u64; 4]) -> [u64; 8] {
@@ -400,7 +517,12 @@ fn fr_from_limbs(l: [u64; 4]) -> Fr {
 pub fn cube_root_of_unity() -> Fr {
     static B: OnceLock<Fr> = OnceLock::new();
     *B.get_or_init(|| {
-        let mont = fr_from_limbs([0x93e7cede4a0329b3, 0x7d4fdca77a96c167, 0x8be4ba08b19a750a, 0x1cbd5653a5661c25]);
+        let mont = fr_from_limbs([
+            0x93e7cede4a0329b3,
+            0x7d4fdca77a96c167,
+            0x8be4ba08b19a750a,
+            0x1cbd5653a5661c25,
+        ]);
         let r = Fr::from(2u64).pow_u64(256);
         mont * r.invert()
     })

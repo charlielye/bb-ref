@@ -42,7 +42,10 @@ pub struct GateRow {
 impl GateRow {
     /// An unconstrained row (all selectors zero) holding the given wires.
     pub fn wires(wires: [u32; 4]) -> Self {
-        Self { wires, ..Default::default() }
+        Self {
+            wires,
+            ..Default::default()
+        }
     }
     pub fn gate_selector(&self, kind: Kind) -> Fr {
         if self.kind == kind {
@@ -56,7 +59,18 @@ impl GateRow {
 impl Default for GateRow {
     fn default() -> Self {
         let z = Fr::zero();
-        Self { wires: [0; 4], q_m: z, q_c: z, q_1: z, q_2: z, q_3: z, q_4: z, q_5: z, kind: Kind::None, gate_value: z }
+        Self {
+            wires: [0; 4],
+            q_m: z,
+            q_c: z,
+            q_1: z,
+            q_2: z,
+            q_3: z,
+            q_4: z,
+            q_5: z,
+            kind: Kind::None,
+            gate_value: z,
+        }
     }
 }
 
@@ -114,7 +128,13 @@ pub const MEGA_BLOCKS: &[BlockDesc] = &[
     b(BlockId::Busread, &[Kind::BusRead]),
     b(
         BlockId::Poseidon2,
-        &[Kind::Poseidon2Ext, Kind::Poseidon2ExtInitial, Kind::Poseidon2QuadInt, Kind::Poseidon2QuadIntTerminal, Kind::Poseidon2TransitionEntry],
+        &[
+            Kind::Poseidon2Ext,
+            Kind::Poseidon2ExtInitial,
+            Kind::Poseidon2QuadInt,
+            Kind::Poseidon2QuadIntTerminal,
+            Kind::Poseidon2TransitionEntry,
+        ],
     ),
 ];
 
@@ -145,10 +165,16 @@ pub struct Blocks {
 
 impl Blocks {
     pub fn new(descs: &'static [BlockDesc]) -> Self {
-        Self { descs, blocks: descs.iter().map(|_| Block::default()).collect() }
+        Self {
+            descs,
+            blocks: descs.iter().map(|_| Block::default()).collect(),
+        }
     }
     fn position(&self, id: BlockId) -> usize {
-        self.descs.iter().position(|d| d.id == id).unwrap_or_else(|| panic!("block {id:?} not in this trace"))
+        self.descs
+            .iter()
+            .position(|d| d.id == id)
+            .unwrap_or_else(|| panic!("block {id:?} not in this trace"))
     }
     pub fn has(&self, id: BlockId) -> bool {
         self.descs.iter().any(|d| d.id == id)

@@ -104,7 +104,11 @@ pub fn mlb_prove(claims: Vec<ProverClaim>, t: &mut NativeTranscript) -> ProverCl
             col.truncate(half);
         };
         if round < log_n {
-            non_shifted.iter_mut().chain(shifted.iter_mut()).chain(eq.iter_mut()).for_each(fold);
+            non_shifted
+                .iter_mut()
+                .chain(shifted.iter_mut())
+                .chain(eq.iter_mut())
+                .for_each(fold);
         } else {
             for col in non_shifted.iter_mut().chain(shifted.iter_mut()) {
                 col[0] *= Fr::one() - u;

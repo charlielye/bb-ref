@@ -32,7 +32,9 @@ impl Mt19937_64 {
         let mut mt = [0u64; 312];
         mt[0] = seed;
         for i in 1..312 {
-            mt[i] = 6364136223846793005u64.wrapping_mul(mt[i - 1] ^ (mt[i - 1] >> 62)).wrapping_add(i as u64);
+            mt[i] = 6364136223846793005u64
+                .wrapping_mul(mt[i - 1] ^ (mt[i - 1] >> 62))
+                .wrapping_add(i as u64);
         }
         Self { mt, index: 312 }
     }
@@ -151,7 +153,11 @@ impl MockDatabus {
     pub fn populate_app(&mut self, b: &mut Builder) {
         let data = self.mock_array();
         Self::append_return_data(b, &data);
-        let slot = self.app_return_data.iter_mut().find(|d| d.is_empty()).expect("more than MAX_APPS_PER_KERNEL apps in a group");
+        let slot = self
+            .app_return_data
+            .iter_mut()
+            .find(|d| d.is_empty())
+            .expect("more than MAX_APPS_PER_KERNEL apps in a group");
         *slot = data;
     }
     /// Returns the app calldata contents (for the kernel's `app_return_data` public inputs).

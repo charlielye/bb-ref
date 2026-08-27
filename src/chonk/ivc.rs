@@ -75,7 +75,11 @@ impl Chonk {
         assert!(kinds.len() >= 4, "Chonk: at least 4 circuits");
         assert_eq!(kinds[0], CircuitKind::App, "Chonk: the first circuit must be an app");
         for (i, k) in kinds.iter().enumerate() {
-            assert_eq!(*k == CircuitKind::HidingKernel, i + 1 == kinds.len(), "Chonk: the hiding kernel is exactly the last circuit");
+            assert_eq!(
+                *k == CircuitKind::HidingKernel,
+                i + 1 == kinds.len(),
+                "Chonk: the hiding kernel is exactly the last circuit"
+            );
         }
         Self {
             kinds,
@@ -128,7 +132,10 @@ impl Chonk {
     /// bb `Chonk::accumulate`. The circuit must have been built on `self.op_queue`; `vk` is its
     /// precomputed verification key (computed here when absent).
     pub fn accumulate(&mut self, circuit: &mut Builder, vk: Option<Vk<Bn254>>, rng: &mut dyn Rng) {
-        assert!(self.accumulated < self.kinds.len(), "Chonk: every circuit has already been accumulated");
+        assert!(
+            self.accumulated < self.kinds.len(),
+            "Chonk: every circuit has already been accumulated"
+        );
         let kind = self.current_kind();
         let next = self.next_kind();
         match kind {
@@ -141,7 +148,10 @@ impl Chonk {
             CircuitKind::App | CircuitKind::Kernel => {
                 self.accumulate_and_fold(circuit, vk, kind, next, rng);
                 if next == Some(CircuitKind::HidingKernel) {
-                    decider_prove(self.prover_accumulator.as_ref().unwrap(), &mut self.accumulation_transcript);
+                    decider_prove(
+                        self.prover_accumulator.as_ref().unwrap(),
+                        &mut self.accumulation_transcript,
+                    );
                     self.decider_proof = self.accumulation_transcript.export_proof();
                     timing::phase("decider");
                     let mut q = self.op_queue.borrow_mut();
@@ -153,7 +163,14 @@ impl Chonk {
         }
     }
 
-    fn accumulate_and_fold(&mut self, circuit: &mut Builder, vk: Option<Vk<Bn254>>, kind: CircuitKind, next: Option<CircuitKind>, rng: &mut dyn Rng) {
+    fn accumulate_and_fold(
+        &mut self,
+        circuit: &mut Builder,
+        vk: Option<Vk<Bn254>>,
+        kind: CircuitKind,
+        next: Option<CircuitKind>,
+        rng: &mut dyn Rng,
+    ) {
         let is_init_group = self.accumulated == 0;
         assert_eq!(
             self.verification_queue.is_empty() && !is_init_group,
@@ -168,7 +185,11 @@ impl Chonk {
         timing::phase("prover instance");
         let vk = vk.unwrap_or_else(|| inst.compute_vk(&self.ck));
         timing::phase("vk");
-        let proof = self.folding_prover.as_mut().unwrap().accumulate_instance(&mut inst, &vk, &self.ck, rng);
+        let proof = self
+            .folding_prover
+            .as_mut()
+            .unwrap()
+            .accumulate_instance(&mut inst, &vk, &self.ck, rng);
         timing::phase("instance to accumulator (oink + sumcheck)");
         self.verification_queue.push(VerifierInputs { proof, vk, kind });
         if matches!(next, Some(CircuitKind::Kernel) | Some(CircuitKind::HidingKernel)) {

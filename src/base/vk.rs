@@ -31,10 +31,16 @@ impl<C: Curve> Vk<C> {
     }
 
     pub fn from_fields(fields: &[C::TF], num_comms: usize) -> Self {
-        assert_eq!(fields.len(), Self::num_fields(num_comms), "VK has the wrong number of fields");
+        assert_eq!(
+            fields.len(),
+            Self::num_fields(num_comms),
+            "VK has the wrong number of fields"
+        );
         let f = C::Fr::num_fields();
         let g = C::G::num_fields();
-        let comms = (0..num_comms).map(|i| C::G::from_fields(&fields[3 * f + i * g..3 * f + (i + 1) * g])).collect();
+        let comms = (0..num_comms)
+            .map(|i| C::G::from_fields(&fields[3 * f + i * g..3 * f + (i + 1) * g]))
+            .collect();
         Self {
             log_circuit_size: C::Fr::from_fields(&fields[0..f]),
             num_public_inputs: C::Fr::from_fields(&fields[f..2 * f]),
