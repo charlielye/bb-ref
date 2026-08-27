@@ -23,7 +23,6 @@ pub fn prove_ultra(inst: &mut ProverInstance, vk: &Vk<Bn254>, rng: &mut dyn Rng)
     let oink = prove_oink(inst, vk, &ck, &mut t, rng, true);
     let betas: Vec<Fr> = t.dyadic_powers("Sumcheck:gate_challenge", flavor.virtual_log_n);
 
-    let polys = inst.all_polys();
     let mut zk = flavor
         .has_zk
         .then(|| ZkData::<Bn254>::new(flavor.virtual_log_n, &mut t, &ck, rng));
@@ -34,7 +33,7 @@ pub fn prove_ultra(inst: &mut ProverInstance, vk: &Vk<Bn254>, rng: &mut dyn Rng)
     let sc = prove_sumcheck::<Bn254>(
         &rels,
         &SumcheckSpec::honk(flavor, &inst.layout).with_witness_end(inst.max_end_index),
-        &polys,
+        &inst.polys,
         &mut t,
         &oink.alpha,
         &betas,

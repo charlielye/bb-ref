@@ -155,14 +155,13 @@ pub fn instance_to_accumulator(
     let oink = prove_oink(inst, vk, ck, t, rng, true);
     crate::base::timing::phase("  fold: oink");
     let betas: Vec<Fr> = t.dyadic_powers("HypernovaFoldingProver:gate_challenge", flavor.virtual_log_n);
-    let polys = inst.all_polys();
     let sc = prove_sumcheck::<Bn254>(
         &HonkRelations {
             flavor,
             layout: &inst.layout,
         },
         &SumcheckSpec::honk(flavor, &inst.layout).with_witness_end(inst.max_end_index),
-        &polys,
+        &inst.polys,
         t,
         &oink.alpha,
         &betas,

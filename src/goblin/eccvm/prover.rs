@@ -43,6 +43,7 @@ pub fn sumcheck_spec() -> SumcheckSpec {
         committed: true,
         batched_len: 24,
         num_entities: NUM_ALL_ENTITIES,
+        shifted_sources: vec![],
     }
 }
 

@@ -15,7 +15,7 @@ pub type Poly = Polynomial<Fr>;
 impl<F: FieldLike> Polynomial<F> {
     pub fn zero(size: usize) -> Self {
         Self {
-            coeffs: vec![F::zero(); size],
+            coeffs: F::zeroed(size),
         }
     }
     pub fn from_coeffs(coeffs: Vec<F>) -> Self {

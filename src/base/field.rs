@@ -74,6 +74,11 @@ pub trait FieldLike:
     fn from_u64(v: u64) -> Self {
         Self::constant(Self::Native::from(v))
     }
+    /// `n` zeros. Native fields override this with a zeroed allocation, whose pages the OS only
+    /// materializes when written, so sparse polynomials cost what they use (bb's virtual zeros).
+    fn zeroed(n: usize) -> Vec<Self> {
+        vec![Self::zero(); n]
+    }
     fn zero() -> Self {
         Self::constant(<Self::Native as ark_ff::AdditiveGroup>::ZERO)
     }
@@ -139,6 +144,22 @@ impl<F: NativeField> FieldLike for F {
         self.inverse().expect("inverse of zero")
     }
     fn assert_equal(&self, _other: &Self) {}
+    fn zeroed(n: usize) -> Vec<Self> {
+        if n == 0 {
+            return Vec::new();
+        }
+        let layout = std::alloc::Layout::array::<F>(n).expect("polynomial size");
+        // SAFETY: the Montgomery representation of zero is the all-zero bit pattern, so a zeroed
+        // allocation of `n` elements is a valid `Vec<F>` of zeros; the allocation is owned by the
+        // returned Vec with the same layout the global allocator will free it with.
+        unsafe {
+            let ptr = std::alloc::alloc_zeroed(layout) as *mut F;
+            if ptr.is_null() {
+                std::alloc::handle_alloc_error(layout);
+            }
+            Vec::from_raw_parts(ptr, n, n)
+        }
+    }
 }
 
 // ---- integer / byte helpers on the canonical representation ----

@@ -115,8 +115,10 @@ pub fn joint_prove(
     let trans_alphas = alpha_powers(&alpha, RelationSet::<Fr>::total_subrelations(&trans_rels) - 1);
     let mut zk = ZkData::<Bn254>::new(JOINT_LOG_N, t, ck, rng);
     let d = layout.batched_len;
-    let mut mega_state = RoundProver::new(&mega.all_polys(), true, MEGA_ZK.trace_offset, mega.max_end_index, None);
-    let mut trans_state = RoundProver::new(&trans.cols, false, 0, usize::MAX, None);
+    let mega_shifted: Vec<usize> = layout.shifted.iter().map(|e| layout.idx(*e)).collect();
+    let mut mega_state =
+        RoundProver::new(&mega.polys, &mega_shifted, true, MEGA_ZK.trace_offset, mega.max_end_index, None);
+    let mut trans_state = RoundProver::new(&trans.cols, &[], false, 0, usize::MAX, None);
     let mut committed = CommittedRounds::<Bn254>::new();
     let mut partial_eval = Fr::one();
     let mut challenge = Vec::with_capacity(JOINT_LOG_N);

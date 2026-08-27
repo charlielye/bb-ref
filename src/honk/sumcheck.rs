@@ -118,7 +118,7 @@ impl<F: FieldLike> RelationSet<F> for HonkRelations<'_> {
 }
 
 /// Shape of one sumcheck instance.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct SumcheckSpec {
     /// bb `compute_effective_round_size`: edges past the witness polynomials' extent are all-zero
     /// witness rows on which every relation vanishes, so the prover skips them (halved each round).
@@ -136,6 +136,9 @@ pub struct SumcheckSpec {
     pub committed: bool,
     /// `BATCHED_RELATION_PARTIAL_LENGTH`.
     pub batched_len: usize,
+    /// Source column of every shifted entity, in order; the shifted columns follow the given
+    /// polynomials in the round table and are read one row ahead of their source.
+    pub shifted_sources: Vec<usize>,
     pub num_entities: usize,
 }
 
@@ -151,6 +154,7 @@ impl SumcheckSpec {
             committed: false,
             batched_len: layout.batched_len,
             num_entities: layout.num_all(),
+            shifted_sources: layout.shifted.iter().map(|e| layout.idx(*e)).collect(),
         }
     }
     pub fn with_witness_end(mut self, witness_end: usize) -> Self {
@@ -731,7 +735,7 @@ impl<F: FieldLike + Copy> ExtensionWeights<F> {
 fn accumulate_edges<F: FieldLike + Copy + Send + Sync>(
     rels: &(impl RelationSet<F> + Sync),
     used: &[Vec<usize>],
-    table: &[Vec<F>],
+    table: &[Column<F>],
     edges: std::ops::Range<usize>,
     params: &RelationParams<F>,
     pows: &[F],
@@ -761,16 +765,16 @@ where
 fn accumulate_edge<F: FieldLike + Copy>(
     rels: &impl RelationSet<F>,
     used: &[Vec<usize>],
-    table: &[Vec<F>],
+    table: &[Column<F>],
     e: usize,
     params: &RelationParams<F>,
     scaling: &F,
     acc: &mut Accumulators<F>,
     s: &mut Scratch<F>,
 ) {
-    for (j, col) in table.iter().enumerate() {
-        s.row0[j] = col.get(2 * e).copied().unwrap_or(F::zero());
-        s.row1[j] = col.get(2 * e + 1).copied().unwrap_or(F::zero());
+    for j in 0..table.len() {
+        s.row0[j] = column_value(table, j, 2 * e);
+        s.row1[j] = column_value(table, j, 2 * e + 1);
     }
     if rels.skip_row(&s.row0, &s.row1) {
         return;
@@ -875,9 +879,35 @@ fn batch_over_relations<F: FieldLike + Copy>(
 
 /// Per-round prover state for one relation set (bb `SumcheckProverRound` +
 /// `PartiallyEvaluatedMultivariates`): the table being folded and the row-disabling bookkeeping.
+/// A column of the round table: the prover's polynomial itself until the first fold (trimmed to
+/// its last non-zero coefficient, bb `end_index`), the shift of another column (read one row
+/// ahead), or the folded values once a round has been evaluated.
+pub enum Column<'a, F> {
+    Borrowed(&'a [F]),
+    ShiftOf(usize),
+    Own(Vec<F>),
+}
+
+fn column_len<F>(table: &[Column<F>], j: usize) -> usize {
+    match &table[j] {
+        Column::Borrowed(s) => s.len(),
+        Column::Own(v) => v.len(),
+        Column::ShiftOf(k) => column_len(table, *k).saturating_sub(1),
+    }
+}
+
+/// Value of column `j` at row `i` (zero past the column's end).
+fn column_value<F: FieldLike + Copy>(table: &[Column<F>], j: usize, i: usize) -> F {
+    match &table[j] {
+        Column::Borrowed(s) => s.get(i).copied().unwrap_or_else(F::zero),
+        Column::Own(v) => v.get(i).copied().unwrap_or_else(F::zero),
+        Column::ShiftOf(k) => column_value(table, *k, i + 1),
+    }
+}
+
 /// Rounds past `log_n` are virtual (zero-extension) rounds.
-pub struct RoundProver<F> {
-    table: Vec<Vec<F>>,
+pub struct RoundProver<'a, F> {
+    table: Vec<Column<'a, F>>,
     log_n: usize,
     row_disabling: bool,
     excluded_head: usize,
@@ -892,29 +922,30 @@ pub struct RoundProver<F> {
     used: Vec<Vec<usize>>,
 }
 
-impl<F: FieldLike + Copy + Send + Sync> RoundProver<F>
+impl<'a, F: FieldLike + Copy + Send + Sync> RoundProver<'a, F>
 where
     RelationParams<F>: Sync,
 {
-    /// `witness_end`: rows from there on are all-zero witness rows (bb witness `end_index`; the
-    /// full size disables row skipping). `active_prefix_end`: the ECCVM's trace rows, beyond which
-    /// only the last edge is evaluated (bb `row_skip_active_prefix_end`).
+    /// The table is `polys` followed by the shifts of `polys[shifted_sources[..]]`. `witness_end`:
+    /// rows from there on are all-zero witness rows (bb witness `end_index`; the full size disables
+    /// row skipping). `active_prefix_end`: the ECCVM's trace rows, beyond which only the last edge
+    /// is evaluated (bb `row_skip_active_prefix_end`).
     pub fn new(
-        polys: &[Polynomial<F>],
+        polys: &'a [Polynomial<F>],
+        shifted_sources: &[usize],
         row_disabling: bool,
         trace_offset: usize,
         witness_end: usize,
         active_prefix_end: Option<usize>,
     ) -> Self {
         let n = polys[0].len();
-        // Columns stop at their last non-zero coefficient (bb `end_index`); reads past the end are
-        // zero and folds only touch the stored prefix.
-        let trim = |p: &Polynomial<F>| {
+        let trim = |p: &'a Polynomial<F>| {
             let end = p.coeffs.iter().rposition(|c| !c.is_zero()).map_or(0, |i| i + 1);
-            p.coeffs[..end].to_vec()
+            Column::Borrowed(&p.coeffs[..end])
         };
+        let table = polys.iter().map(trim).chain(shifted_sources.iter().map(|s| Column::ShiftOf(*s))).collect();
         Self {
-            table: polys.iter().map(trim).collect(),
+            table,
             log_n: n.trailing_zeros() as usize,
             row_disabling,
             excluded_head: if row_disabling { trace_offset } else { 0 },
@@ -957,7 +988,7 @@ where
     }
     /// Current value of column `i` (its evaluation once all real rounds are done).
     pub fn current(&self, i: usize) -> F {
-        self.table[i].first().copied().unwrap_or(F::zero())
+        column_value(&self.table, i, 0)
     }
     pub fn evals(&self) -> Vec<F> {
         (0..self.table.len()).map(|i| self.current(i)).collect()
@@ -1015,8 +1046,8 @@ where
         } else {
             // virtual round: the table has one row and the edge is (P(u), 0)
             let mut acc = Accumulators::new(rels, d);
-            let edge_table: Vec<Vec<F>> = (0..self.table.len())
-                .map(|i| vec![self.current(i), F::zero()])
+            let edge_table: Vec<Column<F>> = (0..self.table.len())
+                .map(|i| Column::Own(vec![self.current(i), F::zero()]))
                 .collect();
             accumulate_edge(
                 rels,
@@ -1041,21 +1072,27 @@ where
     pub fn partially_evaluate(&mut self, u: &F) {
         let round = self.round;
         if round < self.log_n {
-            self.table.par_iter_mut().for_each(|col| {
-                if col.len() % 2 == 1 {
-                    col.push(F::zero());
-                }
-                let half = col.len() / 2;
-                for k in 0..half {
-                    col[k] = col[2 * k] + *u * (col[2 * k + 1] - col[2 * k]);
-                }
-                col.truncate(half);
-            });
+            // The folded table is half the size and owned (bb `PartiallyEvaluatedMultivariates`).
+            let table = &self.table;
+            let folded: Vec<Column<F>> = (0..table.len())
+                .into_par_iter()
+                .map(|j| {
+                    let half = column_len(table, j).div_ceil(2);
+                    Column::Own(
+                        (0..half)
+                            .map(|k| {
+                                let a = column_value(table, j, 2 * k);
+                                a + *u * (column_value(table, j, 2 * k + 1) - a)
+                            })
+                            .collect(),
+                    )
+                })
+                .collect();
+            self.table = folded;
         } else {
-            for col in self.table.iter_mut() {
-                if let Some(c) = col.first_mut() {
-                    *c *= F::one() - *u;
-                }
+            for j in 0..self.table.len() {
+                let v = column_value(&self.table, j, 0) * (F::one() - *u);
+                self.table[j] = Column::Own(vec![v]);
             }
         }
         self.witness_end = self.witness_end.div_ceil(2);
@@ -1158,6 +1195,7 @@ where
     let alphas = alpha_powers(alpha, rels.total_subrelations() - 1);
     let mut state = RoundProver::new(
         polys,
+        &spec.shifted_sources,
         spec.row_disabling,
         spec.trace_offset,
         spec.witness_end,
