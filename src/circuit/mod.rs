@@ -6,6 +6,7 @@ pub mod memory;
 pub mod nnf;
 pub mod op_queue;
 pub mod plookup;
+pub mod secp256r1_fixed_base;
 pub mod trace;
 
 pub use builder::{Builder, IS_CONSTANT};

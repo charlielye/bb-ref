@@ -2,9 +2,12 @@
 //! handle to the builder so that arithmetic on them emits gates in evaluation order.
 pub mod bigfield;
 pub mod biggroup;
+pub mod biggroup_secp256r1;
+pub mod byte_array;
 pub mod bool;
 pub mod curve;
 pub mod cycle_group;
+pub mod ecdsa;
 pub mod field;
 pub mod goblin;
 pub mod hash;

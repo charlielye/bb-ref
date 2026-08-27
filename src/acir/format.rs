@@ -46,7 +46,7 @@ pub enum BlackBoxFuncCall {
     Blake2s(IgnoredAny),
     Blake3(IgnoredAny),
     EcdsaSecp256k1(IgnoredAny),
-    EcdsaSecp256r1(IgnoredAny),
+    EcdsaSecp256r1(EcdsaSecp256r1),
     MultiScalarMul(MultiScalarMul),
     EmbeddedCurveAdd(EmbeddedCurveAdd),
     Keccakf1600(IgnoredAny),
@@ -56,6 +56,17 @@ pub enum BlackBoxFuncCall {
         outputs: Vec<Witness>,
     },
     Sha256Compression(Sha256Compression),
+}
+
+/// secp256r1 ECDSA verification over byte-wise inputs (32 bytes per coordinate, 64 per signature).
+#[derive(Deserialize, Debug, Clone)]
+pub struct EcdsaSecp256r1 {
+    pub public_key_x: Vec<FunctionInput>,
+    pub public_key_y: Vec<FunctionInput>,
+    pub signature: Vec<FunctionInput>,
+    pub hashed_message: Vec<FunctionInput>,
+    pub predicate: FunctionInput,
+    pub output: Witness,
 }
 
 /// Grumpkin MSM: `points` and `scalars` are flat `(x, y)` / `(lo, hi)` pairs.

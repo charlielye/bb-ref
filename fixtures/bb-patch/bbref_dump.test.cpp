@@ -39,6 +39,8 @@
 #include "barretenberg/stdlib/hash/poseidon2/poseidon2.hpp"
 #include "barretenberg/stdlib/hash/sha256/sha256.hpp"
 #include "barretenberg/stdlib/primitives/curves/secp256r1.hpp"
+#include "barretenberg/stdlib/encryption/ecdsa/ecdsa.hpp"
+#include "barretenberg/stdlib/primitives/biggroup/biggroup_secp256r1.hpp"
 #include "barretenberg/stdlib/hash/poseidon2/poseidon2_permutation.hpp"
 #include "barretenberg/stdlib/primitives/databus/databus.hpp"
 #include "barretenberg/stdlib/primitives/pairing_points.hpp"
@@ -1464,9 +1466,64 @@ void biggroup_ops(Builder& b)
     trace_op("assert", b);
 }
 
+void secp256r1_mul(Builder& b)
+{
+    using Curve = stdlib::secp256r1<Builder>;
+    using G1 = Curve::Group;
+    using Fr = Curve::ScalarField;
+    using FrNative = ::bb::secp256r1::fr;
+    using G1Native = ::bb::secp256r1::g1;
+    Fr u1 = Fr::from_witness(&b, FrNative(uint256_t(0x1234567890abcdefULL, 0xfedcba0987654321ULL, 0x0f0e0d0c0b0a0908ULL, 0x0706050403020100ULL)));
+    G1 t1 = G1::secp256r1_fixed_base_mul(u1);
+    trace_op("fixed_base_mul", b);
+    const G1Native::affine_element q_n(G1Native::one * FrNative(11));
+    G1 q = G1::from_witness(&b, q_n);
+    Fr u2 = Fr::from_witness(&b, FrNative(uint256_t(0xabcdef0123456789ULL, 0x1122334455667788ULL, 0x99aabbccddeeff00ULL, 0x0123456789abcdefULL)));
+    auto out = G1::secp256r1_ecdsa_mul(q, u1, u2);
+    trace_op("ecdsa_mul", b);
+    out.u2_is_acceptable.assert_equal(bool_ct(true));
+    G1 e1 = G1::from_witness(&b, t1.get_value());
+    t1.incomplete_assert_equal(e1);
+    G1 e2 = G1::from_witness(&b, out.result.get_value());
+    out.result.incomplete_assert_equal(e2);
+}
+
+void ecdsa_r1(Builder& b)
+{
+    using Curve = stdlib::secp256r1<Builder>;
+    using Fq = Curve::BaseField;
+    using Fr = Curve::ScalarField;
+    using G1 = Curve::Group;
+    auto bytes = [&](const char* hex) {
+        std::vector<uint8_t> v;
+        for (size_t i = 0; i < 64; i += 2) {
+            v.push_back(static_cast<uint8_t>(std::stoul(std::string(hex + i, 2), nullptr, 16)));
+        }
+        return stdlib::byte_array<Builder>(&b, v);
+    };
+    auto hashed_message = bytes("5566778899aabbccddeeff00112233445566778899aabbccddeeff0011223344");
+    auto pub_x_bytes = bytes("471c3e758c4904285bba7e53118ed0f524adeb0757d25bd2f8e7b0d76dfa714c");
+    auto pub_y_bytes = bytes("dd520f7aca8a8b917acc37f51de8f0c9bbe3ad858382e702dc25a12d09f7a858");
+    auto r = bytes("4a5530b043726fbeebd13c58ebc50dcc944fd60e07b714aac9b57eddc6037a88");
+    auto s = bytes("2b0f47eb371a2580242896f996d17e91d6134517572759d4d9729892c8b4dcd0");
+    Fq pub_x(pub_x_bytes);
+    Fq pub_y(pub_y_bytes);
+    G1 public_key(pub_x, pub_y, /*assert_on_curve=*/false);
+    bool_ct result = stdlib::ecdsa_verify_signature<Builder, Curve, Fq, Fr, G1>(hashed_message, public_key, { r, s });
+    result.assert_equal(bool_ct(true));
+}
+
 void run(Builder& b, const std::string& name)
 {
     auto suffix = [&](const std::string& prefix) { return std::stoul(name.substr(prefix.size())); };
+    if (name == "secp256r1_mul") {
+        secp256r1_mul(b);
+        return;
+    }
+    if (name == "ecdsa_r1") {
+        ecdsa_r1(b);
+        return;
+    }
     if (name == "biggroup_ops") {
         biggroup_ops(b);
     } else if (name == "bigfield_ops") {

@@ -17,8 +17,8 @@ pub fn get_lookup_accumulators(id: MultiTableId, key_a: &FieldT, key_b: &FieldT,
         }
     } else {
         let ctx = ctx.expect("witness key without a builder");
-        let mut lhs_index = key_a.witness_index;
-        let mut rhs_index = key_b.witness_index;
+        let mut lhs_index = key_a.get_witness_index();
+        let mut rhs_index = key_b.get_witness_index();
         if key_a.is_constant() {
             lhs_index = ctx.borrow_mut().put_constant_variable(key_a.get_value());
         }

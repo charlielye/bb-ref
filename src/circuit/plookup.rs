@@ -20,6 +20,7 @@ pub enum BasicTableId {
     Sha256Base28Rotate3,
     Sha256Base16,
     Sha256Base16Rotate2,
+    Secp256r1FixedBase { axis: u8, window: u8 },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -30,6 +31,7 @@ pub enum MultiTableId {
     Sha256MajOutput,
     Sha256WitnessInput,
     Sha256WitnessOutput,
+    Secp256r1FixedBase { axis: u8, is_lo: bool },
 }
 
 /// How a basic table maps a key to its two values (bb `get_values_from_key`).
@@ -39,6 +41,8 @@ pub enum TableValues {
     SparseRotation { base: u64, rotation: u32 },
     /// The base-digits of `key` mapped through `table`, packed as bits.
     SparseNormalization { base: u64, table: &'static [u64] },
+    /// The two limbs of one axis of a secp256r1 fixed-base table entry.
+    FixedBase { axis: u8, window: u8 },
 }
 
 impl TableValues {
@@ -64,6 +68,9 @@ impl TableValues {
                     count += 1;
                 }
                 [Fr::from(accumulator), Fr::zero()]
+            }
+            TableValues::FixedBase { axis, window } => {
+                super::secp256r1_fixed_base::extract_axis(&super::secp256r1_fixed_base::entry(window as usize, key[0] as usize), axis)
             }
         }
     }
@@ -112,7 +119,7 @@ pub struct MultiTable {
 }
 
 impl MultiTable {
-    fn new(
+    pub(crate) fn new(
         column_coefficients: [Vec<Fr>; 3],
         slice_sizes: Vec<u64>,
         basic_table_ids: Vec<BasicTableId>,
@@ -155,17 +162,17 @@ pub struct ReadData<T> {
 pub fn get_multitable(id: MultiTableId) -> &'static MultiTable {
     static TABLES: LazyLock<Vec<(MultiTableId, MultiTable)>> = LazyLock::new(|| {
         use MultiTableId::*;
-        [
-            Sha256ChInput,
-            Sha256ChOutput,
-            Sha256MajInput,
-            Sha256MajOutput,
-            Sha256WitnessInput,
-            Sha256WitnessOutput,
-        ]
-        .into_iter()
-        .map(|id| (id, sha256::multitable(id)))
-        .collect()
+        let mut tables: Vec<(MultiTableId, MultiTable)> =
+            [Sha256ChInput, Sha256ChOutput, Sha256MajInput, Sha256MajOutput, Sha256WitnessInput, Sha256WitnessOutput]
+                .into_iter()
+                .map(|id| (id, sha256::multitable(id)))
+                .collect();
+        for axis in 0..4 {
+            for is_lo in [true, false] {
+                tables.push((Secp256r1FixedBase { axis, is_lo }, super::secp256r1_fixed_base::multitable(axis, is_lo)));
+            }
+        }
+        tables
     });
     &TABLES.iter().find(|(i, _)| *i == id).expect("multitable").1
 }
@@ -240,6 +247,7 @@ pub fn create_basic_table(id: BasicTableId, table_index: usize) -> BasicTable {
         Sha256Base28Rotate3 => sparse_table_with_rotation(id, table_index, 28, 10, 3),
         Sha256Base16 => sparse_table_with_rotation(id, table_index, 16, 10, 0),
         Sha256Base16Rotate2 => sparse_table_with_rotation(id, table_index, 16, 11, 2),
+        Secp256r1FixedBase { axis, window } => super::secp256r1_fixed_base::basic_table(id, table_index, axis, window as usize),
     }
 }
 
@@ -400,6 +408,7 @@ pub mod sha256 {
                     vec![sparse(16, 2), sparse(16, 2), sparse(16, 0)],
                 )
             }
+            MultiTableId::Secp256r1FixedBase { .. } => unreachable!("not a sha256 table"),
         }
     }
 }

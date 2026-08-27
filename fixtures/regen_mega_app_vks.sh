@@ -13,7 +13,7 @@ tmp=$(mktemp -d)
 python3 - "$acir" <<'PY' > "$tmp/programs"
 import json, base64, gzip, os, sys, msgpack
 root = sys.argv[1]
-ok = {'AssertZero', 'BB:RANGE', 'BB:Poseidon2Permutation', 'MemoryInit', 'MemoryOp', 'BrilligCall'}
+ok = {'AssertZero', 'BB:RANGE', 'BB:Poseidon2Permutation', 'BB:Sha256Compression', 'BB:EcdsaSecp256r1', 'MemoryInit', 'MemoryOp', 'BrilligCall'}
 for p in sorted(os.listdir(root)):
     f = os.path.join(root, p, 'target', 'program.json')
     if not os.path.exists(f):

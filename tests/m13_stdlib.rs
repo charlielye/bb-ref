@@ -15,6 +15,8 @@ use bb_ref::honk::flavor::FlavorDesc;
 use bb_ref::honk::{MEGA_APP, MEGA_KERNEL};
 use bb_ref::stdlib::bigfield::BigField;
 use bb_ref::stdlib::biggroup::{Element, Scalar};
+use bb_ref::stdlib::byte_array::ByteArray;
+use bb_ref::stdlib::ecdsa::ecdsa_verify_signature;
 use bb_ref::stdlib::sha256;
 use num_bigint::BigUint;
 use bb_ref::stdlib::cycle_group::{CycleGroup, CycleScalar};
@@ -176,7 +178,7 @@ fn wb(ctx: &Ctx, v: bool) -> BoolT {
 
 /// The programs with lookup gates are dumped as MegaApp (MegaKernel has no lookup entities).
 fn flavor_of(name: &str) -> &'static FlavorDesc {
-    if name.starts_with("sha256") || name.starts_with("bigfield") || name.starts_with("biggroup") {
+    if ["sha256", "bigfield", "biggroup", "secp256r1", "ecdsa"].iter().any(|p| name.starts_with(p)) {
         &MEGA_APP
     } else {
         &MEGA_KERNEL
@@ -316,6 +318,45 @@ fn biggroup_ops(ctx: &Ctx) {
     let e = Element::<P256>::from_witness(ctx, &sum.get_value());
     sum.incomplete_assert_equal(&e);
     tr("assert");
+}
+
+fn secp256r1_mul(ctx: &Ctx) {
+    use ark_ec::{AffineRepr, CurveGroup};
+    let tr = |l: &str| bb_ref::circuit::builder::trace_phase(&format!("secp256r1_mul: {l}"));
+    let scalar = |limbs: [u64; 4]| ark_secp256r1::Fr::from(BigUint::from_slice(&limbs.iter().flat_map(|l| [*l as u32, (*l >> 32) as u32]).collect::<Vec<_>>()));
+    let g = ark_secp256r1::Affine::generator();
+    let u1_n = scalar([0x1234567890abcdef, 0xfedcba0987654321, 0x0f0e0d0c0b0a0908, 0x0706050403020100]);
+    let u1 = Scalar::<P256>::from_witness(ctx, &u1_n);
+    let t1 = Element::<P256>::secp256r1_fixed_base_mul(&u1);
+    assert_eq!(t1.get_value(), (g * u1_n).into_affine(), "fixed-base mul value");
+    tr("fixed_base_mul");
+    let q_n = (g * ark_secp256r1::Fr::from(11u64)).into_affine();
+    let q = Element::<P256>::from_witness(ctx, &q_n);
+    let u2_n = scalar([0xabcdef0123456789, 0x1122334455667788, 0x99aabbccddeeff00, 0x0123456789abcdef]);
+    let u2 = Scalar::<P256>::from_witness(ctx, &u2_n);
+    let (res, ok) = Element::<P256>::secp256r1_ecdsa_mul(&q, &u1, &u2);
+    assert_eq!(res.get_value(), (g * u1_n + q_n * u2_n).into_affine(), "ecdsa mul value");
+    tr("ecdsa_mul");
+    ok.assert_equal(&BoolT::constant(true));
+    let e1 = Element::<P256>::from_witness(ctx, &t1.get_value());
+    t1.incomplete_assert_equal(&e1);
+    let e2 = Element::<P256>::from_witness(ctx, &res.get_value());
+    res.incomplete_assert_equal(&e2);
+}
+
+fn ecdsa_r1(ctx: &Ctx) {
+    let bytes = |h: &str| ByteArray::from_bytes(ctx, &hex::decode(h).unwrap());
+    let hashed_message = bytes("5566778899aabbccddeeff00112233445566778899aabbccddeeff0011223344");
+    let pub_x_bytes = bytes("471c3e758c4904285bba7e53118ed0f524adeb0757d25bd2f8e7b0d76dfa714c");
+    let pub_y_bytes = bytes("dd520f7aca8a8b917acc37f51de8f0c9bbe3ad858382e702dc25a12d09f7a858");
+    let r = bytes("4a5530b043726fbeebd13c58ebc50dcc944fd60e07b714aac9b57eddc6037a88");
+    let s = bytes("2b0f47eb371a2580242896f996d17e91d6134517572759d4d9729892c8b4dcd0");
+    let pub_x = P256Fq::from_bytes(&pub_x_bytes);
+    let pub_y = P256Fq::from_bytes(&pub_y_bytes);
+    let public_key = Element::<P256>::new(pub_x, pub_y, false);
+    let result = ecdsa_verify_signature(&hashed_message, &public_key, &r, &s);
+    assert!(result.get_value(), "ecdsa signature should verify");
+    result.assert_equal(&BoolT::constant(true));
 }
 
 fn sha256_block(ctx: &Ctx) {
@@ -526,6 +567,8 @@ fn run(ctx: &Ctx, name: &str) {
         "io_hiding_default" => HidingKernelIo::add_default(ctx),
         "kernel_io_set" => kernel_io_set(ctx),
         "hiding_io_set" => hiding_io_set(ctx),
+        "secp256r1_mul" => secp256r1_mul(ctx),
+        "ecdsa_r1" => ecdsa_r1(ctx),
         _ if name.starts_with("poseidon2_hash_") => poseidon2_hash(ctx, suffix("poseidon2_hash_")),
         _ if name.starts_with("goblin_batch_mul_") => goblin_batch_mul(ctx, suffix("goblin_batch_mul_")),
         _ if name.starts_with("aggregate_multiple_") => aggregate_multiple(ctx, suffix("aggregate_multiple_")),
@@ -562,6 +605,8 @@ pub const PROGRAMS: &[&str] = &[
     "sha256_block",
     "bigfield_ops",
     "biggroup_ops",
+    "secp256r1_mul",
+    "ecdsa_r1",
 ];
 
 fn check(name: &str) {

@@ -5,7 +5,8 @@
 //! verify nothing.
 
 use super::format::{
-    field, BlackBoxFuncCall, BlockType, Circuit, EmbeddedCurveAdd, FunctionInput, MultiScalarMul, Opcode, Witness,
+    field, BlackBoxFuncCall, BlockType, Circuit, EmbeddedCurveAdd, FunctionInput, MultiScalarMul, Opcode,
+    Witness,
 };
 use super::mock::mock_chonk_from_constraints;
 use crate::base::field::FieldLike;
@@ -20,8 +21,12 @@ use crate::circuit::{Builder, EccOpQueue, IS_CONSTANT};
 use crate::stdlib::cycle_group::{CycleGroup, CycleScalar};
 use crate::stdlib::io::{AppIo, KernelIo, MAX_APPS_PER_KERNEL};
 use crate::stdlib::memory::{RamTable, RomTable};
+use crate::stdlib::biggroup::Element;
+use crate::stdlib::byte_array::ByteArray;
+use crate::stdlib::ecdsa::ecdsa_verify_signature;
 use crate::stdlib::{poseidon2, sha256, BoolT, Ctx, FieldT, StdBn254};
-use ark_ec::AffineRepr;
+use ark_ff::{BigInteger, PrimeField};
+use ark_ec::{AffineRepr, CurveGroup};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -68,6 +73,15 @@ struct Sha256Constraint {
     hash_values: Vec<FunctionInput>,
     outputs: Vec<u32>,
 }
+/// bb `EcdsaConstraint`: witness indices of the byte-wise inputs.
+struct EcdsaConstraint {
+    hashed_message: Vec<u32>,
+    signature: Vec<u32>,
+    pub_x: Vec<u32>,
+    pub_y: Vec<u32>,
+    predicate: FunctionInput,
+    result: u32,
+}
 
 /// One linear AssertZero with at most two witnesses (half of a batched-eq row).
 struct BatchedEqEntry {
@@ -88,6 +102,7 @@ struct Constraints {
     range: Vec<(u32, u32)>,
     poseidon2: Vec<Poseidon2Constraint>,
     sha256: Vec<Sha256Constraint>,
+    ecdsa_r1: Vec<EcdsaConstraint>,
     msm: Vec<MultiScalarMul>,
     ec_add: Vec<EmbeddedCurveAdd>,
     blocks: BTreeMap<u32, BlockConstraint>,
@@ -369,6 +384,17 @@ fn classify(circuit: &Circuit, is_mega: bool) -> (Constraints, Vec<u32>) {
                         outputs,
                     });
                 }
+                BlackBoxFuncCall::EcdsaSecp256r1(e) => {
+                    assert!(e.public_key_x.len() == 32 && e.public_key_y.len() == 32 && e.signature.len() == 64 && e.hashed_message.len() == 32);
+                    c.note_input(&e.predicate);
+                    let witnesses = |c: &mut Constraints, inputs: &[FunctionInput]| inputs.iter().map(|i| c.input(i)).collect();
+                    let hashed_message = witnesses(&mut c, &e.hashed_message);
+                    let signature = witnesses(&mut c, &e.signature);
+                    let pub_x = witnesses(&mut c, &e.public_key_x);
+                    let pub_y = witnesses(&mut c, &e.public_key_y);
+                    let result = c.note(e.output);
+                    c.ecdsa_r1.push(EcdsaConstraint { hashed_message, signature, pub_x, pub_y, predicate: e.predicate.clone(), result });
+                }
                 BlackBoxFuncCall::Poseidon2Permutation { inputs, outputs } => {
                     let state = inputs.iter().map(|i| c.input(i)).collect();
                     let result = outputs.iter().map(|w| c.note(*w)).collect();
@@ -625,6 +651,69 @@ fn claimed_result_fields(ctx: &Ctx, outputs: &[Witness; 2]) -> (FieldT, FieldT) 
     (x, y)
 }
 
+/// bb `fields_to_bytes`: one range-constrained byte per field.
+fn fields_to_bytes(ctx: &Ctx, fields: &[FieldT]) -> ByteArray {
+    let mut result = ByteArray::empty(ctx);
+    for field in fields {
+        result.write(&ByteArray::from_field(field, 1));
+    }
+    result
+}
+
+/// bb `create_ecdsa_verify_constraints<secp256r1>`: a disabled constraint (predicate false) verifies
+/// a fixed valid-shaped input instead; write-VK mode fills the witnesses with the generator.
+fn create_ecdsa_verify_constraints(ctx: &Ctx, input: &EcdsaConstraint) {
+    let fields = |indices: &[u32]| -> Vec<FieldT> { indices.iter().map(|i| FieldT::from_witness_index(ctx, *i)).collect() };
+    let mut hashed_message_fields = fields(&input.hashed_message);
+    let mut r_fields = fields(&input.signature[..32]);
+    let mut s_fields = fields(&input.signature[32..]);
+    let mut pub_x_fields = fields(&input.pub_x);
+    let mut pub_y_fields = fields(&input.pub_y);
+    let result_field = FieldT::from_witness_index(ctx, input.result);
+    let predicate = BoolT::from_field(&to_field_ct(ctx, &input.predicate));
+    let coordinate_bytes = |p: &ark_secp256r1::Affine| {
+        (p.x.into_bigint().to_bytes_be(), p.y.into_bigint().to_bytes_be())
+    };
+    if ctx.borrow().is_write_vk_mode {
+        let (gx, gy) = coordinate_bytes(&ark_secp256r1::Affine::generator());
+        let mut b = ctx.borrow_mut();
+        for w in input.hashed_message.iter().chain(&input.signature) {
+            b.set_variable(*w, Fr::zero());
+        }
+        for (w, byte) in input.pub_x.iter().zip(&gx).chain(input.pub_y.iter().zip(&gy)) {
+            b.set_variable(*w, Fr::from(*byte as u64));
+        }
+        b.set_variable(input.result, Fr::one());
+    }
+    if !predicate.is_constant() {
+        for idx in 0..32 {
+            let unit = FieldT::constant(Fr::from(u64::from(idx == 0)));
+            r_fields[idx] = FieldT::conditional_assign(&predicate, &r_fields[idx], &unit);
+            s_fields[idx] = FieldT::conditional_assign(&predicate, &s_fields[idx], &unit);
+            hashed_message_fields[idx] = FieldT::conditional_assign(&predicate, &hashed_message_fields[idx], &unit);
+        }
+        let two_g = (ark_secp256r1::Affine::generator() + ark_secp256r1::Affine::generator()).into_affine();
+        let (default_x, default_y) = coordinate_bytes(&two_g);
+        for i in 0..32 {
+            pub_x_fields[i] = FieldT::conditional_assign(&predicate, &pub_x_fields[i], &FieldT::constant(Fr::from(default_x[i] as u64)));
+            pub_y_fields[i] = FieldT::conditional_assign(&predicate, &pub_y_fields[i], &FieldT::constant(Fr::from(default_y[i] as u64)));
+        }
+    } else {
+        assert!(predicate.get_value(), "ECDSA constraint with a constant false predicate");
+    }
+    let hashed_message = fields_to_bytes(ctx, &hashed_message_fields);
+    let pub_x_bytes = fields_to_bytes(ctx, &pub_x_fields);
+    let pub_y_bytes = fields_to_bytes(ctx, &pub_y_fields);
+    let r = fields_to_bytes(ctx, &r_fields);
+    let s = fields_to_bytes(ctx, &s_fields);
+    let result = BoolT::from_field(&result_field);
+    let pub_x = crate::stdlib::biggroup::Fq::<ark_secp256r1::Config>::from_bytes(&pub_x_bytes);
+    let pub_y = crate::stdlib::biggroup::Fq::<ark_secp256r1::Config>::from_bytes(&pub_y_bytes);
+    let public_key = Element::<ark_secp256r1::Config>::new(pub_x, pub_y, false);
+    let signature_result = ecdsa_verify_signature(&hashed_message, &public_key, &r, &s);
+    signature_result.assert_equal(&BoolT::conditional_assign(&predicate, &result, &signature_result));
+}
+
 /// bb `create_multi_scalar_mul_constraint`.
 fn create_multi_scalar_mul_constraint(ctx: &Ctx, m: &MultiScalarMul) {
     let predicate = BoolT::from_field(&to_field_ct(ctx, &m.predicate));
@@ -845,6 +934,9 @@ fn lower(builder: Builder, c: Constraints) -> Ctx {
         for (out, result) in output.iter().zip(&s.outputs) {
             out.assert_equal(&FieldT::from_witness_index(&ctx, *result));
         }
+    }
+    for e in &c.ecdsa_r1 {
+        create_ecdsa_verify_constraints(&ctx, e);
     }
     for p in &c.poseidon2 {
         assert!(p.state.len() == 4 && p.result.len() == 4);

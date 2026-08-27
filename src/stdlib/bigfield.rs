@@ -4,8 +4,9 @@
 //! Every gate-emitting path is a line-by-line port of `bigfield_impl.hpp`.
 
 use super::bool::BoolT;
+use super::byte_array::ByteArray;
 use super::field::{Ctx, FieldT};
-use crate::base::field::{from_u256, FieldLike, U256};
+use crate::base::field::{from_u256, u256, FieldLike, U256};
 use crate::base::Fr;
 use crate::circuit::nnf::{AddSimple, NonNativeMultiplicationWitnesses, DEFAULT_NON_NATIVE_FIELD_LIMB_BITS};
 use crate::circuit::BlockId;
@@ -299,6 +300,40 @@ impl<N: PrimeField> BigField<N> {
         ];
         let prime = low_bits.add(&high_bits.mul(&FieldT::constant(shift_k(2))));
         Self::from_state(ctx, limbs, prime)
+    }
+
+    /// bb `bigfield(const byte_array&)`: 32 big-endian bytes as a 256-bit integer; the two bytes
+    /// straddling limb boundaries are split into range-checked nibbles.
+    pub fn from_bytes(bytes: &ByteArray) -> Self {
+        assert_eq!(bytes.len(), 32);
+        let ctx = bytes.ctx().expect("byte array without a builder");
+        let split_byte_into_nibbles = |split_byte: &FieldT| {
+            let byte_val = u256(&split_byte.get_value()).0[0];
+            let lo_nibble = FieldT::from_witness(&ctx, Fr::from(byte_val & 15));
+            let hi_nibble = FieldT::from_witness(&ctx, Fr::from(byte_val >> 4));
+            lo_nibble.create_range_constraint(4);
+            hi_nibble.create_range_constraint(4);
+            let sum = lo_nibble.add(&hi_nibble.mul(&FieldT::constant(Fr::from(16u64))));
+            sum.assert_equal(split_byte);
+            (lo_nibble, hi_nibble)
+        };
+        let reconstruct_two_limbs = |hi_bytes: &FieldT, lo_bytes: &FieldT, split_byte: &FieldT| {
+            let (lo_nibble, hi_nibble) = split_byte_into_nibbles(split_byte);
+            let hi_limb = hi_nibble.add(&hi_bytes.mul(&FieldT::constant(Fr::from(16u64))));
+            let lo_limb = lo_bytes.add(&lo_nibble.mul(&FieldT::constant(from_u256(U256::from(1u64) << 64))));
+            (lo_limb, hi_limb)
+        };
+        let hi_8_bytes = bytes.slice(0, 6).to_field();
+        let mid_split_byte = bytes.slice(6, 1).to_field();
+        let mid_8_bytes = bytes.slice(7, 8).to_field();
+        let lo_8_bytes = bytes.slice(15, 8).to_field();
+        let lo_split_byte = bytes.slice(23, 1).to_field();
+        let lolo_8_bytes = bytes.slice(24, 8).to_field();
+        let (limb0, limb1) = reconstruct_two_limbs(&lo_8_bytes, &lolo_8_bytes, &lo_split_byte);
+        let (limb2, limb3) = reconstruct_two_limbs(&hi_8_bytes, &mid_8_bytes, &mid_split_byte);
+        let res = Self::unsafe_construct_from_limbs(&limb0, &limb1, &limb2, &limb3, true);
+        res.set_limb_max(3, pow2(256 - NUM_LIMB_BITS * 3) - 1u64);
+        res
     }
 
     /// bb `unsafe_construct_from_limbs` (4 limbs): the prime limb is recomputed, nothing is range-checked.

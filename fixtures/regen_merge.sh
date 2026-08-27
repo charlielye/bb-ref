@@ -49,6 +49,6 @@ for prog in field_ops poseidon2_hash_1 poseidon2_hash_2 poseidon2_hash_3 poseido
   BBREF_STDLIB=$prog BBREF_OUT=$T/stdlib/$prog "$BIN" --gtest_filter='BbRefDump.Stdlib'
 done
 # lookup-table programs are dumped as MegaApp (MegaKernel has no lookups)
-for prog in sha256_block bigfield_ops biggroup_ops; do
+for prog in sha256_block bigfield_ops biggroup_ops secp256r1_mul ecdsa_r1; do
   BBREF_FLAVOR=app BBREF_STDLIB=$prog BBREF_OUT=$T/stdlib/$prog "$BIN" --gtest_filter='BbRefDump.Stdlib'
 done

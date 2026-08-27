@@ -111,6 +111,11 @@ builder_tests! {
     array_dynamic: "array_dynamic",
     poseidon: "no_predicates_numeric_generic_poseidon",
     unsafe_range_constraint: "unsafe_range_constraint",
+    ecdsa_secp256r1: "ecdsa_secp256r1",
+    ecdsa_secp256r1_3x: "ecdsa_secp256r1_3x",
+    ecdsa_secp256r1_high_s: "ecdsa_secp256r1_high_s",
+    ecdsa_secp256r1_invalid_inputs: "ecdsa_secp256r1_invalid_inputs",
+    ecdsa_secp256r1_invalid_pub_key_in_inactive_branch: "ecdsa_secp256r1_invalid_pub_key_in_inactive_branch",
 }
 
 /// VK hashes of every acir_tests program in the supported opcode subset, from `bb write_vk`.
