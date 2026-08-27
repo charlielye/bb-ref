@@ -2,6 +2,7 @@
 pub mod codec;
 pub mod field;
 pub mod generators;
+pub mod timing;
 pub mod group;
 pub mod io;
 pub mod poseidon2;

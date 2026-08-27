@@ -8,6 +8,7 @@
 
 use super::flavor::{FlavorDesc, Layout};
 use super::relations::{RelationParams, Row};
+use rayon::prelude::*;
 use crate::base::field::{FieldLike, U256};
 use crate::base::group::Curve;
 use crate::base::poly::Polynomial;
@@ -428,6 +429,36 @@ fn new_accumulators<F: FieldLike>(rels: &impl RelationSet<F>, d: usize) -> Accum
     (0..rels.num_relations()).map(|r| vec![vec![F::zero(); d]; rels.num_subrelations(r)]).collect()
 }
 
+fn add_accumulators<F: FieldLike + Copy>(mut a: Accumulators<F>, b: Accumulators<F>) -> Accumulators<F> {
+    for (ra, rb) in a.iter_mut().zip(b) {
+        for (sa, sb) in ra.iter_mut().zip(rb) {
+            for (x, y) in sa.iter_mut().zip(sb) {
+                *x += y;
+            }
+        }
+    }
+    a
+}
+
+/// The accumulators over a range of edges, split across threads (exact arithmetic: any split
+/// gives the same sums).
+fn accumulate_edges<F: FieldLike + Copy + Send + Sync>(rels: &(impl RelationSet<F> + Sync), table: &[Vec<F>], edges: std::ops::Range<usize>, params: &RelationParams<F>, betas: &[F], round: usize, d: usize) -> Accumulators<F>
+where
+    RelationParams<F>: Sync,
+{
+    edges
+        .into_par_iter()
+        .with_min_len(16)
+        .fold(
+            || new_accumulators(rels, d),
+            |mut acc, e| {
+                accumulate_edge(rels, table, e, params, &pow_tail(betas, round, e), &mut acc, d);
+                acc
+            },
+        )
+        .reduce(|| new_accumulators(rels, d), add_accumulators)
+}
+
 /// Add the contributions of the edge `(table[·][2e], table[·][2e+1])` at every `k`.
 fn accumulate_edge<F: FieldLike + Copy>(rels: &impl RelationSet<F>, table: &[Vec<F>], e: usize, params: &RelationParams<F>, scaling: &F, acc: &mut Accumulators<F>, d: usize) {
     let mut row = vec![F::zero(); table.len()];
@@ -507,7 +538,10 @@ pub struct RoundProver<F> {
     round: usize,
 }
 
-impl<F: FieldLike + Copy> RoundProver<F> {
+impl<F: FieldLike + Copy + Send + Sync> RoundProver<F>
+where
+    RelationParams<F>: Sync,
+{
     pub fn new(polys: &[Polynomial<F>], row_disabling: bool, trace_offset: usize) -> Self {
         let n = polys[0].len();
         Self {
@@ -533,20 +567,14 @@ impl<F: FieldLike + Copy> RoundProver<F> {
 
     /// The round univariate of the relations (bb `compute_univariate` + `compute_offset_area_contribution`,
     /// or `compute_virtual_contribution` for a virtual round), without any Libra term.
-    pub fn univariate(&self, rels: &impl RelationSet<F>, params: &RelationParams<F>, betas: &[F], partial_eval: &F, alphas: &[F], d: usize) -> Vec<F> {
+    pub fn univariate(&self, rels: &(impl RelationSet<F> + Sync), params: &RelationParams<F>, betas: &[F], partial_eval: &F, alphas: &[F], d: usize) -> Vec<F> {
         let round = self.round;
         if round < self.log_n {
             let round_size = 1 << (self.log_n - round);
-            let mut acc = new_accumulators(rels, d);
-            for e in self.excluded_head / 2..round_size / 2 {
-                accumulate_edge(rels, &self.table, e, params, &pow_tail(betas, round, e), &mut acc, d);
-            }
+            let acc = accumulate_edges(rels, &self.table, self.excluded_head / 2..round_size / 2, params, betas, round, d);
             let mut univariate = batch_over_relations(rels, &acc, alphas, &betas[round], partial_eval, None, d);
             if self.row_disabling {
-                let mut head = new_accumulators(rels, d);
-                for e in 0..self.excluded_head / 2 {
-                    accumulate_edge(rels, &self.table, e, params, &pow_tail(betas, round, e), &mut head, d);
-                }
+                let head = accumulate_edges(rels, &self.table, 0..self.excluded_head / 2, params, betas, round, d);
                 let head_uni = batch_over_relations(rels, &head, alphas, &betas[round], partial_eval, Some((self.rd0, self.rd1)), d);
                 for (k, v) in head_uni.into_iter().enumerate() {
                     univariate[k] += v;
@@ -567,13 +595,13 @@ impl<F: FieldLike + Copy> RoundProver<F> {
     pub fn partially_evaluate(&mut self, u: &F) {
         let round = self.round;
         if round < self.log_n {
-            for col in self.table.iter_mut() {
+            self.table.par_iter_mut().for_each(|col| {
                 let half = col.len() / 2;
                 for k in 0..half {
                     col[k] = col[2 * k] + *u * (col[2 * k + 1] - col[2 * k]);
                 }
                 col.truncate(half);
-            }
+            });
         } else {
             for col in self.table.iter_mut() {
                 col[0] *= F::one() - *u;
@@ -656,7 +684,7 @@ pub struct SumcheckProverOutput<C: Curve> {
 /// bb `SumcheckProver::prove` (plain, ZK and committed variants). `ck` is required for the
 /// committed variant (to commit to the round univariates).
 pub fn prove_sumcheck<C: Curve<TF = Fr>>(
-    rels: &impl RelationSet<C::Fr>,
+    rels: &(impl RelationSet<C::Fr> + Sync),
     spec: &SumcheckSpec,
     polys: &[Polynomial<C::Fr>],
     t: &mut NativeTranscript,
@@ -669,6 +697,8 @@ pub fn prove_sumcheck<C: Curve<TF = Fr>>(
 where
     C::Fr: Copy,
     C::G: AffineRepr<ScalarField = C::Fr>,
+    C::Fr: Copy + Send + Sync,
+    RelationParams<C::Fr>: Sync,
 {
     type F<C> = <C as Curve>::Fr;
     let d = spec.batched_len;

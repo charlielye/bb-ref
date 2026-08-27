@@ -5,8 +5,8 @@ edition = "2021"
 description = "Minimal Rust reference implementation of barretenberg's UltraHonk and Chonk provers/verifiers"
 
 [dependencies]
-ark-ff = "0.6"
-ark-ec = "0.6"
+ark-ff = { version = "0.6", features = ["parallel"] }
+ark-ec = { version = "0.6", features = ["parallel"] }
 ark-bn254 = "0.6"
 ark-grumpkin = "0.6"
 ark-serialize = "0.6"
@@ -20,6 +20,7 @@ base64 = "0.22"
 serde_json = "1"
 sha2 = "0.10"
 blake3 = "1.8.5"
+rayon = "1.11"
 
 [profile.dev]
 opt-level = 1

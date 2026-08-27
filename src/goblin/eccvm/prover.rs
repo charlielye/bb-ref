@@ -7,6 +7,7 @@ use super::check::eccvm_relation_params;
 use super::relations::EccvmRelations;
 use super::trace::TRANSLATION_ENTITIES;
 use super::*;
+use rayon::prelude::*;
 use crate::base::field::FieldLike;
 use crate::base::group::Curve;
 use crate::base::poly::Polynomial;
@@ -86,8 +87,10 @@ pub fn eccvm_prove(q: &EccOpQueue, ck: &GrumpkinKey, t: &mut NativeTranscript, r
     commitments[0] = ck.commit(polys.col(Ent::gemini_masking_poly));
     t.send("Gemini:masking_poly_comm", &commitments[0]);
     commitments[1..=NUM_PRECOMPUTED].copy_from_slice(&fixed_vk());
-    for e in NUM_PRECOMPUTED + 1..FIRST_SHIFTED - 2 {
-        commitments[e] = ck.commit(&polys.cols[e]);
+    let witness_range = NUM_PRECOMPUTED + 1..FIRST_SHIFTED - 2;
+    let comms: Vec<GrumpkinAffine> = witness_range.clone().into_par_iter().map(|e| ck.commit(&polys.cols[e])).collect();
+    for (e, c) in witness_range.zip(comms) {
+        commitments[e] = c;
         t.send(&label(ent(e)), &commitments[e]);
     }
 

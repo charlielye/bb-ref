@@ -87,8 +87,10 @@ pub fn decode_steps(bytes: &[u8], rng: &mut dyn Rng) -> Vec<PrivateExecutionStep
 pub fn prove_steps(steps: &[PrivateExecutionStep], ck: CommitmentKey, rng: &mut dyn Rng) -> (ChonkProof, Vk<Bn254>) {
     let mut ivc = Chonk::new(steps.iter().map(|s| s.kind).collect(), ck);
     for step in steps {
+        crate::base::timing::phase(&format!("== {} ({:?})", step.name, step.kind));
         let mut circuit = build_circuit_mega(&step.circuit, Some(&step.witness), Some(&mut ivc), rng);
         assert!(circuit.failed.is_none(), "{}: circuit not satisfied: {:?}", step.name, circuit.failed);
+        crate::base::timing::phase("circuit built");
         ivc.accumulate(&mut circuit, rng);
         let computed = match step.kind {
             CircuitKind::HidingKernel => ivc.hiding_vk(),

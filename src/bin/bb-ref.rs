@@ -86,6 +86,12 @@ fn write_vk_files(out: &Path, vk: &Vk<Bn254>) {
 }
 
 fn main() {
+    // Beyond ~48 threads the MSM-heavy phases slow down (arkworks' parallel MSM splits into few
+    // windows; oversubscription costs more than it gains); RAYON_NUM_THREADS still overrides.
+    if std::env::var_os("RAYON_NUM_THREADS").is_none() {
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(48);
+        rayon::ThreadPoolBuilder::new().num_threads(threads).build_global().expect("rayon pool");
+    }
     let args: Vec<String> = std::env::args().collect();
     let cmd = args.get(1).map(String::as_str).unwrap_or("");
     let mut flags: HashMap<String, String> = HashMap::new();

@@ -5,6 +5,7 @@
 use super::batched::joint_prove;
 use super::proof::ChonkProof;
 use crate::base::rng::Rng;
+use crate::base::timing;
 use crate::base::vk::Vk;
 use crate::base::{Bn254, CommitmentKey, Fr, GrumpkinKey, NativeTranscript};
 use crate::circuit::op_queue::EccOpQueue;
@@ -141,9 +142,11 @@ impl Chonk {
                 if next == Some(CircuitKind::HidingKernel) {
                     decider_prove(self.prover_accumulator.as_ref().unwrap(), &mut self.accumulation_transcript);
                     self.decider_proof = self.accumulation_transcript.export_proof();
+                    timing::phase("decider");
                     let mut q = self.op_queue.borrow_mut();
                     q.construct_zk_columns(rng);
                     self.batch_merge_proof = batch_merge_prove(&q, CHONK_MAX_NUM_CIRCUITS, &self.ck);
+                    timing::phase("batch merge");
                 }
             }
         }
@@ -161,11 +164,15 @@ impl Chonk {
             self.folding_prover = Some(FoldingProver::new());
         }
         let mut inst = ProverInstance::from_builder(kind.flavor(), circuit, rng);
+        timing::phase("prover instance");
         let vk = inst.compute_vk(&self.ck);
+        timing::phase("vk");
         let proof = self.folding_prover.as_mut().unwrap().accumulate_instance(&mut inst, &vk, &self.ck, rng);
+        timing::phase("instance to accumulator (oink + sumcheck)");
         self.verification_queue.push(VerifierInputs { proof, vk, kind });
         if matches!(next, Some(CircuitKind::Kernel) | Some(CircuitKind::HidingKernel)) {
             self.prove_multilinear_batching();
+            timing::phase("multilinear batching");
         }
         self.op_queue.borrow_mut().merge();
         self.accumulated += 1;
@@ -186,16 +193,21 @@ impl Chonk {
         let mut t = NativeTranscript::new();
         let oink = prove_oink(&mut inst, &vk, &self.ck, &mut t, rng, false);
         let hiding_oink_proof = t.export_proof();
+        timing::phase("hiding oink");
         let mut q = self.op_queue.borrow_mut();
         merge_prove(&mut q, &self.ck, &mut t);
         let merge_proof = t.export_proof();
+        timing::phase("merge");
         let eccvm = eccvm_prove(&q, &GrumpkinKey::new(ECCVM_FIXED_SIZE), &mut t, rng);
         let eccvm_proof = t.export_proof();
+        timing::phase("eccvm");
         let (v, x) = (eccvm.batching_challenge_v, eccvm.evaluation_challenge_x);
         let circuit = TranslatorCircuit::new(v, x, &q);
         let mut polys = TranslatorPolys::from_circuit(&circuit, &TranslatorPolys::random_masking(rng));
+        timing::phase("translator circuit");
         joint_prove(&inst, &oink.params, &mut polys, &v, &x, &self.ck, &mut t, rng);
         let joint_proof = t.export_proof();
+        timing::phase("joint proof");
         self.hiding = Some((inst, vk));
         ChonkProof {
             hiding_oink_proof,

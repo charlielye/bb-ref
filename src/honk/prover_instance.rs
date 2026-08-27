@@ -3,6 +3,7 @@
 
 use super::flavor::{Ent, FlavorDesc, Layout, BUS_SPECS};
 use super::oink::PERMUTATION_ARGUMENT_VALUE_SEPARATOR;
+use rayon::prelude::*;
 use crate::base::field::{from_bytes_be, FieldLike, Fr};
 use crate::base::poly::Poly;
 use crate::base::vk::Vk;
@@ -63,7 +64,7 @@ impl ProverInstance {
     /// The verification key: commitments to the precomputed polynomials.
     pub fn compute_vk(&self, ck: &CommitmentKey) -> Vk<Bn254> {
         let m = self.layout.num_masking;
-        let comms = (m..m + self.layout.num_precomputed).map(|i| ck.commit(&self.polys[i])).collect();
+        let comms = (m..m + self.layout.num_precomputed).into_par_iter().map(|i| ck.commit(&self.polys[i])).collect();
         Vk {
             log_circuit_size: Fr::from(self.log_n() as u64),
             num_public_inputs: Fr::from(self.public_inputs.len() as u64),

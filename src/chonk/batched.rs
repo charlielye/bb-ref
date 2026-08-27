@@ -3,6 +3,7 @@
 //! Shplemini/KZG opening of all their polynomials. The MegaZK polynomials are zero-extended from
 //! `2^16` to `2^17` variables.
 
+use rayon::prelude::*;
 use crate::base::codec::Transcriptable;
 use crate::base::field::FieldLike;
 use crate::base::group::{GroupLike, PairingPoints};
@@ -52,11 +53,13 @@ pub fn translator_oink_prove(polys: &mut TranslatorPolys, v: &Fq, x: &Fq, ck: &C
     let result_limbs: [Fr; 4] = std::array::from_fn(|i| polys.cols[FIRST_WIRE + ACCUMULATORS_BINARY_LIMBS_0 + i].coeffs[RESULT_ROW]);
     polys.cols[TEnt::gemini_masking_poly as usize] = build_gemini_masking_poly(CONST_TRANSLATOR_LOG_N, CIRCUIT_SIZE, CIRCUIT_SIZE, rng);
     t.send("Gemini:masking_poly_comm", &ck.commit(polys.col(TEnt::gemini_masking_poly)));
-    for (g, label) in CONCATENATED_LABELS.iter().enumerate() {
-        t.send(label, &ck.commit(&polys.cols[TEnt::concatenated_range_constraints_0 as usize + g]));
-    }
-    for (k, label) in ORDERED_LABELS.iter().enumerate() {
-        t.send(label, &ck.commit(&polys.cols[TEnt::ordered_range_constraints_0 as usize + k]));
+    let cols: Vec<usize> = (0..CONCATENATED_LABELS.len())
+        .map(|g| TEnt::concatenated_range_constraints_0 as usize + g)
+        .chain((0..ORDERED_LABELS.len()).map(|k| TEnt::ordered_range_constraints_0 as usize + k))
+        .collect();
+    let comms: Vec<_> = cols.par_iter().map(|c| ck.commit(&polys.cols[*c])).collect();
+    for (label, c) in CONCATENATED_LABELS.iter().chain(ORDERED_LABELS.iter()).zip(&comms) {
+        t.send(label, c);
     }
     let beta: Fr = t.challenge("beta");
     let gamma: Fr = t.challenge("gamma");

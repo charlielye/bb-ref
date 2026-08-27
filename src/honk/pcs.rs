@@ -3,6 +3,7 @@
 //! Sources: `commitment_schemes/shplonk/shplemini.hpp`, `gemini/gemini.hpp`, `shplonk/shplonk.hpp`,
 //! `claim_batcher.hpp`, `small_subgroup_ipa/*`, `kzg/kzg.hpp`.
 
+use rayon::prelude::*;
 use crate::base::field::{FieldLike, U256};
 use crate::base::group::{Curve, GroupLike, PairingPoints};
 use crate::base::poly::Polynomial;
@@ -532,8 +533,9 @@ pub fn shplemini_prove(
             folds.push(Poly::from_coeffs(vec![final_eval * tail]));
         }
     }
-    for (l, f) in folds.iter().enumerate() {
-        t.send(&format!("Gemini:FOLD_{}", l + 1), &ck.commit(f));
+    let fold_comms: Vec<_> = folds.par_iter().map(|f| ck.commit(f)).collect();
+    for (l, c) in fold_comms.iter().enumerate() {
+        t.send(&format!("Gemini:FOLD_{}", l + 1), c);
     }
     let r: Fr = t.challenge("Gemini:r");
     if libra.is_some() {

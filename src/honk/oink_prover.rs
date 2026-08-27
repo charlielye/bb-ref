@@ -5,6 +5,7 @@ use super::flavor::{Ent, Rel, BUS_SPECS};
 use super::oink::compute_public_input_delta;
 use super::prover_instance::ProverInstance;
 use super::relations::{lookup_term, table_term, RelationParams, Row};
+use rayon::prelude::*;
 use crate::base::field::{FieldLike, Fr};
 use crate::base::poly::Poly;
 use crate::base::rng::Rng;
@@ -17,9 +18,12 @@ pub struct OinkProverOutput {
     pub alpha: Fr,
 }
 
-fn commit_and_send(inst: &ProverInstance, ck: &CommitmentKey, t: &mut NativeTranscript, e: Ent) {
-    let c = ck.commit(inst.poly(e));
-    t.send(e.name(), &c);
+/// Commit to the polynomials in parallel, then send them in transcript order.
+fn commit_and_send(inst: &ProverInstance, ck: &CommitmentKey, t: &mut NativeTranscript, ents: &[Ent]) {
+    let comms: Vec<_> = ents.par_iter().map(|e| ck.commit(inst.poly(*e))).collect();
+    for (e, c) in ents.iter().zip(&comms) {
+        t.send(e.name(), c);
+    }
 }
 
 pub fn prove_oink(inst: &mut ProverInstance, vk: &Vk<Bn254>, ck: &CommitmentKey, t: &mut NativeTranscript, rng: &mut dyn Rng, emit_alpha: bool) -> OinkProverOutput {
@@ -29,23 +33,20 @@ pub fn prove_oink(inst: &mut ProverInstance, vk: &Vk<Bn254>, ck: &CommitmentKey,
         t.send(&format!("public_input_{i}"), pi);
     }
 
+    let mut first: Vec<Ent> = vec![];
     if flavor.has_gemini_masking {
         let mask = build_gemini_masking_poly(inst.log_n(), inst.max_end_index, inst.dyadic_size, rng);
         *inst.poly_mut(Ent::gemini_masking_poly) = mask;
-        commit_and_send(inst, ck, t, Ent::gemini_masking_poly);
+        first.push(Ent::gemini_masking_poly);
     }
-    commit_and_send(inst, ck, t, Ent::w_l);
-    commit_and_send(inst, ck, t, Ent::w_r);
-    commit_and_send(inst, ck, t, Ent::w_o);
+    first.extend([Ent::w_l, Ent::w_r, Ent::w_o]);
     if inst.layout.has(Ent::ecc_op_wire_1) {
-        for e in [Ent::ecc_op_wire_1, Ent::ecc_op_wire_2, Ent::ecc_op_wire_3, Ent::ecc_op_wire_4] {
-            commit_and_send(inst, ck, t, e);
-        }
+        first.extend([Ent::ecc_op_wire_1, Ent::ecc_op_wire_2, Ent::ecc_op_wire_3, Ent::ecc_op_wire_4]);
     }
     for b in inst.layout.buses() {
-        commit_and_send(inst, ck, t, BUS_SPECS[b].value);
-        commit_and_send(inst, ck, t, BUS_SPECS[b].read_counts);
+        first.extend([BUS_SPECS[b].value, BUS_SPECS[b].read_counts]);
     }
+    commit_and_send(inst, ck, t, &first);
 
     let mut params = RelationParams::<Fr>::default();
     if flavor.has(Rel::Memory) {
@@ -57,29 +58,32 @@ pub fn prove_oink(inst: &mut ProverInstance, vk: &Vk<Bn254>, ck: &CommitmentKey,
     }
     add_ram_rom_memory_records_to_wire_4(inst, &params);
     add_rom_logup_inverses_to_wire_4(inst, &params);
+    let mut second: Vec<Ent> = vec![];
     if flavor.has(Rel::LogDerivLookup) {
-        commit_and_send(inst, ck, t, Ent::lookup_read_counts);
-        commit_and_send(inst, ck, t, Ent::lookup_read_tags);
+        second.extend([Ent::lookup_read_counts, Ent::lookup_read_tags]);
     }
-    commit_and_send(inst, ck, t, Ent::w_4);
+    second.push(Ent::w_4);
+    commit_and_send(inst, ck, t, &second);
 
     let c: Vec<Fr> = t.challenges(&["beta", "gamma"]);
     params.beta = c[0];
     params.gamma = c[1];
+    let mut third: Vec<Ent> = vec![];
     if flavor.has(Rel::LogDerivLookup) {
         params.beta_sqr = c[0] * c[0];
         params.beta_cube = params.beta_sqr * c[0];
         compute_logderivative_inverses(inst, &params);
-        commit_and_send(inst, ck, t, Ent::lookup_inverses);
+        third.push(Ent::lookup_inverses);
     }
     for b in inst.layout.buses() {
         compute_databus_inverses(inst, b, &params);
-        commit_and_send(inst, ck, t, BUS_SPECS[b].inverses);
+        third.push(BUS_SPECS[b].inverses);
     }
+    commit_and_send(inst, ck, t, &third);
 
     params.public_input_delta = compute_public_input_delta(&inst.public_inputs, &params.beta, &params.gamma, &Fr::from(inst.pub_inputs_offset as u64));
     compute_grand_product(inst, &params);
-    commit_and_send(inst, ck, t, Ent::z_perm);
+    commit_and_send(inst, ck, t, &[Ent::z_perm]);
 
     let alpha: Fr = if emit_alpha { t.challenge("alpha") } else { Fr::from(0u64) };
     OinkProverOutput { params, alpha }
