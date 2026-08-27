@@ -1,0 +1,5 @@
+# Test binaries otherwise run one rayon pool per process at the machine's core count while cargo
+# runs binaries and tests concurrently; on large machines that oversubscribes by orders of magnitude.
+[env]
+RAYON_NUM_THREADS = { value = "16", force = false }
+RUST_TEST_THREADS = { value = "4", force = false }
