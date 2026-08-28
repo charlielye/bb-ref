@@ -56,6 +56,145 @@ impl<P: BigGroupCurve> ChainAddAccumulator<P> {
     }
 }
 
+/// The scalar side of the Strauss MSM. bb instantiates `element` with either a bigfield scalar
+/// (foreign curves like secp256r1) or the circuit-native `field_t` (bn254-in-bn254 recursion); the
+/// NAF reconstruction constraint and the edge-case bookkeeping differ between the two.
+pub trait ScalarOps<P: BigGroupCurve>: Clone {
+    fn ctx_of(&self) -> Option<Ctx>;
+    fn is_const(&self) -> bool;
+    /// The scalar as an integer, reduced mod the scalar-field modulus.
+    fn reduced_value(&self) -> BigUint;
+    fn to_native(&self) -> P::ScalarField;
+    fn from_native_constant(v: P::ScalarField) -> Self;
+    fn add_s(&self, other: &Self) -> Self;
+    fn mul_s(&self, other: &Self) -> Self;
+    fn neg_s(&self) -> Self;
+    /// bb `handle_points_at_infinity`: zero the scalar of a point at infinity.
+    fn zero_if(is_inf: &BoolT, s: &Self) -> Self;
+    /// bb masks the composite last scalar with a `self_reduce`; native scalars need nothing.
+    fn self_reduce_if_composite(&self);
+    /// The constraint tying the NAF bit witnesses (incl. the trailing skew) back to the scalar.
+    fn constrain_naf(scalar: &Self, ctx: &Ctx, naf_entries: &[BoolT], num_rounds: usize);
+}
+
+fn scalar_modulus_bits<P: BigGroupCurve>() -> usize {
+    let m: BigUint = P::ScalarField::MODULUS.into();
+    m.bits() as usize
+}
+
+impl<P: BigGroupCurve> ScalarOps<P> for Scalar<P> {
+    fn ctx_of(&self) -> Option<Ctx> {
+        self.ctx()
+    }
+    fn is_const(&self) -> bool {
+        self.is_constant()
+    }
+    fn reduced_value(&self) -> BigUint {
+        self.get_value() % Scalar::<P>::modulus()
+    }
+    fn to_native(&self) -> P::ScalarField {
+        self.get_native_value()
+    }
+    fn from_native_constant(v: P::ScalarField) -> Self {
+        Scalar::<P>::from_native(&v)
+    }
+    fn add_s(&self, other: &Self) -> Self {
+        self.add(other)
+    }
+    fn mul_s(&self, other: &Self) -> Self {
+        self.mul(other)
+    }
+    fn neg_s(&self) -> Self {
+        self.neg()
+    }
+    fn zero_if(is_inf: &BoolT, s: &Self) -> Self {
+        Scalar::<P>::conditional_assign(is_inf, &Scalar::<P>::zero(), s)
+    }
+    fn self_reduce_if_composite(&self) {
+        self.self_reduce();
+    }
+    fn constrain_naf(scalar: &Self, ctx: &Ctx, naf_entries: &[BoolT], num_rounds: usize) {
+        let reconstruct_half_naf = |nafs: &[BoolT]| -> (FieldT, FieldT) {
+            let mut negative_accumulator = FieldT::constant(Fr::from(0u64));
+            let mut positive_accumulator = FieldT::constant(Fr::from(0u64));
+            for n in nafs {
+                negative_accumulator = negative_accumulator.add(&negative_accumulator).add(&n.to_field());
+                positive_accumulator = positive_accumulator.add(&positive_accumulator).add(&FieldT::constant(Fr::from(1u64))).sub(&n.to_field());
+            }
+            (positive_accumulator, negative_accumulator)
+        };
+        let (hi_accumulators, mut lo_accumulators) = if num_rounds > (NUM_LIMB_BITS * 2) as usize {
+            let midpoint = num_rounds - (NUM_LIMB_BITS * 2) as usize;
+            let hi = reconstruct_half_naf(&naf_entries[..midpoint]);
+            let lo = reconstruct_half_naf(&naf_entries[midpoint..num_rounds]);
+            (hi, lo)
+        } else {
+            let zero_idx = ctx.borrow().zero_idx();
+            let zero = FieldT::from_witness_index(&ctx, zero_idx);
+            let lo = reconstruct_half_naf(&naf_entries[..num_rounds]);
+            ((zero.clone(), zero), lo)
+        };
+        let mut hi_accumulators = hi_accumulators;
+        let lo_neg_with_skew = lo_accumulators.1.add(&naf_entries[num_rounds].to_field());
+        let two_pow_136 = FieldT::constant(crate::base::field::from_u256(crate::base::field::U256::from(1u64) << (NUM_LIMB_BITS * 2) as u32));
+        let overflow_check = lo_neg_with_skew.sub(&two_pow_136);
+        let has_overflow = overflow_check.is_zero();
+        lo_accumulators.1 = lo_neg_with_skew.mul(&has_overflow.not().to_field());
+        hi_accumulators.1 = hi_accumulators.1.add(&has_overflow.to_field());
+        let reconstructed_positive = Scalar::<P>::from_halves(&lo_accumulators.0, &hi_accumulators.0, false, 0);
+        let reconstructed_negative = Scalar::<P>::from_halves(&lo_accumulators.1, &hi_accumulators.1, false, 0);
+        let accumulator = reconstructed_positive.sub(&reconstructed_negative);
+        if scalar.is_constant() {
+            accumulator.self_reduce();
+        }
+        accumulator.assert_equal(scalar);
+    }
+}
+
+impl ScalarOps<ark_bn254::g1::Config> for FieldT {
+    fn ctx_of(&self) -> Option<Ctx> {
+        self.ctx.clone()
+    }
+    fn is_const(&self) -> bool {
+        self.is_constant()
+    }
+    fn reduced_value(&self) -> BigUint {
+        to_big(&self.get_value())
+    }
+    fn to_native(&self) -> Fr {
+        self.get_value()
+    }
+    fn from_native_constant(v: Fr) -> Self {
+        FieldT::constant(v)
+    }
+    fn add_s(&self, other: &Self) -> Self {
+        self.add(other)
+    }
+    fn mul_s(&self, other: &Self) -> Self {
+        self.mul(other)
+    }
+    fn neg_s(&self) -> Self {
+        self.neg()
+    }
+    fn zero_if(is_inf: &BoolT, s: &Self) -> Self {
+        FieldT::conditional_assign_internal(is_inf, &FieldT::constant(Fr::from(0u64)), s)
+    }
+    fn self_reduce_if_composite(&self) {}
+    fn constrain_naf(scalar: &Self, _ctx: &Ctx, naf_entries: &[BoolT], num_rounds: usize) {
+        let mut accumulators = Vec::with_capacity(num_rounds + 1);
+        for i in 0..num_rounds {
+            let mut entry = naf_entries[num_rounds - 1 - i].to_field();
+            entry = entry.mul(&FieldT::constant(-Fr::from(2u64)));
+            entry = entry.add(&FieldT::constant(Fr::from(1u64)));
+            entry = entry.mul(&FieldT::constant(Fr::from(BigUint::from(1u64) << i)));
+            accumulators.push(entry);
+        }
+        accumulators.push(naf_entries[num_rounds].to_field().neg());
+        let accumulator_result = FieldT::accumulate(&accumulators);
+        scalar.assert_equal(&accumulator_result);
+    }
+}
+
 impl<P: BigGroupCurve> Element<P> {
     fn has_a() -> bool {
         !P::COEFF_A.is_zero()
@@ -481,11 +620,10 @@ impl<P: BigGroupCurve> Element<P> {
 
     /// bb `compute_naf`: `num_rounds + 1` bools, `[num_rounds]` the skew, the rest the NAF from the
     /// most significant digit down (`true` = −1); the reconstruction is asserted equal to `scalar`.
-    pub fn compute_naf(scalar: &Scalar<P>, max_num_bits: usize) -> Vec<BoolT> {
-        let ctx = scalar.ctx().expect("compute_naf needs a builder");
-        let modulus = Scalar::<P>::modulus();
-        let mut scalar_multiplier = scalar.get_value() % &modulus;
-        let num_rounds = if max_num_bits == 0 { modulus.bits() as usize } else { max_num_bits };
+    pub fn compute_naf<S: ScalarOps<P>>(scalar: &S, max_num_bits: usize) -> Vec<BoolT> {
+        let ctx = scalar.ctx_of().expect("compute_naf needs a builder");
+        let mut scalar_multiplier = scalar.reduced_value();
+        let num_rounds = if max_num_bits == 0 { scalar_modulus_bits::<P>() } else { max_num_bits };
         let mut naf_entries: Vec<BoolT> = Vec::with_capacity(num_rounds + 1);
         let skew_value = !scalar_multiplier.bit(0);
         scalar_multiplier += BigUint::from(skew_value as u64);
@@ -504,41 +642,7 @@ impl<P: BigGroupCurve> Element<P> {
             naf_entries.push(e.clone());
         }
         naf_entries.push(skew);
-        entries_rev.clear();
-        let reconstruct_half_naf = |nafs: &[BoolT]| -> (FieldT, FieldT) {
-            let mut negative_accumulator = FieldT::constant(Fr::from(0u64));
-            let mut positive_accumulator = FieldT::constant(Fr::from(0u64));
-            for n in nafs {
-                negative_accumulator = negative_accumulator.add(&negative_accumulator).add(&n.to_field());
-                positive_accumulator = positive_accumulator.add(&positive_accumulator).add(&FieldT::constant(Fr::from(1u64))).sub(&n.to_field());
-            }
-            (positive_accumulator, negative_accumulator)
-        };
-        let (hi_accumulators, mut lo_accumulators) = if num_rounds > (NUM_LIMB_BITS * 2) as usize {
-            let midpoint = num_rounds - (NUM_LIMB_BITS * 2) as usize;
-            let hi = reconstruct_half_naf(&naf_entries[..midpoint]);
-            let lo = reconstruct_half_naf(&naf_entries[midpoint..num_rounds]);
-            (hi, lo)
-        } else {
-            let zero_idx = ctx.borrow().zero_idx();
-            let zero = FieldT::from_witness_index(&ctx, zero_idx);
-            let lo = reconstruct_half_naf(&naf_entries[..num_rounds]);
-            ((zero.clone(), zero), lo)
-        };
-        let mut hi_accumulators = hi_accumulators;
-        let lo_neg_with_skew = lo_accumulators.1.add(&naf_entries[num_rounds].to_field());
-        let two_pow_136 = FieldT::constant(crate::base::field::from_u256(crate::base::field::U256::from(1u64) << (NUM_LIMB_BITS * 2) as u32));
-        let overflow_check = lo_neg_with_skew.sub(&two_pow_136);
-        let has_overflow = overflow_check.is_zero();
-        lo_accumulators.1 = lo_neg_with_skew.mul(&has_overflow.not().to_field());
-        hi_accumulators.1 = hi_accumulators.1.add(&has_overflow.to_field());
-        let reconstructed_positive = Scalar::<P>::from_halves(&lo_accumulators.0, &hi_accumulators.0, false, 0);
-        let reconstructed_negative = Scalar::<P>::from_halves(&lo_accumulators.1, &hi_accumulators.1, false, 0);
-        let accumulator = reconstructed_positive.sub(&reconstructed_negative);
-        if scalar.is_constant() {
-            accumulator.self_reduce();
-        }
-        accumulator.assert_equal(scalar);
+        S::constrain_naf(scalar, &ctx, &naf_entries, num_rounds);
         naf_entries
     }
 
@@ -586,10 +690,10 @@ impl<P: BigGroupCurve> Element<P> {
     }
 
     /// bb `process_strauss_msm_rounds` over `max_num_bits`-bit scalars.
-    fn process_strauss_msm_rounds(points: &[Self], scalars: &[Scalar<P>], max_num_bits: usize) -> Self {
+    fn process_strauss_msm_rounds<S: ScalarOps<P>>(points: &[Self], scalars: &[S], max_num_bits: usize) -> Self {
         assert!(!points.is_empty() && points.len() == scalars.len());
         for s in scalars {
-            assert!(s.get_value().bits() as usize <= max_num_bits, "process_strauss_msm: scalar out of range");
+            assert!(s.reduced_value().bits() as usize <= max_num_bits, "process_strauss_msm: scalar out of range");
         }
         let num_rounds = max_num_bits;
         let msm_size = scalars.len();
@@ -618,8 +722,8 @@ impl<P: BigGroupCurve> Element<P> {
     }
 
     /// bb `handle_points_at_infinity`: infinity points become the generator with a zero scalar.
-    fn handle_points_at_infinity(points: &[Self], scalars: &[Scalar<P>]) -> (Vec<Self>, Vec<Scalar<P>>) {
-        let ctx = points.iter().find_map(|p| p.ctx()).or_else(|| scalars.iter().find_map(|s| s.ctx())).expect("batch_mul needs a builder");
+    fn handle_points_at_infinity<S: ScalarOps<P>>(points: &[Self], scalars: &[S]) -> (Vec<Self>, Vec<S>) {
+        let ctx = points.iter().find_map(|p| p.ctx()).or_else(|| scalars.iter().find_map(|s| s.ctx_of())).expect("batch_mul needs a builder");
         let one = Self::one(&ctx);
         let mut out_points = vec![];
         let mut out_scalars = vec![];
@@ -628,19 +732,51 @@ impl<P: BigGroupCurve> Element<P> {
             if is_inf.get_value() && is_inf.is_constant() {
                 continue;
             }
-            if s.get_value() == BigUint::from(0u64) && s.is_constant() {
+            if s.reduced_value() == BigUint::from(0u64) && s.is_const() {
                 continue;
             }
             let point = p.conditional_select(&one, &is_inf);
-            let scalar = Scalar::<P>::conditional_assign(&is_inf, &Scalar::<P>::zero(), s);
+            let scalar = S::zero_if(&is_inf, s);
             out_points.push(point);
             out_scalars.push(scalar);
         }
         (out_points, out_scalars)
     }
 
-    fn batch_mul_internal(points: &[Self], scalars: &[Scalar<P>], max_num_bits: usize, with_edgecases: bool) -> Self {
-        assert!(!with_edgecases, "batch_mul with edge-case masking is not ported (needs a random offset point)");
+    /// bb `mask_points`: adds `2^i · O` (a fresh random offset point) to every point and appends the
+    /// balancing term, so no two points in the MSM tables can collide. The offset witness draws from
+    /// the global randomness source, like bb's engine.
+    fn mask_points<S: ScalarOps<P>>(points: &[Self], scalars: &[S]) -> (Vec<Self>, Vec<S>, Self) {
+        assert_eq!(points.len(), scalars.len());
+        let ctx = points.iter().find_map(|p| p.ctx()).or_else(|| scalars.iter().find_map(|s| s.ctx_of())).expect("mask_points needs a builder");
+        let native_offset_generator = crate::base::rng::global_random_affine::<P>();
+        let offset_generator_element = Self::from_witness(&ctx, &native_offset_generator);
+        offset_generator_element.is_point_at_infinity().assert_equal(&BoolT::constant(false));
+        let mut running_point = offset_generator_element.clone();
+        let mut running_scalar = S::from_native_constant(P::ScalarField::from(1u64));
+        let mut last_scalar = S::from_native_constant(P::ScalarField::from(0u64));
+        let mut out_points = Vec::with_capacity(points.len() + 1);
+        let mut out_scalars = Vec::with_capacity(points.len() + 1);
+        for (p, s) in points.iter().zip(scalars) {
+            out_scalars.push(s.clone());
+            let masked = p.add_internal(&running_point);
+            masked.is_point_at_infinity().assert_equal(&BoolT::constant(false));
+            out_points.push(masked);
+            last_scalar = last_scalar.add_s(&s.mul_s(&running_scalar));
+            running_scalar = running_scalar.add_s(&running_scalar);
+            running_point = running_point.dbl_internal();
+        }
+        let two_power_n = P::ScalarField::from(2u64).pow([points.len() as u64]);
+        let two_power_n_inverse = <P::ScalarField as ark_ff::Field>::inverse(&two_power_n).unwrap();
+        last_scalar = last_scalar.mul_s(&S::from_native_constant(two_power_n_inverse));
+        let neg_last = last_scalar.neg_s();
+        neg_last.self_reduce_if_composite();
+        out_scalars.push(neg_last);
+        out_points.push(running_point);
+        (out_points, out_scalars, offset_generator_element)
+    }
+
+    fn batch_mul_internal<S: ScalarOps<P>>(points: &[Self], scalars: &[S], max_num_bits: usize, with_edgecases: bool) -> Self {
         assert!(!points.is_empty() && points.len() == scalars.len());
         let builder = points[0].ctx();
         let (points, scalars) = Self::handle_points_at_infinity(points, scalars);
@@ -649,8 +785,8 @@ impl<P: BigGroupCurve> Element<P> {
         let mut new_points = vec![];
         let mut new_scalars = vec![];
         for (p, s) in points.iter().zip(&scalars) {
-            if p.is_constant() && s.is_constant() {
-                constant_accumulator += Projective::<P>::from(p.get_value()) * s.get_native_value();
+            if p.is_constant() && s.is_const() {
+                constant_accumulator += Projective::<P>::from(p.get_value()) * s.to_native();
                 has_constant_terms = true;
             } else {
                 new_points.push(p.clone());
@@ -658,12 +794,20 @@ impl<P: BigGroupCurve> Element<P> {
             }
         }
         let (points, scalars) = (new_points, new_scalars);
+        let (points, scalars) = if with_edgecases && !points.is_empty() {
+            let (masked_points, masked_scalars, _offset_generator) = Self::mask_points(&points, &scalars);
+            (masked_points, masked_scalars)
+        } else {
+            (points, scalars)
+        };
+        let original_size = scalars.len();
         let mut big_points = vec![];
         let mut big_scalars = vec![];
         let mut small_points = vec![];
         let mut small_scalars = vec![];
-        for (p, s) in points.iter().zip(&scalars) {
-            if max_num_bits == 0 {
+        for (i, (p, s)) in points.iter().zip(&scalars).enumerate() {
+            let is_last_scalar_big = i == original_size - 1 && with_edgecases;
+            if max_num_bits == 0 || is_last_scalar_big {
                 big_points.push(p.clone());
                 big_scalars.push(s.clone());
             } else {
@@ -671,7 +815,7 @@ impl<P: BigGroupCurve> Element<P> {
                 small_scalars.push(s.clone());
             }
         }
-        let max_num_bits_in_field = Scalar::<P>::modulus().bits() as usize;
+        let max_num_bits_in_field = scalar_modulus_bits::<P>();
         let mut accumulator: Option<Self> = None;
         if has_constant_terms || (big_points.is_empty() && small_points.is_empty()) {
             let affine = constant_accumulator.into_affine();
@@ -700,10 +844,10 @@ impl<P: BigGroupCurve> Element<P> {
         accumulator.unwrap()
     }
     /// bb `batch_mul(points, scalars, max_num_bits, with_edgecases)`.
-    pub fn batch_mul(points: &[Self], scalars: &[Scalar<P>], max_num_bits: usize, with_edgecases: bool) -> Self {
+    pub fn batch_mul<S: ScalarOps<P>>(points: &[Self], scalars: &[S], max_num_bits: usize, with_edgecases: bool) -> Self {
         Self::batch_mul_internal(points, scalars, max_num_bits, with_edgecases).get_standard_form()
     }
-    pub fn scalar_mul(&self, scalar: &Scalar<P>, max_num_bits: usize) -> Self {
+    pub fn scalar_mul<S: ScalarOps<P>>(&self, scalar: &S, max_num_bits: usize) -> Self {
         Self::batch_mul(&[self.clone()], &[scalar.clone()], max_num_bits, false)
     }
 }
@@ -932,6 +1076,14 @@ impl<P: BigGroupCurve> BatchLookupTable<P> {
             accumulator = Element::<P>::chain_add(e, &accumulator);
         }
         accumulator
+    }
+}
+
+impl BigGroupCurve for ark_bn254::g1::Config {
+    fn biggroup_offset_generator() -> Affine<Self> {
+        let x = ark_bn254::Fq::from(BigUint::parse_bytes(b"169b33374f53b95f16edf369c34509da6485297ee10452a62af4bd2820d6fb33", 16).unwrap());
+        let y = ark_bn254::Fq::from(BigUint::parse_bytes(b"019d6e473e9b638cfe2b8f232288a075050a381b745cffaa9f9264121567315b", 16).unwrap());
+        Affine::new_unchecked(x, y)
     }
 }
 

@@ -49,6 +49,7 @@ for prog in field_ops poseidon2_hash_1 poseidon2_hash_2 poseidon2_hash_3 poseido
   BBREF_STDLIB=$prog BBREF_OUT=$T/stdlib/$prog "$BIN" --gtest_filter='BbRefDump.Stdlib'
 done
 # lookup-table programs are dumped as MegaApp (MegaKernel has no lookups)
-for prog in sha256_block bigfield_ops biggroup_ops secp256r1_mul ecdsa_r1 keccak_permutation logic_ops; do
-  BBREF_FLAVOR=app BBREF_STDLIB=$prog BBREF_OUT=$T/stdlib/$prog "$BIN" --gtest_filter='BbRefDump.Stdlib'
+# BB_RNG_SEED: biggroup_bn254_ops draws its mask_points offset from the seeded engine (DebugRng(12345) in Rust)
+for prog in sha256_block bigfield_ops biggroup_ops biggroup_bn254_ops secp256r1_mul ecdsa_r1 keccak_permutation logic_ops; do
+  HARDWARE_CONCURRENCY=1 BB_RNG_SEED=12345 BBREF_FLAVOR=app BBREF_STDLIB=$prog BBREF_OUT=$T/stdlib/$prog "$BIN" --gtest_filter='BbRefDump.Stdlib'
 done

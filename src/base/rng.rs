@@ -2,7 +2,7 @@
 //! its CSPRNG or by seeding both sides' `mt19937_64` (bb's debug engine, `BB_RNG_SEED`).
 
 use super::field::{Fq, Fr, U256};
-use ark_ff::{BigInteger, PrimeField, UniformRand};
+use ark_ff::{AdditiveGroup, BigInteger, PrimeField, UniformRand};
 
 pub trait Rng {
     /// A uniformly random 256-bit integer (bb `RNG::get_random_uint256`).
@@ -129,5 +129,66 @@ pub fn from_env() -> Box<dyn Rng> {
     match std::env::var("BB_RNG_SEED") {
         Ok(seed) => Box::new(DebugRng::new(seed.parse().expect("BB_RNG_SEED must be a u64"))),
         Err(_) => Box::new(OsRng),
+    }
+}
+
+/// The process-global witness-randomness source, mirroring bb's `numeric::get_randomness()` global
+/// engine: stdlib gadgets that bb feeds from the implicit engine (e.g. `mask_points`' random offset)
+/// draw from here, so a seed set on both sides keeps witnesses byte-equal. Defaults to OS randomness.
+static GLOBAL: std::sync::Mutex<Option<Box<dyn Rng + Send>>> = std::sync::Mutex::new(None);
+
+pub fn set_global(rng: Box<dyn Rng + Send>) {
+    *GLOBAL.lock().unwrap() = Some(rng);
+}
+/// Sets the global source from `BB_RNG_SEED`/`BB_RNG_TAPE_IN`, like `from_env`.
+pub fn set_global_from_env() {
+    if std::env::var("BB_RNG_TAPE_IN").is_ok() || std::env::var("BB_RNG_SEED").is_ok() {
+        set_global(from_env_boxed());
+    }
+}
+fn from_env_boxed() -> Box<dyn Rng + Send> {
+    if let Ok(path) = std::env::var("BB_RNG_TAPE_IN") {
+        return Box::new(TapeRng::from_bytes(std::fs::read(path).expect("BB_RNG_TAPE_IN")));
+    }
+    match std::env::var("BB_RNG_SEED") {
+        Ok(seed) => Box::new(DebugRng::new(seed.parse().expect("BB_RNG_SEED must be a u64"))),
+        Err(_) => Box::new(OsRng),
+    }
+}
+pub fn global_next_u256() -> U256 {
+    let mut g = GLOBAL.lock().unwrap();
+    match g.as_mut() {
+        Some(rng) => rng.next_u256(),
+        None => OsRng.next_u256(),
+    }
+}
+/// bb `field::random_element(engine)` from the global source.
+pub fn global_field<F: PrimeField>() -> F {
+    random_field_from(global_next_u256(), global_next_u256())
+}
+
+/// bb `group::element::random_element()` (hash-to-curve path) reduced to affine: sample x until
+/// `x³ + ax + b` is square (root = `pow((q+1)/4)`, valid only for `q ≡ 3 mod 4` like bn254), then
+/// draw (and discard) the projective z randomization so the draw ledger matches bb's.
+pub fn global_random_affine<P: ark_ec::short_weierstrass::SWCurveConfig>() -> ark_ec::short_weierstrass::Affine<P>
+where
+    P::BaseField: PrimeField,
+{
+    use ark_ff::{Field, Zero};
+    let modulus: num_bigint::BigUint = P::BaseField::MODULUS.into();
+    assert_eq!(&modulus % 4u64, num_bigint::BigUint::from(3u64), "sqrt convention needs q ≡ 3 mod 4");
+    let exponent: num_bigint::BigUint = (&modulus + 1u64) >> 2;
+    let limbs = exponent.to_u64_digits();
+    loop {
+        let x: P::BaseField = global_field();
+        let mut yy = x.square() * x + P::COEFF_B;
+        if !P::COEFF_A.is_zero() {
+            yy += x * P::COEFF_A;
+        }
+        let y = yy.pow(&limbs);
+        if y.square() == yy {
+            let _z: P::BaseField = global_field();
+            return ark_ec::short_weierstrass::Affine::<P>::new_unchecked(x, y);
+        }
     }
 }

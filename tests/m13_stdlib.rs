@@ -12,7 +12,7 @@ use bb_ref::honk::circuit_checker::check_circuit;
 use bb_ref::honk::oink_prover::prove_oink;
 use bb_ref::honk::prover_instance::ProverInstance;
 use bb_ref::honk::flavor::FlavorDesc;
-use bb_ref::honk::{MEGA_APP, MEGA_KERNEL};
+use bb_ref::honk::{MEGA_APP, MEGA_KERNEL, ULTRA};
 use bb_ref::stdlib::bigfield::BigField;
 use bb_ref::stdlib::biggroup::{Element, Scalar};
 use bb_ref::stdlib::byte_array::ByteArray;
@@ -180,6 +180,9 @@ fn wb(ctx: &Ctx, v: bool) -> BoolT {
 
 /// The programs with lookup gates are dumped as MegaApp (MegaKernel has no lookup entities).
 fn flavor_of(name: &str) -> &'static FlavorDesc {
+    if name == "biggroup_bn254_ops" {
+        return &ULTRA;
+    }
     if ["sha256", "bigfield", "biggroup", "secp256r1", "ecdsa", "keccak", "logic"].iter().any(|p| name.starts_with(p)) {
         &MEGA_APP
     } else {
@@ -318,6 +321,47 @@ fn biggroup_ops(ctx: &Ctx) {
     let sum = s.add(&d).add(&dd).add(&n).add(&cn).add(&cs).add(&msm).add(&sm);
     tr("sum");
     let e = Element::<P256>::from_witness(ctx, &sum.get_value());
+    sum.incomplete_assert_equal(&e);
+    tr("assert");
+}
+
+fn biggroup_bn254_ops(ctx: &Ctx) {
+    use ark_ec::{AffineRepr, CurveGroup};
+    use bb_ref::base::G1Affine;
+    bb_ref::base::rng::set_global(Box::new(bb_ref::base::rng::DebugRng::new(12345)));
+    type Bn = ark_bn254::g1::Config;
+    let tr = |l: &str| bb_ref::circuit::builder::trace_phase(&format!("biggroup_bn254_ops: {l}"));
+    let g = G1Affine::generator();
+    let p_n = (g * Fr::from(7u64)).into_affine();
+    let q_n = (g * Fr::from(11u64)).into_affine();
+    let p = Element::<Bn>::from_witness(ctx, &p_n);
+    let q = Element::<Bn>::from_witness(ctx, &q_n);
+    tr("points");
+    let (t, f) = (wb(ctx, true), wb(ctx, false));
+    let s = p.add(&q);
+    let d = p.sub(&q);
+    let dd = p.dbl();
+    let n = p.neg();
+    let cn = p.conditional_negate(&t);
+    let cs = Element::<Bn>::conditional_assign(&f, &p, &q);
+    let _res = s.validate_on_curve(false);
+    tr("ops");
+    let u1 = FieldT::from_witness(ctx, from_hex("0abc1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab"));
+    let u2 = FieldT::from_witness(ctx, from_hex("00000000000000000000000000000000abcdef0123456789abcdef0123456789"));
+    let u3 = FieldT::from_witness(ctx, from_hex("00000000000000000000000000000000112233445566778899aabbccddeeff00"));
+    let m1 = Element::<Bn>::batch_mul(&[p.clone(), q.clone()], &[u1.clone(), u2.clone()], 0, true);
+    assert_eq!(m1.get_value(), (p_n * u1.get_value() + q_n * u2.get_value()).into_affine(), "bn254 edgecase batch_mul value");
+    tr("batch_mul_edgecases");
+    let m2 = Element::<Bn>::batch_mul(&[p.clone(), q.clone()], &[u2.clone(), u3.clone()], 128, false);
+    assert_eq!(m2.get_value(), (p_n * u2.get_value() + q_n * u3.get_value()).into_affine(), "bn254 small batch_mul value");
+    tr("batch_mul_small");
+    let const_g = Element::<Bn>::constant_point(Some(ctx.clone()), &g);
+    let m3 = Element::<Bn>::batch_mul(&[p.clone(), const_g], &[u3.clone(), FieldT::constant(Fr::from(5u64))], 0, false);
+    tr("batch_mul_mixed_constant");
+    let sm = p.scalar_mul(&u1, 0);
+    tr("scalar_mul");
+    let sum = s.add(&d).add(&dd).add(&n).add(&cn).add(&cs).add(&m1).add(&m2).add(&m3).add(&sm);
+    let e = Element::<Bn>::from_witness(ctx, &sum.get_value());
     sum.incomplete_assert_equal(&e);
     tr("assert");
 }
@@ -627,6 +671,7 @@ fn run(ctx: &Ctx, name: &str) {
         "io_hiding_default" => HidingKernelIo::add_default(ctx),
         "kernel_io_set" => kernel_io_set(ctx),
         "hiding_io_set" => hiding_io_set(ctx),
+        "biggroup_bn254_ops" => biggroup_bn254_ops(ctx),
         "secp256r1_mul" => secp256r1_mul(ctx),
         "ecdsa_r1" => ecdsa_r1(ctx),
         "keccak_permutation" => keccak_permutation(ctx),
@@ -667,6 +712,7 @@ pub const PROGRAMS: &[&str] = &[
     "sha256_block",
     "bigfield_ops",
     "biggroup_ops",
+    "biggroup_bn254_ops",
     "secp256r1_mul",
     "ecdsa_r1",
     "keccak_permutation",
@@ -679,9 +725,11 @@ fn check(name: &str) {
         eprintln!("skipping stdlib/{name}: no dump");
         return;
     }
-    let ctx = Rc::new(RefCell::new(Builder::new_mega(Rc::new(
-        RefCell::new(EccOpQueue::new()),
-    ))));
+    let ctx = Rc::new(RefCell::new(if std::ptr::eq(flavor_of(name), &ULTRA) {
+        Builder::new()
+    } else {
+        Builder::new_mega(Rc::new(RefCell::new(EccOpQueue::new())))
+    }));
     run(&ctx, name);
     let mut builder = Rc::try_unwrap(ctx).ok().unwrap().into_inner();
     assert!(builder.failed.is_none(), "{name}: builder failure {:?}", builder.failed);
@@ -703,9 +751,11 @@ fn check(name: &str) {
 #[test]
 fn stdlib_programs_are_satisfied() {
     for name in PROGRAMS {
-        let ctx = Rc::new(RefCell::new(Builder::new_mega(Rc::new(
-            RefCell::new(EccOpQueue::new()),
-        ))));
+        let ctx = Rc::new(RefCell::new(if std::ptr::eq(flavor_of(name), &ULTRA) {
+            Builder::new()
+        } else {
+            Builder::new_mega(Rc::new(RefCell::new(EccOpQueue::new())))
+        }));
         run(&ctx, name);
         let mut builder = Rc::try_unwrap(ctx).ok().unwrap().into_inner();
         assert!(builder.failed.is_none(), "{name}: builder failure {:?}", builder.failed);

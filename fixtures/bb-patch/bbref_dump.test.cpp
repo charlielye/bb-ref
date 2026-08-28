@@ -1519,6 +1519,58 @@ void biggroup_ops(Builder& b)
     trace_op("assert", b);
 }
 
+// Non-goblin bn254 biggroup with native field_t scalars: only meaningful on UltraCircuitBuilder
+// (on Mega builders bb aliases the bn254 element to the goblin element).
+template <typename B> void biggroup_bn254_ops_t(B& b)
+{
+    using Curve = stdlib::bn254<B>;
+    using G1 = Curve::Group;
+    using FrS = Curve::ScalarField;
+    using witness_u = stdlib::witness_t<B>;
+    using bool_u = stdlib::bool_t<B>;
+    auto tr = [&](const char* label) {
+        if (std::getenv("BBREF_TRACE_GATES") != nullptr) {
+            std::cerr << "[bb gates 0 arith " << b.blocks.arithmetic.size() << " nnf " << b.blocks.nnf.size()
+                      << "] " << label << std::endl;
+        }
+    };
+    const g1::affine_element p_n(g1::element(g1::affine_element::one()) * fr(7));
+    const g1::affine_element q_n(g1::element(g1::affine_element::one()) * fr(11));
+    G1 p = G1::from_witness(&b, p_n);
+    G1 q = G1::from_witness(&b, q_n);
+    tr("points");
+    bool_u t = bool_u(witness_u(&b, fr(1)));
+    bool_u f = bool_u(witness_u(&b, fr(0)));
+    G1 s = p + q;
+    G1 d = p - q;
+    G1 dd = p.dbl();
+    G1 n = -p;
+    G1 cn = p.conditional_negate(t);
+    G1 cs = G1::conditional_assign(f, p, q);
+    [[maybe_unused]] auto res = s.validate_on_curve("", false);
+    tr("ops");
+    FrS u1 = FrS(witness_u(&b, fr(uint256_t("0abc1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab"))));
+    FrS u2 = FrS(witness_u(&b, fr(uint256_t("00000000000000000000000000000000abcdef0123456789abcdef0123456789"))));
+    FrS u3 = FrS(witness_u(&b, fr(uint256_t("00000000000000000000000000000000112233445566778899aabbccddeeff00"))));
+    G1 m1 = G1::batch_mul({ p, q }, { u1, u2 }, /*max_num_bits=*/0, /*with_edgecases=*/true);
+    tr("batch_mul_edgecases");
+    G1 m2 = G1::batch_mul({ p, q }, { u2, u3 }, /*max_num_bits=*/128, /*with_edgecases=*/false);
+    tr("batch_mul_small");
+    using FqB = typename Curve::BaseField;
+    const g1::affine_element one_n = g1::affine_element::one();
+    FqB gx(nullptr, uint256_t(one_n.x));
+    FqB gy(nullptr, uint256_t(one_n.y));
+    G1 const_g(gx, gy);
+    G1 m3 = G1::batch_mul({ p, const_g }, { u3, FrS(fr(5)) }, /*max_num_bits=*/0, /*with_edgecases=*/false);
+    tr("batch_mul_mixed_constant");
+    G1 sm = p.scalar_mul(u1);
+    tr("scalar_mul");
+    G1 sum = s + d + dd + n + cn + cs + m1 + m2 + m3 + sm;
+    G1 e = G1::from_witness(&b, sum.get_value());
+    sum.incomplete_assert_equal(e);
+    tr("assert");
+}
+
 void secp256r1_mul(Builder& b)
 {
     using Curve = stdlib::secp256r1<Builder>;
@@ -1662,6 +1714,18 @@ TEST(BbRefDump, Stdlib)
         GTEST_SKIP() << "set BBREF_STDLIB, BBREF_OUT";
     }
     bb::srs::init_file_crs_factory(bb::srs::bb_crs_path());
+    const char* flavor_early = std::getenv("BBREF_FLAVOR");
+    if (flavor_early != nullptr && std::string(flavor_early) == "ultra") {
+        UltraCircuitBuilder ultra_builder;
+        if (std::string(program) == "biggroup_bn254_ops") {
+            stdlib_programs::biggroup_bn254_ops_t(ultra_builder);
+        } else {
+            throw_or_abort("unknown ultra stdlib program " + std::string(program));
+        }
+        ASSERT_FALSE(ultra_builder.failed()) << ultra_builder.err();
+        dump_from_builder<UltraFlavor>(ultra_builder, out);
+        return;
+    }
     MegaCircuitBuilder builder{ std::make_shared<ECCOpQueue>() };
     stdlib_programs::run(builder, program);
     ASSERT_FALSE(builder.failed()) << builder.err();
