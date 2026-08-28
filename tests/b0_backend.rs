@@ -85,9 +85,40 @@ backend_tests! {
     inbox_parity_64,
 }
 
-/// The circuits bb-ref can currently build (grows per B-milestone; the rest of `backend_vk_hash/`
-/// is fixture-complete but unsupported until the recursion lowerings land).
-const SUPPORTED: &[&str] = &["inbox_parity_64"];
+/// The circuits bb-ref can currently build, with the node's `--ipa_accumulation` flag (grows per
+/// B-milestone; the rest of `backend_vk_hash/` is fixture-complete but unsupported until the
+/// remaining recursion lowerings land: CHONK for rollup_tx_base_private/chonk_verifier_public,
+/// keccak vk_hash for rollup_root, AVM never).
+const SUPPORTED: &[(&str, bool)] = &[
+    ("inbox_parity_64", false),
+    ("parity_base", false),
+    ("parity_root", false),
+    ("rollup_checkpoint_padding", true),
+    ("rollup_tx_merge", true),
+    ("rollup_checkpoint_merge", true),
+    ("rollup_checkpoint_root", true),
+    ("rollup_checkpoint_root_single_block", true),
+    ("rollup_block_merge", true),
+    ("rollup_block_root", true),
+    ("rollup_block_root_first", true),
+    ("rollup_block_root_first_empty_tx", true),
+    ("rollup_block_root_first_single_tx", true),
+    ("rollup_block_root_single_tx", true),
+];
+
+fn artifact(name: &str) -> std::path::PathBuf {
+    let copied = common::fixture_dir(&format!("backend/{name}/program.json"));
+    if copied.exists() {
+        return copied;
+    }
+    let root = std::env::var("PROTOCOL_CIRCUITS").unwrap_or_else(|_| {
+        format!(
+            "{}/../aztec-packages2/noir-projects/fnd/noir-protocol-circuits/target",
+            env!("CARGO_MANIFEST_DIR")
+        )
+    });
+    std::path::PathBuf::from(root).join(format!("{name}.json"))
+}
 
 #[test]
 fn backend_vk_hash_sweep() {
@@ -101,14 +132,14 @@ fn backend_vk_hash_sweep() {
     let mut unsupported = 0;
     for path in &entries {
         let name = path.file_name().unwrap().to_str().unwrap();
-        if !SUPPORTED.contains(&name) {
+        let Some((_, ipa)) = SUPPORTED.iter().find(|(n, _)| *n == name) else {
             unsupported += 1;
             continue;
-        }
+        };
         let expected: Fr = from_bytes_be(&std::fs::read(path).unwrap());
-        let program = common::fixture_dir(&format!("backend/{name}/program.json"));
-        let circuit = decode_program(&std::fs::read(program).expect("program.json"));
-        let mut builder = build_circuit(&circuit, None);
+        let circuit = decode_program(&std::fs::read(artifact(name)).expect("program.json"));
+        let mut builder = bb_ref::acir::lower::build_circuit_opts(&circuit, None, *ipa);
+        eprintln!("built {name}");
         let inst = ProverInstance::from_builder(&ULTRA, &mut builder, &mut OsRng);
         let ck = CommitmentKey::new(inst.max_end_index);
         assert_eq!(inst.compute_vk(&ck).hash(), expected, "{name}: VK hash");

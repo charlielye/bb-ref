@@ -52,7 +52,8 @@ pub fn verify_oink<C: Curve>(
     let computed_vk_hash = vk.hash();
     crate::circuit::builder::trace_phase("oink: vk hashed");
     t.add_to_hash_buffer("vk_hash", &computed_vk_hash);
-    assert_eq!(vk_hash.value(), computed_vk_hash.value(), "VK hash mismatch");
+    // In-circuit this is a copy constraint; a value mismatch (possible only with write-VK mock
+    // witnesses) records a builder failure rather than aborting.
     vk_hash.assert_equal(&computed_vk_hash);
     let num_public_inputs_field = C::Fr::from_u64(num_public_inputs as u64);
     assert_eq!(

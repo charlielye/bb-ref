@@ -92,6 +92,19 @@ pub fn vk_to_witnesses_ultra(ctx: &Ctx, vk: &Vk<crate::base::group::Bn254>) -> (
     (stdlib_vk, hash)
 }
 
+/// bb `StdlibVerificationKey_(std::span<FF>)`: a VK from its 115 field-element witnesses (3 meta
+/// fields, then 4 limb fields per commitment).
+pub fn vk_from_fields(fields: &[FieldT]) -> Vk<StdUltraBn254> {
+    assert_eq!(fields.len() % 4, 3, "VK field count");
+    let comms = fields[3..].chunks(4).map(G::from_fields).collect();
+    Vk::<StdUltraBn254> {
+        log_circuit_size: fields[0].clone(),
+        num_public_inputs: fields[1].clone(),
+        pub_inputs_offset: fields[2].clone(),
+        comms,
+    }
+}
+
 // ---- RollupIO (pairing points + accumulated IPA claim on the public inputs) ----
 
 pub const ROLLUP_PUBLIC_INPUTS_SIZE: usize = 8 + 6;

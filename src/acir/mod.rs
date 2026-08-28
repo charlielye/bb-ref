@@ -3,6 +3,7 @@
 //! HyperNova recursion) to the circuit builder, plus the `ivc-inputs.msgpack` private execution
 //! steps a Chonk proof is made of.
 pub mod format;
+pub mod honk_recursion;
 pub mod lower;
 pub mod mock;
 pub mod steps;

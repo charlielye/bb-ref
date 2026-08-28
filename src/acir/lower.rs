@@ -121,6 +121,7 @@ struct Constraints {
     ec_add: Vec<EmbeddedCurveAdd>,
     blocks: BTreeMap<u32, BlockConstraint>,
     hn_recursion: Vec<RecursionConstraint>,
+    honk_recursion: Vec<crate::acir::honk_recursion::HonkRecursionConstraint>,
 }
 
 impl Constraints {
@@ -451,6 +452,25 @@ fn classify(circuit: &Circuit, is_mega: bool) -> (Constraints, Vec<u32>) {
                     c.ec_add.push(e.clone());
                 }
                 BlackBoxFuncCall::RecursiveAggregation(r) => {
+                    use crate::acir::honk_recursion as hr;
+                    if matches!(r.proof_type, hr::HONK | hr::ROLLUP_HONK | hr::ROOT_ROLLUP_HONK) {
+                        assert!(
+                            matches!(r.predicate, FunctionInput::Constant(_)),
+                            "witness predicates on Honk recursion constraints are not supported"
+                        );
+                        let key = r.verification_key.iter().map(|i| c.input(i)).collect();
+                        let proof = r.proof.iter().map(|i| c.input(i)).collect();
+                        let public_inputs = r.public_inputs.iter().map(|i| c.input(i)).collect();
+                        let key_hash = c.input(&r.key_hash);
+                        c.honk_recursion.push(hr::HonkRecursionConstraint {
+                            key,
+                            key_hash,
+                            proof,
+                            public_inputs,
+                            proof_type: r.proof_type,
+                        });
+                        continue;
+                    }
                     match &r.predicate {
                         FunctionInput::Constant(p) if field(p).is_zero() => continue,
                         FunctionInput::Constant(_) => {}
@@ -870,11 +890,24 @@ pub fn add_default_pairing_points(b: &mut Builder) {
 /// Build the (unfinalized) Ultra circuit of an ACIR program. Without a witness the circuit is built
 /// over zero witnesses (bb's write-VK mode); the structure, and hence the VK, is the same.
 pub fn build_circuit(circuit: &Circuit, witness: Option<&[Fr]>) -> Builder {
-    let (c, public_inputs) = classify(circuit, false);
+    build_circuit_opts(circuit, witness, false)
+}
+
+/// bb `create_circuit<UltraCircuitBuilder>` with `ProgramMetadata.has_ipa_claim` (the CLI's
+/// `--ipa_accumulation` flag): backend circuits recursively verifying UltraRollup proofs
+/// accumulate the nested IPA claims and publish `RollupIO`.
+pub fn build_circuit_opts(circuit: &Circuit, witness: Option<&[Fr]>, has_ipa_claim: bool) -> Builder {
+    let (mut c, public_inputs) = classify(circuit, false);
     assert!(c.hn_recursion.is_empty(), "recursion constraints need a Mega circuit");
-    let builder = Builder::from_acir(&witness_or_zeros(witness, &c), public_inputs, witness.is_none());
+    let honk_recursion = std::mem::take(&mut c.honk_recursion);
+    let is_write_vk = witness.is_none();
+    let builder = Builder::from_acir(&witness_or_zeros(witness, &c), public_inputs, is_write_vk);
     let ctx = lower(builder, c);
-    add_default_pairing_points(&mut ctx.borrow_mut());
+    if honk_recursion.is_empty() && !has_ipa_claim {
+        add_default_pairing_points(&mut ctx.borrow_mut());
+    } else {
+        super::honk_recursion::process_honk_recursion_constraints(&ctx, &honk_recursion, is_write_vk, has_ipa_claim);
+    }
     into_builder(ctx)
 }
 
@@ -889,6 +922,7 @@ pub fn build_circuit_mega(
     rng: &mut dyn Rng,
 ) -> Builder {
     let (mut c, public_inputs) = classify(circuit, true);
+    assert!(c.honk_recursion.is_empty(), "Honk recursion constraints need an Ultra circuit");
     let hn_recursion = std::mem::take(&mut c.hn_recursion);
     let mut mock;
     let ivc = match ivc {
