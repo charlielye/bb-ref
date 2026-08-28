@@ -200,8 +200,7 @@ pub fn full_relation_value<F: FieldLike>(
     params: &RelationParams<F>,
     scaling: &F,
     alphas: &[F],
-    main_factor: &F,
-    offset_factor: &F,
+    row_disabling_challenge: Option<&[F]>,
 ) -> F {
     // every relation is accumulated before any batching (bb `accumulate_relation_evaluations` then
     // `scale_and_batch_elements`), which fixes the in-circuit gate order
@@ -209,10 +208,20 @@ pub fn full_relation_value<F: FieldLike>(
         .map(|ri| {
             let mut acc = vec![F::zero(); rels.num_subrelations(ri)];
             rels.accumulate(ri, &mut acc, evals, params, scaling);
-            crate::circuit::builder::trace_phase(&format!("relation {ri} accumulated"));
             acc
         })
         .collect();
+    // bb computes the row-disabling factors AFTER accumulating every relation and before batching
+    // (`compute_full_relation_purported_value`).
+    let (main_factor, offset_factor) = match row_disabling_challenge {
+        Some(challenge) => {
+            let m = row_disabling_main_factor(challenge);
+            let o = F::one() - &m;
+            (m, o)
+        }
+        None => (F::one(), F::zero()),
+    };
+    let (main_factor, offset_factor) = (&main_factor, &offset_factor);
     let mut result = F::zero();
     let mut alpha_idx = 0;
     for (ri, acc) in accumulated.iter().enumerate() {
@@ -251,12 +260,12 @@ pub fn verify_sumcheck<C: Curve>(
     rels: &impl RelationSet<C::Fr>,
     spec: &SumcheckSpec,
     t: &mut Transcript<C::TF, C::Hash>,
-    alpha: &C::Fr,
+    alphas: &[C::Fr],
     params: &RelationParams<C::Fr>,
     gate_challenges: &[C::Fr],
 ) -> SumcheckOutput<C> {
     type F<C> = <C as Curve>::Fr;
-    let alphas = alpha_powers(alpha, rels.total_subrelations() - 1);
+    assert_eq!(alphas.len(), rels.total_subrelations() - 1, "precomputed alpha powers");
 
     let mut target_sum = F::<C>::zero();
     let mut libra_challenge = F::<C>::zero();
@@ -278,7 +287,8 @@ pub fn verify_sumcheck<C: Curve>(
             let e1: F<C> = t.receive(&format!("Sumcheck:univariate_{round}_eval_1"));
             round_evaluations.push([e0, e1, F::<C>::zero()]);
             let u: F<C> = t.challenge(&format!("Sumcheck:u_{round}"));
-            partial_evaluation_result *= &gate_separator_factor(&u, &gate_challenges[round]);
+            let factor = gate_separator_factor(&u, &gate_challenges[round]);
+            partial_evaluation_result *= &factor;
             challenge.push(u);
         } else {
             let univariate: Vec<F<C>> = t.receive_vec(&format!("Sumcheck:univariate_{round}"), spec.batched_len);
@@ -294,27 +304,16 @@ pub fn verify_sumcheck<C: Curve>(
         }
     }
 
-    crate::circuit::builder::trace_phase("sumcheck: rounds done");
     let evals: Vec<F<C>> = t.receive_vec("Sumcheck:evaluations", spec.num_entities);
 
-    let (main_factor, offset_factor) = if spec.row_disabling {
-        let m = row_disabling_main_factor(&challenge);
-        let o = F::<C>::one() - &m;
-        (m, o)
-    } else {
-        (F::<C>::one(), F::<C>::zero())
-    };
-    crate::circuit::builder::trace_phase("sumcheck: row disabling factors");
     let mut full_value = full_relation_value(
         rels,
         &evals,
         params,
         &partial_evaluation_result,
         &alphas,
-        &main_factor,
-        &offset_factor,
+        spec.row_disabling.then_some(challenge.as_slice()),
     );
-    crate::circuit::builder::trace_phase("sumcheck: full relation value");
 
     let mut libra_evaluation = F::<C>::zero();
     if spec.has_zk {
@@ -326,6 +325,10 @@ pub fn verify_sumcheck<C: Curve>(
         // Only the first round's sum is checked here; the chain S_i(u_i) = S_{i+1}(0) + S_{i+1}(1) and
         // S_{d-1}(u_{d-1}) = full relation value are enforced through the univariate opening claims.
         let first_sum = round_evaluations[0][0].clone() + &round_evaluations[0][1];
+        // bb Grumpkin recursive `perform_final_verification`: reduce all three before the equality.
+        first_sum.self_reduce();
+        target_sum.self_reduce();
+        full_value.self_reduce();
         if first_sum.value() != target_sum.value() {
             verified = false;
         }

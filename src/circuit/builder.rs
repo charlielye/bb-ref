@@ -121,6 +121,8 @@ thread_local! {
 pub fn global_gate_count() -> usize {
     GLOBAL_GATE_COUNT.with(|c| c.get())
 }
+/// Per-op field_t trace (`BBREF_FT_TRACE`), printed only once the arith block has reached
+/// `BBREF_FT_FROM` (default 0) so captures in late regions stay manageable.
 pub fn trace_phase(label: &str) {
     if std::env::var_os("BBREF_TRACE_GATES").is_some() {
         let lens = CURRENT_BLOCK_LENS.with(|b| *b.borrow());

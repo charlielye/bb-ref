@@ -163,9 +163,10 @@ fn shiftable_init<T: FieldLike>(acc: &mut [T], r: &[T], scaling: &T) {
         msm_pc,
         transcript_msm_count,
     ];
-    let scaled_first = r[lagrange_first as usize].clone() * scaling;
+    // bb's `accumulate_init` lambda recomputes `lagrange_first * scaling_factor` per subrelation.
     for (j, e) in INITS.iter().enumerate() {
-        acc[j] += scaled_first.clone() * &r[*e as usize];
+        let scaled_first = r[lagrange_first as usize].clone() * scaling;
+        acc[j] += scaled_first * &r[*e as usize];
     }
 }
 
@@ -187,27 +188,26 @@ fn point_table<T: FieldLike>(acc: &mut [T], r: &[T], scaling: &T) {
     let transition = v(precompute_point_transition);
     let first = v(lagrange_first);
 
-    let two_x = tx.clone() + &tx;
+    let two_x = tx.dbl();
     let three_x = two_x.clone() + &tx;
     let three_xx = tx.clone() * &three_x;
     let nine_xxxx = three_xx.sqr();
-    let two_y = ty.clone() + &ty;
+    let two_y = ty.dbl();
     let four_yy = two_y.sqr();
     let x_double_check = (dx.clone() + &two_x) * &four_yy - &nine_xxxx;
     let y_double_check = (ty.clone() + &dy) * &two_y + &(three_xx * (dx.clone() - &tx));
     acc[0] += transition.clone() * &x_double_check * scaling;
     acc[1] += transition.clone() * &y_double_check * scaling;
-    let not_first_not_transition = (one.clone() - &first) * (one.clone() - &transition);
-    acc[2] += not_first_not_transition.clone() * (dx.clone() - &dx_shift) * scaling;
-    acc[3] += not_first_not_transition.clone() * (dy.clone() - &dy_shift) * scaling;
+    acc[2] += (one.clone() - &first) * (one.clone() - &transition) * (dx.clone() - &dx_shift) * scaling;
+    acc[3] += (one.clone() - &first) * (one.clone() - &transition) * (dy.clone() - &dy_shift) * scaling;
 
     let (x1, y1, x2, y2, x3, y3) = (tx_shift, ty_shift, dx, dy, tx, ty);
     let lambda_numerator = y2.clone() - &y1;
     let lambda_denominator = x2.clone() - &x1;
     let x_add_check = (x3.clone() + &x2 + &x1) * lambda_denominator.sqr() - lambda_numerator.sqr();
     let y_add_check = (y3 + &y1) * &lambda_denominator + &((x3 - &x1) * &lambda_numerator);
-    acc[4] += not_first_not_transition.clone() * &x_add_check * scaling;
-    acc[5] += not_first_not_transition * &y_add_check * scaling;
+    acc[4] += (one.clone() - &first) * (one.clone() - &transition) * &x_add_check * scaling;
+    acc[5] += (one.clone() - &first) * (one.clone() - &transition) * &y_add_check * scaling;
 }
 
 fn wnaf<T: FieldLike<Native = Fq>>(acc: &mut [T], r: &[T], scaling: &T) {
@@ -234,18 +234,18 @@ fn wnaf<T: FieldLike<Native = Fq>>(acc: &mut [T], r: &[T], scaling: &T) {
         v(precompute_s4hi),
         v(precompute_s4lo),
     ];
+    let scaled_transition = q_transition.clone() * scaling;
+    let scaled_transition_is_zero = -scaled_transition.clone() + scaling;
+    let scaled_first = scaling.clone() * &first;
     for (j, s) in slices.iter().enumerate() {
         acc[j] += ((s.clone() - &one).sqr() - &one) * ((s.clone() - &c(2)).sqr() - &one) * scaling;
     }
     let to_wnaf = |hi: &T, lo: &T| {
-        let mut t = hi.clone() + hi;
-        t += &t.clone();
+        let mut t = hi.dbl();
+        t = t.dbl();
         t += lo;
-        t.clone() + &t - &c(15)
+        t.dbl() - &c(15)
     };
-    let scaled_transition = q_transition.clone() * scaling;
-    let scaled_transition_is_zero = -scaled_transition.clone() + scaling;
-    let scaled_first = scaling.clone() * &first;
     let s1hi_shift = v(precompute_s1hi_shift);
     let s1hi_shift_msb_set = (s1hi_shift.clone() - &c(2)) * (s1hi_shift - &c(3));
     acc[20] += (scaled_transition.clone() + &scaled_first) * &select_shift * &s1hi_shift_msb_set;
@@ -258,7 +258,7 @@ fn wnaf<T: FieldLike<Native = Fq>>(acc: &mut [T], r: &[T], scaling: &T) {
     let mut row_slice = w[0].clone();
     for k in 1..4 {
         for _ in 0..4 {
-            row_slice += &row_slice.clone();
+            row_slice = row_slice.dbl();
         }
         row_slice += &w[k];
     }
@@ -337,7 +337,7 @@ fn msm<T: FieldLike<Native = Fq>>(acc: &mut [T], r: &[T], scaling: &T) {
         let y = yo * selector + &(yb.clone() * (-selector.clone() + &one));
         let slope_relation = lambda.clone() * (x.clone() - xa) - &(y.clone() - ya);
         *collision += &(xa.clone() - &x);
-        let x_out = lambda.clone() * lambda + &(-x.clone() - xa);
+        let x_out = lambda.mul_self() + &(-x.clone() - xa);
         let y_out = lambda.clone() * (xa.clone() - &x_out) - ya;
         (x_out, y_out, slope_relation)
     };
@@ -361,8 +361,8 @@ fn msm<T: FieldLike<Native = Fq>>(acc: &mut [T], r: &[T], scaling: &T) {
     }
 
     let dbl = |x: &T, y: &T, lambda: &T| {
-        let two_x = x.clone() + x;
-        let slope_relation = lambda.clone() * (y.clone() + y) - &((two_x.clone() + x) * x);
+        let two_x = x.dbl();
+        let slope_relation = lambda.clone() * y.dbl() - &((two_x.clone() + x) * x);
         let x_out = lambda.sqr() - &two_x;
         let y_out = lambda.clone() * (x.clone() - &x_out) - y;
         (x_out, y_out, slope_relation)
@@ -423,10 +423,13 @@ fn msm<T: FieldLike<Native = Fq>>(acc: &mut [T], r: &[T], scaling: &T) {
         acc[14 + j] += q_skew.clone() * s * scaling;
     }
 
+    let add_point: [T; 4] = std::array::from_fn(|k| adds[k].clone() * &q_add + &(q_skew.clone() * &skew_select[k]));
+    let x_delta: [T; 4] =
+        std::array::from_fn(|k| x_skew_collision[k].clone() * &q_skew + &(x_collision[k].clone() * &q_add));
     for k in 0..4 {
-        let add_point = adds[k].clone() * &q_add + &(q_skew.clone() * &skew_select[k]);
-        let x_delta = x_skew_collision[k].clone() * &q_skew + &(x_collision[k].clone() * &q_add);
-        acc[18 + k] += (x_delta * &collision_inverse[k] - &add_point) * scaling;
+        acc[18 + k] += (x_delta[k].clone() * &collision_inverse[k] - &add_point[k]) * scaling;
+    }
+    for k in 0..4 {
         acc[22 + k] += (-adds[k].clone() + &one) * &slices[k] * scaling;
     }
     acc[26] += (q_add.clone() * &q_double + &(q_add.clone() * &q_skew) + &(q_double.clone() * &q_skew)) * scaling;
@@ -534,11 +537,11 @@ fn transcript<T: FieldLike<Native = Fq>>(acc: &mut [T], r: &[T], scaling: &T) {
     let is_not_hiding_row = -second.clone() + &one;
     acc[0] += (z1 * &z1_zero) * scaling;
     acc[1] += (z2 * &z2_zero) * scaling;
-    let mut tmp = q_add.clone() + &q_add;
+    let mut tmp = q_add.dbl();
     tmp += &q_mul;
-    tmp += &tmp.clone();
+    tmp = tmp.dbl();
     tmp += &q_eq;
-    tmp += &tmp.clone();
+    tmp = tmp.dbl();
     tmp += &q_reset;
     acc[2] += (tmp - &op) * scaling;
     let pc_delta = pc.clone() - &pc_shift;
@@ -566,14 +569,16 @@ fn transcript<T: FieldLike<Native = Fq>>(acc: &mut [T], r: &[T], scaling: &T) {
     let infinity_exclusion_check = p_infinity.clone() + &is_accumulator_empty - &both_infinity - &both_infinity;
     let eq_x_diff = px.clone() - &acc_x;
     let eq_y_diff = py.clone() - &acc_y;
-    acc[9] +=
-        q_eq.clone() * (eq_x_diff * &both_not_infinity + &infinity_exclusion_check) * &is_not_hiding_row * scaling;
-    acc[10] +=
-        q_eq.clone() * (eq_y_diff * &both_not_infinity + &infinity_exclusion_check) * &is_not_hiding_row * scaling;
+    let eq_x_diff_relation =
+        q_eq.clone() * (eq_x_diff * &both_not_infinity + &infinity_exclusion_check) * &is_not_hiding_row;
+    let eq_y_diff_relation =
+        q_eq.clone() * (eq_y_diff * &both_not_infinity + &infinity_exclusion_check) * &is_not_hiding_row;
+    acc[9] += eq_x_diff_relation * scaling;
+    acc[10] += eq_y_diff_relation * scaling;
     acc[11] += third.clone() * (-is_accumulator_empty.clone() + &one) * scaling;
     acc[12] += (third * &mcount + &(last * &pc)) * scaling;
     let validate_on_curve = q_add.clone() + &q_mul + &q_eq;
-    let on_curve_check = py.clone() * &py - &(px.clone() * &px * &px) - &c(3);
+    let on_curve_check = py.mul_self() - &(px.mul_self() * &px) - &c(3);
     acc[13] += validate_on_curve * &on_curve_check * &is_not_infinity * &is_not_hiding_row * scaling;
 
     {
@@ -596,10 +601,24 @@ fn transcript<T: FieldLike<Native = Fq>>(acc: &mut [T], r: &[T], scaling: &T) {
         // λ relation for the point added: the MSM output or the base point.
         let lambda_relation_for = |x: &T, y: &T, infinity: &T| {
             let mut rel = T::zero();
-            rel += &((lambda.clone() * (rhs_x.clone() - x) - &(rhs_y.clone() - y)) * &is_add);
-            rel += &((lambda.clone() * (y.clone() + y) - &(x.clone() * x * &c(3))) * &is_double);
+            {
+                let lambda_denominator = rhs_x.clone() - x;
+                let lambda_numerator = rhs_y.clone() - y;
+                let lambda_relation = lambda.clone() * &lambda_denominator - &lambda_numerator;
+                rel += &(lambda_relation * &is_add);
+            }
+            {
+                let lambda_denominator = y.dbl();
+                let lambda_numerator = x.mul_self() * &c(3);
+                let lambda_relation = lambda.clone() * &lambda_denominator - &lambda_numerator;
+                rel += &(lambda_relation * &is_double);
+            }
             rel *= &((-infinity.clone() + &one) * (-is_accumulator_empty.clone() + &one));
-            rel += &(lambda.clone() * (infinity.clone() + &is_accumulator_empty + &result_infinity_from_operation));
+            {
+                let lambda_relation_invalid =
+                    infinity.clone() + &is_accumulator_empty + &result_infinity_from_operation;
+                rel += &(lambda.clone() * &lambda_relation_invalid);
+            }
             rel
         };
         let mut transcript_lambda_relation = lambda_relation_for(&msm_x, &msm_y, &msm_infinity) * &mt;
@@ -608,27 +627,27 @@ fn transcript<T: FieldLike<Native = Fq>>(acc: &mut [T], r: &[T], scaling: &T) {
 
         let propagate = q_mul.clone() * (-mt.clone() + &one) + &(q_eq.clone() * (-q_reset.clone() + &one));
         {
-            let lambda_sqr = lambda.clone() * &lambda;
+            let lambda_sqr = lambda.mul_self();
             let mut x3 = lambda_sqr - &lhs_x - &rhs_x;
             let mut y3 = lambda.clone() * (lhs_x.clone() - &x3) - &lhs_y;
             x3 += &(result_is_lhs.clone() * (rhs_x.clone() + &lhs_x + &lhs_x));
             x3 += &(result_is_rhs.clone() * (lhs_x.clone() + &rhs_x + &rhs_x));
             x3 += &(result_is_infinity.clone() * (lhs_x.clone() + &rhs_x));
-            y3 += &(result_is_lhs.clone() * (lhs_y.clone() + &lhs_y));
+            y3 += &(result_is_lhs.clone() * lhs_y.dbl());
             y3 += &(result_is_rhs.clone() * (lhs_y.clone() + &rhs_y));
             y3 += &(result_is_infinity.clone() * &lhs_y);
+            let mut add_x = (x3 - &out_x) * &any_add_is_active;
+            add_x += &(propagate.clone() * &is_not_last_row * (out_x.clone() - &acc_x));
+            add_x += &(out_x.clone() * &q_reset);
+            let mut add_y = (y3 - &out_y) * &any_add_is_active;
+            add_y += &(propagate.clone() * &is_not_last_row * (out_y.clone() - &acc_y));
+            add_y += &(out_y.clone() * &q_reset);
             let opcode_is_zero = is_not_first_row.clone()
                 * (-q_add.clone() + &one)
                 * (-q_mul.clone() + &one)
                 * (-q_reset.clone() + &one)
                 * (-q_eq.clone() + &one);
-            let mut add_x = (x3 - &out_x) * &any_add_is_active;
-            add_x += &(propagate.clone() * &is_not_last_row * (out_x.clone() - &acc_x));
-            add_x += &(out_x.clone() * &q_reset);
             add_x += &(out_x * &opcode_is_zero);
-            let mut add_y = (y3 - &out_y) * &any_add_is_active;
-            add_y += &(propagate.clone() * &is_not_last_row * (out_y.clone() - &acc_y));
-            add_y += &(out_y.clone() * &q_reset);
             add_y += &(out_y * &opcode_is_zero);
             acc[15] += add_x * scaling;
             acc[16] += add_y * scaling;
@@ -684,10 +703,10 @@ fn transcript<T: FieldLike<Native = Fq>>(acc: &mut [T], r: &[T], scaling: &T) {
 
 /// `2 * (4 * hi + lo) - 15`
 fn to_wnaf<T: FieldLike>(hi: &T, lo: &T) -> T {
-    let mut t = hi.clone() + hi;
-    t += &t.clone();
+    let mut t = hi.dbl();
+    t = t.dbl();
     t += lo;
-    t.clone() + &t - &T::from_u64(15)
+    t.dbl() - &T::from_u64(15)
 }
 
 /// bb `ECCVMSetRelationImpl::compute_grand_product_numerator`.
@@ -695,7 +714,7 @@ pub fn set_numerator<T: FieldLike<Native = Fq>>(r: &[T], p: &RelationParams<T>) 
     let v = |e: Ent| r[e as usize].clone();
     let one = T::one();
     let round = v(precompute_round);
-    let round4 = (round.clone() + &round) + &(round.clone() + &round);
+    let round4 = round.dbl().dbl();
     let (gamma, beta, beta_sqr, beta_cube, beta_quartic) =
         (&p.gamma, &p.beta, &p.beta_sqr, &p.beta_cube, &p.beta_quartic);
     let pc = v(precompute_pc);
@@ -712,8 +731,8 @@ pub fn set_numerator<T: FieldLike<Native = Fq>>(r: &[T], p: &RelationParams<T>) 
     ];
     for (k, (hi, lo)) in slices.iter().enumerate() {
         let (s0, s1) = (v(*hi), v(*lo));
-        let mut wnaf_slice = s0.clone() + &s0;
-        wnaf_slice += &wnaf_slice.clone();
+        let mut wnaf_slice = s0.dbl();
+        wnaf_slice = wnaf_slice.dbl();
         wnaf_slice += &s1;
         let input =
             wnaf_slice + gamma + &(pc.clone() * beta) + &((round4.clone() + &c(k as u64)) * beta_sqr) + &first_term_tag;
@@ -748,13 +767,13 @@ pub fn set_numerator<T: FieldLike<Native = Fq>>(r: &[T], p: &RelationParams<T>) 
         let mut row_slice = w[0].clone();
         for k in 1..4 {
             for _ in 0..4 {
-                row_slice += &row_slice.clone();
+                row_slice = row_slice.dbl();
             }
             row_slice += &w[k];
         }
-        let mut scalar_sum_full = wnaf_scalar_sum.clone() + &wnaf_scalar_sum;
+        let mut scalar_sum_full = wnaf_scalar_sum.dbl();
         for _ in 0..15 {
-            scalar_sum_full += &scalar_sum_full.clone();
+            scalar_sum_full = scalar_sum_full.dbl();
         }
         scalar_sum_full += &(row_slice + &adjusted_skew);
         let transition = v(precompute_point_transition);
@@ -860,23 +879,27 @@ fn set<T: FieldLike<Native = Fq>>(acc: &mut [T], r: &[T], p: &RelationParams<T>,
 pub fn lookup_terms<T: FieldLike<Native = Fq>>(r: &[T], p: &RelationParams<T>) -> [T; 6] {
     let v = |e: Ent| r[e as usize].clone();
     let (gamma, beta, beta_sqr, beta_cube) = (&p.gamma, &p.beta, &p.beta_sqr, &p.beta_cube);
-    let current_pc = v(msm_pc) - &v(msm_count);
     let reads = [
         (msm_slice1, msm_x1, msm_y1),
         (msm_slice2, msm_x2, msm_y2),
         (msm_slice3, msm_x3, msm_y3),
         (msm_slice4, msm_x4, msm_y4),
     ];
+    // bb instantiates `compute_read_term` per index: `current_pc` is recomputed for every term, and
+    // term 0 carries no `- 0`.
     let read = |k: usize| {
         let (s, x, y) = reads[k];
-        (current_pc.clone() - &c(k as u64)) + gamma + &(v(s) * beta) + &(v(x) * beta_sqr) + &(v(y) * beta_cube)
+        let current_pc = v(msm_pc) - &v(msm_count);
+        let base = if k == 0 { current_pc } else { current_pc - &c(k as u64) };
+        base + gamma + &(v(s) * beta) + &(v(x) * beta_sqr) + &(v(y) * beta_cube)
     };
+    let (r0, r1, r2, r3) = (read(0), read(1), read(2), read(3));
     let pc = v(precompute_pc);
     let (tx, ty, round) = (v(precompute_tx), v(precompute_ty), v(precompute_round));
     let positive =
         pc.clone() + gamma + &((-round.clone() + &c(15)) * beta) + &(tx.clone() * beta_sqr) + &(ty.clone() * beta_cube);
     let negative = pc + gamma + &(round * beta) + &(tx * beta_sqr) - &(ty * beta_cube);
-    [read(0), read(1), read(2), read(3), positive, negative]
+    [r0, r1, r2, r3, positive, negative]
 }
 
 pub fn lookup_inverse_exists<T: FieldLike>(r: &[T]) -> T {
@@ -894,7 +917,8 @@ fn lookup<T: FieldLike<Native = Fq>>(acc: &mut [T], r: &[T], p: &RelationParams<
         let prev = denominators[i - 1].clone();
         denominators[i] *= &prev;
     }
-    acc[0] += (denominators[5].clone() * &inverses - &lookup_inverse_exists(r)) * scaling;
+    let inverse_exists = lookup_inverse_exists(r);
+    acc[0] += (denominators[5].clone() * &inverses - &inverse_exists) * scaling;
     let mut inverse_accumulator = inverses;
     for i in (1..6).rev() {
         denominators[i] = denominators[i - 1].clone() * &inverse_accumulator;

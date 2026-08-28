@@ -121,11 +121,13 @@ fn mock_proof_fields(acir_public_inputs: usize, ipa: bool) -> Vec<Fr> {
 pub fn process_honk_recursion_constraints(
     ctx: &Ctx,
     constraints: &[HonkRecursionConstraint],
+    chonk_constraints: &[HonkRecursionConstraint],
     is_write_vk: bool,
     has_ipa_claim: bool,
 ) {
     let mut points: Option<PairingPoints<StdUltraBn254>> = None;
     let mut nested: Vec<(IpaClaimCt, Vec<FieldT>)> = Vec::new();
+    let mut openings: Vec<crate::chonk::verifier::DeferredTripleIpaOpening> = Vec::new();
     let mut is_root_rollup = false;
     for c in constraints {
         assert!(
@@ -169,6 +171,39 @@ pub fn process_honk_recursion_constraints(
         });
     }
 
+    for c in chonk_constraints {
+        assert_eq!(c.proof_type, CHONK);
+        if is_write_vk {
+            let mut b = ctx.borrow_mut();
+            for (&idx, v) in c.key.iter().zip(mock_mega_zk_vk_fields(c.public_inputs.len())) {
+                b.set_variable(idx, v);
+            }
+            let proof_values = mock_chonk_proof_fields(c.public_inputs.len());
+            let indices = c.public_inputs.iter().chain(&c.proof);
+            for (&idx, v) in indices.zip(proof_values) {
+                b.set_variable(idx, v);
+            }
+        }
+        let vk_fields: Vec<FieldT> = c.key.iter().map(|&i| FieldT::from_witness_index(ctx, i)).collect();
+        let vk_hash = FieldT::from_witness_index(ctx, c.key_hash);
+        let proof: Vec<FieldT> = c
+            .public_inputs
+            .iter()
+            .chain(&c.proof)
+            .map(|&i| FieldT::from_witness_index(ctx, i))
+            .collect();
+        let vk = vk_from_fields(&vk_fields);
+        let out = crate::chonk::verifier::chonk_verify_recursive(ctx, &vk, &vk_hash, &proof);
+        if !out.all_checks_passed && !is_write_vk {
+            ctx.borrow_mut().failure("Chonk recursion verification failed");
+        }
+        openings.push(out.triple_ipa_opening);
+        points = Some(match points {
+            None => out.pairing_points,
+            Some(acc) => aggregate_pair(acc, out.pairing_points),
+        });
+    }
+
     if has_ipa_claim {
         let ck = GrumpkinKey::new(POLY_LENGTH);
         let mut accumulators: Vec<_> = nested
@@ -178,6 +213,18 @@ pub fn process_honk_recursion_constraints(
                 reduce_verify_ct(ctx, &claim, &mut t)
             })
             .collect();
+        for opening in openings {
+            let mut t = StdlibTranscript::from_proof(&opening.proof);
+            let acc = crate::goblin::ipa::triple_ipa_reduce_to_accumulator::<crate::stdlib::curve::StdUltraGrumpkin>(
+                ctx,
+                &opening.claim,
+                &mut t,
+            );
+            accumulators.push(crate::rollup::ipa_recursive::IpaAccumulatorCt {
+                u_challenges_inv: acc.u_challenges_inv,
+                comm: acc.claimed_commitment,
+            });
+        }
         let (claim, ipa_proof) = match accumulators.len() {
             2 => {
                 let a2 = accumulators.pop().unwrap();
@@ -199,6 +246,7 @@ pub fn process_honk_recursion_constraints(
             }
         }
     } else if is_root_rollup {
+        assert!(openings.is_empty(), "unreachable: root rollup with chonk openings");
         unimplemented!("root rollup full IPA verification (fixed_batch_mul) not yet ported");
     } else {
         assert!(nested.is_empty(), "IPA claims present without --ipa_accumulation");
@@ -210,4 +258,135 @@ pub fn process_honk_recursion_constraints(
         }
     }
     ctx.borrow_mut().finalize_public_inputs();
+}
+
+/// bb `create_mock_honk_vk<MegaZKFlavor, HidingKernelIO>`.
+fn mock_mega_zk_vk_fields(acir_public_inputs: usize) -> Vec<Fr> {
+    use crate::honk::flavor::MEGA_ZK;
+    let one = <ark_bn254::G1Affine as Transcriptable<Fr>>::to_fields(&ark_bn254::G1Affine::generator());
+    let mut fields = vec![
+        Fr::from(MEGA_ZK.virtual_log_n as u64),
+        Fr::from((acir_public_inputs + crate::chonk::verifier::HIDING_KERNEL_PUBLIC_INPUTS_SIZE) as u64),
+        Fr::from(1u64),
+    ];
+    for _ in 0..MEGA_ZK.layout().num_precomputed {
+        fields.extend_from_slice(&one);
+    }
+    fields
+}
+
+/// bb `create_mock_chonk_proof`: mock MegaZK Oink, merge, ECCVM, TripleIPA and joint proofs, each
+/// section length asserted against the real proof layout.
+fn mock_chonk_proof_fields(acir_public_inputs: usize) -> Vec<Fr> {
+    use crate::base::GrumpkinAffine;
+    use crate::chonk::proof::{ECCVM_PROOF_LENGTH, JOINT_PROOF_LENGTH, TRIPLE_IPA_PROOF_LENGTH};
+    use crate::goblin::eccvm::{CONST_ECCVM_LOG_N, NUM_ALL_ENTITIES as ECCVM_ALL, NUM_WITNESS as ECCVM_WITNESS};
+    use crate::goblin::merge::MERGE_PROOF_SIZE;
+    use crate::goblin::translator::{
+        CONST_TRANSLATOR_LOG_N, FULL_CIRCUIT_ENTITIES, LOG_MINI_CIRCUIT_SIZE, NUM_MINICIRCUIT_EVALUATIONS,
+    };
+    use crate::honk::flavor::MEGA_ZK;
+    let bn_one = <ark_bn254::G1Affine as Transcriptable<Fr>>::to_fields(&ark_bn254::G1Affine::generator());
+    let gr_one = <GrumpkinAffine as Transcriptable<Fr>>::to_fields(&GrumpkinAffine::generator());
+    let mut fields = Vec::new();
+
+    // --- MegaZK Oink: ACIR public inputs, the HidingKernelIO defaults, witness commitments ---
+    for _ in 0..acir_public_inputs {
+        fields.push(global_field::<Fr>());
+    }
+    fields.extend(std::iter::repeat(Fr::from(0u64)).take(8));
+    let default_comm =
+        <ark_bn254::G1Affine as Transcriptable<Fr>>::to_fields(&crate::stdlib::io::default_ecc_commitment());
+    for _ in 0..5 {
+        fields.extend_from_slice(&default_comm);
+    }
+    let mega_lay = MEGA_ZK.layout();
+    for _ in 0..mega_lay.num_witness + mega_lay.num_masking {
+        fields.extend_from_slice(&bn_one);
+    }
+
+    // --- Merge ---
+    let start = fields.len();
+    for _ in 0..5 {
+        fields.extend_from_slice(&bn_one);
+    }
+    for _ in 0..13 {
+        fields.push(global_field::<Fr>());
+    }
+    fields.extend_from_slice(&bn_one);
+    fields.extend_from_slice(&bn_one);
+    assert_eq!(fields.len() - start, MERGE_PROOF_SIZE);
+
+    // --- ECCVM (Grumpkin commitments, fq field elements as limb pairs) ---
+    let start = fields.len();
+    let mut fq_random = |fields: &mut Vec<Fr>, n: usize| {
+        for _ in 0..n {
+            let v: Fq = global_field();
+            fields.extend(<Fq as Transcriptable<Fr>>::to_fields(&v));
+        }
+    };
+    for _ in 0..ECCVM_WITNESS + 1 {
+        fields.extend_from_slice(&gr_one);
+    }
+    fq_random(&mut fields, 1); // Libra sum
+    for _ in 0..CONST_ECCVM_LOG_N {
+        fields.extend_from_slice(&gr_one);
+        fq_random(&mut fields, 2);
+    }
+    fq_random(&mut fields, ECCVM_ALL);
+    fq_random(&mut fields, 1); // Libra evaluation
+    fields.extend_from_slice(&gr_one);
+    fields.extend_from_slice(&gr_one);
+    fq_random(&mut fields, 5); // small-IPA transcript evals
+    fields.extend_from_slice(&gr_one); // translation masking commitment
+    fq_random(&mut fields, 6); // op, Px, Py, z1, z2, masking-term eval
+    fields.extend_from_slice(&gr_one); // translation grand sum commitment
+    fields.extend_from_slice(&gr_one); // translation quotient commitment
+    fq_random(&mut fields, 4); // concatenation, grand-sum-shift, grand-sum, quotient evals
+    fields.extend_from_slice(&gr_one); // TripleIPA pow-tensor masking commitment
+    fq_random(&mut fields, 1); // pow-tensor masking evaluation
+    fields.extend_from_slice(&gr_one); // Shplonk Q
+    assert_eq!(fields.len() - start, ECCVM_PROOF_LENGTH, "mock eccvm proof length");
+
+    // --- TripleIPA ---
+    let start = fields.len();
+    fq_random(&mut fields, 3);
+    for _ in 0..2 * CONST_ECCVM_LOG_N + 1 {
+        fields.extend_from_slice(&gr_one);
+    }
+    fq_random(&mut fields, 1);
+    assert_eq!(fields.len() - start, TRIPLE_IPA_PROOF_LENGTH, "mock triple ipa length");
+
+    // --- Joint (Translator Oink + committed sumcheck + PCS) ---
+    let start = fields.len();
+    for _ in 0..1 + 10 + 1 + 1 {
+        fields.extend_from_slice(&bn_one);
+    }
+    fields.push(global_field::<Fr>()); // Libra sum
+    for round in 0..CONST_TRANSLATOR_LOG_N {
+        if round == LOG_MINI_CIRCUIT_SIZE {
+            for _ in 0..NUM_MINICIRCUIT_EVALUATIONS {
+                fields.push(global_field::<Fr>());
+            }
+        }
+        fields.extend_from_slice(&bn_one);
+        fields.push(global_field::<Fr>());
+        fields.push(global_field::<Fr>());
+    }
+    for _ in 0..mega_lay.num_all() + FULL_CIRCUIT_ENTITIES.len() + 1 {
+        fields.push(global_field::<Fr>());
+    }
+    fields.extend_from_slice(&bn_one);
+    fields.extend_from_slice(&bn_one);
+    // PCS: gemini folds, gemini evals, small-IPA evals (ZK), Shplonk Q, KZG W
+    for _ in 0..CONST_TRANSLATOR_LOG_N - 1 {
+        fields.extend_from_slice(&bn_one);
+    }
+    for _ in 0..CONST_TRANSLATOR_LOG_N + 4 {
+        fields.push(global_field::<Fr>());
+    }
+    fields.extend_from_slice(&bn_one);
+    fields.extend_from_slice(&bn_one);
+    assert_eq!(fields.len() - start, JOINT_PROOF_LENGTH, "mock joint proof length");
+    fields
 }

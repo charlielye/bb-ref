@@ -17,7 +17,7 @@ use std::path::Path;
 
 fn verify(proof: &[Fr], ipa_proof: &[Fr], ck: &GrumpkinKey) -> bool {
     let mut t = NativeTranscript::from_proof(proof);
-    let out = eccvm_verify(&mut t);
+    let out = eccvm_verify::<bb_ref::base::Grumpkin>(&(), &mut t);
     out.ok && triple_ipa_verify(ck, &out.triple_ipa_claim, &mut NativeTranscript::from_proof(ipa_proof))
 }
 

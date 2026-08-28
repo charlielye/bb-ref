@@ -51,6 +51,34 @@ pub fn aggregate_pair(
     PairingPoints { p0, p1 }
 }
 
+/// bb stdlib `PairingPoints::aggregate_multiple` (Ultra branch): bind every point in a fresh
+/// transcript, draw `n-1` short challenges, then `P = P_0 + batch_mul(P_1.., challenges, 128)`.
+pub fn aggregate_multiple(
+    points: Vec<PairingPoints<StdUltraBn254>>,
+    handle_edge_cases: bool,
+) -> PairingPoints<StdUltraBn254> {
+    assert!(!points.is_empty(), "aggregate_multiple needs at least one pair");
+    if points.len() == 1 {
+        return points.into_iter().next().unwrap();
+    }
+    let mut t = Transcript::<FieldT, StdPoseidon2>::new();
+    let mut labels = Vec::with_capacity(points.len() - 1);
+    for (idx, pp) in points.iter().enumerate() {
+        t.add_to_hash_buffer(&format!("first_component_{idx}"), &pp.p0);
+        t.add_to_hash_buffer(&format!("second_component_{idx}"), &pp.p1);
+        if idx > 0 {
+            labels.push(format!("pp_aggregation_challenge_{idx}"));
+        }
+    }
+    let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+    let challenges: Vec<FieldT> = t.short_challenges(&label_refs);
+    let remaining_p0: Vec<G> = points[1..].iter().map(|p| p.p0.clone()).collect();
+    let remaining_p1: Vec<G> = points[1..].iter().map(|p| p.p1.clone()).collect();
+    let p0 = points[0].p0.add(&G::batch_mul(&remaining_p0, &challenges, 128, handle_edge_cases));
+    let p1 = points[0].p1.add(&G::batch_mul(&remaining_p1, &challenges, 128, handle_edge_cases));
+    PairingPoints { p0, p1 }
+}
+
 /// bb `UltraVerifier_<UltraRecursiveFlavor_<UltraCircuitBuilder>, DefaultIO>::verify_proof`:
 /// reduce to the PCS pairing points, reconstruct the inner circuit's own pairing-point public
 /// inputs, and aggregate the two into the output accumulator. `vk_hash` is the witness holding the

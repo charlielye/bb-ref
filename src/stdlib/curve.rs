@@ -44,3 +44,22 @@ impl Curve for StdUltraBn254 {
     }
     const LIBRA_UNIVARIATES_LENGTH: usize = Bn254::LIBRA_UNIVARIATES_LENGTH;
 }
+
+/// bb `stdlib::grumpkin<UltraCircuitBuilder>`: Grumpkin in-circuit on an Ultra builder — bigfield
+/// scalars, `cycle_group` commitments (the rollup-side recursive ECCVM/IPA instantiation).
+pub struct StdUltraGrumpkin;
+
+impl Curve for StdUltraGrumpkin {
+    type TF = FieldT;
+    type Fr = crate::stdlib::bigfield::BigField<crate::base::Fq>;
+    type G = crate::stdlib::cycle_group::CycleGroup;
+    type Hash = StdPoseidon2;
+    const SUBGROUP_SIZE: usize = crate::base::Grumpkin::SUBGROUP_SIZE;
+    fn subgroup_generator() -> crate::base::Fq {
+        crate::base::Grumpkin::subgroup_generator()
+    }
+    fn subgroup_generator_inverse() -> crate::base::Fq {
+        crate::base::Grumpkin::subgroup_generator_inverse()
+    }
+    const LIBRA_UNIVARIATES_LENGTH: usize = crate::base::Grumpkin::LIBRA_UNIVARIATES_LENGTH;
+}

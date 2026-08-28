@@ -53,6 +53,10 @@ done
 for prog in sha256_block bigfield_ops biggroup_ops biggroup_bn254_ops secp256r1_mul ecdsa_r1 keccak_permutation logic_ops; do
   HARDWARE_CONCURRENCY=1 BB_RNG_SEED=12345 BBREF_FLAVOR=app BBREF_STDLIB=$prog BBREF_OUT=$T/stdlib/$prog "$BIN" --gtest_filter='BbRefDump.Stdlib'
 done
+# B4b micro-oracles: isolated bigfield expression repros, dumped as Ultra (the divergent context)
+for prog in row_disabling_fq wnaf_range_fq; do
+  HARDWARE_CONCURRENCY=1 BBREF_FLAVOR=ultra BBREF_STDLIB=$prog BBREF_OUT=$T/stdlib/$prog "$BIN" --gtest_filter='BbRefDump.Stdlib'
+done
 # B2: the Ultra recursive verifier over an a_1_mul inner proof (seeded: batch_mul masking draws)
 mkdir -p $T/ultra_recursion/a_1_mul
 HARDWARE_CONCURRENCY=1 BB_RNG_SEED=12345 BBREF_INNER_PROGRAM=$ACIR/a_1_mul/target/program.json BBREF_INNER_WITNESS=$ACIR/a_1_mul/target/witness.gz BBREF_OUT=$T/ultra_recursion/a_1_mul "$BIN" --gtest_filter='BbRefDump.UltraRecursion'

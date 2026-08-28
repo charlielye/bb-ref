@@ -15,6 +15,7 @@
 #include "barretenberg/flavor/mega_zk_flavor.hpp"
 #include "barretenberg/commitment_schemes/triple_ipa/triple_ipa.hpp"
 #include "barretenberg/eccvm/eccvm_flavor.hpp"
+#include "barretenberg/polynomials/row_disabling_polynomial.hpp"
 #include "barretenberg/eccvm/eccvm_prover.hpp"
 #include "barretenberg/eccvm/eccvm_trace_checker.hpp"
 #include "barretenberg/eccvm/eccvm_verifier.hpp"
@@ -1485,6 +1486,50 @@ void trace_op(const char* label, Builder& b)
     }
 }
 
+
+
+template <typename B> void wnaf_range_fq_t(B& b)
+{
+    using fq_ct = stdlib::bigfield<B, ::bb::Bn254FqParams>;
+    using FqNative = ::bb::fq;
+    fq_ct s = fq_ct::from_witness(&b, FqNative(uint256_t(3, 0, 0, 0)));
+    fq_ct sc = fq_ct::from_witness(&b, FqNative(uint256_t(0x123456789abcdefULL, 7, 11, 0)));
+    fq_ct r = ((s - 1).sqr() - 1) * ((s - 2).sqr() - 1) * sc;
+    r.self_reduce();
+}
+void wnaf_range_fq(Builder& b)
+{
+    wnaf_range_fq_t(b);
+}
+
+template <typename B> void row_disabling_fq_t(B& b)
+{
+    auto tr = [&](const char* label) {
+        if (std::getenv("BBREF_TRACE_GATES") != nullptr) {
+            std::cerr << "[bb gates 0 arith " << b.blocks.arithmetic.size() << " nnf " << b.blocks.nnf.size()
+                      << "] " << label << std::endl;
+        }
+    };
+    using fq_ct = stdlib::bigfield<B, ::bb::Bn254FqParams>;
+    using FqNative = ::bb::fq;
+    std::vector<fq_ct> u;
+    for (size_t i = 0; i < 15; ++i) {
+        u.push_back(fq_ct::from_witness(&b, FqNative(uint256_t(i * 7 + 3, i + 1, 2 * i + 5, 0))));
+        tr("u");
+    }
+    fq_ct main_factor = RowDisablingPolynomial<fq_ct>::evaluate_at_challenge(u, 15);
+    tr("main");
+    fq_ct offset_factor = fq_ct(1) - main_factor;
+    tr("offset");
+    main_factor.self_reduce();
+    tr("main_reduced");
+    offset_factor.self_reduce();
+    tr("offset_reduced");
+}
+void row_disabling_fq(Builder& b)
+{
+    row_disabling_fq_t(b);
+}
 void bigfield_ops(Builder& b)
 {
     using Fq = stdlib::secp256r1<Builder>::BaseField;
@@ -1760,6 +1805,10 @@ void run(Builder& b, const std::string& name)
         biggroup_ops(b);
     } else if (name == "bigfield_ops") {
         bigfield_ops(b);
+    } else if (name == "row_disabling_fq") {
+        row_disabling_fq(b);
+    } else if (name == "wnaf_range_fq") {
+        wnaf_range_fq(b);
     } else if (name == "sha256_block") {
         sha256_block(b);
     } else if (name == "field_ops") {
@@ -1809,6 +1858,10 @@ TEST(BbRefDump, Stdlib)
         UltraCircuitBuilder ultra_builder;
         if (std::string(program) == "biggroup_bn254_ops") {
             stdlib_programs::biggroup_bn254_ops_t(ultra_builder);
+        } else if (std::string(program) == "row_disabling_fq") {
+            stdlib_programs::row_disabling_fq_t(ultra_builder);
+        } else if (std::string(program) == "wnaf_range_fq") {
+            stdlib_programs::wnaf_range_fq_t(ultra_builder);
         } else {
             throw_or_abort("unknown ultra stdlib program " + std::string(program));
         }
@@ -1851,4 +1904,23 @@ TEST(BbRefDump, AcirMega)
     } else {
         dump_from_builder<MegaZKFlavor>(builder, out);
     }
+}
+
+// Write-VK instance dump of an ACIR program on UltraCircuitBuilder (backend recursion circuits):
+// BBREF_PROGRAM (program.json), BBREF_IPA=1 for --ipa_accumulation, BBREF_OUT. Witness-free, so
+// witness polynomials contain mock randomness; only precomputed + sigma/id are comparable.
+TEST(BbRefDump, UltraWriteVk)
+{
+    const char* out = std::getenv("BBREF_OUT");
+    const char* program_path = std::getenv("BBREF_PROGRAM");
+    if (out == nullptr || program_path == nullptr) {
+        GTEST_SKIP() << "set BBREF_OUT and BBREF_PROGRAM";
+    }
+    bb::srs::init_file_crs_factory(bb::srs::bb_crs_path());
+    bb::srs::init_grumpkin_file_crs_factory(bb::srs::bb_crs_path());
+    auto bytecode = get_bytecode(program_path);
+    acir_format::AcirProgram program{ acir_format::circuit_buf_to_acir_format(std::move(bytecode), false), {} };
+    acir_format::ProgramMetadata metadata{ .has_ipa_claim = std::getenv("BBREF_IPA") != nullptr };
+    auto builder = acir_format::create_circuit<UltraCircuitBuilder>(program, metadata);
+    dump_from_builder<UltraFlavor>(builder, out);
 }

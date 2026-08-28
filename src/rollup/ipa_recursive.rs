@@ -5,7 +5,7 @@
 
 use super::ipa::{self, IpaClaim, IPA_PROOF_LENGTH, LOG_POLY_LENGTH, POLY_LENGTH};
 use crate::base::codec::{FromChallenge, Transcriptable};
-use crate::base::field::{from_u256, FieldLike, U256};
+use crate::base::field::{from_u256, U256};
 use crate::base::transcript::Transcript;
 use crate::base::{Fq, Fr, GrumpkinKey};
 use crate::stdlib::bigfield::{BigField, NUM_LIMB_BITS};
@@ -14,7 +14,6 @@ use crate::stdlib::field::split_unique;
 use crate::stdlib::hash::StdPoseidon2;
 use crate::stdlib::{Ctx, FieldT};
 use ark_ec::AffineRepr;
-use ark_ff::Field;
 
 pub type FqCt = BigField<Fq>;
 pub type StdlibTranscript = Transcript<FieldT, StdPoseidon2>;

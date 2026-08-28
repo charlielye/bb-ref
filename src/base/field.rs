@@ -88,6 +88,16 @@ pub trait FieldLike:
     fn sqr(&self) -> Self {
         self.clone() * self
     }
+    /// bb bigfield `self_reduce`: native and circuit-native fields are always reduced.
+    fn self_reduce(&self) {}
+    /// bb `x + x` with both operands the same object (bigfield reduction aliasing).
+    fn dbl(&self) -> Self {
+        self.clone() + self
+    }
+    /// bb `x * x` with both operands the same object (NOT `sqr`, which is a different gate pattern).
+    fn mul_self(&self) -> Self {
+        self.clone() * self
+    }
     /// Square-and-multiply; in-circuit implementations override to reproduce bb's gate pattern.
     fn pow_u64(&self, mut e: u64) -> Self {
         let mut base = self.clone();
@@ -122,6 +132,27 @@ pub trait FieldLike:
     /// bb `pow<num_bits>(exponent)` for an exponent below `2^num_bits` (in-circuit: bit decomposition).
     fn pow_field(&self, exponent: &Self, _num_bits: u32) -> Self {
         self.pow_u64(u256_to_u64(&u256(&exponent.value())))
+    }
+    /// bb `fix_witness` on a witness: a gate pinning it to its value. Natively nothing.
+    fn fix(&self) {}
+    /// bb `madd`: `self * to_mul + Σ to_add` (in-circuit implementations fuse the gates).
+    fn madd(&self, to_mul: &Self, to_add: &[Self]) -> Self {
+        let mut acc = self.clone() * to_mul;
+        for a in to_add {
+            acc += a;
+        }
+        acc
+    }
+    /// bb bigfield `mult_madd`: `Σ left_i * right_i + Σ to_add` (native: a plain dot product).
+    fn mult_madd(left: &[Self], right: &[Self], to_add: &[Self]) -> Self {
+        let mut acc = Self::zero();
+        for (l, r) in left.iter().zip(right) {
+            acc += l.clone() * r;
+        }
+        for a in to_add {
+            acc += a;
+        }
+        acc
     }
 }
 

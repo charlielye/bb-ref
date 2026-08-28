@@ -13,10 +13,21 @@ pub fn hash(input: &[FieldT]) -> FieldT {
         .iter()
         .find_map(|f| f.ctx.clone())
         .expect("sponge inputs must include a witness");
-    assert!(
-        input.iter().all(|f| !f.is_constant()),
-        "sponge inputs should not be stdlib constants"
-    );
+    // Constants entering the transcript hash (e.g. the Shplonk claim's fixed zero evaluation in
+    // the recursive TripleIPA) become fixed witnesses, like the sponge IV below.
+    let input: Vec<FieldT> = input
+        .iter()
+        .map(|f| {
+            if f.is_constant() {
+                let mut w = f.clone();
+                w.convert_constant_to_fixed_witness(&ctx);
+                w
+            } else {
+                f.clone()
+            }
+        })
+        .collect();
+    let input = &input[..];
     let mut iv = FieldT::constant(Fr::from((input.len() as u128) << 64));
     iv.convert_constant_to_fixed_witness(&ctx);
     let zero = || FieldT::constant(Fr::zero());

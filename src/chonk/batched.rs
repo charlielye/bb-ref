@@ -5,7 +5,9 @@
 
 use crate::base::codec::Transcriptable;
 use crate::base::field::FieldLike;
-use crate::base::group::{GroupLike, PairingPoints};
+use crate::base::field::{from_u256, u256};
+use crate::base::group::{Curve, GroupLike, PairingPoints};
+use crate::base::transcript::Transcript;
 use crate::base::poly::Poly;
 use crate::base::rng::Rng;
 use crate::base::vk::Vk;
@@ -28,7 +30,7 @@ use crate::honk::pcs::{
 use crate::honk::prover_instance::ProverInstance;
 use crate::honk::relations::RelationParams;
 use crate::honk::sumcheck::{
-    alpha_powers, evaluate_univariate, full_relation_value, gate_separator_factor, row_disabling_main_factor,
+    alpha_powers, evaluate_univariate, full_relation_value, gate_separator_factor,
     CommittedRounds, HonkRelations, RelationSet, RoundProver, ZkData,
 };
 use rayon::prelude::*;
@@ -110,7 +112,13 @@ pub fn joint_prove(
     // --- joint sumcheck ---
     let alpha: Fr = t.challenge("Sumcheck:alpha");
     let betas: Vec<Fr> = t.dyadic_powers("Sumcheck:gate_challenge", JOINT_LOG_N);
-    let alpha_kh = alpha.pow_u64(RelationSet::<Fr>::total_subrelations(&mega_rels) as u64);
+    let alpha_kh = {
+        let mut p = Fr::one();
+        for _ in 0..RelationSet::<Fr>::total_subrelations(&mega_rels) {
+            p *= alpha;
+        }
+        p
+    };
     let mega_alphas = alpha_powers(&alpha, RelationSet::<Fr>::total_subrelations(&mega_rels) - 1);
     let trans_alphas = alpha_powers(&alpha, RelationSet::<Fr>::total_subrelations(&trans_rels) - 1);
     let mut zk = ZkData::<Bn254>::new(JOINT_LOG_N, t, ck, rng);
@@ -197,28 +205,90 @@ pub fn joint_prove(
 
 /// What the joint verifier needs besides the proofs: the ECCVM's translation challenges and result,
 /// and the merged op-queue table commitments (from the merge protocol).
-pub struct JointVerifierInputs {
-    pub evaluation_input_x: Fq,
-    pub batching_challenge_v: Fq,
-    pub accumulated_result: Fq,
-    pub op_queue_wire_commitments: [G1Affine; NUM_OP_QUEUE_WIRES],
+/// bb `TransFlavor::BF`: how the translator's Grumpkin-scalar inputs (x, v, accumulated result)
+/// yield their limb representations — native slicing for `fq`, direct limb extraction for the
+/// in-circuit bigfield (bb `put_translation_data_in_relation_parameters_impl`, both overloads).
+pub trait TranslatorBf<TF: crate::base::field::FieldLike>: Clone {
+    fn five_limbs(&self) -> [TF; 5];
+    fn four_limbs(&self) -> [TF; 4];
+    fn mul(&self, other: &Self) -> Self;
 }
 
-pub struct JointVerification {
-    pub pairing_points: PairingPoints<Bn254>,
+impl TranslatorBf<Fr> for Fq {
+    fn five_limbs(&self) -> [Fr; 5] {
+        let l = split_fq_into_limbs(self);
+        [l[0], l[1], l[2], l[3], from_u256::<Fr>(u256(self))]
+    }
+    fn four_limbs(&self) -> [Fr; 4] {
+        split_fq_into_limbs(self)
+    }
+    fn mul(&self, other: &Self) -> Self {
+        *self * other
+    }
+}
+
+impl TranslatorBf<crate::stdlib::FieldT> for crate::stdlib::bigfield::BigField<Fq> {
+    fn five_limbs(&self) -> [crate::stdlib::FieldT; 5] {
+        std::array::from_fn(|i| {
+            if i < 4 {
+                self.limb_element(i)
+            } else {
+                self.get_prime_basis_limb()
+            }
+        })
+    }
+    fn four_limbs(&self) -> [crate::stdlib::FieldT; 4] {
+        std::array::from_fn(|i| self.limb_element(i))
+    }
+    fn mul(&self, other: &Self) -> Self {
+        crate::stdlib::bigfield::BigField::mul(self, other)
+    }
+}
+
+/// bb `put_translation_data_in_relation_parameters` + beta/gamma: the v powers are computed with
+/// four multiplications (the last unused), matching bb's loop.
+fn translator_params_bf<TF, B>(v: &B, x: &B, accumulated_result: &B) -> RelationParams<TF>
+where
+    TF: crate::base::field::FieldLike,
+    B: TranslatorBf<TF>,
+{
+    let mut params = RelationParams {
+        evaluation_input_x: x.five_limbs(),
+        ..Default::default()
+    };
+    let mut v_power = v.clone();
+    for i in 0..4 {
+        params.batching_challenge_v[i] = v_power.five_limbs();
+        v_power = v_power.mul(v);
+    }
+    params.accumulated_result = accumulated_result.four_limbs();
+    params
+}
+
+pub struct JointVerification<C: Curve = Bn254> {
+    pub pairing_points: PairingPoints<C>,
     /// Sumcheck and Libra consistency checks.
     pub verified: bool,
 }
 
 /// bb `BatchedHonkTranslatorVerifier_::verify`. `mega_oink` is the output of `verify_oink` with
 /// `emit_alpha = false` on the same transcript `t`; `joint_proof` is loaded here.
-pub fn joint_verify(
-    mega_vk: &Vk<Bn254>,
-    mega_oink: &OinkOutput<Bn254>,
-    joint_proof: &[Fr],
-    inputs: &JointVerifierInputs,
-    t: &mut NativeTranscript,
-) -> JointVerification {
+pub fn joint_verify<C: Curve, B: TranslatorBf<C::Fr>>(
+    ctx: &<C::Fr as FieldLike>::Ctx,
+    mega_vk: &Vk<C>,
+    mega_oink: &OinkOutput<C>,
+    joint_proof: &[C::TF],
+    evaluation_input_x: &B,
+    batching_challenge_v: &B,
+    accumulated_result: &B,
+    op_queue_wire_commitments: &[C::G; NUM_OP_QUEUE_WIRES],
+    t: &mut Transcript<C::TF, C::Hash>,
+) -> JointVerification<C>
+where
+    C::Fr: FieldLike<Native = Fr>,
+    C::TF: crate::base::codec::ChallengeField + FieldLike<Native = Fr, Ctx = <C::Fr as FieldLike>::Ctx>,
+    C::G: crate::base::group::GroupLike<C::Fr, Native = G1Affine>,
+{
     t.load_proof(joint_proof);
     let layout = MEGA_ZK.layout();
     let mega_rels = HonkRelations {
@@ -229,122 +299,152 @@ pub fn joint_verify(
     let _ = mega_vk;
 
     // --- translator oink (bb `TranslatorVerifier_::receive_pre_sumcheck`) ---
-    t.add_to_hash_buffer("vk_hash", &fixed_vk_hash());
-    let masking: G1Affine = t.receive("Gemini:masking_poly_comm");
-    let concatenated: Vec<G1Affine> = CONCATENATED_LABELS.iter().map(|l| t.receive(l)).collect();
-    let ordered: Vec<G1Affine> = ORDERED_LABELS.iter().map(|l| t.receive(l)).collect();
-    let beta: Fr = t.challenge("beta");
-    let gamma: Fr = t.challenge("gamma");
-    let trans_params = translator_relation_params(
-        &inputs.batching_challenge_v,
-        &inputs.evaluation_input_x,
-        split_fq_into_limbs(&inputs.accumulated_result),
-        beta,
-        gamma,
-    );
-    let z_perm: G1Affine = t.receive("Z_PERM");
-    let opq = &inputs.op_queue_wire_commitments;
+    // bb `FixedVKAndHash` in the recursive verifier: the hash and the single fixed commitment
+    // become witnesses pinned by fix gates (`FixedStdlibVKAndHash_`); natively plain values.
+    let vk_hash_wit = <C::TF as FieldLike>::from_witness(ctx, fixed_vk_hash());
+    let mut trans_vk_comm = C::G::from_witness(ctx, fixed_vk());
+    vk_hash_wit.fix();
+    trans_vk_comm.fix_witness();
+    t.add_to_hash_buffer("vk_hash", &vk_hash_wit);
+    // bb `receive_pre_sumcheck` computes the translation-data relation parameters right after the
+    // vk hash, before any commitment is received; beta/gamma are filled in after their challenges.
+    let mut trans_params =
+        translator_params_bf::<C::Fr, B>(batching_challenge_v, evaluation_input_x, accumulated_result);
+    let masking: C::G = t.receive("Gemini:masking_poly_comm");
+    let concatenated: Vec<C::G> = CONCATENATED_LABELS.iter().map(|l| t.receive(l)).collect();
+    let ordered: Vec<C::G> = ORDERED_LABELS.iter().map(|l| t.receive(l)).collect();
+    let beta: C::Fr = t.challenge("beta");
+    let gamma: C::Fr = t.challenge("gamma");
+    trans_params.beta = beta;
+    trans_params.gamma = gamma;
+    let z_perm: C::G = t.receive("Z_PERM");
+    let opq = op_queue_wire_commitments;
     // bb `get_pcs_unshifted` / `get_pcs_to_be_shifted` in commitment form
-    let trans_unshifted: Vec<G1Affine> = [masking, fixed_vk(), opq[0], opq[1], opq[2], opq[3]]
+    let trans_unshifted: Vec<C::G> = [
+        masking.clone(),
+        trans_vk_comm,
+        opq[0].clone(),
+        opq[1].clone(),
+        opq[2].clone(),
+        opq[3].clone(),
+    ]
+    .into_iter()
+    .chain(ordered.iter().cloned())
+    .chain([z_perm.clone()])
+    .chain(concatenated.iter().cloned())
+    .collect();
+    let trans_to_be_shifted: Vec<C::G> = [opq[1].clone(), opq[2].clone(), opq[3].clone()]
         .into_iter()
-        .chain(ordered.iter().copied())
+        .chain(ordered.iter().cloned())
         .chain([z_perm])
-        .chain(concatenated.iter().copied())
-        .collect();
-    let trans_to_be_shifted: Vec<G1Affine> = [opq[1], opq[2], opq[3]]
-        .into_iter()
-        .chain(ordered.iter().copied())
-        .chain([z_perm])
-        .chain(concatenated.iter().copied())
+        .chain(concatenated.iter().cloned())
         .collect();
 
     // --- joint sumcheck ---
-    let alpha: Fr = t.challenge("Sumcheck:alpha");
-    let alpha_kh = alpha.pow_u64(RelationSet::<Fr>::total_subrelations(&mega_rels) as u64);
-    let mega_alphas = alpha_powers(&alpha, RelationSet::<Fr>::total_subrelations(&mega_rels) - 1);
-    let trans_alphas = alpha_powers(&alpha, RelationSet::<Fr>::total_subrelations(&trans_rels) - 1);
-    let gate_challenges: Vec<Fr> = t.dyadic_powers("Sumcheck:gate_challenge", JOINT_LOG_N);
-    let mut libra_commitments: Vec<G1Affine> = vec![t.receive("Libra:concatenation_commitment")];
-    let libra_total_sum: Fr = t.receive("Libra:Sum");
-    let libra_challenge: Fr = t.challenge("Libra:Challenge");
-    let target_sum = libra_total_sum * libra_challenge;
+    let alpha: C::Fr = t.challenge("Sumcheck:alpha");
+    // bb computes alpha^{K_H} by K_H sequential multiplications from FF(1), not a pow gadget.
+    let alpha_kh = {
+        let mut p = C::Fr::one();
+        for _ in 0..RelationSet::<C::Fr>::total_subrelations(&mega_rels) {
+            p = p * &alpha;
+        }
+        p
+    };
+    let mega_alphas = alpha_powers(&alpha, RelationSet::<C::Fr>::total_subrelations(&mega_rels) - 1);
+    let trans_alphas = alpha_powers(&alpha, RelationSet::<C::Fr>::total_subrelations(&trans_rels) - 1);
+    let gate_challenges: Vec<C::Fr> = t.dyadic_powers("Sumcheck:gate_challenge", JOINT_LOG_N);
+    let mut libra_commitments: Vec<C::G> = vec![t.receive("Libra:concatenation_commitment")];
+    let libra_total_sum: C::Fr = t.receive("Libra:Sum");
+    let libra_challenge: C::Fr = t.challenge("Libra:Challenge");
+    let target_sum = libra_total_sum * &libra_challenge;
     let mut challenge = Vec::with_capacity(JOINT_LOG_N);
-    let mut partial_eval = Fr::one();
+    let mut partial_eval = C::Fr::one();
     let mut round_commitments = Vec::with_capacity(JOINT_LOG_N);
-    let mut round_evaluations: Vec<[Fr; 3]> = Vec::with_capacity(JOINT_LOG_N);
+    let mut round_evaluations: Vec<[C::Fr; 3]> = Vec::with_capacity(JOINT_LOG_N);
     let mut minicircuit = Vec::new();
     for round in 0..JOINT_LOG_N {
-        round_commitments.push(t.receive::<G1Affine>(&format!("Sumcheck:univariate_comm_{round}")));
-        let e0: Fr = t.receive(&format!("Sumcheck:univariate_{round}_eval_0"));
-        let e1: Fr = t.receive(&format!("Sumcheck:univariate_{round}_eval_1"));
-        round_evaluations.push([e0, e1, Fr::zero()]);
-        let u: Fr = t.challenge(&format!("Sumcheck:u_{round}"));
+        round_commitments.push(t.receive::<C::G>(&format!("Sumcheck:univariate_comm_{round}")));
+        let e0: C::Fr = t.receive(&format!("Sumcheck:univariate_{round}_eval_0"));
+        let e1: C::Fr = t.receive(&format!("Sumcheck:univariate_{round}_eval_1"));
+        round_evaluations.push([e0, e1, C::Fr::zero()]);
+        let u: C::Fr = t.challenge(&format!("Sumcheck:u_{round}"));
         partial_eval *= gate_separator_factor(&u, &gate_challenges[round]);
         challenge.push(u);
         if round == LOG_MINI_CIRCUIT_SIZE - 1 {
             minicircuit = t.receive_vec("Sumcheck:minicircuit_evaluations", NUM_MINICIRCUIT_EVALUATIONS);
         }
     }
-    let mega_evals: Vec<Fr> = t.receive_vec("Sumcheck:evaluations", layout.num_all());
-    let trans_full: Vec<Fr> = t.receive_vec("Sumcheck:evaluations_translator", FULL_CIRCUIT_ENTITIES.len());
-    let (trans_evals, concat_shift_evals) = complete_evaluations(&trans_full, &minicircuit, &challenge);
+    let mega_evals: Vec<C::Fr> = t.receive_vec("Sumcheck:evaluations", layout.num_all());
+    let trans_full: Vec<C::Fr> = t.receive_vec("Sumcheck:evaluations_translator", FULL_CIRCUIT_ENTITIES.len());
+    let trans_evals = complete_evaluations(&trans_full, &minicircuit, &challenge);
 
-    let main_factor = row_disabling_main_factor(&challenge);
-    let offset_factor = Fr::one() - main_factor;
+    // bb builds a fresh `GateSeparatorPolynomial(gate_challenges, joint_challenge)` for the FRV
+    // calls, recomputing the partial evaluation from scratch after the receives (the incremental
+    // one from the rounds is discarded).
+    let mut final_partial_eval = C::Fr::one();
+    for (round, u) in challenge.iter().enumerate() {
+        final_partial_eval *= gate_separator_factor(u, &gate_challenges[round]);
+    }
+
     let frv_mega = full_relation_value(
         &mega_rels,
         &mega_evals,
         &mega_oink.params,
-        &partial_eval,
+        &final_partial_eval,
         &mega_alphas,
-        &main_factor,
-        &offset_factor,
+        Some(challenge.as_slice()),
     );
     let frv_trans = full_relation_value(
         &trans_rels,
         &trans_evals,
         &trans_params,
-        &partial_eval,
+        &final_partial_eval,
         &trans_alphas,
-        &Fr::one(),
-        &Fr::zero(),
+        None,
     );
-    let mut full_value = frv_mega + alpha_kh * frv_trans;
-    let libra_evaluation: Fr = t.receive("Libra:claimed_evaluation");
+    let mut full_value = frv_mega + &(alpha_kh * &frv_trans);
+    let libra_evaluation: C::Fr = t.receive("Libra:claimed_evaluation");
     libra_commitments.push(t.receive("Libra:grand_sum_commitment"));
     libra_commitments.push(t.receive("Libra:quotient_commitment"));
-    full_value += libra_evaluation * libra_challenge;
+    full_value += libra_evaluation.clone() * &libra_challenge;
     // committed sumcheck: the first sum is checked here, the chain and the last value through the openings
-    let sumcheck_verified = round_evaluations[0][0] + round_evaluations[0][1] == target_sum;
+    let first_round_sum = round_evaluations[0][0].clone() + &round_evaluations[0][1];
+    let sumcheck_verified = first_round_sum.value() == target_sum.value();
+    // bb `perform_final_verification`: `first_sumcheck_round_evaluations_sum.assert_equal(target_total_sum)`
+    // (in-circuit copy-constraint, no gates).
+    first_round_sum.assert_equal(&target_sum);
     for i in 1..JOINT_LOG_N {
-        round_evaluations[i - 1][2] = round_evaluations[i][0] + round_evaluations[i][1];
+        let chained = round_evaluations[i][0].clone() + &round_evaluations[i][1];
+        round_evaluations[i - 1][2] = chained;
     }
     round_evaluations[JOINT_LOG_N - 1][2] = full_value;
     let _ = evaluate_univariate::<Fr>;
 
     // --- joint PCS ---
+    let concat_shift_evals =
+        crate::goblin::translator::concat_shift_evaluations(&trans_evals, &challenge);
     let n_mega_unshifted = layout.num_unshifted();
-    let trans_shifted_evals = PCS_SHIFTED.iter().map(|e| trans_evals[*e]).chain(concat_shift_evals);
-    let batcher = ClaimBatcher::<Bn254> {
+    let trans_shifted_evals = PCS_SHIFTED.iter().map(|e| trans_evals[*e].clone()).chain(concat_shift_evals);
+    let batcher = ClaimBatcher::<C> {
         unshifted_comms: trans_unshifted
             .iter()
-            .copied()
-            .chain(mega_oink.commitments.iter().copied())
+            .cloned()
+            .chain(mega_oink.commitments.iter().cloned())
             .collect(),
         unshifted_evals: PCS_UNSHIFTED
             .iter()
-            .map(|e| trans_evals[*e])
-            .chain(mega_evals[..n_mega_unshifted].iter().copied())
+            .map(|e| trans_evals[*e].clone())
+            .chain(mega_evals[..n_mega_unshifted].iter().cloned())
             .collect(),
         shifted_comms: layout
             .shifted
             .iter()
-            .map(|e| mega_oink.commitments[layout.idx(*e)])
+            .map(|e| mega_oink.commitments[layout.idx(*e)].clone())
             .chain(trans_to_be_shifted)
             .collect(),
         shifted_evals: mega_evals[n_mega_unshifted..]
             .iter()
-            .copied()
+            .cloned()
             .chain(trans_shifted_evals)
             .collect(),
     };
@@ -361,12 +461,12 @@ pub fn joint_verify(
             .enumerate()
             .map(|(j, e)| (PCS_UNSHIFTED.len() + layout.idx(*e), n_unshifted + j)),
     );
-    let shplemini = shplemini_verify::<Bn254>(
+    let shplemini = shplemini_verify::<C>(
         true,
         true,
         &batcher,
         &challenge,
-        &G1Affine::one(&()),
+        &C::G::one(ctx),
         t,
         &repeated,
         &libra_commitments,
@@ -375,7 +475,7 @@ pub fn joint_verify(
         &round_evaluations,
     );
     let msm_size = shplemini.claim.commitments.len() + 1;
-    let pairing_points = kzg_reduce_verify_batch_opening_claim::<Bn254>(shplemini.claim, t, msm_size);
+    let pairing_points = kzg_reduce_verify_batch_opening_claim::<C>(shplemini.claim, t, msm_size);
     JointVerification {
         pairing_points,
         verified: sumcheck_verified && shplemini.consistency_checked,

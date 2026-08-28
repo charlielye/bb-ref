@@ -444,37 +444,48 @@ pub fn complete_evaluations<T: FieldLike>(
     full_circuit: &[T],
     minicircuit: &[T],
     u: &[T],
-) -> (Vec<T>, [T; NUM_CONCATENATED_POLYS]) {
+) -> Vec<T> {
     assert_eq!(full_circuit.len(), FULL_CIRCUIT_ENTITIES.len());
     assert_eq!(minicircuit.len(), NUM_MINICIRCUIT_EVALUATIONS);
     let mut evals: Vec<T> = (0..NUM_ALL_ENTITIES).map(|_| T::zero()).collect();
     for (e, v) in FULL_CIRCUIT_ENTITIES.iter().zip(full_circuit) {
         evals[*e] = v.clone();
     }
-    // the mini-circuit values were taken after LOG_MINI rounds; scale by L_0 of the remaining rounds
-    let l0 = u[LOG_MINI_CIRCUIT_SIZE..]
-        .iter()
-        .fold(T::one(), |acc, uk| acc * &(T::one() - uk));
     for (e, v) in minicircuit_entities().zip(minicircuit) {
-        evals[e] = v.clone() * &l0;
+        evals[e] = v.clone();
     }
+    // bb `complete_claimed_evaluations`: the selector evaluations come first, then the minicircuit
+    // wires are scaled by L_0 of the top rounds.
     for (k, v) in selector_evaluations(u).into_iter().enumerate() {
         evals[2 + k] = v;
     }
-    let group_evals = |evals: &[T], shifted: bool| -> Vec<Vec<T>> {
-        (0..NUM_CONCATENATED_POLYS)
-            .map(|g| {
-                concatenation_group_entities(g, shifted)
-                    .into_iter()
-                    .map(|e| e.map_or_else(T::zero, |e| evals[e].clone()))
-                    .collect()
-            })
-            .collect()
-    };
+    let l0 = u[LOG_MINI_CIRCUIT_SIZE..]
+        .iter()
+        .fold(T::one(), |acc, uk| acc * &(T::one() - uk));
+    for e in minicircuit_entities() {
+        let scaled = evals[e].clone() * &l0;
+        evals[e] = scaled;
+    }
     let concat = reconstruct_concatenated_evaluations(&group_evals(&evals, false), u);
-    let concat_shift = reconstruct_concatenated_evaluations(&group_evals(&evals, true), u);
     for (g, v) in concat.into_iter().enumerate() {
         evals[FIRST_CONCATENATED + g] = v;
     }
-    (evals, concat_shift)
+    evals
+}
+
+fn group_evals<T: FieldLike>(evals: &[T], shifted: bool) -> Vec<Vec<T>> {
+    (0..NUM_CONCATENATED_POLYS)
+        .map(|g| {
+            concatenation_group_entities(g, shifted)
+                .into_iter()
+                .map(|e| e.map_or_else(T::zero, |e| evals[e].clone()))
+                .collect()
+        })
+        .collect()
+}
+
+/// bb reconstructs the shifted concatenated evaluations at the top of `verify_joint_pcs`, not
+/// during the sumcheck evaluation completion.
+pub fn concat_shift_evaluations<T: FieldLike>(evals: &[T], u: &[T]) -> [T; NUM_CONCATENATED_POLYS] {
+    reconstruct_concatenated_evaluations(&group_evals(evals, true), u)
 }

@@ -104,6 +104,8 @@ const SUPPORTED: &[(&str, bool)] = &[
     ("rollup_block_root_first_empty_tx", true),
     ("rollup_block_root_first_single_tx", true),
     ("rollup_block_root_single_tx", true),
+    ("rollup_tx_base_private", true),
+    ("chonk_verifier_public", true),
 ];
 
 fn artifact(name: &str) -> std::path::PathBuf {
@@ -136,6 +138,11 @@ fn backend_vk_hash_sweep() {
             unsupported += 1;
             continue;
         };
+        if let Ok(only) = std::env::var("BBREF_SWEEP") {
+            if only != name {
+                continue;
+            }
+        }
         let expected: Fr = from_bytes_be(&std::fs::read(path).unwrap());
         let circuit = decode_program(&std::fs::read(artifact(name)).expect("program.json"));
         let mut builder = bb_ref::acir::lower::build_circuit_opts(&circuit, None, *ipa);
@@ -148,4 +155,38 @@ fn backend_vk_hash_sweep() {
         "{} supported, {unsupported} not yet supported",
         entries.len() - unsupported
     );
+}
+
+/// Gate-level diff of a backend write-VK circuit against a bb `BbRefDump.UltraWriteVk` dump
+/// (deterministic polynomials only: precomputed and permutation; witness values are mock-random on
+/// both sides). Set `BBREF_WVK=<name>`; the dump lives at `instance/backend_wvk/<name>`.
+#[test]
+fn backend_write_vk_instance_diff() {
+    let Ok(name) = std::env::var("BBREF_WVK") else {
+        eprintln!("skipping: set BBREF_WVK=<circuit name>");
+        return;
+    };
+    let dump = common::fixture_dir(&format!("instance/backend_wvk/{name}"));
+    if !dump.join("vk").exists() {
+        eprintln!("skipping {name}: no write-vk dump");
+        return;
+    }
+    let ipa = SUPPORTED.iter().find(|(n, _)| *n == name).map(|(_, i)| *i).unwrap_or(true);
+    let circuit = decode_program(&std::fs::read(artifact(&name)).expect("program.json"));
+    let mut builder = bb_ref::acir::lower::build_circuit_opts(&circuit, None, ipa);
+    let inst = ProverInstance::from_builder(&ULTRA, &mut builder, &mut OsRng);
+    let expected = ProverInstance::load_dump(&ULTRA, &dump);
+    assert_eq!(inst.dyadic_size, expected.dyadic_size, "{name}: dyadic size");
+    let compare: Vec<usize> = (0..inst.layout.num_unshifted())
+        .filter(|&i| {
+            let n = inst.layout.unshifted[i].name();
+            n.starts_with("q_")
+                || n.starts_with("sigma_")
+                || n.starts_with("id_")
+                || n.starts_with("table_")
+                || n.starts_with("lagrange_")
+        })
+        .collect();
+    common::assert_polys_equal(&name, &inst, &expected, &builder, &compare);
+    eprintln!("{name}: deterministic polynomials match");
 }

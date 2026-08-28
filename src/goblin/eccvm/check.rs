@@ -11,19 +11,22 @@ use crate::honk::relations::RelationParams;
 use rayon::prelude::*;
 
 /// The ECCVM's relation parameters from `beta`, `gamma` (bb `ECCVMProver`/`ECCVMTraceChecker`).
-pub fn eccvm_relation_params(beta: Fq, gamma: Fq) -> RelationParams<Fq> {
-    let beta_sqr = beta.sqr();
-    let beta_quartic = beta_sqr.sqr();
-    let tag = beta_quartic;
-    let delta = (gamma + tag)
-        * (gamma + beta_sqr + tag)
-        * (gamma + beta_sqr + beta_sqr + tag)
-        * (gamma + beta_sqr + beta_sqr + beta_sqr + tag);
+pub fn eccvm_relation_params<F: crate::base::field::FieldLike<Native = Fq>>(beta: F, gamma: F) -> RelationParams<F> {
+    // bb's exact operation order and kinds (multiplications, not squarings — the bigfield gate
+    // patterns differ): beta², beta⁴, beta³, then the delta product, then its inversion.
+    let beta_sqr = beta.clone() * &beta;
+    let beta_quartic = beta_sqr.clone() * &beta_sqr;
+    let beta_cube = beta_sqr.clone() * &beta;
+    let tag = beta_quartic.clone();
+    let delta = (gamma.clone() + &tag)
+        * &(gamma.clone() + &beta_sqr + &tag)
+        * &(gamma.clone() + &beta_sqr + &beta_sqr + &tag)
+        * &(gamma.clone() + &beta_sqr + &beta_sqr + &beta_sqr + &tag);
     RelationParams {
         beta,
         gamma,
         beta_sqr,
-        beta_cube: beta_sqr * beta,
+        beta_cube,
         beta_quartic,
         eccvm_set_permutation_delta: delta.invert(),
         ..Default::default()

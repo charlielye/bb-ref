@@ -205,8 +205,9 @@ fn delta_range<T: FieldLike<Native = Fr>>(acc: &mut [T], r: &[T], scaling: &T) {
     let v = |e: Ent| r[e as usize].clone();
     let maximum_sort_value = -c::<T>((1 << MICRO_LIMB_BITS) - 1);
     let not_last_or_masking = v(lagrange_real_last) + &v(lagrange_ordered_masking) - &T::one();
-    for i in 0..5 {
-        let delta = v(ORDERED_SHIFT[i]) - &v(ORDERED[i]);
+    // bb computes all five deltas before any of the range chains.
+    let deltas: [T; 5] = std::array::from_fn(|i| v(ORDERED_SHIFT[i]) - &v(ORDERED[i]));
+    for (i, delta) in deltas.into_iter().enumerate() {
         let mut tmp = delta.clone();
         tmp *= &(delta.clone() - &c(1));
         tmp *= &(delta.clone() - &c(2));

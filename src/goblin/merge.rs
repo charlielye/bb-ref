@@ -174,6 +174,8 @@ where
     for j in 0..NUM_WIRES {
         let diff = evals[j].clone() + (pow_kappa.clone() * &evals[j + NUM_WIRES]) - &evals[j + 2 * NUM_WIRES];
         ok &= diff.is_zero();
+        // bb constrains the identity in-circuit: `concatenation_diff.assert_equal(FF(0))`.
+        diff.assert_equal(&C::Fr::constant(<C::Fr as FieldLike>::Native::from(0u64)));
     }
     let mut degree_diff = C::Fr::zero();
     for j in 0..NUM_WIRES {
@@ -181,6 +183,7 @@ where
     }
     degree_diff -= evals[3 * NUM_WIRES].clone() * &pow_kappa_minus_one;
     ok &= degree_diff.is_zero();
+    degree_diff.assert_equal(&C::Fr::constant(<C::Fr as FieldLike>::Native::from(0u64)));
 
     let betas: Vec<C::Fr> = t.short_challenges(&SHPLONK_LABELS);
     let quotient: C::G = t.receive("SHPLONK_BATCHED_QUOTIENT");
@@ -204,6 +207,7 @@ where
         commitments: msm_commitments,
         scalars,
         evaluation_point: z,
+            evaluation: C::Fr::zero(),
     };
     let pairing_points = kzg_reduce_verify_batch_opening_claim(claim, t, 3 * NUM_WIRES + 4);
     MergeOutput {

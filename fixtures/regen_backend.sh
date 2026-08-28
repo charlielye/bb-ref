@@ -79,4 +79,13 @@ for j in "$TGT"/parity_*.json "$TGT"/rollup_*.json "$TGT"/chonk_verifier_public.
   fi
   rm -rf "$T"
 done
+# B4b: write-VK instance dumps for the chonk-recursion circuits (BbRefDump.UltraWriteVk); witness
+# polynomials are mock-random so only precomputed + sigma/id are comparable (backend_write_vk_instance_diff).
+for name in chonk_verifier_public rollup_tx_base_private; do
+  mkdir -p "$OUT/instance/backend_wvk/$name"
+  HARDWARE_CONCURRENCY=1 BB_RNG_SEED=12345 BBREF_IPA=1 BBREF_PROGRAM=$TGT/$name.json \
+    BBREF_OUT="$OUT/instance/backend_wvk/$name" "$DSL" --gtest_filter='BbRefDump.UltraWriteVk'
+  echo "backend_wvk $name"
+done
+
 echo "backend fixtures regenerated under $OUT"

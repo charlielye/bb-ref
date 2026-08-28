@@ -678,9 +678,8 @@ impl FieldT {
 
     pub fn fix_witness(&self) {
         assert!(!self.is_constant());
-        self.ctx()
-            .borrow_mut()
-            .fix_witness(self.witness_index, self.get_value());
+        let value = self.get_value();
+        self.ctx().borrow_mut().fix_witness(self.witness_index, value);
     }
 }
 
@@ -874,6 +873,13 @@ impl FieldLike for FieldT {
     }
     fn pow_field(&self, exponent: &Self, num_bits: u32) -> Self {
         self.pow_field_bits(exponent, num_bits)
+    }
+    fn madd(&self, to_mul: &Self, to_add: &[Self]) -> Self {
+        assert_eq!(to_add.len(), 1, "field_t madd takes a single addend");
+        FieldT::madd(self, to_mul, &to_add[0])
+    }
+    fn fix(&self) {
+        self.fix_witness();
     }
 }
 

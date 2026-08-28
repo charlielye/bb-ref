@@ -218,14 +218,19 @@ where
     let layout = flavor.layout();
     let oink = verify_oink::<C>(flavor, &layout, vk, vk_hash, t, num_public_inputs, true);
     let betas: Vec<C::Fr> = t.dyadic_powers("HypernovaFoldingProver:gate_challenge", flavor.virtual_log_n);
+    let rels = HonkRelations {
+        flavor,
+        layout: &layout,
+    };
+    let alphas = crate::honk::sumcheck::alpha_powers(
+        &oink.alpha,
+        crate::honk::sumcheck::RelationSet::<C::Fr>::total_subrelations(&rels) - 1,
+    );
     let sc = verify_sumcheck::<C>(
-        &HonkRelations {
-            flavor,
-            layout: &layout,
-        },
+        &rels,
         &SumcheckSpec::honk(flavor, &layout),
         t,
-        &oink.alpha,
+        &alphas,
         &oink.params,
         &betas,
     );

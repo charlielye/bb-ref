@@ -70,7 +70,7 @@ impl CycleScalar {
     /// halves, with `no_wrap_split_at` splits where limb bounds overflow.
     pub fn from_bigfield(scalar: &crate::stdlib::bigfield::BigField<crate::base::Fq>) -> Self {
         use crate::base::field::{from_u256, U256};
-        use crate::stdlib::bigfield::{NUM_LIMB_BITS as LIMB_BITS, NUM_LIMBS as _};
+        use crate::stdlib::bigfield::NUM_LIMB_BITS as LIMB_BITS;
         use num_bigint::BigUint;
         const LO_BITS: usize = 128;
         const HI_BITS: usize = 126;
@@ -172,7 +172,8 @@ impl CycleGroup {
             }
         }
         let g = Self { x, y, is_infinity, ctx };
-        assert!(g.get_value().is_on_curve(), "cycle_group: point is not on the curve");
+        // bb never aborts natively on an off-curve value (write-VK mock proofs contain garbage);
+        // `validate_on_curve` records the constraint failure instead.
         if assert_on_curve {
             g.validate_on_curve();
         }
@@ -244,6 +245,13 @@ impl CycleGroup {
     }
     /// Force the coordinates of a point at infinity to `(0, 0)`.
     /// bb `cycle_group::set_public`: standardize (infinity to (0,0)) then publish both coordinates.
+    /// bb `cycle_group::fix_witness`.
+    pub fn fix_witness(&self) {
+        self.x.fix_witness();
+        self.y.fix_witness();
+        self.is_infinity.fix_witness();
+    }
+
     pub fn set_public(&self) -> u32 {
         let mut standard = self.clone();
         standard.standardize();
@@ -737,5 +745,56 @@ impl StrausLookupTable {
             BoolT::constant(false),
             false,
         )
+    }
+}
+
+impl std::fmt::Debug for CycleGroup {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CycleGroup({:?})", self.get_value())
+    }
+}
+impl PartialEq for CycleGroup {
+    fn eq(&self, other: &Self) -> bool {
+        self.get_value() == other.get_value()
+    }
+}
+
+impl crate::base::group::GroupLike<crate::stdlib::bigfield::BigField<Fq>> for CycleGroup {
+    type Native = GrumpkinAffine;
+    fn one(_ctx: &Ctx) -> Self {
+        CycleGroup::constant(GrumpkinAffine::generator())
+    }
+    fn constant(_ctx: &Ctx, p: GrumpkinAffine) -> Self {
+        CycleGroup::constant(p)
+    }
+    fn from_witness(ctx: &Ctx, p: GrumpkinAffine) -> Self {
+        CycleGroup::from_witness(ctx, p)
+    }
+    fn value(&self) -> GrumpkinAffine {
+        self.get_value()
+    }
+    fn neg(&self) -> Self {
+        CycleGroup::neg(self)
+    }
+    fn add(&self, other: &Self) -> Self {
+        CycleGroup::add(self, other)
+    }
+    fn scalar_mul(&self, s: &crate::stdlib::bigfield::BigField<Fq>) -> Self {
+        <Self as crate::base::group::GroupLike<crate::stdlib::bigfield::BigField<Fq>>>::batch_mul(
+            &[self.clone()],
+            std::slice::from_ref(s),
+        )
+    }
+    fn batch_mul(points: &[Self], scalars: &[crate::stdlib::bigfield::BigField<Fq>]) -> Self {
+        let cycle_scalars: Vec<CycleScalar> = scalars.iter().map(CycleScalar::from_bigfield).collect();
+        CycleGroup::batch_mul(points, &cycle_scalars)
+    }
+    fn fix_witness(&mut self) {
+        CycleGroup::fix_witness(self);
+    }
+    fn enforce_equal(&self, other: &Self) {
+        let mut a = self.clone();
+        let mut b = other.clone();
+        CycleGroup::assert_equal(&mut a, &mut b);
     }
 }

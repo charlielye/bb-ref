@@ -180,7 +180,7 @@ fn wb(ctx: &Ctx, v: bool) -> BoolT {
 
 /// The programs with lookup gates are dumped as MegaApp (MegaKernel has no lookup entities).
 fn flavor_of(name: &str) -> &'static FlavorDesc {
-    if name == "biggroup_bn254_ops" {
+    if name == "biggroup_bn254_ops" || name == "row_disabling_fq" || name == "wnaf_range_fq" {
         return &ULTRA;
     }
     if ["sha256", "bigfield", "biggroup", "secp256r1", "ecdsa", "keccak", "logic"].iter().any(|p| name.starts_with(p)) {
@@ -196,80 +196,79 @@ fn p256(limbs: [u64; 4]) -> ark_secp256r1::Fq {
     ark_secp256r1::Fq::from(BigUint::from_slice(&limbs.iter().flat_map(|l| [*l as u32, (*l >> 32) as u32]).collect::<Vec<_>>()))
 }
 
+
+
+fn wnaf_range_fq(ctx: &Ctx) {
+    use bb_ref::base::field::{from_u256, U256};
+    type FqCt = bb_ref::stdlib::bigfield::BigField<bb_ref::base::Fq>;
+    let s = FqCt::from_witness(ctx, &from_u256(U256::new([3, 0, 0, 0])));
+    let sc = FqCt::from_witness(ctx, &from_u256(U256::new([0x123456789abcdef, 7, 11, 0])));
+    let one = FqCt::from_u64(1);
+    let two = FqCt::from_u64(2);
+    let s1 = s.sub(&one);
+    let sq1 = s1.sqr();
+    let a = sq1.sub(&one);
+    let s2 = s.sub(&two);
+    let sq2 = s2.sqr();
+    let bfac = sq2.sub(&one);
+    let ab = a.mul(&bfac);
+    let r = ab.mul(&sc);
+    r.self_reduce();
+}
+
+fn row_disabling_fq(ctx: &Ctx) {
+    use bb_ref::base::field::from_u256;
+    use bb_ref::base::field::U256;
+    type FqCt = bb_ref::stdlib::bigfield::BigField<bb_ref::base::Fq>;
+    let mut u: Vec<FqCt> = Vec::new();
+    for i in 0..15u64 {
+        let v: bb_ref::base::Fq = from_u256(U256::new([i * 7 + 3, i + 1, 2 * i + 5, 0]));
+        u.push(FqCt::from_witness(ctx, &v));
+    }
+    let main_factor = bb_ref::honk::sumcheck::row_disabling_main_factor(&u);
+    let offset_factor = <FqCt as bb_ref::base::field::FieldLike>::one() - &main_factor;
+    main_factor.self_reduce();
+    offset_factor.self_reduce();
+}
+
 fn bigfield_ops(ctx: &Ctx) {
     let a_n = p256([0x1234567890abcdef, 0xfedcba0987654321, 0x0f0e0d0c0b0a0908, 0x0706050403020100]);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: a_n");
     let c_n = p256([0x00000000000000ff, 0x1111111111111111, 0x2222222222222222, 0x3333333333333333]);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: c_n");
     let a = P256Fq::from_witness(ctx, &a_n);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: a");
     let c = P256Fq::from_witness(ctx, &c_n);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: c");
     let k = P256Fq::from_u64(0x9999);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: k");
     let (t, f) = (wb(ctx, true), wb(ctx, false));
     let s = a.add(&c);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: s");
     let d = a.sub(&c);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: d");
     let m = a.mul(&c);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: m");
     let q = a.div(&c);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: q");
     let sq = a.sqr();
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: sq");
     let ma = a.madd(&c, &[s.clone()]);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: ma");
     let mm = P256Fq::mult_madd(&[a.clone(), c.clone()], &[c.clone(), a.clone()], &[m.clone()], false);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: mm");
     let dm = P256Fq::dual_madd(&a, &c, &s, &d, &[sq.clone()]);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: dm");
     let msd = P256Fq::msub_div(&[a.clone()], &[c.clone()], &d, &[s.clone()], true);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: msd");
     let cn = m.conditional_negate(&t);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: cn");
     let cs = P256Fq::conditional_assign(&f, &a, &c);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: cs");
     let ka = k.mul(&a);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: ka");
     let ak = a.add(&k);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: ak");
     let amk = a.sub(&k);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: amk");
     let kq = k.div(&a);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: kq");
     let sm = P256Fq::sum(&[a.clone(), c.clone(), s.clone(), d.clone(), m.clone()]);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: sm");
     let p5 = a.pow(5);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: p5");
     let ng = a.neg();
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: ng");
     let inv = a.invert();
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: inv");
     let sa = a.sqradd(&[c.clone()]);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: sa");
     let e1 = a.eq(&c);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: e1");
     let e2 = cs.eq(&a);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: e2");
     let lt = a.is_less_than(&P256Fq::modulus());
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: lt");
     a.assert_is_in_field();
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: a.assert_is_in_field();");
     mm.assert_is_not_equal(&m);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: mm.assert_is_not_equal(&m);");
     inv.mul(&a).assert_equal(&P256Fq::one());
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: inv.mul(&a).assert_equal(&P256Fq::one())");
     let r = q.mul(&c);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: r");
     r.reduce_mod_target_modulus();
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: r.reduce_mod_target_modulus();");
     r.assert_equal(&a);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: r.assert_equal(&a);");
     let acc = P256Fq::sum(&[sq, ma, mm, dm, msd, cn, ka, ak, amk, kq, sm, p5, ng, sa]);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: acc");
     acc.assert_zero_if(&f);
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: acc.assert_zero_if(&f);");
     let out = acc.get_limb(0).element
         .add(&acc.get_limb(1).element)
         .add(&acc.get_limb(2).element)
@@ -278,11 +277,8 @@ fn bigfield_ops(ctx: &Ctx) {
         .add(&e1.to_field())
         .add(&e2.to_field())
         .add(&lt.to_field());
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: .add(&lt.to_field());");
     let e = FieldT::from_witness(ctx, out.get_value());
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: e");
     out.sub(&e).assert_is_zero();
-    bb_ref::circuit::builder::trace_phase("bigfield_ops: out.sub(&e).assert_is_zero();");
 }
 
 type P256 = ark_secp256r1::Config;
@@ -660,6 +656,8 @@ fn run(ctx: &Ctx, name: &str) {
         "field_ops" => field_ops(ctx),
         "sha256_block" => sha256_block(ctx),
         "bigfield_ops" => bigfield_ops(ctx),
+        "row_disabling_fq" => row_disabling_fq(ctx),
+        "wnaf_range_fq" => wnaf_range_fq(ctx),
         "biggroup_ops" => biggroup_ops(ctx),
         "bool_ops" => bool_ops(ctx),
         "cycle_group_add" => cycle_group_add(ctx),
@@ -711,6 +709,8 @@ pub const PROGRAMS: &[&str] = &[
     "cycle_group_mul_witness",
     "sha256_block",
     "bigfield_ops",
+    "row_disabling_fq",
+    "wnaf_range_fq",
     "biggroup_ops",
     "biggroup_bn254_ops",
     "secp256r1_mul",

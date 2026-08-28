@@ -1151,7 +1151,13 @@ impl crate::base::group::GroupLike<FieldT> for Element<ark_bn254::g1::Config> {
     fn batch_mul(points: &[Self], scalars: &[FieldT]) -> Self {
         Element::batch_mul(points, scalars, 0, true)
     }
-    fn assert_equal(&self, other: &Self) {
+    fn fix_witness(&mut self) {
+        // bb also pins the infinity flag.
+        self.x.fix_witness();
+        self.y.fix_witness();
+        self.is_infinity.fix_witness();
+    }
+    fn enforce_equal(&self, other: &Self) {
         self.incomplete_assert_equal(other);
     }
 }

@@ -240,7 +240,7 @@ impl GroupLike<FieldT> for GoblinElement {
         let t = ctx.borrow_mut().queue_ecc_eq();
         Self::from_op_wires(&ctx, [t.x_lo, t.x_hi, t.y_lo, t.y_hi])
     }
-    fn assert_equal(&self, other: &Self) {
+    fn enforce_equal(&self, other: &Self) {
         self.incomplete_assert_equal(other)
     }
 }

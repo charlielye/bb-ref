@@ -8,7 +8,7 @@ use bb_ref::base::rng::TapeRng;
 use bb_ref::base::srs::bn254_g2;
 use bb_ref::base::{CommitmentKey, Fq, Fr, G1Affine, NativeTranscript, OsRng};
 use bb_ref::chonk::batched::{
-    joint_prove, joint_verify, mega_zk_oink_length_without_public_inputs, JointVerifierInputs, JOINT_LOG_N,
+    joint_prove, joint_verify, mega_zk_oink_length_without_public_inputs, JOINT_LOG_N,
 };
 use bb_ref::circuit::{Builder, EccOpQueue};
 use bb_ref::goblin::translator::builder::TranslatorCircuit;
@@ -28,6 +28,15 @@ fn read_points(bytes: &[u8]) -> Vec<G1Affine> {
         .collect()
 }
 
+/// The joint verifier's caller-supplied inputs (kept as a struct for the test's literals).
+#[derive(Clone, Copy)]
+struct JointVerifierInputs {
+    evaluation_input_x: Fq,
+    batching_challenge_v: Fq,
+    accumulated_result: Fq,
+    op_queue_wire_commitments: [bb_ref::base::G1Affine; 4],
+}
+
 fn verify(
     vk: &bb_ref::base::vk::Vk<bb_ref::base::Bn254>,
     oink_proof: &[Fr],
@@ -38,7 +47,17 @@ fn verify(
     let num_public_inputs = oink_proof.len() - mega_zk_oink_length_without_public_inputs();
     let mut t = NativeTranscript::from_proof(oink_proof);
     let oink = verify_oink::<bb_ref::base::Bn254>(&MEGA_ZK, &layout, vk, &vk.hash(), &mut t, num_public_inputs, false);
-    let r = joint_verify(vk, &oink, joint_proof, inputs, &mut t);
+    let r = joint_verify::<bb_ref::base::Bn254, Fq>(
+        &(),
+        vk,
+        &oink,
+        joint_proof,
+        &inputs.evaluation_input_x,
+        &inputs.batching_challenge_v,
+        &inputs.accumulated_result,
+        &inputs.op_queue_wire_commitments,
+        &mut t,
+    );
     r.verified && r.pairing_points.check(&bn254_g2())
 }
 

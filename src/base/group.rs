@@ -28,7 +28,11 @@ pub trait GroupLike<F: FieldLike>: Clone + Debug + PartialEq {
     fn scalar_mul(&self, s: &F) -> Self;
     /// One multi-scalar multiplication. Natively an MSM; in goblin circuits an op-queue sequence.
     fn batch_mul(points: &[Self], scalars: &[F]) -> Self;
-    fn assert_equal(&self, other: &Self);
+    /// In-circuit: equality constraints on the coordinates (named to avoid shadowing inherent
+    /// `&mut self` methods on stdlib group types). Natively: nothing.
+    fn enforce_equal(&self, other: &Self);
+    /// bb `fix_witness`: gates pinning a witness point to its value. Natively nothing.
+    fn fix_witness(&mut self) {}
 }
 
 impl<P: SWCurveConfig> GroupLike<P::ScalarField> for Affine<P>
@@ -61,7 +65,7 @@ where
         assert_eq!(points.len(), scalars.len());
         Projective::<P>::msm_unchecked(points, scalars).into_affine()
     }
-    fn assert_equal(&self, _other: &Self) {}
+    fn enforce_equal(&self, _other: &Self) {}
 }
 
 /// Everything a generic prover/verifier needs to know about the curve it runs over.

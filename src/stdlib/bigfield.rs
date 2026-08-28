@@ -162,7 +162,7 @@ impl<N: PrimeField> BigField<N> {
     fn limb(&self, i: usize) -> Limb {
         self.state.borrow().limbs[i].clone()
     }
-    fn limb_element(&self, i: usize) -> FieldT {
+    pub fn limb_element(&self, i: usize) -> FieldT {
         self.state.borrow().limbs[i].element.clone()
     }
     fn limb_max(&self, i: usize) -> BigUint {
@@ -426,7 +426,11 @@ impl<N: PrimeField> BigField<N> {
     /// a 68-bit low limb and the rest, range-checked and tied by a linear identity.
     fn decompose_non_native_field_double_width_limb(ctx: &Ctx, limb_idx: u32, num_limb_bits: u64) -> [u32; 2] {
         let value = big(&ctx.borrow().get_variable(limb_idx));
-        assert!(value < pow2(num_limb_bits));
+        // Garbage witnesses (bb write-VK mock proofs) may exceed the limb width; the range
+        // constraints below record the failure like bb, which never aborts natively here.
+        if value >= pow2(num_limb_bits) {
+            ctx.borrow_mut().failure("decompose_non_native_field_double_width_limb: limb too large");
+        }
         let low = &value & (pow2(NUM_LIMB_BITS) - 1u64);
         let hi = &value >> NUM_LIMB_BITS;
         let (low_idx, hi_idx) = {
@@ -474,7 +478,11 @@ impl<N: PrimeField> BigField<N> {
         }
         let max_limb = Self::get_maximum_unreduced_limb_value();
         let limb_overflow = (0..NUM_LIMBS).any(|i| self.limb_max(i) > max_limb);
-        if self.get_maximum_value() > Self::get_maximum_unreduced_value() || limb_overflow {
+        let value_overflow = self.get_maximum_value() > Self::get_maximum_unreduced_value();
+        if value_overflow || limb_overflow {
+            if std::env::var("BBREF_REDUCE_BT").is_ok() {
+                eprintln!("self_reduce fired:\n{}", std::backtrace::Backtrace::force_capture());
+            }
             self.self_reduce();
         }
     }
@@ -1065,8 +1073,9 @@ impl<N: PrimeField> BigField<N> {
         let num_quotient_bits = Self::get_quotient_max_bits(&[Self::default_maximum_remainder()]) as u64;
         let v = sum_of_products_final + add_right_final_sum;
         let (quotient_value, remainder_value) = (&v / &modulus, &v % &modulus);
-        if fix_remainder_to_zero {
-            assert!(remainder_value == BigUint::from(0u64));
+        if fix_remainder_to_zero && remainder_value != BigUint::from(0u64) {
+            // Recorded, not aborted: the fixed-to-zero remainder constraint fails on mock witnesses.
+            ctx.borrow_mut().failure("bigfield: nonzero remainder fixed to zero");
         }
         let quotient = Self::create_from_u512_as_witness(&ctx, &quotient_value, false, num_quotient_bits);
         let remainder = if fix_remainder_to_zero {
@@ -1091,8 +1100,13 @@ impl<N: PrimeField> BigField<N> {
     pub fn msub_div(mul_left: &[Self], mul_right: &[Self], divisor: &Self, to_sub: &[Self], enable_divisor_nz_check: bool) -> Self {
         assert_eq!(mul_left.len(), mul_right.len());
         let modulus = Self::modulus();
-        assert!(divisor.get_value() % &modulus != BigUint::from(0u64), "bigfield: division by zero in msub_div");
         let ctx = divisor.ctx.clone().or_else(|| mul_left.iter().chain(mul_right).chain(to_sub).find_map(|e| e.ctx.clone()));
+        if divisor.get_value() % &modulus == BigUint::from(0u64) {
+            // Recorded, not aborted: write-VK mock witnesses can produce a zero divisor.
+            if let Some(c) = &ctx {
+                c.borrow_mut().failure("bigfield: division by zero in msub_div");
+            }
+        }
         if enable_divisor_nz_check {
             divisor.assert_is_not_equal(&Self::zero());
         }
@@ -1308,7 +1322,13 @@ impl<N: PrimeField> BigField<N> {
             assert_eq!(self.get_value(), other.get_value(), "bigfield::assert_equal on constants");
             return;
         } else if other.is_constant() {
-            assert!(self.get_value() < modulus, "bigfield::assert_equal: 'this' is not reduced");
+            // Garbage witnesses (write-VK mocks) may be unreduced; bb's guard is debug-only and the
+            // limb constraints below record the failure.
+            if self.get_value() >= modulus {
+                if let Some(c) = &ctx {
+                    c.borrow_mut().failure("bigfield::assert_equal: unreduced witness");
+                }
+            }
             for i in 0..NUM_LIMBS {
                 self.limb_element(i).sub(&other.limb_element(i)).assert_is_zero();
             }
@@ -1582,3 +1602,129 @@ impl<N: PrimeField> BigField<N> {
         }
     }
 }
+
+impl<N: PrimeField> Default for BigField<N>
+where
+    N: crate::base::field::NativeField,
+{
+    fn default() -> Self {
+        Self::zero()
+    }
+}
+impl<N: PrimeField> std::fmt::Debug for BigField<N> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "BigField({})", self.get_value())
+    }
+}
+impl<N: PrimeField> PartialEq for BigField<N> {
+    fn eq(&self, other: &Self) -> bool {
+        self.get_value() == other.get_value()
+    }
+}
+
+impl<N> crate::base::field::FieldLike for BigField<N>
+where
+    N: crate::base::field::NativeField + PrimeField,
+{
+    type Native = N;
+    type Ctx = Ctx;
+    fn ctx(&self) -> Option<Ctx> {
+        BigField::ctx(self)
+    }
+    fn constant(v: N) -> Self {
+        Self::from_native(&v)
+    }
+    fn from_witness(ctx: &Ctx, v: N) -> Self {
+        BigField::from_witness(ctx, &v)
+    }
+    fn value(&self) -> N {
+        self.get_native_value()
+    }
+    fn invert(&self) -> Self {
+        BigField::invert(self)
+    }
+    fn assert_equal(&self, other: &Self) {
+        BigField::assert_equal(self, other)
+    }
+    fn sqr(&self) -> Self {
+        BigField::sqr(self)
+    }
+    fn self_reduce(&self) {
+        BigField::self_reduce(self)
+    }
+    fn dbl(&self) -> Self {
+        BigField::add(self, self)
+    }
+    fn mul_self(&self) -> Self {
+        BigField::mul(self, self)
+    }
+    fn pow_u64(&self, e: u64) -> Self {
+        self.pow(u32::try_from(e).expect("bigfield exponents are 32-bit"))
+    }
+    fn fixed_witness(ctx: &Ctx, v: N) -> Self {
+        let mut f = Self::from_native(&v);
+        f.convert_constant_to_fixed_witness(ctx);
+        f
+    }
+    fn div(&self, other: &Self) -> Self {
+        BigField::div(self, other)
+    }
+    fn madd(&self, to_mul: &Self, to_add: &[Self]) -> Self {
+        BigField::madd(self, to_mul, to_add)
+    }
+    fn mult_madd(left: &[Self], right: &[Self], to_add: &[Self]) -> Self {
+        BigField::mult_madd(left, right, to_add, false)
+    }
+    fn fix(&self) {
+        BigField::fix_witness(self);
+    }
+    fn ranged_less_than(&self, _other: &Self, _num_bits: u32) -> Self {
+        unimplemented!("bigfield ranged_less_than in-circuit")
+    }
+    fn pow_field(&self, _exponent: &Self, _num_bits: u32) -> Self {
+        unimplemented!("bigfield pow_field in-circuit")
+    }
+}
+
+macro_rules! bigfield_binop {
+    ($trait:ident, $fn:ident, $method:ident) => {
+        impl<N: PrimeField + crate::base::field::NativeField> std::ops::$trait for BigField<N> {
+            type Output = Self;
+            fn $fn(self, o: Self) -> Self {
+                BigField::$method(&self, &o)
+            }
+        }
+        impl<N: PrimeField + crate::base::field::NativeField> std::ops::$trait<&BigField<N>> for BigField<N> {
+            type Output = Self;
+            fn $fn(self, o: &Self) -> Self {
+                BigField::$method(&self, o)
+            }
+        }
+    };
+}
+bigfield_binop!(Add, add, add);
+bigfield_binop!(Sub, sub, sub);
+bigfield_binop!(Mul, mul, mul);
+impl<N: PrimeField + crate::base::field::NativeField> std::ops::Neg for BigField<N> {
+    type Output = Self;
+    fn neg(self) -> Self {
+        BigField::neg(&self)
+    }
+}
+macro_rules! bigfield_assign {
+    ($trait:ident, $fn:ident, $method:ident) => {
+        impl<N: PrimeField + crate::base::field::NativeField> std::ops::$trait for BigField<N> {
+            fn $fn(&mut self, o: Self) {
+                *self = BigField::$method(self, &o);
+            }
+        }
+        impl<N: PrimeField + crate::base::field::NativeField> std::ops::$trait<&BigField<N>> for BigField<N> {
+            fn $fn(&mut self, o: &Self) {
+                *self = BigField::$method(self, o);
+            }
+        }
+    };
+}
+bigfield_assign!(AddAssign, add_assign, add);
+bigfield_assign!(SubAssign, sub_assign, sub);
+bigfield_assign!(MulAssign, mul_assign, mul);

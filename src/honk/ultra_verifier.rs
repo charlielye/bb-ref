@@ -61,14 +61,19 @@ pub fn reduce_to_pairing_check<C: Curve>(
     if flavor.has_zk {
         libra_commitments.push(t.receive("Libra:concatenation_commitment"));
     }
+    let rels = HonkRelations {
+        flavor,
+        layout: &layout,
+    };
+    let alphas = crate::honk::sumcheck::alpha_powers(
+        &oink.alpha,
+        crate::honk::sumcheck::RelationSet::<C::Fr>::total_subrelations(&rels) - 1,
+    );
     let sc = verify_sumcheck::<C>(
-        &HonkRelations {
-            flavor,
-            layout: &layout,
-        },
+        &rels,
         &SumcheckSpec::honk(flavor, &layout),
         &mut t,
-        &oink.alpha,
+        &alphas,
         &oink.params,
         &gate_challenges,
     );

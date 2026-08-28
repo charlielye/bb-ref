@@ -47,9 +47,51 @@ pub fn assert_polys_equal(
     for &i in compare.iter().filter(|i| is_selector(**i)) {
         scan(i, &mut first);
     }
-    if first.is_none() {
+    if first.is_none() || std::env::var("BBREF_DIFF_ALL").is_ok() {
         for &i in compare.iter().filter(|i| !is_selector(**i)) {
             scan(i, &mut first);
+        }
+    }
+    if let Ok(range) = std::env::var("BBREF_PRINT_SIGS") {
+        let (a, z) = range.split_once(':').unwrap();
+        let (a, z): (usize, usize) = (a.parse().unwrap(), z.parse().unwrap());
+        let sig = |polys: &[bb_ref::base::Poly], row: usize| -> String {
+            ["q_m", "q_l", "q_r", "q_o", "q_4", "q_c", "q_arith"]
+                .iter()
+                .map(|n| {
+                    let i = compare
+                        .iter()
+                        .copied()
+                        .find(|i| inst.layout.unshifted[*i].name() == *n)
+                        .unwrap();
+                    let v = polys[i].coeffs[row];
+                    if v == -Fr::from(1u64) {
+                        "-1".to_string()
+                    } else {
+                        format!("{:?}", v).chars().take(4).collect()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        for row in a..z.min(inst.polys[0].coeffs.len()) {
+            eprintln!("SIGROW {row}: [{}]", sig(&inst.polys, row));
+        }
+    }
+    if let Ok(at) = std::env::var("BBREF_DIFF_AT") {
+        let at: usize = at.parse().unwrap();
+        for row in at.saturating_sub(2)..=at + 2 {
+            for &j in compare {
+                let (a, b) = (inst.polys[j].coeffs[row], expected.polys[j].coeffs[row]);
+                if a != Fr::from(0u64) || b != Fr::from(0u64) {
+                    eprintln!(
+                        "AT row {row} {:>24}: rust {:?}{}",
+                        inst.layout.unshifted[j].name(),
+                        a,
+                        if a == b { String::new() } else { format!("  bb {b:?}") }
+                    );
+                }
+            }
         }
     }
     let Some((r, i)) = first else { return };
