@@ -8,4 +8,5 @@ pub mod chonk;
 pub mod circuit;
 pub mod goblin;
 pub mod honk;
+pub mod rollup;
 pub mod stdlib;

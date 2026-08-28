@@ -1290,6 +1290,17 @@ impl<N: PrimeField> BigField<N> {
         ctx.borrow_mut().range_constrain_two_limbs(r2, r3, NUM_LIMB_BITS as usize, Self::num_last_limb_bits() as usize);
     }
 
+    /// bb `bigfield::set_public`: canonical form as two public inputs (limbs combined pairwise).
+    pub fn set_public(&self) -> u32 {
+        self.self_reduce();
+        let shift = FieldT::constant(from_u256(U256::from(1u64) << NUM_LIMB_BITS as u32));
+        let lo = self.limb_element(0).add(&self.limb_element(1).mul(&shift));
+        let hi = self.limb_element(2).add(&self.limb_element(3).mul(&shift));
+        let start = lo.set_public();
+        hi.set_public();
+        start
+    }
+
     pub fn assert_equal(&self, other: &Self) {
         let ctx = self.ctx_of(other);
         let modulus = Self::modulus();

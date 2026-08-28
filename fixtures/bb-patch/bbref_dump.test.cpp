@@ -57,6 +57,9 @@
 #include <sstream>
 #include "barretenberg/flavor/ultra_flavor.hpp"
 #include "barretenberg/flavor/ultra_zk_flavor.hpp"
+#include "barretenberg/flavor/ultra_recursive_flavor.hpp"
+#include "barretenberg/stdlib/special_public_inputs/special_public_inputs.hpp"
+#include "barretenberg/stdlib/proof/proof.hpp"
 #include "barretenberg/stdlib_circuit_builders/mega_circuit_builder.hpp"
 #include "barretenberg/ultra_honk/oink_prover.hpp"
 #include "barretenberg/srs/global_crs.hpp"
@@ -1130,6 +1133,45 @@ TEST(BbRefDump, ChonkFlow)
     }
     auto proof = ivc->prove();
     write_proof(out / "proof_fields.bin", proof.to_field_elements());
+}
+
+// --- B2: Ultra recursive verifier ------------------------------------------------------------------------
+// BBREF_INNER_PROGRAM=<program.json> BBREF_INNER_WITNESS=<witness.gz> BBREF_OUT=<dir>
+//   ./bin/dsl_tests --gtest_filter='BbRefDump.UltraRecursion'
+// Proves the inner ACIR program with non-ZK UltraHonk, then builds an outer ULTRA circuit running
+// bb's recursive Ultra verifier (UltraRecursiveFlavor over UltraCircuitBuilder, DefaultIO) and dumps
+// its instance. Run seeded (HARDWARE_CONCURRENCY=1 BB_RNG_SEED=...): the verifier's batch_mul masks
+// points with engine randomness.
+TEST(BbRefDump, UltraRecursion)
+{
+    const char* inner_program = std::getenv("BBREF_INNER_PROGRAM");
+    const char* inner_witness = std::getenv("BBREF_INNER_WITNESS");
+    const char* out = std::getenv("BBREF_OUT");
+    if (inner_program == nullptr || inner_witness == nullptr || out == nullptr) {
+        GTEST_SKIP() << "set BBREF_INNER_PROGRAM, BBREF_INNER_WITNESS, BBREF_OUT";
+    }
+    bb::srs::init_file_crs_factory(bb::srs::bb_crs_path());
+    auto bytecode = get_bytecode(inner_program);
+    auto witness_data = get_bytecode(inner_witness);
+    acir_format::AcirProgram program{ acir_format::circuit_buf_to_acir_format(std::move(bytecode), false), {} };
+    program.witness = acir_format::witness_buf_to_witness_vector(std::move(witness_data));
+    acir_format::ProgramMetadata metadata{ .has_ipa_claim = false };
+    auto inner_circuit = acir_format::create_circuit<UltraCircuitBuilder>(program, metadata);
+    auto inner_instance = std::make_shared<ProverInstance_<UltraFlavor>>(inner_circuit);
+    auto inner_vk = std::make_shared<UltraFlavor::VerificationKey>(inner_instance->get_precomputed());
+    UltraProver_<UltraFlavor> inner_prover{ inner_instance, inner_vk };
+    auto inner_proof = inner_prover.construct_proof();
+
+    using RecursiveFlavor = UltraRecursiveFlavor_<UltraCircuitBuilder>;
+    UltraCircuitBuilder outer;
+    auto stdlib_vk_and_hash = std::make_shared<typename RecursiveFlavor::VKAndHash>(outer, inner_vk);
+    UltraVerifier_<RecursiveFlavor, bb::stdlib::recursion::honk::DefaultIO<UltraCircuitBuilder>> verifier{ stdlib_vk_and_hash };
+    bb::stdlib::Proof<UltraCircuitBuilder> stdlib_inner_proof(outer, inner_proof);
+    auto output = verifier.verify_proof(stdlib_inner_proof);
+    bb::stdlib::recursion::honk::DefaultIO<UltraCircuitBuilder> io;
+    io.pairing_inputs = output.points_accumulator;
+    io.set_public();
+    dump_from_builder<UltraFlavor>(outer, out);
 }
 
 // --- M13: stdlib programs (gate-exactness of the in-circuit primitives) ---------------------------------

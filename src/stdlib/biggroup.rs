@@ -1079,6 +1079,83 @@ impl<P: BigGroupCurve> BatchLookupTable<P> {
     }
 }
 
+
+impl<P: BigGroupCurve> std::fmt::Debug for Element<P> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Element({:?})", self.get_value())
+    }
+}
+impl<P: BigGroupCurve> PartialEq for Element<P> {
+    fn eq(&self, other: &Self) -> bool {
+        self.get_value() == other.get_value()
+    }
+}
+
+impl<P: BigGroupCurve> Element<P> {
+    /// bb `element::set_public`: the standard form's coordinates as four 136-bit-limb public inputs.
+    pub fn set_public(&self) -> u32 {
+        let standard = self.get_standard_form();
+        let start = standard.x.set_public();
+        standard.y.set_public();
+        start
+    }
+}
+
+impl crate::base::codec::Transcriptable<FieldT> for Element<ark_bn254::g1::Config> {
+    fn num_fields() -> usize {
+        4
+    }
+    /// bb `StdlibCodec::serialize_to_fields` for a bn254 commitment: each coordinate's limbs combined
+    /// at the 2·NUM_LIMB_BITS boundary.
+    fn to_fields(&self) -> Vec<FieldT> {
+        let shift = FieldT::constant(crate::base::field::from_u256(crate::base::field::U256::from(1u64) << NUM_LIMB_BITS as u32));
+        let half = |c: &Fq<ark_bn254::g1::Config>, lo: usize| c.get_limb(lo).element.add(&c.get_limb(lo + 1).element.mul(&shift));
+        vec![half(&self.x, 0), half(&self.x, 2), half(&self.y, 0), half(&self.y, 2)]
+    }
+    /// bb `StdlibCodec::deserialize_from_fields`: bigfield halves with in-field validation, infinity
+    /// auto-detected from zero coordinates, on-curve asserted.
+    fn from_fields(f: &[FieldT]) -> Self {
+        let x = Fq::<ark_bn254::g1::Config>::from_halves(&f[0], &f[1], false, 0);
+        x.assert_is_in_field();
+        let y = Fq::<ark_bn254::g1::Config>::from_halves(&f[2], &f[3], false, 0);
+        y.assert_is_in_field();
+        Self::new(x, y, true)
+    }
+}
+
+impl crate::base::group::GroupLike<FieldT> for Element<ark_bn254::g1::Config> {
+    type Native = Affine<ark_bn254::g1::Config>;
+    fn one(ctx: &Ctx) -> Self {
+        Element::one(ctx)
+    }
+    fn constant(ctx: &Ctx, p: Self::Native) -> Self {
+        Element::constant_point(Some(ctx.clone()), &p)
+    }
+    fn from_witness(ctx: &Ctx, p: Self::Native) -> Self {
+        Element::from_witness(ctx, &p)
+    }
+    fn value(&self) -> Self::Native {
+        self.get_value()
+    }
+    fn neg(&self) -> Self {
+        Element::neg(self)
+    }
+    fn add(&self, other: &Self) -> Self {
+        Element::add(self, other)
+    }
+    fn scalar_mul(&self, s: &FieldT) -> Self {
+        Element::scalar_mul(self, s, 0)
+    }
+    /// bb `Commitment::batch_mul(points, scalars)` — the recursive verifiers' defaulted call:
+    /// full-width scalars with edge-case masking.
+    fn batch_mul(points: &[Self], scalars: &[FieldT]) -> Self {
+        Element::batch_mul(points, scalars, 0, true)
+    }
+    fn assert_equal(&self, other: &Self) {
+        self.incomplete_assert_equal(other);
+    }
+}
+
 impl BigGroupCurve for ark_bn254::g1::Config {
     fn biggroup_offset_generator() -> Affine<Self> {
         let x = ark_bn254::Fq::from(BigUint::parse_bytes(b"169b33374f53b95f16edf369c34509da6485297ee10452a62af4bd2820d6fb33", 16).unwrap());
