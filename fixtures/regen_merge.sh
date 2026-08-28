@@ -56,3 +56,6 @@ done
 # B2: the Ultra recursive verifier over an a_1_mul inner proof (seeded: batch_mul masking draws)
 mkdir -p $T/ultra_recursion/a_1_mul
 HARDWARE_CONCURRENCY=1 BB_RNG_SEED=12345 BBREF_INNER_PROGRAM=$ACIR/a_1_mul/target/program.json BBREF_INNER_WITNESS=$ACIR/a_1_mul/target/witness.gz BBREF_OUT=$T/ultra_recursion/a_1_mul "$BIN" --gtest_filter='BbRefDump.UltraRecursion'
+# B3: Ultra recursion with IPA accumulation (RollupIO; seeded inner witnesses + IPA randomness)
+mkdir -p $T/ultra_rollup_recursion
+HARDWARE_CONCURRENCY=1 BB_RNG_SEED=12345 BBREF_OUT=$T/ultra_rollup_recursion "$BIN" --gtest_filter='BbRefDump.UltraRollupRecursion'

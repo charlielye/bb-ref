@@ -8,6 +8,7 @@
 // rom_logup_records.txt, proof.bin (the proof bb produces from this instance, 32 bytes per field).
 #include "acir_format.hpp"
 #include "acir_to_constraint_buf.hpp"
+#include "recursion_constraint_output.hpp"
 #include "barretenberg/common/get_bytecode.hpp"
 #include "barretenberg/flavor/mega_app_flavor.hpp"
 #include "barretenberg/flavor/mega_kernel_flavor.hpp"
@@ -1171,6 +1172,53 @@ TEST(BbRefDump, UltraRecursion)
     bb::stdlib::recursion::honk::DefaultIO<UltraCircuitBuilder> io;
     io.pairing_inputs = output.points_accumulator;
     io.set_public();
+    dump_from_builder<UltraFlavor>(outer, out);
+}
+
+// --- B3: Ultra recursive verifier with IPA accumulation (RollupIO) ---------------------------------------
+// BBREF_OUT=<dir> ./bin/dsl_tests --gtest_filter='BbRefDump.UltraRollupRecursion'
+// Inner: a seeded arbitrary Ultra circuit with RollupIO::add_default (random valid IPA claim, proof on
+// builder.ipa_proof), proven with UltraFlavor (combined honk+ipa proof). Outer: bb's recursive verifier
+// with RollupIO, then the DSL finalize path (single-claim IPA accumulation + RollupIO publish). Run with
+// HARDWARE_CONCURRENCY=1 BB_RNG_SEED=<seed>: the inner witnesses, the random IPA claim and the outer
+// masked batch_muls all draw from the engine.
+TEST(BbRefDump, UltraRollupRecursion)
+{
+    const char* out = std::getenv("BBREF_OUT");
+    if (out == nullptr) {
+        GTEST_SKIP() << "set BBREF_OUT";
+    }
+    bb::srs::init_file_crs_factory(bb::srs::bb_crs_path());
+    bb::srs::init_grumpkin_file_crs_factory(bb::srs::bb_crs_path());
+    UltraCircuitBuilder inner;
+    for (size_t i = 0; i < (1 << 6); ++i) {
+        fr a = fr::random_element();
+        fr b_v = fr::random_element();
+        fr c = fr::random_element();
+        fr d = a + b_v + c;
+        uint32_t a_idx = inner.add_variable(a);
+        uint32_t b_idx = inner.add_variable(b_v);
+        uint32_t c_idx = inner.add_variable(c);
+        uint32_t d_idx = inner.add_variable(d);
+        inner.create_big_add_gate({ a_idx, b_idx, c_idx, d_idx, fr(1), fr(1), fr(1), fr(-1), fr(0) });
+    }
+    bb::stdlib::recursion::honk::RollupIO::add_default(inner);
+    auto inner_instance = std::make_shared<ProverInstance_<UltraFlavor>>(inner);
+    auto inner_vk = std::make_shared<UltraFlavor::VerificationKey>(inner_instance->get_precomputed());
+    UltraProver_<UltraFlavor> inner_prover{ inner_instance, inner_vk };
+    auto inner_proof = inner_prover.construct_proof();
+
+    using RecursiveFlavor = UltraRecursiveFlavor_<UltraCircuitBuilder>;
+    UltraCircuitBuilder outer;
+    auto stdlib_vk_and_hash = std::make_shared<typename RecursiveFlavor::VKAndHash>(outer, inner_vk);
+    UltraVerifier_<RecursiveFlavor, bb::stdlib::recursion::honk::RollupIO> verifier{ stdlib_vk_and_hash };
+    bb::stdlib::Proof<UltraCircuitBuilder> stdlib_inner_proof(outer, inner_proof);
+    auto output = verifier.verify_proof(stdlib_inner_proof);
+    write_proof(std::filesystem::path(out) / "inner_proof.bin", inner_proof);
+    write_file(std::filesystem::path(out) / "inner_vk", to_buffer(*inner_vk));
+    acir_format::HonkRecursionConstraintsOutput<UltraCircuitBuilder> outputs;
+    outputs.update(output, /*update_ipa_data=*/true);
+    outputs.finalize(outer, /*is_hn_recursion_constraints=*/false, /*has_ipa_claim=*/true);
     dump_from_builder<UltraFlavor>(outer, out);
 }
 

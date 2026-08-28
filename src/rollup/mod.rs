@@ -2,6 +2,9 @@
 //! arithmetic — non-goblin bn254 biggroup commitments with native `FieldT` scalars (bb
 //! `UltraRecursiveFlavor_<UltraCircuitBuilder>` / `stdlib::bn254<UltraCircuitBuilder>`).
 
+pub mod ipa;
+pub mod ipa_recursive;
+
 use crate::base::codec::Transcriptable;
 use crate::base::group::PairingPoints;
 use crate::base::transcript::Transcript;
@@ -87,4 +90,103 @@ pub fn vk_to_witnesses_ultra(ctx: &Ctx, vk: &Vk<crate::base::group::Bn254>) -> (
     };
     let hash = f(&vk.hash());
     (stdlib_vk, hash)
+}
+
+// ---- RollupIO (pairing points + accumulated IPA claim on the public inputs) ----
+
+pub const ROLLUP_PUBLIC_INPUTS_SIZE: usize = 8 + 6;
+
+pub struct RollupRecursiveOutput {
+    pub points_accumulator: PairingPoints<StdUltraBn254>,
+    pub ipa_claim: ipa_recursive::IpaClaimCt,
+    /// The nested proof's 64 IPA-proof fields (witnesses), for the nested reduce-verify.
+    pub ipa_proof: Vec<FieldT>,
+    pub public_inputs: Vec<FieldT>,
+}
+
+/// bb stdlib `RollupIO::reconstruct_from_public`.
+pub fn reconstruct_rollup_io(public_inputs: &[FieldT]) -> (PairingPoints<StdUltraBn254>, ipa_recursive::IpaClaimCt) {
+    assert!(public_inputs.len() >= ROLLUP_PUBLIC_INPUTS_SIZE, "public inputs too small for RollupIO");
+    let f = &public_inputs[public_inputs.len() - ROLLUP_PUBLIC_INPUTS_SIZE..];
+    let pairing = PairingPoints {
+        p0: G::from_fields(&f[0..4]),
+        p1: G::from_fields(&f[4..8]),
+    };
+    let claim = ipa_recursive::IpaClaimCt::reconstruct_from_public(&f[8..14]);
+    (pairing, claim)
+}
+
+/// bb stdlib `RollupIO::set_public`: pairing points then the IPA claim.
+pub fn set_rollup_io_public(pairing: &PairingPoints<StdUltraBn254>, claim: &ipa_recursive::IpaClaimCt) -> u32 {
+    let start = set_ultra_pairing_points_public(pairing);
+    claim.set_public();
+    start
+}
+
+/// bb stdlib `RollupIO::add_default`: default (infinity) pairing points as fixed zero public inputs,
+/// a random valid IPA claim, and its proof left for `builder.ipa_proof`.
+pub fn add_default_rollup_io(ctx: &Ctx) -> Vec<crate::base::Fr> {
+    // bb constructs the random claim first; the pairing points and claim publish afterwards.
+    let (claim, ipa_proof) = ipa_recursive::create_random_valid_ipa_claim_and_proof(ctx);
+    crate::stdlib::io::set_default_pairing_points_public(ctx);
+    claim.set_public();
+    ctx.borrow_mut().ipa_proof = ipa_proof.clone();
+    ipa_proof
+}
+
+/// bb `UltraVerifier_<UltraRecursiveFlavor_, RollupIO>::verify_proof`: split the combined proof,
+/// reduce the Honk part, aggregate the inner pairing points and pass the inner IPA claim upward.
+pub fn verify_recursive_ultra_rollup(
+    flavor: &'static FlavorDesc,
+    ctx: &Ctx,
+    vk: &Vk<StdUltraBn254>,
+    vk_hash: &FieldT,
+    combined_proof: &[FieldT],
+) -> RollupRecursiveOutput {
+    let (honk_proof, ipa_proof) = ipa_recursive::split_rollup_proof(combined_proof);
+    let r = reduce_to_pairing_check::<StdUltraBn254>(flavor, vk, vk_hash, honk_proof, ctx);
+    let (mut pi_points, ipa_claim) = reconstruct_rollup_io(&r.public_inputs);
+    pi_points = aggregate_pair(pi_points, r.pcs_pairing_points);
+    RollupRecursiveOutput {
+        points_accumulator: pi_points,
+        ipa_claim,
+        ipa_proof: ipa_proof.to_vec(),
+        public_inputs: r.public_inputs,
+    }
+}
+
+/// Native verification of a rollup (UltraFlavor + RollupIO) proof: the Honk part, both pairing
+/// checks, and the appended 64-field IPA proof against the published claim.
+pub fn verify_ultra_rollup(
+    flavor: &FlavorDesc,
+    vk: &Vk<crate::base::group::Bn254>,
+    public_inputs: &[crate::base::Fr],
+    proof: &[crate::base::Fr],
+    g2: &crate::base::group::G2Points,
+    grumpkin_key: &crate::base::GrumpkinKey,
+) -> bool {
+    use crate::base::group::Bn254;
+    use ark_ec::AffineRepr;
+    assert!(proof.len() > ipa::IPA_PROOF_LENGTH);
+    let (honk_proof, ipa_fields) = proof.split_at(proof.len() - ipa::IPA_PROOF_LENGTH);
+    let full: Vec<_> = [public_inputs, honk_proof].concat();
+    let r = reduce_to_pairing_check::<Bn254>(flavor, vk, &vk.hash(), &full, &());
+    if !r.succeeded {
+        return false;
+    }
+    let pis = &r.public_inputs;
+    assert!(pis.len() >= ROLLUP_PUBLIC_INPUTS_SIZE);
+    let f = &pis[pis.len() - ROLLUP_PUBLIC_INPUTS_SIZE..];
+    let pairing = PairingPoints::<Bn254>::from_fields(&f[0..8]);
+    let claim = ipa::IpaClaim {
+        challenge: <crate::base::Fq as Transcriptable<crate::base::Fr>>::from_fields(&f[8..10]),
+        evaluation: <crate::base::Fq as Transcriptable<crate::base::Fr>>::from_fields(&f[10..12]),
+        commitment: <crate::base::GrumpkinAffine as Transcriptable<crate::base::Fr>>::from_fields(&f[12..14]),
+    };
+    let pi_ok = (AffineRepr::is_zero(&pairing.p0) && AffineRepr::is_zero(&pairing.p1)) || pairing.check(g2);
+    if !(pi_ok && r.pcs_pairing_points.check(g2)) {
+        return false;
+    }
+    let mut t = ipa::NativeTranscript::from_proof(ipa_fields);
+    ipa::reduce_verify(grumpkin_key, &claim, &mut t)
 }

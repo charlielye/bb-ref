@@ -58,5 +58,8 @@ pub fn prove_ultra(inst: &mut ProverInstance, vk: &Vk<Bn254>, rng: &mut dyn Rng)
         &[],
     );
     kzg_open(claim, &ck, &mut t);
-    t.export_proof()
+    let mut proof = t.export_proof();
+    // bb `UltraProver_::construct_proof`: a RollupIO circuit's IPA proof rides after the Honk proof.
+    proof.extend_from_slice(&inst.ipa_proof);
+    proof
 }

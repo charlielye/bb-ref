@@ -4,7 +4,7 @@
 
 use super::bool::BoolT;
 use crate::base::codec::{ChallengeField, FromChallenge, Transcriptable};
-use crate::base::field::{from_u256, u256, u256_low_bits, u256_num_bits, u256_shr, FieldLike};
+use crate::base::field::{from_u256, u256, u256_low_bits, u256_num_bits, u256_shr, FieldLike, U256};
 use crate::base::Fr;
 use crate::circuit::builder::{AddQuad, AddTriple, ArithmeticTriple, MulQuad, DEFAULT_PLOOKUP_RANGE_BITNUM};
 use crate::circuit::{Builder, IS_CONSTANT};
@@ -686,6 +686,31 @@ impl FieldT {
 
 /// bb `split_unique`: `field = lo + hi * 2^lo_bits` with `lo < 2^lo_bits`, `hi < 2^(254 - lo_bits)`
 /// and the pair validated to be the unique in-field decomposition.
+/// bb `field_t::no_wrap_split_at`: split a value known to fit `num_bits` at `lsb_index` with range
+/// constraints on both halves.
+pub fn no_wrap_split_at(f: &FieldT, lsb_index: usize, num_bits: usize) -> (FieldT, FieldT) {
+    assert!(lsb_index < num_bits);
+    let value = u256(&f.get_value());
+    let hi_val = u256_shr(value, lsb_index as u32);
+    let lo_val = u256_low_bits(value, lsb_index as u32);
+    if f.is_constant() {
+        return (FieldT::constant(from_u256(lo_val)), FieldT::constant(from_u256(hi_val)));
+    }
+    if lsb_index == 0 {
+        f.create_range_constraint(num_bits as u64);
+        return (FieldT::constant(Fr::zero()), f.clone());
+    }
+    let ctx = f.ctx();
+    let lo = FieldT::from_witness(&ctx, from_u256(lo_val));
+    let hi = FieldT::from_witness(&ctx, from_u256(hi_val));
+    lo.create_range_constraint(lsb_index as u64);
+    hi.create_range_constraint((num_bits - lsb_index) as u64);
+    let shift = FieldT::constant(from_u256(U256::from(1u64) << lsb_index as u32));
+    let reconstructed = FieldT::add(&lo, &FieldT::mul(&hi, &shift));
+    f.assert_equal(&reconstructed);
+    (lo, hi)
+}
+
 pub fn split_unique(field: &FieldT, lo_bits: u32) -> (FieldT, FieldT) {
     const MAX_BITS: u32 = 254;
     let value = u256(&field.get_value());

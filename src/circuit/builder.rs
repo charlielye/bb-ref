@@ -145,6 +145,8 @@ pub struct Builder {
     pub tau: HashMap<u32, u32>,
     current_tag: u32,
     zero_idx: u32,
+    /// bb `builder.ipa_proof`: a rollup circuit's appended 64-field IPA proof (RollupIO).
+    pub ipa_proof: Vec<Fr>,
     public_inputs: Vec<u32>,
     public_inputs_finalized: bool,
     num_gates: usize,
@@ -180,6 +182,7 @@ impl Builder {
             tau: HashMap::new(),
             current_tag: DEFAULT_TAG,
             zero_idx: 0,
+            ipa_proof: vec![],
             public_inputs: vec![],
             public_inputs_finalized: false,
             num_gates: 0,

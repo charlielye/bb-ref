@@ -65,6 +65,47 @@ impl CycleScalar {
     pub fn ctx(&self) -> Option<Ctx> {
         same_ctx(&self.lo.ctx, &self.hi.ctx)
     }
+
+    /// bb `cycle_scalar(BigScalarField&)`: a bigfield grumpkin scalar recombined into the 128/126-bit
+    /// halves, with `no_wrap_split_at` splits where limb bounds overflow.
+    pub fn from_bigfield(scalar: &crate::stdlib::bigfield::BigField<crate::base::Fq>) -> Self {
+        use crate::base::field::{from_u256, U256};
+        use crate::stdlib::bigfield::{NUM_LIMB_BITS as LIMB_BITS, NUM_LIMBS as _};
+        use num_bigint::BigUint;
+        const LO_BITS: usize = 128;
+        const HI_BITS: usize = 126;
+        if scalar.get_maximum_value() >= (BigUint::from(1u64) << (LO_BITS + HI_BITS)) {
+            scalar.self_reduce();
+        }
+        let mut limb0 = scalar.get_limb(0).element;
+        let mut limb1 = scalar.get_limb(1).element;
+        let limb2 = scalar.get_limb(2).element;
+        let limb3 = scalar.get_limb(3).element;
+        let mut limb1_max = scalar.get_limb(1).maximum_value;
+        let limb0_max = scalar.get_limb(0).maximum_value;
+        let default_max = crate::stdlib::bigfield::BigField::<crate::base::Fq>::default_maximum_limb();
+        if limb0_max > default_max {
+            let limb0_max_bits = limb0_max.bits() as usize;
+            let (limb0_lo, limb0_hi) = crate::stdlib::field::no_wrap_split_at(&limb0, LIMB_BITS as usize, limb0_max_bits);
+            limb0 = limb0_lo;
+            limb1 = limb1.add(&limb0_hi);
+            limb1_max += &limb0_max >> LIMB_BITS;
+        }
+        let lo_bits_in_limb_1 = LO_BITS - LIMB_BITS as usize;
+        let (limb1_lo, limb1_hi) = if limb1_max < (BigUint::from(1u64) << lo_bits_in_limb_1) {
+            (limb1, FieldT::constant(Fr::from(0u64)))
+        } else {
+            let limb1_max_bits = limb1_max.bits() as usize;
+            crate::stdlib::field::no_wrap_split_at(&limb1, lo_bits_in_limb_1, limb1_max_bits)
+        };
+        let shift_1 = FieldT::constant(from_u256(U256::from(1u64) << LIMB_BITS as u32));
+        let lo = limb0.add(&limb1_lo.mul(&shift_1));
+        let limb2_shift = FieldT::constant(from_u256(U256::from(1u64) << (2 * LIMB_BITS as usize - LO_BITS) as u32));
+        let limb3_shift = FieldT::constant(from_u256(U256::from(1u64) << (3 * LIMB_BITS as usize - LO_BITS) as u32));
+        let hi = limb1_hi.add_two(&limb2.mul(&limb2_shift), &limb3.mul(&limb3_shift));
+        Self::new(lo, hi)
+    }
+
     pub fn get_value(&self) -> Fq {
         let two_pow_128 = Fq::from(2u64).pow([LO_BITS as u64]);
         from_u256::<Fq>(u256(&self.lo.get_value())) + from_u256::<Fq>(u256(&self.hi.get_value())) * two_pow_128
@@ -147,6 +188,14 @@ impl CycleGroup {
         }
     }
     /// bb `from_constant_witness`: fixed witnesses holding a constant point.
+    /// bb `cycle_group::from_witness`: plain coordinate witnesses ((0,0) for infinity), on-curve checked.
+    pub fn from_witness(ctx: &Ctx, p: GrumpkinAffine) -> Self {
+                let (xv, yv) = if AffineRepr::is_zero(&p) { (Fr::from(0u64), Fr::from(0u64)) } else { (p.x, p.y) };
+        let x = FieldT::from_witness(ctx, xv);
+        let y = FieldT::from_witness(ctx, yv);
+        Self::from_xy(x, y, true)
+    }
+
     pub fn from_constant_witness(ctx: &Ctx, p: GrumpkinAffine) -> Self {
         if p.is_zero() {
             return Self {
@@ -194,6 +243,15 @@ impl CycleGroup {
         res.assert_is_zero();
     }
     /// Force the coordinates of a point at infinity to `(0, 0)`.
+    /// bb `cycle_group::set_public`: standardize (infinity to (0,0)) then publish both coordinates.
+    pub fn set_public(&self) -> u32 {
+        let mut standard = self.clone();
+        standard.standardize();
+        let start = standard.x.set_public();
+        standard.y.set_public();
+        start
+    }
+
     pub fn standardize(&mut self) {
         self.x = FieldT::conditional_assign(&self.is_infinity, &FieldT::constant(Fr::zero()), &self.x);
         self.y = FieldT::conditional_assign(&self.is_infinity, &FieldT::constant(Fr::zero()), &self.y);
