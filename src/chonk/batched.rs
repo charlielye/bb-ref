@@ -190,7 +190,7 @@ pub fn joint_prove(
         .collect();
     let round_claims = sumcheck_round_claims(&committed.univariates, &committed.evaluations, &challenge);
     crate::base::timing::phase("  joint: sumcheck");
-    let claim = shplemini_prove(
+    let claim = shplemini_prove::<crate::base::Bn254>(
         &unshifted,
         &to_be_shifted,
         &challenge,
@@ -199,7 +199,7 @@ pub fn joint_prove(
         Some(&libra),
         &round_claims,
     );
-    kzg_open(claim, ck, t);
+    kzg_open::<crate::base::Bn254>(claim, ck, t);
     crate::base::timing::phase("  joint: shplemini + kzg");
 }
 

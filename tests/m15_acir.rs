@@ -32,7 +32,7 @@ fn verify(vk: &Vk<Bn254>, proof: &ChonkProof) -> bool {
 }
 
 fn read_hiding_vk(path: &Path) -> Vk<Bn254> {
-    Vk::from_bytes(&std::fs::read(path).unwrap(), MEGA_ZK.layout().num_precomputed)
+    Vk::<bb_ref::base::Bn254>::from_bytes(&std::fs::read(path).unwrap(), MEGA_ZK.layout().num_precomputed)
 }
 
 /// `bb write_vk --scheme chonk --circuit_kind <kind>`: the VK of every mock-protocol artifact.

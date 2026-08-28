@@ -12,13 +12,22 @@ pub const NUM_LIMB_BITS: u32 = 68;
 const LOWER_BITS: u32 = 2 * NUM_LIMB_BITS; // 136
 const TOTAL_BITS: u32 = 254;
 
-pub trait Transcriptable<TF: FL>: Sized {
+/// The transcript's word type: a field element natively (`Fr`, `FieldT`) or a raw 256-bit integer
+/// for the Keccak transcript (bb `Codec::DataType`).
+pub trait TranscriptData: Clone + PartialEq + std::fmt::Debug {
+    /// In-circuit: a copy constraint binding two transcript words (bb `assert_equal`); native: no-op.
+    fn assert_equal(&self, _other: &Self) {}
+}
+impl TranscriptData for Fr {}
+impl TranscriptData for U256 {}
+
+pub trait Transcriptable<TF: TranscriptData>: Sized {
     fn num_fields() -> usize;
     fn to_fields(&self) -> Vec<TF>;
     fn from_fields(fields: &[TF]) -> Self;
 }
 
-pub trait FromChallenge<TF: FL>: Sized {
+pub trait FromChallenge<TF: TranscriptData>: Sized {
     /// From a full-width (~254-bit) hash output.
     fn full(c: TF) -> Self;
     /// From a 127-bit limb of a split hash output.
@@ -27,7 +36,7 @@ pub trait FromChallenge<TF: FL>: Sized {
 
 /// Splitting a hash output into two 127-bit halves (natively arithmetic; in-circuit a range-gated
 /// decomposition).
-pub trait ChallengeField: FL {
+pub trait ChallengeField: TranscriptData {
     fn split_challenge(&self) -> [Self; 2];
 }
 
@@ -148,7 +157,7 @@ impl Transcriptable<Fr> for GrumpkinAffine {
     }
 }
 
-impl<TF: FL, T: Transcriptable<TF>, const N: usize> Transcriptable<TF> for [T; N] {
+impl<TF: TranscriptData, T: Transcriptable<TF>, const N: usize> Transcriptable<TF> for [T; N] {
     fn num_fields() -> usize {
         N * T::num_fields()
     }
@@ -184,4 +193,103 @@ impl FromChallenge<Fr> for Fq {
 /// Helper for values that are natively integers but travel as field elements.
 pub fn fr_to_usize(f: &Fr) -> usize {
     u256_to_u64(&u256(f)) as usize
+}
+
+// ---- Keccak transcript (bb `U256Codec`): words are raw 256-bit integers ----
+
+impl Transcriptable<U256> for U256 {
+    fn num_fields() -> usize {
+        1
+    }
+    fn to_fields(&self) -> Vec<U256> {
+        vec![*self]
+    }
+    fn from_fields(f: &[U256]) -> Self {
+        f[0]
+    }
+}
+
+impl Transcriptable<U256> for Fr {
+    fn num_fields() -> usize {
+        1
+    }
+    fn to_fields(&self) -> Vec<U256> {
+        vec![u256(self)]
+    }
+    fn from_fields(f: &[U256]) -> Self {
+        // bb asserts canonicity: value < r.
+        assert!(f[0] < <Fr as ark_ff::PrimeField>::MODULUS, "non-canonical scalar in keccak proof");
+        from_u256(f[0])
+    }
+}
+
+macro_rules! int_u256_transcriptable {
+    ($t:ty) => {
+        impl Transcriptable<U256> for $t {
+            fn num_fields() -> usize {
+                1
+            }
+            fn to_fields(&self) -> Vec<U256> {
+                vec![U256::from(*self as u64)]
+            }
+            fn from_fields(f: &[U256]) -> Self {
+                u256_to_u64(&f[0]) as $t
+            }
+        }
+    };
+}
+int_u256_transcriptable!(u64);
+int_u256_transcriptable!(u32);
+
+impl Transcriptable<U256> for bool {
+    fn num_fields() -> usize {
+        1
+    }
+    fn to_fields(&self) -> Vec<U256> {
+        vec![U256::from(*self as u64)]
+    }
+    fn from_fields(f: &[U256]) -> Self {
+        f[0] != U256::from(0u64)
+    }
+}
+
+/// bn254 G1 under `U256Codec`: `[x, y]` as full-width base-field values; infinity is `(0, 0)`.
+impl Transcriptable<U256> for G1Affine {
+    fn num_fields() -> usize {
+        2
+    }
+    fn to_fields(&self) -> Vec<U256> {
+        match self.xy() {
+            None => vec![U256::from(0u64); 2],
+            Some((x, y)) => vec![u256(&x), u256(&y)],
+        }
+    }
+    fn from_fields(f: &[U256]) -> Self {
+        if f[0] == U256::from(0u64) && f[1] == U256::from(0u64) {
+            return G1Affine::identity();
+        }
+        assert!(
+            f[0] < <Fq as ark_ff::PrimeField>::MODULUS && f[1] < <Fq as ark_ff::PrimeField>::MODULUS,
+            "non-canonical base field element in keccak proof"
+        );
+        let p = G1Affine::new_unchecked(from_u256::<Fq>(f[0]), from_u256::<Fq>(f[1]));
+        assert!(p.is_on_curve(), "deserialized point is not on the curve");
+        p
+    }
+}
+
+impl FromChallenge<U256> for Fr {
+    fn full(c: U256) -> Self {
+        // The keccak challenge is already reduced mod r.
+        from_u256(c)
+    }
+    fn short(c: U256) -> Self {
+        from_u256(c)
+    }
+}
+
+impl ChallengeField for U256 {
+    fn split_challenge(&self) -> [Self; 2] {
+        [u256_low_bits(*self, 127), u256_shr(*self, 127)]
+    }
 }

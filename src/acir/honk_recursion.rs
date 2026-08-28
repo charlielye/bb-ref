@@ -247,7 +247,29 @@ pub fn process_honk_recursion_constraints(
         }
     } else if is_root_rollup {
         assert!(openings.is_empty(), "unreachable: root rollup with chonk openings");
-        unimplemented!("root rollup full IPA verification (fixed_batch_mul) not yet ported");
+        // bb `perform_full_IPA_verification`: accumulate the two nested claims, then fully verify
+        // the accumulated claim in-circuit (DefaultIO; no IPA proof rides on the circuit).
+        let ck = GrumpkinKey::new(POLY_LENGTH);
+        let mut accumulators: Vec<_> = nested
+            .into_iter()
+            .map(|(claim, proof)| {
+                let mut t = StdlibTranscript::from_proof(&proof);
+                reduce_verify_ct(ctx, &claim, &mut t)
+            })
+            .collect();
+        assert_eq!(accumulators.len(), 2, "root rollup must accumulate two IPA proofs");
+        let a2 = accumulators.pop().unwrap();
+        let a1 = accumulators.pop().unwrap();
+        let (claim, ipa_proof) = accumulate(&ck, a1, a2);
+        let proof_fields: Vec<FieldT> = ipa_proof.iter().map(|f| FieldT::from_witness(ctx, *f)).collect();
+        let mut t = StdlibTranscript::from_proof(&proof_fields);
+        crate::rollup::ipa_recursive::full_verify_ct(ctx, &claim, &mut t);
+        match points {
+            Some(pp) => {
+                set_ultra_pairing_points_public(&pp);
+            }
+            None => super::lower::add_default_pairing_points(&mut ctx.borrow_mut()),
+        }
     } else {
         assert!(nested.is_empty(), "IPA claims present without --ipa_accumulation");
         match points {

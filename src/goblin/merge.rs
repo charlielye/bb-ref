@@ -108,7 +108,7 @@ pub fn merge_prove(q: &mut EccOpQueue, ck: &CommitmentKey, t: &mut NativeTranscr
         &g_minus,
         &(betas[3 * NUM_WIRES] * (z - kappa) * (z - kappa_inv).invert()),
     );
-    kzg_open(
+    kzg_open::<crate::base::Bn254>(
         ProverClaim {
             poly: partial,
             challenge: z,

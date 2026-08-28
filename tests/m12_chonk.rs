@@ -27,7 +27,7 @@ fn tamper_point(fields: &mut [Fr], offset: usize) {
 }
 
 fn read_vk(path: &Path) -> Vk<Bn254> {
-    Vk::from_bytes(&std::fs::read(path).unwrap(), MEGA_ZK.layout().num_precomputed)
+    Vk::<bb_ref::base::Bn254>::from_bytes(&std::fs::read(path).unwrap(), MEGA_ZK.layout().num_precomputed)
 }
 
 fn check_bb_proof(dir: &Path) {

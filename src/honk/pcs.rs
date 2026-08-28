@@ -602,11 +602,11 @@ pub struct LibraPolys<F: FieldLike = Fr>(pub [Polynomial<F>; NUM_SMALL_IPA_COMMI
 
 /// bb `make_small_ipa_prover_opening_claims`: send the transmitted evaluations under
 /// `<prefix><suffix>` and return the five claims.
-pub fn small_ipa_prover_claims<C: Curve<TF = Fr>>(
+pub fn small_ipa_prover_claims<C: Curve>(
     polys: &LibraPolys<C::Fr>,
     r: &C::Fr,
     prefix: &str,
-    t: &mut NativeTranscript,
+    t: &mut crate::base::transcript::Transcript<C::TF, C::Hash>,
 ) -> Vec<ProverClaim<C::Fr>>
 where
     C::Fr: Copy,
@@ -644,15 +644,20 @@ pub struct ShplonkProverOutput<C: Curve> {
 
 /// bb `ShpleminiProver_::prove`: Gemini folds + (ZK) Libra claims + Shplonk batching. Returns the
 /// final opening claim `(G, z, 0)` to be opened with KZG.
-pub fn shplemini_prove(
+pub fn shplemini_prove<C>(
     unshifted: &[&Poly],
     to_be_shifted: &[&Poly],
     u: &[Fr],
     ck: &CommitmentKey,
-    t: &mut NativeTranscript,
+    t: &mut crate::base::transcript::Transcript<C::TF, C::Hash>,
     libra: Option<&LibraPolys>,
     sumcheck_round_claims: &[ProverClaim],
-) -> ProverClaim {
+) -> ProverClaim
+where
+    C: crate::base::group::Curve<Fr = Fr, G = crate::base::G1Affine>,
+    Fr: crate::base::codec::Transcriptable<C::TF> + crate::base::codec::FromChallenge<C::TF>,
+    crate::base::G1Affine: crate::base::codec::Transcriptable<C::TF>,
+{
     use crate::base::group::Curve;
     let virtual_log_n = u.len();
     // Shorter polynomials (a smaller circuit batched with a larger one) are zero-extended.
@@ -756,11 +761,11 @@ pub fn shplemini_prove(
 
     // --- Libra opening claims (ZK) ---
     let libra_claims = libra.map_or(Vec::new(), |polys| {
-        small_ipa_prover_claims::<Bn254>(polys, &r, "Libra:", t)
+        small_ipa_prover_claims::<C>(polys, &r, "Libra:", t)
     });
 
     // --- Shplonk ---
-    shplonk_prove::<Bn254>(virtual_log_n, &claims, &libra_claims, sumcheck_round_claims, ck, t).claim
+    shplonk_prove::<C>(virtual_log_n, &claims, &libra_claims, sumcheck_round_claims, ck, t).claim
 }
 
 /// bb `ShpleminiProver_::compute_sumcheck_round_claims`: each committed round univariate opened at
@@ -793,13 +798,13 @@ fn accumulate_quotient<F: FieldLike + Copy>(q: &mut [F], p: &[F], x: F, v: F, sc
 
 /// bb `ShplonkProver_::prove`: batched quotient `Q`, then `G = Q - Q_z` opened at `z` with value 0.
 /// `virtual_log_n` only matters when `libra_claims` is non-empty.
-pub fn shplonk_prove<C: Curve<TF = Fr>>(
+pub fn shplonk_prove<C: Curve>(
     virtual_log_n: usize,
     claims: &[ProverClaim<C::Fr>],
     libra_claims: &[ProverClaim<C::Fr>],
     sumcheck_claims: &[ProverClaim<C::Fr>],
     ck: &Ck<C::G>,
-    t: &mut NativeTranscript,
+    t: &mut crate::base::transcript::Transcript<C::TF, C::Hash>,
 ) -> ShplonkProverOutput<C>
 where
     C::Fr: Copy + Send + Sync,
@@ -885,7 +890,12 @@ where
 }
 
 /// bb `KZG::compute_opening_proof`: commit to `(p - v) / (X - r)` and send it as `KZG:W`.
-pub fn kzg_open(claim: ProverClaim, ck: &CommitmentKey, t: &mut NativeTranscript) {
+pub fn kzg_open<C>(claim: ProverClaim, ck: &CommitmentKey, t: &mut crate::base::transcript::Transcript<C::TF, C::Hash>)
+where
+    C: crate::base::group::Curve<Fr = Fr, G = crate::base::G1Affine>,
+    Fr: crate::base::codec::Transcriptable<C::TF>,
+    crate::base::G1Affine: crate::base::codec::Transcriptable<C::TF>,
+{
     let mut quotient = claim.poly;
     quotient.coeffs[0] -= claim.evaluation;
     quotient.factor_root(&claim.challenge);
@@ -896,12 +906,12 @@ pub fn kzg_open(claim: ProverClaim, ck: &CommitmentKey, t: &mut NativeTranscript
 
 /// bb `SmallSubgroupIPAProver` for the Libra data: computes and commits to the grand-sum
 /// polynomial `A` and the identity quotient `Q`, returning `[G, A, Q]`.
-pub fn small_subgroup_ipa_prove<C: Curve<TF = Fr>>(
+pub fn small_subgroup_ipa_prove<C: Curve>(
     zk: &ZkData<C>,
     u: &[C::Fr],
     claimed_inner_product: &C::Fr,
     ck: &Ck<C::G>,
-    t: &mut NativeTranscript,
+    t: &mut crate::base::transcript::Transcript<C::TF, C::Hash>,
     rng: &mut dyn Rng,
 ) -> LibraPolys<C::Fr>
 where
@@ -924,14 +934,14 @@ where
 /// The SmallSubgroupIPA prover proper (bb `SmallSubgroupIPAProver::prove`) for a concatenated
 /// witness `G` (monomial form, masked) with Lagrange values `g` over the subgroup and a challenge
 /// polynomial `F` given by its Lagrange values: proves `Σ_i g_i F_i = claimed_inner_product`.
-pub fn small_subgroup_ipa_prove_core<C: Curve<TF = Fr>>(
+pub fn small_subgroup_ipa_prove_core<C: Curve>(
     g_poly: &Polynomial<C::Fr>,
     g_lagrange: &[C::Fr],
     f_lagrange: &[C::Fr],
     claimed_inner_product: &C::Fr,
     prefix: &str,
     ck: &Ck<C::G>,
-    t: &mut NativeTranscript,
+    t: &mut crate::base::transcript::Transcript<C::TF, C::Hash>,
     rng: &mut dyn Rng,
 ) -> LibraPolys<C::Fr>
 where

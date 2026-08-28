@@ -14,7 +14,7 @@ pub fn decider_prove(acc: &ProverClaim, t: &mut NativeTranscript) {
         .end_index()
         .max(acc.shifted_polynomial.end_index());
     let ck = CommitmentKey::new(actual_size);
-    let claim = shplemini_prove(
+    let claim = shplemini_prove::<crate::base::Bn254>(
         &[&acc.non_shifted_polynomial],
         &[&acc.shifted_polynomial],
         &acc.challenge,
@@ -23,7 +23,7 @@ pub fn decider_prove(acc: &ProverClaim, t: &mut NativeTranscript) {
         None,
         &[],
     );
-    kzg_open(claim, &ck, t);
+    kzg_open::<crate::base::Bn254>(claim, &ck, t);
 }
 
 pub fn decider_verify<C: Curve>(

@@ -2,7 +2,7 @@
 //! `c_{i+1} = H(c_i || round_data)`. Generic over the transcript field so the same code drives
 //! native and in-circuit verifiers.
 
-use super::codec::{ChallengeField, FromChallenge, Transcriptable};
+use super::codec::{ChallengeField, FromChallenge, Transcriptable, TranscriptData};
 use super::field::FieldLike;
 use super::poseidon2::Hasher;
 use std::marker::PhantomData;
@@ -28,7 +28,7 @@ pub struct Manifest {
     pub entries: Vec<ManifestEntry>,
 }
 
-pub struct Transcript<TF: FieldLike, H: Hasher<TF>> {
+pub struct Transcript<TF: TranscriptData, H: Hasher<TF>> {
     proof_data: Vec<TF>,
     proof_start: usize,
     num_written: usize,
@@ -41,13 +41,13 @@ pub struct Transcript<TF: FieldLike, H: Hasher<TF>> {
     _h: PhantomData<H>,
 }
 
-impl<TF: FieldLike, H: Hasher<TF>> Default for Transcript<TF, H> {
+impl<TF: TranscriptData, H: Hasher<TF>> Default for Transcript<TF, H> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<TF: FieldLike, H: Hasher<TF>> Transcript<TF, H> {
+impl<TF: TranscriptData, H: Hasher<TF>> Transcript<TF, H> {
     pub fn new() -> Self {
         Self {
             proof_data: Vec::new(),

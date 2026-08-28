@@ -55,6 +55,35 @@ impl<C: Curve> Vk<C> {
     }
 }
 
+impl Vk<super::group::KeccakBn254> {
+    /// bb's on-disk keccak `vk` file: 59 32-byte big-endian words (`to_field_elements` under `U256Codec`).
+    pub fn from_bytes(bytes: &[u8], num_comms: usize) -> Self {
+        assert_eq!(bytes.len() % 32, 0, "VK byte length not a multiple of 32");
+        let fields: Vec<super::field::U256> = bytes
+            .chunks(32)
+            .map(|c| {
+                let mut limbs = [0u64; 4];
+                for (i, l) in c.chunks(8).enumerate() {
+                    limbs[3 - i] = u64::from_be_bytes(l.try_into().unwrap());
+                }
+                super::field::U256::new(limbs)
+            })
+            .collect();
+        Self::from_fields(&fields, num_comms)
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.to_fields()
+            .iter()
+            .flat_map(|w| super::keccak::u256_to_bytes_be(w))
+            .collect()
+    }
+
+    pub fn log_n_value(&self) -> usize {
+        super::codec::fr_to_usize(&self.log_circuit_size)
+    }
+}
+
 impl Vk<Bn254> {
     /// bb's on-disk `vk` file: every field element as 32 big-endian bytes.
     pub fn from_bytes(bytes: &[u8], num_comms: usize) -> Self {

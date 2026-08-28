@@ -21,6 +21,8 @@ pub enum BasicTableId {
     Sha256Base16,
     Sha256Base16Rotate2,
     Secp256r1FixedBase { axis: u8, window: u8 },
+    /// bb `STRAUS_EC_POINT`: a dynamic per-point table for `cycle_group::fixed_batch_mul`.
+    StrausEcPoint,
     KeccakRho(u8),
     KeccakTheta,
     KeccakChi,
@@ -279,6 +281,7 @@ pub fn create_basic_table(id: BasicTableId, table_index: usize) -> BasicTable {
     use BasicTableId::*;
     assert!(table_index > 0);
     match id {
+        BasicTableId::StrausEcPoint => unreachable!("Straus tables are registered directly with the builder"),
         Sha256WitnessNormalize => sparse_normalization_table(id, table_index, 16, 3, &sha256::WITNESS_EXTENSION_NORMALIZATION),
         Sha256ChNormalize => sparse_normalization_table(id, table_index, 28, 2, &sha256::CHOOSE_NORMALIZATION),
         Sha256MajNormalize => sparse_normalization_table(id, table_index, 16, 3, &sha256::MAJORITY_NORMALIZATION),

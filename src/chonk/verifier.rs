@@ -47,10 +47,11 @@ impl<C: Curve> HidingKernelIo<C> {
 
 impl HidingKernelIo<Bn254> {
     pub fn to_public_inputs(&self) -> Vec<Fr> {
+        use crate::base::codec::Transcriptable;
         let mut out = self.pairing_points.to_fields();
-        out.extend(self.kernel_return_data.to_fields());
+        out.extend(Transcriptable::<Fr>::to_fields(&self.kernel_return_data));
         for c in &self.ecc_op_tables {
-            out.extend(c.to_fields());
+            out.extend(Transcriptable::<Fr>::to_fields(c));
         }
         out
     }

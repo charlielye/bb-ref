@@ -156,3 +156,37 @@ pub fn verify_ultra(
     let pi_ok = (AffineRepr::is_zero(&pi_points.p0) && AffineRepr::is_zero(&pi_points.p1)) || pi_points.check(g2);
     pi_ok && r.pcs_pairing_points.check(g2)
 }
+
+/// Native UltraKeccak verification: the proof is a vector of raw 256-bit words.
+pub fn verify_ultra_keccak(
+    flavor: &FlavorDesc,
+    vk: &Vk<crate::base::KeccakBn254>,
+    public_inputs: &[crate::base::Fr],
+    proof: &[crate::base::U256],
+    g2: &G2Points,
+) -> bool {
+    use crate::base::KeccakBn254;
+    // bb `UltraVerifier_::compute_log_n`: unpadded flavors take log_n from the VK.
+    let mut flavor_local = *flavor;
+    if !flavor_local.use_padding {
+        flavor_local.virtual_log_n = vk.log_n_value();
+    }
+    let flavor = &flavor_local;
+    let mut full: Vec<crate::base::U256> = public_inputs
+        .iter()
+        .flat_map(|f| Transcriptable::<crate::base::U256>::to_fields(f))
+        .collect();
+    full.extend_from_slice(proof);
+    let r = reduce_to_pairing_check::<KeccakBn254>(flavor, vk, &vk.hash(), &full, &());
+    if !r.succeeded {
+        return false;
+    }
+    // The pairing-point public inputs use the circuit's field-limb encoding regardless of codec.
+    let pi_points = default_io_pairing_points::<Bn254>(&r.public_inputs);
+    let pi_ok = (AffineRepr::is_zero(&pi_points.p0) && AffineRepr::is_zero(&pi_points.p1)) || pi_points.check(g2);
+    let pcs = PairingPoints::<Bn254> {
+        p0: r.pcs_pairing_points.p0,
+        p1: r.pcs_pairing_points.p1,
+    };
+    pi_ok && pcs.check(g2)
+}

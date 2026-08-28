@@ -5,7 +5,7 @@ use super::poseidon2_params as params;
 use crate::base::field::FieldLike;
 use std::sync::OnceLock;
 
-pub trait Hasher<F: FieldLike> {
+pub trait Hasher<F: crate::base::codec::TranscriptData> {
     fn hash(input: &[F]) -> F;
 }
 

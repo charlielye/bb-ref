@@ -392,6 +392,7 @@ impl Rel {
 }
 
 /// Flavor constants. Everything else (entity counts, layout, proof length) is derived.
+#[derive(Clone, Copy, Debug)]
 pub struct FlavorDesc {
     pub name: &'static str,
     /// Order matters: it fixes the entity layout, the subrelation order, and the trace block order.
@@ -405,6 +406,9 @@ pub struct FlavorDesc {
     pub trace_offset: usize,
     /// Round-univariate length = max relation partial length + this.
     pub batched_len_extra: usize,
+    /// bb `USE_PADDING`: pad the transcript to `virtual_log_n` rounds (false for Keccak flavors,
+    /// whose proofs are sized by the actual `log_n`).
+    pub use_padding: bool,
 }
 
 pub static ULTRA: FlavorDesc = FlavorDesc {
@@ -425,6 +429,7 @@ pub static ULTRA: FlavorDesc = FlavorDesc {
     virtual_log_n: 25,
     trace_offset: 4,
     batched_len_extra: 1,
+    use_padding: true,
 };
 
 pub static ULTRA_ZK: FlavorDesc = FlavorDesc {
@@ -446,6 +451,21 @@ pub static ULTRA_ZK: FlavorDesc = FlavorDesc {
     virtual_log_n: 25,
     trace_offset: 4,
     batched_len_extra: 2,
+    use_padding: true,
+};
+
+/// bb `UltraKeccakFlavor`: Ultra with a Keccak transcript, U256 codec, and unpadded proofs.
+pub static ULTRA_KECCAK: FlavorDesc = FlavorDesc {
+    use_padding: false,
+    name: "UltraKeccakFlavor",
+    ..ULTRA
+};
+
+/// bb `UltraKeccakZKFlavor`.
+pub static ULTRA_KECCAK_ZK: FlavorDesc = FlavorDesc {
+    use_padding: false,
+    name: "UltraKeccakZKFlavor",
+    ..ULTRA_ZK
 };
 
 const MEGA_POSEIDON2: [Rel; 5] = [
@@ -481,6 +501,7 @@ pub static MEGA_APP: FlavorDesc = FlavorDesc {
     virtual_log_n: CONST_FOLDING_LOG_N,
     trace_offset: 0,
     batched_len_extra: 1,
+    use_padding: true,
 };
 
 /// Chonk kernel circuits: no lookups or non-native-field gates, all seven buses (bb `mega_kernel.ts`).
@@ -512,6 +533,7 @@ pub static MEGA_KERNEL: FlavorDesc = FlavorDesc {
     virtual_log_n: CONST_FOLDING_LOG_N,
     trace_offset: 0,
     batched_len_extra: 1,
+    use_padding: true,
 };
 
 /// The Chonk hiding kernel: ZK sumcheck, only the kernel calldata bus (bb `mega_zk.ts`).
@@ -536,6 +558,7 @@ pub static MEGA_ZK: FlavorDesc = FlavorDesc {
     virtual_log_n: HIDING_KERNEL_LOG_N,
     trace_offset: 4,
     batched_len_extra: 2,
+    use_padding: true,
 };
 
 /// bb `CONST_FOLDING_LOG_N`: the padded sumcheck size of every folded (Mega) circuit.

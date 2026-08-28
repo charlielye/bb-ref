@@ -203,6 +203,51 @@ fn prove_challenge_poly_opening(ck: &GrumpkinKey, claim: &IpaClaimCt, challenge_
     t.export_proof()
 }
 
+/// bb `IPA::full_verify_recursive`: reduce, then recompute `G_zero` from the round challenges by
+/// an in-circuit MSM over the (constant) SRS. The first SRS point is handled via a plain scalar
+/// mul so the plookup-table rows stay within `2^23` (bb's comment on table sizing).
+pub fn full_verify_ct(ctx: &Ctx, claim: &IpaClaimCt, t: &mut StdlibTranscript) {
+    let acc = reduce_verify_ct(ctx, claim, t);
+    let round_challenges_inv = &acc.u_challenges_inv;
+    let mut claimed_g_zero = acc.comm;
+
+    // s_vec[r] = prod (u_i)^{-r_i}, computed with bb's linear-time doubling algorithm.
+    let one = FqCt::one();
+    let mut s_vec_temporaries: Vec<FqCt> = vec![one.clone(); POLY_LENGTH / 2];
+    let mut s_vec: Vec<FqCt> = vec![one.clone(); POLY_LENGTH];
+    let (mut previous_round_s, mut current_round_s): (&mut [FqCt], &mut [FqCt]) =
+        if LOG_POLY_LENGTH % 2 == 0 {
+            (&mut s_vec, &mut s_vec_temporaries)
+        } else {
+            (&mut s_vec_temporaries, &mut s_vec)
+        };
+    previous_round_s[0] = one;
+    for (i, round_challenge) in round_challenges_inv.iter().enumerate().take(LOG_POLY_LENGTH) {
+        let round_size = 1usize << (i + 1);
+        for j in 0..round_size / 2 {
+            current_round_s[j * 2] = previous_round_s[j].clone();
+            current_round_s[j * 2 + 1] = previous_round_s[j].mul(round_challenge);
+        }
+        std::mem::swap(&mut previous_round_s, &mut current_round_s);
+    }
+    drop(previous_round_s);
+    drop(current_round_s);
+
+    let srs = GrumpkinKey::new(POLY_LENGTH);
+    let first_term = CycleGroup::batch_mul(
+        &[CycleGroup::constant(srs.points[0])],
+        &[CycleScalar::from_bigfield(&s_vec[0])],
+    );
+    let remaining_points: Vec<CycleGroup> = srs.points[1..POLY_LENGTH]
+        .iter()
+        .map(|p| CycleGroup::constant(*p))
+        .collect();
+    let remaining_scalars: Vec<CycleScalar> = s_vec[1..].iter().map(CycleScalar::from_bigfield).collect();
+    let remaining_term = CycleGroup::fixed_batch_mul(&remaining_points, &remaining_scalars, 8);
+    let mut computed_g_zero = first_term.add(&remaining_term);
+    claimed_g_zero.assert_equal(&mut computed_g_zero);
+}
+
 /// bb `IPA::accumulate` on two accumulators: bind both, squeeze `alpha`/`r`, combine, natively
 /// re-prove the combined challenge polynomial.
 pub fn accumulate(ck: &GrumpkinKey, acc_1: IpaAccumulatorCt, acc_2: IpaAccumulatorCt) -> (IpaClaimCt, Vec<Fr>) {

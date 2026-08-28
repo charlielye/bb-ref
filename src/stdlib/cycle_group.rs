@@ -612,6 +612,189 @@ impl CycleGroup {
     }
 }
 
+
+/// bb `straus_plookup_table`: a per-point plookup table `{ [G] + i.[P] }` for a CONSTANT base
+/// point; zero construction gates, one lookup gate per read.
+pub struct StrausPlookupTable {
+    ctx: Ctx,
+    table: usize,
+    native_table: Vec<GrumpkinAffine>,
+}
+
+impl StrausPlookupTable {
+    pub fn new(ctx: &Ctx, base_point: GrumpkinAffine, offset_generator: GrumpkinAffine, table_bits: usize) -> Self {
+        use ark_ec::CurveGroup;
+        let table_size = 1usize << table_bits;
+        let mut projective: Vec<Element> = Vec::with_capacity(table_size);
+        projective.push(offset_generator.into_group());
+        let base = base_point.into_group();
+        for i in 1..table_size {
+            let next = projective[i - 1] + base;
+            projective.push(next);
+        }
+        let native_table = Element::normalize_batch(&projective);
+        let mut columns: [Vec<Fr>; 3] = [vec![], vec![], vec![]];
+        for (i, p) in native_table.iter().enumerate() {
+            columns[0].push(Fr::from(i as u64));
+            columns[1].push(p.x);
+            columns[2].push(p.y);
+        }
+        let table = ctx.borrow_mut().register_basic_lookup_table(crate::circuit::plookup::BasicTable {
+            id: crate::circuit::plookup::BasicTableId::StrausEcPoint,
+            table_index: 0,
+            use_twin_keys: false,
+            columns,
+            lookup_gates: vec![],
+        });
+        Self {
+            ctx: ctx.clone(),
+            table,
+            native_table,
+        }
+    }
+
+    pub fn read(&self, index: &FieldT) -> CycleGroup {
+        let mut index = index.clone();
+        if index.is_constant() {
+            let v = index.get_value();
+            index = FieldT::from_witness(&self.ctx, v);
+            index.assert_equal(&FieldT::constant(v));
+        }
+        let native_index = u256(&index.get_value()).0[0] as usize;
+        let point = self.native_table[native_index];
+        let (x_idx, y_idx) = {
+            let mut b = self.ctx.borrow_mut();
+            (b.add_variable(point.x), b.add_variable(point.y))
+        };
+        self.ctx.borrow_mut().create_standalone_lookup_gate(
+            [index.get_witness_index(), x_idx, y_idx],
+            self.table,
+            crate::circuit::plookup::LookupEntry {
+                key: [native_index as u64, 0],
+                value: [point.x, point.y],
+            },
+        );
+        let x = FieldT::from_witness_index(&self.ctx, x_idx);
+        let y = FieldT::from_witness_index(&self.ctx, y_idx);
+        CycleGroup::from_xyi(x, y, BoolT::constant(false), false)
+    }
+}
+
+impl CycleGroup {
+    /// bb `cycle_group::fixed_batch_mul`: MSM over CONSTANT points via per-point plookup tables.
+    pub fn fixed_batch_mul(constant_points: &[Self], scalars: &[CycleScalar], table_bits: usize) -> Self {
+        assert_eq!(constant_points.len(), scalars.len(), "points/scalars size mismatch in fixed_batch_mul");
+        if scalars.is_empty() {
+            return Self::constant(GrumpkinAffine::zero());
+        }
+        let mut plookup_scalars = vec![];
+        let mut plookup_points = vec![];
+        let mut has_non_constant_component = false;
+        let mut constant_acc = Element::ZERO;
+        for (point, scalar) in constant_points.iter().zip(scalars) {
+            assert!(point.is_constant(), "fixed_batch_mul requires constant points");
+            if scalar.is_constant() {
+                constant_acc += point.get_value() * scalar.get_value();
+            } else {
+                if point.get_value().is_zero() {
+                    let ctx = scalar.ctx().unwrap();
+                    let mut b = ctx.borrow_mut();
+                    b.create_limbed_range_constraint(scalar.lo.get_witness_index(), LO_BITS as u64, table_bits as u64);
+                    b.create_limbed_range_constraint(scalar.hi.get_witness_index(), HI_BITS as u64, table_bits as u64);
+                    continue;
+                }
+                plookup_scalars.push(scalar.clone());
+                plookup_points.push(point.get_value());
+                has_non_constant_component = true;
+            }
+        }
+        if !has_non_constant_component {
+            return Self::constant(affine(constant_acc));
+        }
+        let offset_generators = derive_generators(b"cycle_group_offset_generator", plookup_points.len() + 1, 0);
+        let mut offset_accumulator = -constant_acc;
+        let (accumulator, offset_generator_delta) = Self::fixed_base_plookup_batch_mul_internal(
+            &plookup_scalars,
+            &plookup_points,
+            &offset_generators,
+            table_bits,
+        );
+        offset_accumulator += offset_generator_delta.into_group();
+        if constant_acc != Element::ZERO {
+            accumulator.unconditional_add(&Self::constant(affine(-offset_accumulator)), None)
+        } else {
+            accumulator.sub(&Self::constant(affine(offset_accumulator)))
+        }
+    }
+
+    /// bb `_fixed_base_plookup_batch_mul_internal`: Straus over plookup tables with native hints.
+    fn fixed_base_plookup_batch_mul_internal(
+        scalars: &[CycleScalar],
+        base_points: &[GrumpkinAffine],
+        offset_generators: &[GrumpkinAffine],
+        table_bits: usize,
+    ) -> (Self, GrumpkinAffine) {
+        use ark_ec::CurveGroup;
+        assert!(!scalars.is_empty());
+        assert_eq!(scalars.len(), base_points.len());
+        assert_eq!(offset_generators.len(), base_points.len() + 1);
+        let num_points = scalars.len();
+        let ctx = scalars.iter().find_map(|s| s.ctx()).unwrap();
+        assert_eq!(LO_BITS % table_bits, 0, "table_bits must divide LO_BITS");
+        let num_rounds = NUM_BITS.div_ceil(table_bits);
+
+        let scalar_slices: Vec<StrausScalarSlices> = scalars
+            .iter()
+            .map(|s| StrausScalarSlices::new(&ctx, s, table_bits))
+            .collect();
+
+        let point_tables: Vec<StrausPlookupTable> = base_points
+            .iter()
+            .enumerate()
+            .map(|(i, p)| StrausPlookupTable::new(&ctx, *p, offset_generators[i + 1], table_bits))
+            .collect();
+
+        // Native Straus transcript for hints.
+        let mut operation_transcript: Vec<Element> = vec![];
+        let mut offset_generator_accumulator: Element = offset_generators[0].into_group();
+        {
+            let mut accumulator: Element = offset_generators[0].into_group();
+            for i in 0..num_rounds {
+                if i != 0 {
+                    for _ in 0..table_bits {
+                        accumulator.double_in_place();
+                        operation_transcript.push(accumulator);
+                        offset_generator_accumulator.double_in_place();
+                    }
+                }
+                for (j, table) in point_tables.iter().enumerate() {
+                    let slice_value = scalar_slices[j].native[num_rounds - i - 1] as usize;
+                    accumulator += table.native_table[slice_value].into_group();
+                    operation_transcript.push(accumulator);
+                    offset_generator_accumulator += offset_generators[j + 1].into_group();
+                }
+            }
+        }
+        let operation_hints = Element::normalize_batch(&operation_transcript);
+
+        let mut hint = operation_hints.iter();
+        let mut accumulator = Self::constant(offset_generators[0]);
+        for i in 0..num_rounds {
+            if i != 0 {
+                for _ in 0..table_bits {
+                    accumulator = accumulator.dbl(Some(*hint.next().unwrap()));
+                }
+            }
+            for (j, table) in point_tables.iter().enumerate() {
+                let scalar_slice = scalar_slices[j].slices[num_rounds - i - 1].clone();
+                let point = table.read(&scalar_slice);
+                accumulator = accumulator.unconditional_add(&point, Some(*hint.next().unwrap()));
+            }
+        }
+        (accumulator, affine(offset_generator_accumulator))
+    }
+}
+
 /// bb `straus_scalar_slices`: a scalar's limbs in `table_bits` windows, low limb first.
 pub struct StrausScalarSlices {
     pub slices: Vec<FieldT>,

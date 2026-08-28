@@ -121,7 +121,7 @@ pub fn batch_merge_prove(q: &EccOpQueue, max_subtables: usize, ck: &CommitmentKe
         gemini_fold: false,
     });
     let opening = shplonk_prove::<Bn254>(0, &claims, &[], &[], ck, &mut t).claim;
-    kzg_open(opening, ck, &mut t);
+    kzg_open::<crate::base::Bn254>(opening, ck, &mut t);
     t.export_proof()
 }
 

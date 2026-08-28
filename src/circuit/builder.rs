@@ -434,6 +434,23 @@ impl Builder {
         self.lookup_tables.len() - 1
     }
 
+    /// bb `register_basic_lookup_table`: append a dynamically-built table (indices are 1-based).
+    pub fn register_basic_lookup_table(&mut self, mut table: super::plookup::BasicTable) -> usize {
+        table.table_index = self.lookup_tables.len() + 1;
+        self.lookup_tables.push(table);
+        self.lookup_tables.len() - 1
+    }
+
+    /// bb `create_lookup_gate` with zero step sizes (standalone read, e.g. a Straus plookup table).
+    pub fn create_standalone_lookup_gate(
+        &mut self,
+        wires: [u32; 3],
+        table: usize,
+        entry: super::plookup::LookupEntry,
+    ) {
+        self.create_lookup_gate(wires, table, entry, [Fr::zero(), Fr::zero(), Fr::zero()]);
+    }
+
     /// bb `create_gates_from_plookup_accumulators`: one lookup gate per slice of a multi-table read,
     /// the first row holding the key witnesses; returns the accumulator witnesses.
     pub fn create_gates_from_plookup_accumulators(

@@ -72,7 +72,7 @@ where
 /// `TF` is the transcript field (bn254 Fr natively, `FieldT` in-circuit); it differs from the
 /// scalar field `Fr` for Grumpkin, whose transcript is still over bn254 Fr.
 pub trait Curve: 'static {
-    type TF: FieldLike + Transcriptable<Self::TF>;
+    type TF: super::codec::TranscriptData + Transcriptable<Self::TF>;
     type Fr: FieldLike + Transcriptable<Self::TF> + FromChallenge<Self::TF>;
     type G: GroupLike<Self::Fr> + Transcriptable<Self::TF>;
     type Hash: Hasher<Self::TF>;
@@ -82,6 +82,25 @@ pub trait Curve: 'static {
     fn subgroup_generator_inverse() -> <Self::Fr as FieldLike>::Native;
     /// Length of the Libra univariates masking the sumcheck round univariates.
     const LIBRA_UNIVARIATES_LENGTH: usize;
+}
+
+/// bn254 with the Keccak transcript (bb `UltraKeccakFlavor`): raw 256-bit transcript words,
+/// keccak-256 hashing, 2-word commitments.
+#[derive(Clone, Copy, Debug)]
+pub struct KeccakBn254;
+impl Curve for KeccakBn254 {
+    type TF = super::field::U256;
+    type Fr = Fr;
+    type G = G1Affine;
+    type Hash = super::keccak::Keccak256;
+    const SUBGROUP_SIZE: usize = Bn254::SUBGROUP_SIZE;
+    fn subgroup_generator() -> Fr {
+        Bn254::subgroup_generator()
+    }
+    fn subgroup_generator_inverse() -> Fr {
+        Bn254::subgroup_generator_inverse()
+    }
+    const LIBRA_UNIVARIATES_LENGTH: usize = Bn254::LIBRA_UNIVARIATES_LENGTH;
 }
 
 #[derive(Clone, Copy, Debug)]

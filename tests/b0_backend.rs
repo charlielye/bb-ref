@@ -6,7 +6,7 @@
 
 mod common;
 use bb_ref::acir::format::{decode_program, decode_witness};
-use bb_ref::acir::lower::build_circuit;
+use bb_ref::acir::lower::{build_circuit, build_circuit_opts};
 use bb_ref::base::field::from_bytes_be;
 use bb_ref::base::io::decode_fields;
 use bb_ref::base::srs::bn254_g2;
@@ -20,21 +20,34 @@ use bb_ref::honk::ultra_verifier::verify_ultra;
 use bb_ref::honk::{ULTRA, ULTRA_ZK};
 
 fn build(name: &str, flavor: &'static FlavorDesc) -> ProverInstance {
+    build_ipa(name, flavor, false)
+}
+
+fn build_ipa(name: &str, flavor: &'static FlavorDesc, has_ipa_claim: bool) -> ProverInstance {
     let dir = common::fixture_dir(&format!("backend/{name}"));
     let circuit = decode_program(&std::fs::read(dir.join("program.json")).expect("program.json"));
     let witness = decode_witness(&std::fs::read(dir.join("witness.gz")).expect("witness.gz"), &mut OsRng);
-    let mut builder = build_circuit(&circuit, Some(&witness));
+    let mut builder = if has_ipa_claim {
+        build_circuit_opts(&circuit, Some(&witness), true)
+    } else {
+        build_circuit(&circuit, Some(&witness))
+    };
     assert!(builder.failed.is_none(), "{name}: builder failure {:?}", builder.failed);
     ProverInstance::from_builder(flavor, &mut builder, &mut OsRng)
 }
 
 fn check_nozk(name: &str) {
+    check_nozk_opts(name, false)
+}
+
+/// B4 exit: real-witness rollup circuits (RollupIO; the combined honk+ipa proof is compared).
+fn check_nozk_opts(name: &str, has_ipa_claim: bool) {
     let dump = common::fixture_dir(&format!("instance/backend/{name}/nozk"));
     if !dump.join("proof.bin").exists() {
         eprintln!("skipping {name}: no instance dump");
         return;
     }
-    let mut inst = build(name, &ULTRA);
+    let mut inst = build_ipa(name, &ULTRA, has_ipa_claim);
     let expected = ProverInstance::load_dump(&ULTRA, &dump);
     assert_eq!(inst.dyadic_size, expected.dyadic_size, "{name}: dyadic size");
     assert_eq!(inst.public_inputs, expected.public_inputs, "{name}: public inputs");
@@ -49,7 +62,7 @@ fn check_nozk(name: &str) {
     let proof = prove_ultra(&mut inst, &vk, &mut OsRng);
     let expected_proof = decode_fields(&std::fs::read(dump.join("proof.bin")).unwrap());
     assert_eq!(proof, expected_proof, "{name}: proof");
-    let mut inst = build(name, &ULTRA);
+    let mut inst = build_ipa(name, &ULTRA, has_ipa_claim);
     let out = prove_oink(&mut inst, &vk, &ck, &mut NativeTranscript::new(), &mut OsRng, true);
     assert_eq!(check_circuit(&inst, &out.params), None, "{name}: relation failure");
 }
@@ -85,11 +98,27 @@ backend_tests! {
     inbox_parity_64,
 }
 
+// B4 exit: real-witness proving through the recursion lowerings (CHONK for tx_base_private,
+// ROLLUP_HONK for tx_merge), instance + VK + combined honk+ipa proof byte-equal to bb.
+mod rollup_tx_base_private_witness {
+    #[test]
+    fn nozk() {
+        super::check_nozk_opts("rollup_tx_base_private", true);
+    }
+}
+mod rollup_tx_merge_witness {
+    #[test]
+    fn nozk() {
+        super::check_nozk_opts("rollup_tx_merge", true);
+    }
+}
+
 /// The circuits bb-ref can currently build, with the node's `--ipa_accumulation` flag (grows per
 /// B-milestone; the rest of `backend_vk_hash/` is fixture-complete but unsupported until the
 /// remaining recursion lowerings land: CHONK for rollup_tx_base_private/chonk_verifier_public,
 /// keccak vk_hash for rollup_root, AVM never).
 const SUPPORTED: &[(&str, bool)] = &[
+    ("rollup_root", false),
     ("inbox_parity_64", false),
     ("parity_base", false),
     ("parity_root", false),
@@ -149,7 +178,22 @@ fn backend_vk_hash_sweep() {
         eprintln!("built {name}");
         let inst = ProverInstance::from_builder(&ULTRA, &mut builder, &mut OsRng);
         let ck = CommitmentKey::new(inst.max_end_index);
-        assert_eq!(inst.compute_vk(&ck).hash(), expected, "{name}: VK hash");
+        let vk = inst.compute_vk(&ck);
+        // rollup_root is proven with `--oracle_hash keccak` (bb-prover honk.ts): its vk_hash fixture
+        // is the UltraKeccak one.
+        let hash: Fr = if name == "rollup_root" {
+            let kvk = bb_ref::base::vk::Vk::<bb_ref::base::KeccakBn254> {
+                log_circuit_size: vk.log_circuit_size,
+                num_public_inputs: vk.num_public_inputs,
+                pub_inputs_offset: vk.pub_inputs_offset,
+                comms: vk.comms,
+            };
+            use bb_ref::base::codec::Transcriptable;
+            <Fr as Transcriptable<bb_ref::base::U256>>::from_fields(&[kvk.hash()])
+        } else {
+            vk.hash()
+        };
+        assert_eq!(hash, expected, "{name}: VK hash");
     }
     eprintln!(
         "{} supported, {unsupported} not yet supported",

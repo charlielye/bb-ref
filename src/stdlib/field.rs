@@ -942,6 +942,12 @@ impl FromChallenge<FieldT> for FieldT {
 }
 
 /// bb `StdlibCodec::split_challenge`: the two 127-bit halves as range-constrained witnesses.
+impl crate::base::codec::TranscriptData for FieldT {
+    fn assert_equal(&self, other: &Self) {
+        FieldT::assert_equal(self, other);
+    }
+}
+
 impl ChallengeField for FieldT {
     fn split_challenge(&self) -> [Self; 2] {
         let (lo, hi) = split_unique(self, 127);

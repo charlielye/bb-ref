@@ -406,12 +406,17 @@ where
     domain
 }
 
-impl<C: Curve<TF = Fr>> ZkData<C>
+impl<C: Curve> ZkData<C>
 where
     C::Fr: PrimeField<BigInt = U256>,
     C::G: AffineRepr<ScalarField = C::Fr>,
 {
-    pub fn new(num_rounds: usize, t: &mut NativeTranscript, ck: &Ck<C::G>, rng: &mut dyn Rng) -> Self {
+    pub fn new(
+        num_rounds: usize,
+        t: &mut crate::base::transcript::Transcript<C::TF, C::Hash>,
+        ck: &Ck<C::G>,
+        rng: &mut dyn Rng,
+    ) -> Self {
         type F<C> = <C as Curve>::Fr;
         let subgroup_size = C::SUBGROUP_SIZE;
         let libra_len = C::LIBRA_UNIVARIATES_LENGTH;
@@ -1120,7 +1125,7 @@ pub struct CommittedRounds<C: Curve> {
     pub evaluations: Vec<[C::Fr; 3]>,
 }
 
-impl<C: Curve<TF = Fr>> CommittedRounds<C>
+impl<C: Curve> CommittedRounds<C>
 where
     C::Fr: Copy,
     C::G: AffineRepr<ScalarField = C::Fr>,
@@ -1133,7 +1138,7 @@ where
         }
     }
     /// Commit to the round univariate and send its values at 0 and 1.
-    pub fn process(&mut self, round: usize, univariate: &[C::Fr], ck: &Ck<C::G>, t: &mut NativeTranscript) {
+    pub fn process(&mut self, round: usize, univariate: &[C::Fr], ck: &Ck<C::G>, t: &mut crate::base::transcript::Transcript<C::TF, C::Hash>) {
         let domain: Vec<C::Fr> = (0..univariate.len()).map(|k| C::Fr::from_u64(k as u64)).collect();
         let monomial = Polynomial::interpolate(&domain, univariate);
         let commitment = ck.commit(&monomial);
@@ -1153,7 +1158,7 @@ where
     }
 }
 
-impl<C: Curve<TF = Fr>> Default for CommittedRounds<C>
+impl<C: Curve> Default for CommittedRounds<C>
 where
     C::Fr: Copy,
     C::G: AffineRepr<ScalarField = C::Fr>,
@@ -1176,11 +1181,11 @@ pub struct SumcheckProverOutput<C: Curve> {
 
 /// bb `SumcheckProver::prove` (plain, ZK and committed variants). `ck` is required for the
 /// committed variant (to commit to the round univariates).
-pub fn prove_sumcheck<C: Curve<TF = Fr>>(
+pub fn prove_sumcheck<C: Curve>(
     rels: &(impl RelationSet<C::Fr> + Sync),
     spec: &SumcheckSpec,
     polys: &[Polynomial<C::Fr>],
-    t: &mut NativeTranscript,
+    t: &mut crate::base::transcript::Transcript<C::TF, C::Hash>,
     alpha: &C::Fr,
     betas: &[C::Fr],
     params: &RelationParams<C::Fr>,

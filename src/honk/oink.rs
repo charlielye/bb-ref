@@ -3,6 +3,7 @@
 
 use super::flavor::{Ent, FlavorDesc, Layout, Rel, BUS_SPECS};
 use super::relations::RelationParams;
+use crate::base::codec::TranscriptData as _;
 use crate::base::field::FieldLike;
 use crate::base::group::Curve;
 use crate::base::transcript::Transcript;

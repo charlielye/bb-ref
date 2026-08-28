@@ -84,7 +84,7 @@ pub fn decode_steps(bytes: &[u8]) -> Vec<PrivateExecutionStep> {
                 circuit: decode_program_gz(&s.bytecode.0),
                 witness_gz: s.witness.0,
                 kind,
-                vk: Vk::from_bytes(&s.vk.0, kind.flavor().layout().num_precomputed),
+                vk: Vk::<crate::base::Bn254>::from_bytes(&s.vk.0, kind.flavor().layout().num_precomputed),
             }
         })
         .collect()

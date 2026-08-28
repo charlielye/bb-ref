@@ -79,6 +79,20 @@ for j in "$TGT"/parity_*.json "$TGT"/rollup_*.json "$TGT"/chonk_verifier_public.
   fi
   rm -rf "$T"
 done
+# B5: UltraKeccak fixtures — bb proofs/VKs for a few acir_tests programs, non-ZK (byte-exact
+# oracle) and ZK (verify-only oracle). ACIR_TESTS points at the pinned acir_tests checkout.
+ACIR_TESTS=${ACIR_TESTS:-$REPO/barretenberg/acir_tests/acir_tests}
+for prog in a_1_mul array_dynamic unsafe_range_constraint; do
+  T2=$ACIR_TESTS/$prog/target
+  mkdir -p "$OUT/keccak/$prog" "$OUT/keccak/${prog}_zk"
+  cp "$T2/program.json" "$T2/witness.gz" "$OUT/keccak/$prog/"
+  "$BB" prove --scheme ultra_honk --oracle_hash keccak --disable_zk --write_vk -b "$T2/program.json" \
+    -w "$T2/witness.gz" -o "$OUT/keccak/$prog"
+  "$BB" prove --scheme ultra_honk --oracle_hash keccak --write_vk -b "$T2/program.json" \
+    -w "$T2/witness.gz" -o "$OUT/keccak/${prog}_zk"
+  echo "keccak $prog"
+done
+
 # B4b: write-VK instance dumps for the chonk-recursion circuits (BbRefDump.UltraWriteVk); witness
 # polynomials are mock-random so only precomputed + sigma/id are comparable (backend_write_vk_instance_diff).
 for name in chonk_verifier_public rollup_tx_base_private; do

@@ -95,12 +95,15 @@ void write_frs(const std::filesystem::path& path, const auto& values, size_t n)
 template <typename Flavor> void dump_from_builder(typename Flavor::CircuitBuilder& builder, const std::filesystem::path& out);
 
 template <typename Flavor, typename Builder>
-void dump_instance(const std::string& program_json, const std::string& witness_path, const std::filesystem::path& out)
+void dump_instance(const std::string& program_json,
+                   const std::string& witness_path,
+                   const std::filesystem::path& out,
+                   bool has_ipa_claim = false)
 {
     constexpr bool is_mega = std::is_same_v<Builder, MegaCircuitBuilder>;
     auto bytecode = get_bytecode(program_json);
     auto witness = get_bytecode(witness_path);
-    acir_format::ProgramMetadata metadata{ .has_ipa_claim = false };
+    acir_format::ProgramMetadata metadata{ .has_ipa_claim = has_ipa_claim };
     acir_format::AcirProgram program{ acir_format::circuit_buf_to_acir_format(std::move(bytecode), is_mega), {} };
     program.witness = acir_format::witness_buf_to_witness_vector(std::move(witness));
     auto builder = acir_format::create_circuit<Builder>(program, metadata);
@@ -454,6 +457,13 @@ TEST(BbRefDump, UltraInstance)
         GTEST_SKIP() << "set BBREF_PROGRAM, BBREF_WITNESS, BBREF_OUT";
     }
     bb::srs::init_file_crs_factory(bb::srs::bb_crs_path());
+    // BBREF_IPA=1: rollup circuits (RollupIO + combined honk+ipa proof); Ultra flavors only.
+    if (std::getenv("BBREF_IPA") != nullptr) {
+        bb::srs::init_grumpkin_file_crs_factory(bb::srs::bb_crs_path());
+        dump_instance<UltraFlavor, UltraCircuitBuilder>(program, witness, std::filesystem::path(out) / "nozk", true);
+        dump_instance<UltraZKFlavor, UltraCircuitBuilder>(program, witness, std::filesystem::path(out) / "zk", true);
+        return;
+    }
     dump_instance<UltraFlavor, UltraCircuitBuilder>(program, witness, std::filesystem::path(out) / "nozk");
     dump_instance<UltraZKFlavor, UltraCircuitBuilder>(program, witness, std::filesystem::path(out) / "zk");
     dump_instance<MegaAppFlavor, MegaCircuitBuilder>(program, witness, std::filesystem::path(out) / "mega_app");

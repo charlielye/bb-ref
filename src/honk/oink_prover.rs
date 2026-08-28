@@ -8,7 +8,8 @@ use super::relations::{lookup_term, table_term, RelationParams, Row};
 use crate::base::field::{batch_invert, grand_product, FieldLike, Fr};
 use crate::base::poly::Poly;
 use crate::base::rng::Rng;
-use crate::base::transcript::NativeTranscript;
+use crate::base::group::Curve;
+use crate::base::transcript::Transcript;
 use crate::base::vk::Vk;
 use crate::base::G1Affine;
 use crate::base::{Bn254, CommitmentKey};
@@ -22,13 +23,17 @@ pub struct OinkProverOutput {
 }
 
 /// Commit to the polynomials in parallel, then send them in transcript order.
-fn commit_and_send(
+fn commit_and_send<C: Curve<Fr = Fr, G = G1Affine>>(
     inst: &ProverInstance,
     ck: &CommitmentKey,
-    t: &mut NativeTranscript,
+    t: &mut Transcript<C::TF, C::Hash>,
     ents: &[Ent],
     out: &mut [Option<G1Affine>],
-) {
+)
+where
+    Fr: crate::base::codec::Transcriptable<C::TF> + crate::base::codec::FromChallenge<C::TF>,
+    G1Affine: crate::base::codec::Transcriptable<C::TF>,
+{
     let comms: Vec<_> = ents.par_iter().map(|e| ck.commit(inst.poly(*e))).collect();
     for (e, c) in ents.iter().zip(&comms) {
         t.send(e.name(), c);
@@ -40,10 +45,26 @@ pub fn prove_oink(
     inst: &mut ProverInstance,
     vk: &Vk<Bn254>,
     ck: &CommitmentKey,
-    t: &mut NativeTranscript,
+    t: &mut crate::base::transcript::NativeTranscript,
     rng: &mut dyn Rng,
     emit_alpha: bool,
 ) -> OinkProverOutput {
+    prove_oink_as::<Bn254>(inst, vk, ck, t, rng, emit_alpha)
+}
+
+/// Generic over the transcript codec/hash (bb instantiates `OinkProver<Flavor>` per flavor).
+pub fn prove_oink_as<C: Curve<Fr = Fr, G = G1Affine>>(
+    inst: &mut ProverInstance,
+    vk: &Vk<C>,
+    ck: &CommitmentKey,
+    t: &mut Transcript<C::TF, C::Hash>,
+    rng: &mut dyn Rng,
+    emit_alpha: bool,
+) -> OinkProverOutput
+where
+    Fr: crate::base::codec::Transcriptable<C::TF> + crate::base::codec::FromChallenge<C::TF>,
+    G1Affine: crate::base::codec::Transcriptable<C::TF>,
+{
     let flavor = inst.flavor;
     let mut comms: Vec<Option<G1Affine>> = vec![None; inst.layout.unshifted.len()];
     for (i, c) in vk.comms.iter().enumerate() {
@@ -72,7 +93,7 @@ pub fn prove_oink(
     for b in inst.layout.buses() {
         first.extend([BUS_SPECS[b].value, BUS_SPECS[b].read_counts]);
     }
-    commit_and_send(inst, ck, t, &first, &mut comms);
+    commit_and_send::<C>(inst, ck, t, &first, &mut comms);
     crate::base::timing::phase("    oink: wire commits");
 
     let mut params = RelationParams::<Fr>::default();
@@ -91,7 +112,7 @@ pub fn prove_oink(
         second.extend([Ent::lookup_read_counts, Ent::lookup_read_tags]);
     }
     second.push(Ent::w_4);
-    commit_and_send(inst, ck, t, &second, &mut comms);
+    commit_and_send::<C>(inst, ck, t, &second, &mut comms);
     crate::base::timing::phase("    oink: w_4/lookup commits");
 
     let c: Vec<Fr> = t.challenges(&["beta", "gamma"]);
@@ -109,7 +130,7 @@ pub fn prove_oink(
         third.push(BUS_SPECS[b].inverses);
     }
     crate::base::timing::phase("    oink: inverses");
-    commit_and_send(inst, ck, t, &third, &mut comms);
+    commit_and_send::<C>(inst, ck, t, &third, &mut comms);
     crate::base::timing::phase("    oink: inverse commits");
 
     params.public_input_delta = compute_public_input_delta(
@@ -120,7 +141,7 @@ pub fn prove_oink(
     );
     compute_grand_product(inst, &params);
     crate::base::timing::phase("    oink: grand product");
-    commit_and_send(inst, ck, t, &[Ent::z_perm], &mut comms);
+    commit_and_send::<C>(inst, ck, t, &[Ent::z_perm], &mut comms);
 
     let alpha: Fr = if emit_alpha {
         t.challenge("alpha")
