@@ -155,6 +155,16 @@ fn from_env_boxed() -> Box<dyn Rng + Send> {
         Err(_) => Box::new(OsRng),
     }
 }
+/// An `Rng` that delegates every draw to the process-global source, so one tape set via
+/// `set_global` can serve bb's single interleaved draw sequence (witness gap-fill, in-circuit
+/// masking, random claims, prover) in order.
+pub struct GlobalProxy;
+impl Rng for GlobalProxy {
+    fn next_u256(&mut self) -> U256 {
+        global_next_u256()
+    }
+}
+
 pub fn global_next_u256() -> U256 {
     let mut g = GLOBAL.lock().unwrap();
     match g.as_mut() {

@@ -1,5 +1,4 @@
-//! In-circuit types over the builder (bb `stdlib/primitives`, `stdlib/hash`). Values carry a
-//! handle to the builder so that arithmetic on them emits gates in evaluation order.
+#![doc = include_str!("README.md")]
 pub mod bigfield;
 pub mod biggroup;
 pub mod biggroup_secp256r1;

@@ -93,6 +93,18 @@ for prog in a_1_mul array_dynamic unsafe_range_constraint; do
   echo "keccak $prog"
 done
 
+# B4-exit: real-witness instance dumps (BbRefDump.UltraInstance + BBREF_IPA + RNG tape). The
+# program.json/witness.gz under backend/ for these two circuits are HARVESTED from a live e2e
+# prover run (BB_DEBUG_OUTPUT_DIR on yarn-project's single-node prover full test) — they cannot be
+# rebuilt from the crates (embedded recursive proofs), only re-harvested.
+for name in rollup_tx_base_private rollup_block_root_single_tx_first; do
+  mkdir -p "$OUT/instance/backend/$name"
+  HARDWARE_CONCURRENCY=1 BB_RNG_TAPE_OUT="$OUT/instance/backend/$name/rng_tape.bin" BBREF_IPA=1 \
+    BBREF_PROGRAM=$OUT/backend/$name/program.json BBREF_WITNESS=$OUT/backend/$name/witness.gz \
+    BBREF_OUT="$OUT/instance/backend/$name" "$DSL" --gtest_filter='BbRefDump.UltraInstance'
+  echo "backend witness dump $name"
+done
+
 # B4b: write-VK instance dumps for the chonk-recursion circuits (BbRefDump.UltraWriteVk); witness
 # polynomials are mock-random so only precomputed + sigma/id are comparable (backend_write_vk_instance_diff).
 for name in chonk_verifier_public rollup_tx_base_private; do

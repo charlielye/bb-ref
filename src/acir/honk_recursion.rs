@@ -118,6 +118,23 @@ fn mock_proof_fields(acir_public_inputs: usize, ipa: bool) -> Vec<Fr> {
 /// bb `create_recursion_constraints` (Ultra) + `HonkRecursionConstraintsOutput::finalize`: verify
 /// each constraint, aggregate the pairing points, accumulate any nested IPA claims, and publish
 /// the circuit's IO.
+/// bb `construct_arbitrary_valid_honk_proof_and_vk`, draw-ledger only. In real (non-write-VK) mode
+/// bb unconditionally builds and proves a scratch one-gate circuit per honk-family constraint; its
+/// proof/vk are only ever used for witness-predicate substitution, which never triggers on the
+/// protocol circuits (predicates are constant). Only the randomness matters for byte parity: three
+/// gate values, one value per ACIR public input, then `RollupIO::add_default`'s random IPA claim.
+/// Instance construction and non-ZK proving draw nothing (M2/B0), so the scratch prove is skipped.
+fn arbitrary_valid_proof_draws(ctx_template: &Ctx, acir_public_inputs: usize, ipa: bool) {
+    let _ = ctx_template;
+    for _ in 0..3 + acir_public_inputs {
+        let _: Fr = global_field();
+    }
+    if ipa {
+        let scratch = std::rc::Rc::new(std::cell::RefCell::new(crate::circuit::Builder::new()));
+        let _ = crate::rollup::add_default_rollup_io(&scratch);
+    }
+}
+
 pub fn process_honk_recursion_constraints(
     ctx: &Ctx,
     constraints: &[HonkRecursionConstraint],
@@ -136,6 +153,9 @@ pub fn process_honk_recursion_constraints(
             c.proof_type
         );
         is_root_rollup |= c.proof_type == ROOT_ROLLUP_HONK;
+        if !is_write_vk {
+            arbitrary_valid_proof_draws(ctx, c.public_inputs.len(), has_ipa(c.proof_type));
+        }
         if is_write_vk {
             let ipa = has_ipa(c.proof_type);
             let mut b = ctx.borrow_mut();

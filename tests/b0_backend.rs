@@ -24,16 +24,25 @@ fn build(name: &str, flavor: &'static FlavorDesc) -> ProverInstance {
 }
 
 fn build_ipa(name: &str, flavor: &'static FlavorDesc, has_ipa_claim: bool) -> ProverInstance {
+    build_ipa_rng(name, flavor, has_ipa_claim, &mut OsRng)
+}
+
+fn build_ipa_rng(
+    name: &str,
+    flavor: &'static FlavorDesc,
+    has_ipa_claim: bool,
+    rng: &mut impl bb_ref::base::rng::Rng,
+) -> ProverInstance {
     let dir = common::fixture_dir(&format!("backend/{name}"));
     let circuit = decode_program(&std::fs::read(dir.join("program.json")).expect("program.json"));
-    let witness = decode_witness(&std::fs::read(dir.join("witness.gz")).expect("witness.gz"), &mut OsRng);
+    let witness = decode_witness(&std::fs::read(dir.join("witness.gz")).expect("witness.gz"), rng);
     let mut builder = if has_ipa_claim {
         build_circuit_opts(&circuit, Some(&witness), true)
     } else {
         build_circuit(&circuit, Some(&witness))
     };
     assert!(builder.failed.is_none(), "{name}: builder failure {:?}", builder.failed);
-    ProverInstance::from_builder(flavor, &mut builder, &mut OsRng)
+    ProverInstance::from_builder(flavor, &mut builder, rng)
 }
 
 fn check_nozk(name: &str) {
@@ -41,29 +50,60 @@ fn check_nozk(name: &str) {
 }
 
 /// B4 exit: real-witness rollup circuits (RollupIO; the combined honk+ipa proof is compared).
+/// Serializes every test that reads or feeds the process-global RNG: the real-witness tests
+/// replay bb's tape through it, and any concurrent circuit build would steal draws.
+static GLOBAL_RNG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn check_nozk_opts(name: &str, has_ipa_claim: bool) {
+    let _rng_guard = GLOBAL_RNG_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let dump = common::fixture_dir(&format!("instance/backend/{name}/nozk"));
     if !dump.join("proof.bin").exists() {
         eprintln!("skipping {name}: no instance dump");
         return;
     }
-    let mut inst = build_ipa(name, &ULTRA, has_ipa_claim);
+    // bb fills ACIR witness-map gaps and in-circuit masks with random field elements;
+    // byte-equality of witness columns needs bb's tape replayed through the ONE global source
+    // (pre-tape dumps like inbox_parity_64 draw nothing observable, so OsRng suffices there).
+    let tape_path = common::fixture_dir(&format!("instance/backend/{name}/rng_tape.bin"));
+    let has_tape = tape_path.exists();
+    if has_tape {
+        let tape = bb_ref::base::rng::TapeRng::from_bytes(std::fs::read(&tape_path).unwrap());
+        bb_ref::base::rng::set_global(Box::new(tape));
+    } else {
+        bb_ref::base::rng::set_global(Box::new(bb_ref::base::rng::OsRng));
+    }
+    let mut tape = bb_ref::base::rng::GlobalProxy;
+    let mut inst = build_ipa_rng(name, &ULTRA, has_ipa_claim, &mut tape);
     let expected = ProverInstance::load_dump(&ULTRA, &dump);
     assert_eq!(inst.dyadic_size, expected.dyadic_size, "{name}: dyadic size");
     assert_eq!(inst.public_inputs, expected.public_inputs, "{name}: public inputs");
+    let mut first: Option<usize> = None;
     for (e, (a, b)) in inst.layout.unshifted.iter().zip(inst.polys.iter().zip(&expected.polys)) {
-        if let Some(i) = a.coeffs.iter().zip(&b.coeffs).position(|(x, y)| x != y) {
-            panic!("{name}: polynomial {} differs at row {i}", e.name());
+        let diffs: Vec<usize> = a.coeffs.iter().zip(&b.coeffs).enumerate().filter(|(_, (x, y))| x != y).map(|(i, _)| i).collect();
+        if !diffs.is_empty() {
+            eprintln!("{name}: {} differs at {} rows; first {:?} last {:?}", e.name(), diffs.len(), &diffs[..diffs.len().min(4)], diffs.last());
+            for &i in diffs.iter().take(3) {
+                eprintln!("  row {i}: mine {:?} bb {:?}", a.coeffs[i], b.coeffs[i]);
+            }
+            first = first.or(Some(diffs[0]));
         }
+    }
+    if let Some(i) = first {
+        panic!("{name}: witness polynomials differ (first at row {i})");
     }
     let ck = CommitmentKey::new(inst.max_end_index);
     let vk = inst.compute_vk(&ck);
     assert_eq!(vk.to_bytes(), std::fs::read(dump.join("vk")).unwrap(), "{name}: VK");
-    let proof = prove_ultra(&mut inst, &vk, &mut OsRng);
+    let proof = prove_ultra(&mut inst, &vk, &mut tape);
     let expected_proof = decode_fields(&std::fs::read(dump.join("proof.bin")).unwrap());
     assert_eq!(proof, expected_proof, "{name}: proof");
-    let mut inst = build_ipa(name, &ULTRA, has_ipa_claim);
-    let out = prove_oink(&mut inst, &vk, &ck, &mut NativeTranscript::new(), &mut OsRng, true);
+    if has_tape {
+        let tape = bb_ref::base::rng::TapeRng::from_bytes(std::fs::read(&tape_path).unwrap());
+        bb_ref::base::rng::set_global(Box::new(tape));
+    }
+    let mut tape = bb_ref::base::rng::GlobalProxy;
+    let mut inst = build_ipa_rng(name, &ULTRA, has_ipa_claim, &mut tape);
+    let out = prove_oink(&mut inst, &vk, &ck, &mut NativeTranscript::new(), &mut tape, true);
     assert_eq!(check_circuit(&inst, &out.params), None, "{name}: relation failure");
 }
 
@@ -112,6 +152,12 @@ mod rollup_tx_merge_witness {
         super::check_nozk_opts("rollup_tx_merge", true);
     }
 }
+mod rollup_block_root_single_tx_first_witness {
+    #[test]
+    fn nozk() {
+        super::check_nozk_opts("rollup_block_root_single_tx_first", true);
+    }
+}
 
 /// The circuits bb-ref can currently build, with the node's `--ipa_accumulation` flag (grows per
 /// B-milestone; the rest of `backend_vk_hash/` is fixture-complete but unsupported until the
@@ -153,6 +199,8 @@ fn artifact(name: &str) -> std::path::PathBuf {
 
 #[test]
 fn backend_vk_hash_sweep() {
+    let _rng_guard = GLOBAL_RNG_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    bb_ref::base::rng::set_global(Box::new(bb_ref::base::rng::OsRng));
     let dir = common::fixture_dir("backend_vk_hash");
     let mut entries: Vec<_> = std::fs::read_dir(&dir)
         .expect("backend_vk_hash fixtures")
@@ -206,6 +254,8 @@ fn backend_vk_hash_sweep() {
 /// both sides). Set `BBREF_WVK=<name>`; the dump lives at `instance/backend_wvk/<name>`.
 #[test]
 fn backend_write_vk_instance_diff() {
+    let _rng_guard = GLOBAL_RNG_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    bb_ref::base::rng::set_global(Box::new(bb_ref::base::rng::OsRng));
     let Ok(name) = std::env::var("BBREF_WVK") else {
         eprintln!("skipping: set BBREF_WVK=<circuit name>");
         return;
