@@ -19,18 +19,33 @@ use bb_ref::goblin::eccvm::FIXED_SIZE as ECCVM_FIXED_SIZE;
 use bb_ref::honk::prover_instance::ProverInstance;
 use bb_ref::honk::ultra_prover::prove_ultra;
 use bb_ref::honk::ultra_verifier::verify_ultra;
-use bb_ref::honk::{FlavorDesc, MEGA_APP, MEGA_KERNEL, MEGA_ZK, ULTRA, ULTRA_ZK};
+use bb_ref::honk::{FlavorDesc, MEGA_APP, MEGA_KERNEL, MEGA_ZK, ULTRA, ULTRA_KECCAK, ULTRA_KECCAK_ZK, ULTRA_ZK};
+use bb_ref::base::field::U256;
+use bb_ref::base::group::KeccakBn254;
+use bb_ref::base::keccak::u256_to_bytes_be;
+use bb_ref::honk::ultra_prover::prove_ultra_as;
+use bb_ref::rollup::ROLLUP_PUBLIC_INPUTS_SIZE;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 fn instance_from_acir(flavor: &'static FlavorDesc, program: &str, witness: Option<&str>) -> ProverInstance {
+    instance_from_acir_opts(flavor, program, witness, false)
+}
+
+fn instance_from_acir_opts(
+    flavor: &'static FlavorDesc,
+    program: &str,
+    witness: Option<&str>,
+    has_ipa_claim: bool,
+) -> ProverInstance {
     let circuit = decode_program(&std::fs::read(program).expect("program.json"));
-    let witness: Option<Vec<Fr>> = witness.map(|w| decode_witness(&std::fs::read(w).expect("witness.gz"), &mut OsRng));
-    let mut builder = build_circuit(&circuit, witness.as_deref());
+    let mut rng = bb_ref::base::rng::GlobalProxy;
+    let witness: Option<Vec<Fr>> = witness.map(|w| decode_witness(&std::fs::read(w).expect("witness.gz"), &mut rng));
+    let mut builder = bb_ref::acir::lower::build_circuit_opts(&circuit, witness.as_deref(), has_ipa_claim);
     if let Some(msg) = &builder.failed {
         eprintln!("warning: circuit is not satisfied ({msg})");
     }
-    ProverInstance::from_builder(flavor, &mut builder, &mut OsRng)
+    ProverInstance::from_builder(flavor, &mut builder, &mut rng)
 }
 
 /// The Chonk subcommands: per-kind VKs from ACIR (kernels against bb's mocked IVC state), proving
@@ -91,6 +106,22 @@ fn chonk(cmd: &str, flags: &HashMap<String, String>) {
     }
 }
 
+/// bb's keccak-flavour file format: 32-byte big-endian words, no length prefix.
+fn write_words(path: &Path, words: &[U256]) {
+    let bytes: Vec<u8> = words.iter().flat_map(|w| u256_to_bytes_be(w)).collect();
+    std::fs::write(path, bytes).unwrap();
+}
+
+/// The same precomputed commitments under the keccak codec (bb `UltraKeccakFlavor::VerificationKey`).
+fn as_keccak_vk(vk: Vk<Bn254>) -> Vk<KeccakBn254> {
+    Vk::<KeccakBn254> {
+        log_circuit_size: vk.log_circuit_size,
+        num_public_inputs: vk.num_public_inputs,
+        pub_inputs_offset: vk.pub_inputs_offset,
+        comms: vk.comms,
+    }
+}
+
 fn write_vk_files(out: &Path, vk: &Vk<Bn254>) {
     std::fs::write(out.join("vk"), vk.to_bytes()).unwrap();
     std::fs::write(out.join("vk_hash"), to_bytes_be(&vk.hash())).unwrap();
@@ -106,6 +137,9 @@ fn main() {
             .build_global()
             .expect("rayon pool");
     }
+    // bb keeps ONE global engine: witness gap-fills, in-circuit masking and the prover all draw
+    // from it, so `BB_RNG_SEED` must seed the global source, not just the explicit prover rng.
+    bb_ref::base::rng::set_global_from_env();
     let args: Vec<String> = std::env::args().collect();
     let cmd = args.get(1).map(String::as_str).unwrap_or("");
     let mut flags: HashMap<String, String> = HashMap::new();
@@ -126,10 +160,13 @@ fn main() {
     }
     let get = |k: &str| flags.get(k).cloned().unwrap_or_else(|| panic!("missing {k}"));
     let scheme = flags.get("--scheme").cloned().unwrap_or_else(|| "ultra_honk".into());
-    let flavor = if flags.contains_key("--disable_zk") {
-        &ULTRA
-    } else {
-        &ULTRA_ZK
+    let keccak = flags.get("--oracle_hash").is_some_and(|h| h == "keccak");
+    let zk = !flags.contains_key("--disable_zk");
+    let flavor: &'static FlavorDesc = match (keccak, zk) {
+        (true, false) => &ULTRA_KECCAK,
+        (true, true) => &ULTRA_KECCAK_ZK,
+        (false, false) => &ULTRA,
+        (false, true) => &ULTRA_ZK,
     };
 
     if scheme == "chonk" {
@@ -155,29 +192,54 @@ fn main() {
             std::process::exit(if ok { 0 } else { 1 });
         }
         "prove" => {
+            // `--ipa_accumulation` (the node's rollup-tree flag) selects the RollupIO tail and the
+            // combined honk+ipa proof; `--oracle_hash keccak` selects the U256/keccak transcript.
+            let ipa = flags.contains_key("--ipa_accumulation");
+            let mut rng = bb_ref::base::rng::GlobalProxy;
             let mut inst = match flags.get("--instance") {
                 Some(dir) => ProverInstance::load_dump(flavor, dir),
-                None => instance_from_acir(flavor, &get("-b"), Some(&get("-w"))),
+                None => instance_from_acir_opts(flavor, &get("-b"), Some(&get("-w")), ipa),
             };
             let ck = CommitmentKey::new(inst.max_end_index);
-            let vk = inst.compute_vk(&ck);
-            let num_user_pis = inst.public_inputs.len() - 8;
-            let proof = prove_ultra(&mut inst, &vk, &mut OsRng);
+            let io_size = if ipa { ROLLUP_PUBLIC_INPUTS_SIZE } else { 8 };
+            let num_user_pis = inst.public_inputs.len() - io_size;
             let out = PathBuf::from(get("-o"));
             std::fs::create_dir_all(&out).unwrap();
-            std::fs::write(out.join("public_inputs"), encode_fields(&proof[..num_user_pis])).unwrap();
-            std::fs::write(out.join("proof"), encode_fields(&proof[num_user_pis..])).unwrap();
-            if flags.contains_key("--write_vk") {
-                write_vk_files(&out, &vk);
+            let write_vk = flags.contains_key("--write_vk");
+            if keccak {
+                let vk = as_keccak_vk(inst.compute_vk(&ck));
+                let proof = prove_ultra_as::<KeccakBn254>(&mut inst, &vk, &mut rng);
+                write_words(&out.join("public_inputs"), &proof[..num_user_pis]);
+                write_words(&out.join("proof"), &proof[num_user_pis..]);
+                if write_vk {
+                    std::fs::write(out.join("vk"), vk.to_bytes()).unwrap();
+                    std::fs::write(out.join("vk_hash"), u256_to_bytes_be(&vk.hash())).unwrap();
+                }
+            } else {
+                let vk = inst.compute_vk(&ck);
+                let proof = prove_ultra(&mut inst, &vk, &mut rng);
+                std::fs::write(out.join("public_inputs"), encode_fields(&proof[..num_user_pis])).unwrap();
+                std::fs::write(out.join("proof"), encode_fields(&proof[num_user_pis..])).unwrap();
+                if write_vk {
+                    write_vk_files(&out, &vk);
+                }
             }
             println!("Proof saved to {}", out.display());
         }
         "write_vk" => {
-            let inst = instance_from_acir(flavor, &get("-b"), None);
+            let ipa = flags.contains_key("--ipa_accumulation");
+            let inst = instance_from_acir_opts(flavor, &get("-b"), None, ipa);
             let ck = CommitmentKey::new(inst.max_end_index);
             let out = PathBuf::from(get("-o"));
             std::fs::create_dir_all(&out).unwrap();
-            write_vk_files(&out, &inst.compute_vk(&ck));
+            let vk = inst.compute_vk(&ck);
+            if keccak {
+                let vk = as_keccak_vk(vk);
+                std::fs::write(out.join("vk"), vk.to_bytes()).unwrap();
+                std::fs::write(out.join("vk_hash"), u256_to_bytes_be(&vk.hash())).unwrap();
+            } else {
+                write_vk_files(&out, &vk);
+            }
             println!("VK saved to {}", out.display());
         }
         _ => {
