@@ -113,7 +113,7 @@ done
 #                      second input unfilled; these runs always produce several checkpoints.
 # Both are shape problems a recipe-driven generator (crafted checkpoints over the orchestrator with
 # committed real leaf txs) would control directly.
-for name in rollup_tx_base_private rollup_block_root_single_tx_first rollup_checkpoint_root_single_block rollup_parity_root rollup_tx_merge rollup_checkpoint_merge rollup_block_root_first rollup_block_root_single_tx rollup_checkpoint_root; do
+for name in rollup_tx_base_private rollup_block_root_single_tx_first rollup_checkpoint_root_single_block rollup_parity_root rollup_tx_merge rollup_checkpoint_merge rollup_block_root_first rollup_block_root_single_tx rollup_checkpoint_root rollup_block_merge; do
   mkdir -p "$OUT/instance/backend/$name"
   ipa=1
   [ "$name" = rollup_parity_root ] && ipa=   # parity_root is plain HONK recursion, no RollupIO
@@ -141,5 +141,17 @@ for name in chonk_verifier_public rollup_tx_base_private; do
     BBREF_OUT="$OUT/instance/backend_wvk/$name" "$DSL" --gtest_filter='BbRefDump.UltraWriteVk'
   echo "backend_wvk $name"
 done
+
+# Epoch shapes that produce each harvested circuit (yarn-project single-node prover full.test.ts,
+# run with BB_DEBUG_OUTPUT_DIR + an AVM-capable bb; see docs/oracle.md):
+#   default PIPELINING_SETUP_OPTS ............ parity_base/root, tx_base_private, block_root_single_tx_first,
+#                                              checkpoint_root_single_block, rollup_root
+#   + a 3-tx batch in one block .............. tx_merge, checkpoint_merge, block_root_first
+#   + maxTxsPerBlock=1 (one tx per block) .... block_root_single_tx, checkpoint_root
+#   + blockDurationMs=1000 (8 blocks/slot)
+#     and a 5-tx concurrent wave ............. block_merge (5 blocks land in ONE checkpoint;
+#                                              an N-block checkpoint yields N-2 block merges)
+# Not reachable from this test at any shape: checkpoint_padding (needs an epoch with exactly ONE
+# checkpoint; every run here produces several). Its VK is still covered by backend_vk_hash_sweep.
 
 echo "backend fixtures regenerated under $OUT"

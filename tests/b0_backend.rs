@@ -161,6 +161,12 @@ mod rollup_block_root_single_tx_first_witness {
         super::check_nozk_opts("rollup_block_root_single_tx_first", true);
     }
 }
+mod rollup_block_merge_witness {
+    #[test]
+    fn nozk() {
+        super::check_nozk_opts("rollup_block_merge", true);
+    }
+}
 mod rollup_checkpoint_merge_witness {
     #[test]
     fn nozk() {
