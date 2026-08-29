@@ -100,9 +100,20 @@ done
 # decides which circuits appear: the stock test sends one tx per block (tx_base, single-tx block
 # root, single-block checkpoint root, root); adding a 3-tx second block to
 # `single-node/prover/server/full.test.ts` also yields tx_merge, checkpoint_merge and the
-# multi-tx first block root. Still unharvested: block_merge (needs 3+ blocks in ONE checkpoint;
-# this config gives each block its own checkpoint) and checkpoint_padding.
-for name in rollup_tx_base_private rollup_block_root_single_tx_first rollup_checkpoint_root_single_block rollup_parity_root rollup_tx_merge rollup_checkpoint_merge rollup_block_root_first; do
+# multi-tx first block root. Adding SEQ_MAX_TX_PER_BLOCK=1 to that same run makes each tx its own
+# block, which additionally yields the non-first single-tx block root and the plain (multi-block)
+# checkpoint root.
+#
+# Still unharvested, and NOT reachable by adding txs:
+#   block_merge        needs 3+ blocks inside ONE checkpoint (an N-block checkpoint gives N-2 block
+#                      merges). This setup advances blocks and checkpoints in lockstep — a 6-tx /
+#                      6-block epoch still produced ~1 block per checkpoint — so it needs checkpoint
+#                      CADENCE config (the slot/block timetable), not more txs.
+#   checkpoint_padding fires only when an epoch has a single checkpoint, leaving the root rollup's
+#                      second input unfilled; these runs always produce several checkpoints.
+# Both are shape problems a recipe-driven generator (crafted checkpoints over the orchestrator with
+# committed real leaf txs) would control directly.
+for name in rollup_tx_base_private rollup_block_root_single_tx_first rollup_checkpoint_root_single_block rollup_parity_root rollup_tx_merge rollup_checkpoint_merge rollup_block_root_first rollup_block_root_single_tx rollup_checkpoint_root; do
   mkdir -p "$OUT/instance/backend/$name"
   ipa=1
   [ "$name" = rollup_parity_root ] && ipa=   # parity_root is plain HONK recursion, no RollupIO

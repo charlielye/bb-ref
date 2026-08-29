@@ -173,6 +173,18 @@ mod rollup_block_root_first_witness {
         super::check_nozk_opts("rollup_block_root_first", true);
     }
 }
+mod rollup_block_root_single_tx_witness {
+    #[test]
+    fn nozk() {
+        super::check_nozk_opts("rollup_block_root_single_tx", true);
+    }
+}
+mod rollup_checkpoint_root_witness {
+    #[test]
+    fn nozk() {
+        super::check_nozk_opts("rollup_checkpoint_root", true);
+    }
+}
 mod rollup_checkpoint_root_single_block_witness {
     #[test]
     fn nozk() {
