@@ -158,6 +158,22 @@ mod rollup_block_root_single_tx_first_witness {
         super::check_nozk_opts("rollup_block_root_single_tx_first", true);
     }
 }
+mod rollup_checkpoint_root_single_block_witness {
+    #[test]
+    fn nozk() {
+        super::check_nozk_opts("rollup_checkpoint_root_single_block", true);
+    }
+}
+mod rollup_parity_root_witness {
+    #[test]
+    fn nozk() {
+        super::check_nozk_opts("rollup_parity_root", false);
+    }
+}
+// The tx/block/checkpoint MERGE variants have no harvested witnesses yet: the e2e epoch that
+// produced the fixtures is too small to force them (a merge needs 3+ leaves at its level).
+// They arrive with the recipe-driven generator (docs/conformance.md); rollup_tx_merge above
+// skips cleanly until then.
 
 /// The circuits bb-ref can currently build, with the node's `--ipa_accumulation` flag (grows per
 /// B-milestone; the rest of `backend_vk_hash/` is fixture-complete but unsupported until the

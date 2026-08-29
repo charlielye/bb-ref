@@ -97,13 +97,25 @@ done
 # program.json/witness.gz under backend/ for these two circuits are HARVESTED from a live e2e
 # prover run (BB_DEBUG_OUTPUT_DIR on yarn-project's single-node prover full test) — they cannot be
 # rebuilt from the crates (embedded recursive proofs), only re-harvested.
-for name in rollup_tx_base_private rollup_block_root_single_tx_first; do
+for name in rollup_tx_base_private rollup_block_root_single_tx_first rollup_checkpoint_root_single_block rollup_parity_root; do
   mkdir -p "$OUT/instance/backend/$name"
-  HARDWARE_CONCURRENCY=1 BB_RNG_TAPE_OUT="$OUT/instance/backend/$name/rng_tape.bin" BBREF_IPA=1 \
+  ipa=1
+  [ "$name" = rollup_parity_root ] && ipa=   # parity_root is plain HONK recursion, no RollupIO
+  mkdir -p "$OUT/instance/backend/$name"
+  HARDWARE_CONCURRENCY=1 BB_RNG_TAPE_OUT="$OUT/instance/backend/$name/rng_tape.bin" BBREF_IPA=$ipa \
     BBREF_PROGRAM=$OUT/backend/$name/program.json BBREF_WITNESS=$OUT/backend/$name/witness.gz \
     BBREF_OUT="$OUT/instance/backend/$name" "$DSL" --gtest_filter='BbRefDump.UltraInstance'
   echo "backend witness dump $name"
 done
+
+# B6: the harvested rollup_root proven with the seeded engine (keccak; seed-deterministic even
+# multithreaded — all draws happen in the single-threaded phases). HARDWARE_CONCURRENCY=1 is NOT
+# set: it trips a slab-allocator bound on the 2^23 circuit.
+mkdir -p "$OUT/instance/backend/rollup_root/seeded"
+BB_RNG_SEED=12345 "$BB" prove --scheme ultra_honk --disable_zk --oracle_hash keccak \
+  -b "$OUT/backend/rollup_root/program.json" -w "$OUT/backend/rollup_root/witness.gz" \
+  --write_vk -o "$OUT/instance/backend/rollup_root/seeded"
+echo "backend witness golden rollup_root"
 
 # B4b: write-VK instance dumps for the chonk-recursion circuits (BbRefDump.UltraWriteVk); witness
 # polynomials are mock-random so only precomputed + sigma/id are comparable (backend_write_vk_instance_diff).
