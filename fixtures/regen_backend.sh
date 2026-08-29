@@ -93,11 +93,16 @@ for prog in a_1_mul array_dynamic unsafe_range_constraint; do
   echo "keccak $prog"
 done
 
-# B4-exit: real-witness instance dumps (BbRefDump.UltraInstance + BBREF_IPA + RNG tape). The
-# program.json/witness.gz under backend/ for these two circuits are HARVESTED from a live e2e
-# prover run (BB_DEBUG_OUTPUT_DIR on yarn-project's single-node prover full test) — they cannot be
-# rebuilt from the crates (embedded recursive proofs), only re-harvested.
-for name in rollup_tx_base_private rollup_block_root_single_tx_first rollup_checkpoint_root_single_block rollup_parity_root; do
+# Real-witness instance dumps (BbRefDump.UltraInstance + BBREF_IPA + RNG tape). The
+# program.json/witness.gz under backend/ for these circuits are HARVESTED from live e2e prover
+# runs (BB_DEBUG_OUTPUT_DIR on yarn-project's single-node prover full test) — they cannot be
+# rebuilt from the crates (they embed real recursive proofs), only re-harvested. The epoch SHAPE
+# decides which circuits appear: the stock test sends one tx per block (tx_base, single-tx block
+# root, single-block checkpoint root, root); adding a 3-tx second block to
+# `single-node/prover/server/full.test.ts` also yields tx_merge, checkpoint_merge and the
+# multi-tx first block root. Still unharvested: block_merge (needs 3+ blocks in ONE checkpoint;
+# this config gives each block its own checkpoint) and checkpoint_padding.
+for name in rollup_tx_base_private rollup_block_root_single_tx_first rollup_checkpoint_root_single_block rollup_parity_root rollup_tx_merge rollup_checkpoint_merge rollup_block_root_first; do
   mkdir -p "$OUT/instance/backend/$name"
   ipa=1
   [ "$name" = rollup_parity_root ] && ipa=   # parity_root is plain HONK recursion, no RollupIO

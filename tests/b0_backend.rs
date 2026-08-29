@@ -138,8 +138,11 @@ backend_tests! {
     inbox_parity_64,
 }
 
-// B4 exit: real-witness proving through the recursion lowerings (CHONK for tx_base_private,
-// ROLLUP_HONK for tx_merge), instance + VK + combined honk+ipa proof byte-equal to bb.
+// Real-witness proving through the recursion lowerings (CHONK for tx_base_private, ROLLUP_HONK
+// for the tree levels): instance + VK + combined honk+ipa proof byte-equal to bb. Fixtures are
+// harvested from live epoch runs (fixtures/regen_backend.sh); the merge and multi-tx block-root
+// variants come from a 3-tx-block epoch shape. Still unharvested: block_merge (needs 3+ blocks in
+// ONE checkpoint — this shape gives each block its own checkpoint) and checkpoint_padding.
 mod rollup_tx_base_private_witness {
     #[test]
     fn nozk() {
@@ -156,6 +159,18 @@ mod rollup_block_root_single_tx_first_witness {
     #[test]
     fn nozk() {
         super::check_nozk_opts("rollup_block_root_single_tx_first", true);
+    }
+}
+mod rollup_checkpoint_merge_witness {
+    #[test]
+    fn nozk() {
+        super::check_nozk_opts("rollup_checkpoint_merge", true);
+    }
+}
+mod rollup_block_root_first_witness {
+    #[test]
+    fn nozk() {
+        super::check_nozk_opts("rollup_block_root_first", true);
     }
 }
 mod rollup_checkpoint_root_single_block_witness {
