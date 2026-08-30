@@ -127,6 +127,51 @@ fn write_vk_files(out: &Path, vk: &Vk<Bn254>) {
     std::fs::write(out.join("vk_hash"), to_bytes_be(&vk.hash())).unwrap();
 }
 
+/// bb `process_msgpack_commands` (`api/api_msgpack.cpp`): a frame loop over one persistent
+/// handler. Responses go to stdout; everything else this process prints goes to stderr.
+fn msgpack_run(input_path: &str, envelopes: bool) {
+    use bb_ref::msgpack::generated::bb_server::handle_request;
+    use bb_ref::msgpack::handler::BbRefHandler;
+    use std::io::{Read, Write};
+
+    let mut input: Box<dyn Read> = if input_path == "-" || input_path.is_empty() {
+        Box::new(std::io::stdin())
+    } else {
+        Box::new(std::fs::File::open(input_path).unwrap_or_else(|e| panic!("{input_path}: {e}")))
+    };
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+
+    let mut handler = BbRefHandler::new();
+    loop {
+        let mut len_buf = [0u8; 4];
+        match input.read_exact(&mut len_buf) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(e) => panic!("reading frame length: {e}"),
+        }
+        let len = u32::from_le_bytes(len_buf) as usize;
+        let mut frame = vec![0u8; len];
+        input.read_exact(&mut frame).expect("incomplete frame");
+
+        let (request_id, payload) = if envelopes {
+            assert!(len >= 8, "envelope frame shorter than its request id");
+            (u64::from_le_bytes(frame[..8].try_into().unwrap()), &frame[8..])
+        } else {
+            (0, &frame[..])
+        };
+
+        let response = handle_request(&mut handler, payload);
+        let total = response.len() + if envelopes { 8 } else { 0 };
+        out.write_all(&(total as u32).to_le_bytes()).unwrap();
+        if envelopes {
+            out.write_all(&request_id.to_le_bytes()).unwrap();
+        }
+        out.write_all(&response).unwrap();
+        out.flush().unwrap();
+    }
+}
+
 fn main() {
     // Beyond ~48 threads the MSM-heavy phases slow down (arkworks' parallel MSM splits into few
     // windows; oversubscription costs more than it gains); RAYON_NUM_THREADS still overrides.
@@ -160,19 +205,39 @@ fn main() {
     }
     let get = |k: &str| flags.get(k).cloned().unwrap_or_else(|| panic!("missing {k}"));
     let scheme = flags.get("--scheme").cloned().unwrap_or_else(|| "ultra_honk".into());
-    let keccak = flags.get("--oracle_hash").is_some_and(|h| h == "keccak");
-    let zk = !flags.contains_key("--disable_zk");
-    let flavor: &'static FlavorDesc = match (keccak, zk) {
-        (true, false) => &ULTRA_KECCAK,
-        (true, true) => &ULTRA_KECCAK_ZK,
-        (false, false) => &ULTRA,
-        (false, true) => &ULTRA_ZK,
+
+    if cmd == "msgpack" {
+        // `bb-ref msgpack run --input <file>` — bb's offline replay mode: bare
+        // `[u32 len][msgpack command]` frames in, `[u32 len][msgpack response]` frames to stdout,
+        // one handler surviving across frames so Chonk sequences work. `--envelopes` accepts the
+        // corpus recording format instead: `[u32 len][u64 request_id][payload]`, ids echoed back.
+        msgpack_run(&get("--input"), flags.contains_key("--envelopes"));
+        return;
+    }
+
+    // bb `dispatch_by_settings`, shared with the msgpack server.
+    let settings = bb_ref::msgpack::generated::bb_types::ProofSystemSettings {
+        ipa_accumulation: flags.contains_key("--ipa_accumulation"),
+        oracle_hash_type: flags
+            .get("--oracle_hash")
+            .cloned()
+            .unwrap_or_else(|| "poseidon2".into()),
+        disable_zk: flags.contains_key("--disable_zk"),
+        optimized_solidity_verifier: false,
     };
+    let keccak = settings.oracle_hash_type == "keccak";
 
     if scheme == "chonk" {
         chonk(cmd, &flags);
         return;
     }
+    let flavor: &'static FlavorDesc = match bb_ref::msgpack::handler::select_flavor(&settings) {
+        Ok((f, _)) => f,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(2);
+        }
+    };
     assert_eq!(scheme, "ultra_honk", "unsupported scheme {scheme}");
 
     match cmd {

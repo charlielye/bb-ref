@@ -179,7 +179,7 @@ pub fn field(bytes: &[u8]) -> Fr {
     from_bytes_be(bytes)
 }
 
-fn gunzip(data: &[u8]) -> Vec<u8> {
+pub fn gunzip(data: &[u8]) -> Vec<u8> {
     let mut out = vec![];
     flate2::read::GzDecoder::new(data)
         .read_to_end(&mut out)
@@ -205,7 +205,13 @@ pub fn decode_program(program_json: &[u8]) -> Circuit {
 
 /// The single circuit of gzipped ACIR bytecode.
 pub fn decode_program_gz(bytecode_gz: &[u8]) -> Circuit {
-    let mut program: Program = decode_msgpack(&gunzip(bytecode_gz));
+    decode_program_raw(&gunzip(bytecode_gz))
+}
+
+/// The single circuit of a decompressed (marker ++ msgpack) ACIR buffer — the form bytecode takes
+/// on the bbapi wire.
+pub fn decode_program_raw(bytecode: &[u8]) -> Circuit {
+    let mut program: Program = decode_msgpack(bytecode);
     assert_eq!(program.functions.len(), 1, "expected a single ACIR function");
     program.functions.remove(0)
 }
@@ -214,8 +220,12 @@ pub fn decode_program_gz(bytecode_gz: &[u8]) -> Circuit {
 /// unconstrained; like bb, they get random values so an accidental use shows up (and the prover's
 /// randomness is consumed the same way).
 pub fn decode_witness(witness_gz: &[u8], rng: &mut dyn Rng) -> Vec<Fr> {
-    let raw = gunzip(witness_gz);
-    let mut stack: WitnessStack = decode_msgpack(&raw);
+    decode_witness_raw(&gunzip(witness_gz), rng)
+}
+
+/// A decompressed witness-stack buffer — the form witnesses take on the bbapi wire.
+pub fn decode_witness_raw(raw: &[u8], rng: &mut dyn Rng) -> Vec<Fr> {
+    let mut stack: WitnessStack = decode_msgpack(raw);
     assert_eq!(stack.stack.len(), 1, "expected a single witness map");
     let map = std::mem::take(&mut stack.stack[0].witness);
     let mut v = Vec::with_capacity(map.keys().next_back().map_or(0, |k| *k as usize + 1));
