@@ -6,3 +6,6 @@
 !/fixtures/data/**/acir/**/proof
 /fixtures/data/**/acir/mock_1_1_tape/
 /fixtures/data/**/acir/rust_1_1/
+
+# Built by pin/build.sh inside the pinned checkout.
+/pin/aztec-packages/barretenberg/cpp/build/

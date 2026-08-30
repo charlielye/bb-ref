@@ -1,0 +1,5 @@
+[submodule "pin/aztec-packages"]
+	path = pin/aztec-packages
+	url = https://github.com/AztecProtocol/aztec-packages
+	branch = cl/bb-ref-conformance
+	shallow = true
