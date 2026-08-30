@@ -9,3 +9,4 @@
 
 # Built by pin/build.sh inside the pinned checkout.
 /pin/aztec-packages/barretenberg/cpp/build/
+bin/
