@@ -138,6 +138,34 @@ where
 
 /// Native UltraHonk verification. `public_inputs` are the user public inputs; `proof` is bb's proof
 /// (which starts with the pairing-point public inputs).
+/// bb `PairingPoints::aggregate` + one check (`ultra_verifier.cpp`, every flavor): fold the PCS
+/// points into the ones carried in the public inputs with a random separator, then perform a
+/// single pairing check. Checking the two sets separately is equally sound, but the separator is
+/// drawn from the session-global engine: consuming a different number of values leaves a seeded
+/// run in step for one command and out of step for every command after it.
+pub fn aggregate_and_check(
+    pi_points: &crate::base::group::PairingPoints<Bn254>,
+    pcs_points: &crate::base::group::PairingPoints<Bn254>,
+    g2: &G2Points,
+) -> bool {
+    use ark_ec::CurveGroup;
+    let pi_default = AffineRepr::is_zero(&pi_points.p0) && AffineRepr::is_zero(&pi_points.p1);
+    let pi_mixed = AffineRepr::is_zero(&pi_points.p0) != AffineRepr::is_zero(&pi_points.p1);
+    let pcs_bad = AffineRepr::is_zero(&pcs_points.p0) || AffineRepr::is_zero(&pcs_points.p1);
+    // bb aborts on these; a verifier reports them as a failed proof.
+    if pi_mixed || pcs_bad {
+        return false;
+    }
+    // Only a fully-default accumulator is uninitialised: adopt the incoming points, drawing nothing.
+    if pi_default {
+        return pcs_points.check(g2);
+    }
+    let separator: crate::base::Fr = crate::base::rng::global_field();
+    let p0 = (pi_points.p0.into_group() + pcs_points.p0.into_group() * separator).into_affine();
+    let p1 = (pi_points.p1.into_group() + pcs_points.p1.into_group() * separator).into_affine();
+    crate::base::group::PairingPoints::<Bn254> { p0, p1 }.check(g2)
+}
+
 pub fn verify_ultra(
     flavor: &FlavorDesc,
     vk: &Vk<Bn254>,
@@ -151,10 +179,7 @@ pub fn verify_ultra(
         return false;
     }
     let pi_points = default_io_pairing_points::<Bn254>(&r.public_inputs);
-    // A default (all-infinity) accumulator carries no claim. Otherwise, both pairing claims must hold;
-    // bb aggregates them with a random separator, which is equivalent and unobservable.
-    let pi_ok = (AffineRepr::is_zero(&pi_points.p0) && AffineRepr::is_zero(&pi_points.p1)) || pi_points.check(g2);
-    pi_ok && r.pcs_pairing_points.check(g2)
+    aggregate_and_check(&pi_points, &r.pcs_pairing_points, g2)
 }
 
 /// Native UltraKeccak verification: the proof is a vector of raw 256-bit words.
@@ -183,10 +208,9 @@ pub fn verify_ultra_keccak(
     }
     // The pairing-point public inputs use the circuit's field-limb encoding regardless of codec.
     let pi_points = default_io_pairing_points::<Bn254>(&r.public_inputs);
-    let pi_ok = (AffineRepr::is_zero(&pi_points.p0) && AffineRepr::is_zero(&pi_points.p1)) || pi_points.check(g2);
     let pcs = PairingPoints::<Bn254> {
         p0: r.pcs_pairing_points.p0,
         p1: r.pcs_pairing_points.p1,
     };
-    pi_ok && pcs.check(g2)
+    aggregate_and_check(&pi_points, &pcs, g2)
 }

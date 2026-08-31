@@ -52,9 +52,13 @@ fn bytecode_gz(program_json: &Path) -> Vec<u8> {
     gunzip(&base64::engine::general_purpose::STANDARD.decode(p.bytecode).unwrap())
 }
 
-fn encode_frame(cmd: &Command) -> Vec<u8> {
+/// One wire frame: `[u32 len][u64 request_id][payload]`, the length covering id and payload. Both
+/// servers read this framing from a file, a pipe, a socket or shared memory, so the same bytes go
+/// to either. Ids are the caller's to choose and come back echoed; these are sequential.
+fn encode_frame(cmd: &Command, request_id: u64) -> Vec<u8> {
     let payload = rmp_serde::to_vec_named(&vec![cmd]).unwrap();
-    let mut frame = (payload.len() as u32).to_le_bytes().to_vec();
+    let mut frame = ((payload.len() + 8) as u32).to_le_bytes().to_vec();
+    frame.extend_from_slice(&request_id.to_le_bytes());
     frame.extend_from_slice(&payload);
     frame
 }
@@ -62,11 +66,12 @@ fn encode_frame(cmd: &Command) -> Vec<u8> {
 fn split_frames(stream: &[u8]) -> Vec<Vec<u8>> {
     let mut frames = Vec::new();
     let mut i = 0;
-    while i + 4 <= stream.len() {
+    while i + 12 <= stream.len() {
         let len = u32::from_le_bytes(stream[i..i + 4].try_into().unwrap()) as usize;
-        i += 4;
-        frames.push(stream[i..i + len].to_vec());
-        i += len;
+        // Skip the echoed request id; the payload is what gets compared.
+        i += 12;
+        frames.push(stream[i..i + len - 8].to_vec());
+        i += len - 8;
     }
     assert_eq!(i, stream.len(), "trailing bytes in response stream");
     frames
@@ -79,8 +84,8 @@ fn run_both(name: &str, cmds: &[Command], threads: Option<u32>) -> (Vec<Vec<u8>>
     std::fs::create_dir_all(&dir).unwrap();
     let input = dir.join("frames.bin");
     let mut all = Vec::new();
-    for c in cmds {
-        all.extend_from_slice(&encode_frame(c));
+    for (n, c) in cmds.iter().enumerate() {
+        all.extend_from_slice(&encode_frame(c, n as u64 + 1));
     }
     std::fs::write(&input, &all).unwrap();
 
