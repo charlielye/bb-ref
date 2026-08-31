@@ -22,7 +22,9 @@ export BB_RNG_SEED
 
 decompress() { case "$CORPUS" in *.zst) zstd -dcq "$CORPUS";; *) cat "$CORPUS";; esac; }
 
+# Kept on divergence: the two streams ARE the evidence, and regenerating them costs minutes.
 out=$(mktemp -d); trap 'rm -rf "$out"' EXIT
+keep() { trap - EXIT; echo "streams kept in $out"; }
 echo "corpus:  $CORPUS"
 echo "bb:      $BB"
 decompress | "$BB" msgpack run --input - > "$out/bb.resp" 2>"$out/bb.err" || {
@@ -35,5 +37,6 @@ if cmp -s "$out/bb.resp" "$out/ref.resp"; then
 else
     echo "DIVERGED:"
     python3 fixtures/replay.py --diff "$CORPUS" "$out/bb.resp" "$out/ref.resp"
+    keep
     exit 1
 fi

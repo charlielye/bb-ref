@@ -5,6 +5,7 @@
 pub mod ipa;
 pub mod ipa_recursive;
 
+use ark_ec::CurveGroup;
 use crate::base::codec::Transcriptable;
 use crate::base::group::PairingPoints;
 use crate::base::transcript::Transcript;
@@ -224,8 +225,20 @@ pub fn verify_ultra_rollup(
         evaluation: <crate::base::Fq as Transcriptable<crate::base::Fr>>::from_fields(&f[10..12]),
         commitment: <crate::base::GrumpkinAffine as Transcriptable<crate::base::Fr>>::from_fields(&f[12..14]),
     };
-    let pi_ok = (AffineRepr::is_zero(&pairing.p0) && AffineRepr::is_zero(&pairing.p1)) || pairing.check(g2);
-    if !(pi_ok && r.pcs_pairing_points.check(g2)) {
+    // bb `PairingPoints::aggregate`: fold the PCS points into the ones carried in the public inputs
+    // with a random separator, so a single pairing check covers both. Checking the two sets
+    // separately is equally sound but draws one field fewer, and bb's engine is a session-global:
+    // consuming a different number of values desynchronises every later proof in the same session.
+    let pi_default = AffineRepr::is_zero(&pairing.p0) && AffineRepr::is_zero(&pairing.p1);
+    let acc_ok = if pi_default {
+        r.pcs_pairing_points.check(g2)
+    } else {
+        let separator: crate::base::Fr = crate::base::rng::global_field();
+        let p0 = (pairing.p0.into_group() + r.pcs_pairing_points.p0.into_group() * separator).into_affine();
+        let p1 = (pairing.p1.into_group() + r.pcs_pairing_points.p1.into_group() * separator).into_affine();
+        PairingPoints::<Bn254> { p0, p1 }.check(g2)
+    };
+    if !acc_ok {
         return false;
     }
     let mut t = ipa::NativeTranscript::from_proof(ipa_fields);

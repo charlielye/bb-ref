@@ -188,7 +188,24 @@ fn native_verify(
 }
 
 /// bb `_prove<Flavor, IO>` (`bbapi_ultra_honk.cpp`): build, prove, split, self-verify.
+/// Reports global RNG draws per command under BBREF_RNG_COUNT.
+struct DrawReport(u64, String);
+impl Drop for DrawReport {
+    fn drop(&mut self) {
+        if std::env::var_os("BBREF_RNG_COUNT").is_some() {
+            let now = crate::base::rng::GLOBAL_DRAWS.load(std::sync::atomic::Ordering::Relaxed);
+            eprintln!("[rng] {} drew {} (total {now})", self.1, now - self.0);
+        }
+    }
+}
+fn scopeguard_draws(before: u64, name: String) -> DrawReport {
+    DrawReport(before, name)
+}
+
+
 fn circuit_prove_impl(cmd: BbCircuitProve) -> Result<BbCircuitProveResponse, String> {
+    let draws_before = crate::base::rng::GLOBAL_DRAWS.load(std::sync::atomic::Ordering::Relaxed);
+    let _guard = scopeguard_draws(draws_before, cmd.circuit.name.clone());
     let (flavor, ipa) = select_flavor(&cmd.settings)?;
     let keccak = flavor.name.contains("Keccak");
 

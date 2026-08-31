@@ -65,25 +65,33 @@ def main():
         requests = list(frames(read(sys.argv[2])))
         left = list(frames(read(sys.argv[3])))
         right = list(frames(read(sys.argv[4])))
+        bad = 0
         for n, (a, b) in enumerate(zip(left, right)):
             if a[1] != b[1]:
+                bad += 1
                 where = next((i for i, (x, y) in enumerate(zip(a[1], b[1])) if x != y), min(len(a[1]), len(b[1])))
                 what = describe(requests[n][1]) if n < len(requests) else "?"
                 print(f"frame {n} ({what}): differs at byte {where} (bb {len(a[1])} B, bb-ref {len(b[1])} B)")
-                print(f"  repro: replay.py --extract <corpus> {n} -o frame{n}.corpus")
-                return
+        print(f"\n{bad}/{len(left)} responses diverged")
+        if bad:
+            print("repro one:  replay.py --extract <corpus> <frame> -o frame.corpus")
+        return
         if len(left) != len(right):
             print(f"response count differs: bb {len(left)}, bb-ref {len(right)}")
     elif mode == "--extract":
         upto = int(sys.argv[3])
         out = sys.argv[sys.argv.index("-o") + 1] if "-o" in sys.argv else f"frame{upto}.corpus"
-        # Chonk commands mutate session state, so a frame only replays behind its predecessors.
+        all_frames = list(frames(read(sys.argv[2])))
+        # Chonk commands mutate session state, so such a frame only replays behind its
+        # predecessors. Everything else is self-contained and extracts alone -- which is the
+        # difference between a 22 KB repro and a 1.7 GB one.
+        stateful = any(describe(p).startswith("BbChonk") for _, p, _ in all_frames[:upto])
+        selected = all_frames[: upto + 1] if stateful else [all_frames[upto]]
         with open(out, "wb") as f:
-            for n, (_, _, raw) in enumerate(frames(read(sys.argv[2]))):
-                if n > upto:
-                    break
+            for _, _, raw in selected:
                 f.write(raw)
-        print(f"wrote frames 0..={upto} -> {out}")
+        span = f"0..={upto}" if stateful else f"{upto}"
+        print(f"wrote frame(s) {span} ({len(selected)}) -> {out}")
     else:
         print(__doc__)
         sys.exit(1)

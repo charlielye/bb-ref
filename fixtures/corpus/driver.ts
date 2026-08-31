@@ -92,10 +92,7 @@ const makeGlobals = (
   });
 };
 
-// Concurrency 1: parallel proving jobs interleave their world-state updates, so a tx-base built
-// while a sibling block is mid-insertion sees a different tree. That costs wall time but makes a
-// regenerated corpus reproducible, which is worth more here.
-const makeDeferredJobQueue = (concurrency = 1) => {
+const makeDeferredJobQueue = (concurrency = 10) => {
   const queue = new SerialQueue();
   queue.start(concurrency);
   return queue;
