@@ -128,8 +128,11 @@ fn write_vk_files(out: &Path, vk: &Vk<Bn254>) {
 }
 
 /// bb `process_msgpack_commands` (`api/api_msgpack.cpp`): a frame loop over one persistent
-/// handler. Responses go to stdout; everything else this process prints goes to stderr.
-fn msgpack_run(input_path: &str, envelopes: bool) {
+/// handler, in bb's single wire framing — `[u32 len][u64 request_id][payload]`, the length
+/// covering id and payload, each response echoing its request id. The same stream therefore
+/// replays over a file, stdin, a socket or shared memory, against bb or against this.
+/// Responses go to stdout; everything else this process prints goes to stderr.
+fn msgpack_run(input_path: &str) {
     use bb_ref::msgpack::generated::bb_server::handle_request;
     use bb_ref::msgpack::handler::BbRefHandler;
     use std::io::{Read, Write};
@@ -151,22 +154,14 @@ fn msgpack_run(input_path: &str, envelopes: bool) {
             Err(e) => panic!("reading frame length: {e}"),
         }
         let len = u32::from_le_bytes(len_buf) as usize;
+        assert!(len >= 8, "frame shorter than its request id");
         let mut frame = vec![0u8; len];
         input.read_exact(&mut frame).expect("incomplete frame");
+        let request_id = u64::from_le_bytes(frame[..8].try_into().unwrap());
 
-        let (request_id, payload) = if envelopes {
-            assert!(len >= 8, "envelope frame shorter than its request id");
-            (u64::from_le_bytes(frame[..8].try_into().unwrap()), &frame[8..])
-        } else {
-            (0, &frame[..])
-        };
-
-        let response = handle_request(&mut handler, payload);
-        let total = response.len() + if envelopes { 8 } else { 0 };
-        out.write_all(&(total as u32).to_le_bytes()).unwrap();
-        if envelopes {
-            out.write_all(&request_id.to_le_bytes()).unwrap();
-        }
+        let response = handle_request(&mut handler, &frame[8..]);
+        out.write_all(&((response.len() + 8) as u32).to_le_bytes()).unwrap();
+        out.write_all(&request_id.to_le_bytes()).unwrap();
         out.write_all(&response).unwrap();
         out.flush().unwrap();
     }
@@ -207,11 +202,9 @@ fn main() {
     let scheme = flags.get("--scheme").cloned().unwrap_or_else(|| "ultra_honk".into());
 
     if cmd == "msgpack" {
-        // `bb-ref msgpack run --input <file>` — bb's offline replay mode: bare
-        // `[u32 len][msgpack command]` frames in, `[u32 len][msgpack response]` frames to stdout,
-        // one handler surviving across frames so Chonk sequences work. `--envelopes` accepts the
-        // corpus recording format instead: `[u32 len][u64 request_id][payload]`, ids echoed back.
-        msgpack_run(&get("--input"), flags.contains_key("--envelopes"));
+        // `bb-ref msgpack run --input <file|->` — bb's replay mode in bb's wire framing, with one
+        // handler surviving across frames so Chonk sequences work.
+        msgpack_run(&get("--input"));
         return;
     }
 

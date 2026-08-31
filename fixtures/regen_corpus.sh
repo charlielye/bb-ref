@@ -1,66 +1,80 @@
-#!/bin/bash
-# Rebuild the conformance corpus: one shaped, seeded epoch, captured as the wire frames the prover
-# stack exchanges with bb. The corpus is that recording — replaying it against bb and against
-# bb-ref and diffing the response streams is the conformance suite.
+#!/usr/bin/env bash
+# Rebuild the conformance corpus from scratch: one script, from a bare checkout to a corpus file.
 #
-# This is a MAINTAINER task, run once per pin (or to extend circuit coverage). Running the
-# conformance suite needs none of it: that only wants the committed corpus plus `pin/build.sh`.
+#   fixtures/regen_corpus.sh [--harvest]
 #
-#   ./fixtures/regen_corpus.sh <output-dir>
+# What it does, skipping whatever is already current:
+#   1. checks out the pinned aztec-packages (fixtures/PIN) into pin/aztec-packages
+#   2. builds it: bb, bb-avm and the labs yarn-project that drives them
+#   3. harvests leaf assets -- real client-proven txs and the world state they anchor to -- if
+#      they are missing or --harvest is given. Only a protocol change invalidates them.
+#   4. runs corpus/driver.ts, which composes the recipe epochs over those assets and proves them
+#      through ONE long-lived bb behind the capture proxy
+#   5. writes corpus/rollup-<pin>.corpus.zst
 #
-# Preconditions (see "Status" below — this script does not yet run end to end):
-#   - pin/aztec-packages checked out and built:  ./pin/build.sh --noir
-#   - the pin's yarn-project built. At this pin it lives in the `labs` submodule:
-#       git -C pin/aztec-packages submodule update --init --depth 1 labs
-#       (then labs' own bootstrap; see labs-patches/ for the overlay it expects)
-#   - an AVM-capable bb, because the epoch proves public txs too:
-#       ninja -C pin/aztec-packages/barretenberg/cpp/build bb-avm
-#
-# Status: the frame capture this relies on lives in ipc-runtime and fires only when the client
-# speaks it — true from the pin branch onward, not at the older commit the dev fixtures use. The
-# epoch shaping below is still a source edit rather than config (see SHAPE), so the run is not yet
-# a single command. Both are tracked in docs/conformance.md.
+# The result is the exact bytes the prover sent to bb, so `conformance.sh` and `bench.sh` replay it
+# into bb or bb-ref with no format in between.
 set -euo pipefail
+cd "$(dirname "$0")/.."
+ROOT=$PWD
+PIN=$(cat fixtures/PIN)
+TREE=$ROOT/pin/aztec-packages
+ASSETS=$ROOT/fixtures/corpus/leaf-assets
+OUT=$ROOT/fixtures/corpus
+BB=$TREE/barretenberg/cpp/build/bin/bb-avm
+ACVM=$TREE/noir/noir-repo/target/release/acvm
+YP=$TREE/labs/yarn-project
 
-out=${1:?usage: regen_corpus.sh <output-dir>}
-here=$(cd "$(dirname "$0")" && pwd)
-repo=${AZTEC_REPO:-$here/../pin/aztec-packages}
-e2e=$repo/labs/yarn-project/end-to-end
-[ -d "$e2e" ] || e2e=$repo/yarn-project/end-to-end   # pre-labs layout
+step() { printf '\n=== %s\n' "$1"; }
 
-mkdir -p "$out"
+step "pinned tree @ ${PIN:0:9}"
+git submodule update --init pin/aztec-packages
+git -C "$TREE" fetch --depth 50 origin "$PIN" 2>/dev/null || true
+git -C "$TREE" checkout -q "$PIN"
+git -C "$TREE" submodule update --init --force --depth 1 \
+    l1-contracts/lib/openzeppelin-contracts l1-contracts/lib/forge-std \
+    barretenberg/sol/lib/forge-std barretenberg/sol/lib/solidity-stringutils
 
-# SHAPE. A checkpoint is a slot's worth of blocks, so coverage is governed by two knobs that must
-# move together — `blockDurationMs` sets the per-slot block budget (3000 -> 2, 2000 -> 3,
-# 1000 -> 8), and the txs-per-block cap must be lowered or a concurrent wave collapses into one
-# block and no blocks accumulate. blockDurationMs=1000 + maxTxsPerBlock=1 + a 5-tx wave of
-# DISTINCT calls (identical private transfers collide on nullifiers) gives a 5-block checkpoint,
-# hence block merges (an N-block checkpoint yields N-2). fixtures/regen_backend.sh maps each shape
-# to the circuits it produces.
-#
-# `rollup_checkpoint_padding` is NOT reachable from any live-chain shape: it needs an epoch holding
-# exactly one checkpoint, while the sequencer cuts one per slot and fills idle slots with empty
-# blocks. It comes from the recipe-driven generator instead (docs/conformance.md).
-echo "regen_corpus: shaping is currently a source edit in $e2e/src/single-node/prover/server/full.test.ts"
-echo "              (TIMEOUT, blockDurationMs, maxTxsPerBlock) — see SHAPE in this script."
+# labs-yarn-project builds bb and bb.js from THIS tree and portals them into labs. Running labs'
+# own bootstrap instead would install the published nightly bb.js and silently prove against a
+# different bb than the one under test.
+step "building bb + labs yarn-project (first run takes ~20 min; cached afterwards)"
+make -C "$TREE" labs-yarn-project
+ninja -C "$TREE/barretenberg/cpp/build" bb-avm
 
-# CAPTURE. IPC_FRAME_CAPTURE_DIR records what the *client* sends and receives, so the corpus is
-# made without instrumenting the server under test. Streams are per connection and labelled by
-# endpoint, so bb's traffic is separable from the world-state/AVM services the same process drives.
-# BB_RNG_SEED makes the run reproducible; note ZK operations additionally need concurrency 1 to
-# replay deterministically, which the corpus manifest records per operation.
-export BB_RNG_SEED=${BB_RNG_SEED:-12345}
-export IPC_FRAME_CAPTURE_DIR="$out/frames"
-export BB_BINARY_PATH=${BB_BINARY_PATH:-$repo/barretenberg/cpp/build/bin/bb-avm}
-export ACVM_BINARY_PATH=${ACVM_BINARY_PATH:-$repo/noir/noir-repo/target/release/acvm}
-export LOG_LEVEL=info
-mkdir -p "$IPC_FRAME_CAPTURE_DIR"
+# node resolves bare specifiers upward from the importing file, so the driver -- which lives here,
+# not in the tree -- needs the built workspace's modules reachable from its own directory.
+ln -sfn "$YP/node_modules" "$OUT/node_modules"
 
-echo "regen_corpus: proving one epoch (this is a real proving run; expect tens of minutes)"
-( cd "$e2e" && yarn test:e2e src/single-node/prover/server/full.test.ts ) 2>&1 | tee "$out/run.log"
+if [ ! -d "$ASSETS/txs" ] || [ "${1:-}" = "--harvest" ]; then
+    step "harvesting leaf txs and world state (~6 min)"
+    # Real client-proven txs are mandatory: a mock tx carries a random ChonkProof, which fails the
+    # tx-base circuit's recursive verification inside bb.
+    rm -rf "$ASSETS"; mkdir -p "$ASSETS"
+    # The chain runs on fake proofs for speed; only the unsent txs are proven for real. Each needs
+    # its own sender -- txs proven from one account against the same PXE state select the same
+    # notes and collide on nullifiers.
+    ( cd "$YP/end-to-end" && \
+      BBREF_HARVEST_OUT=$ASSETS BBREF_FUNDED_ACCOUNTS=11 FAKE_PROOFS=1 \
+      BB_BINARY_PATH=$BB ACVM_BINARY_PATH=$ACVM \
+      yarn test:e2e src/single-node/prover/server/bbref_harvest.test.ts )
+else
+    echo "leaf assets present ($(ls "$ASSETS/txs" | wc -l) txs) -- pass --harvest to refresh"
+fi
 
-echo "regen_corpus: captured streams:"
-ls -la "$IPC_FRAME_CAPTURE_DIR"
-echo
-echo "Next: keep the bb-labelled .req/.resp pair(s), record the per-operation thread policy in a"
-echo "manifest, and check coverage against the in-scope circuit list before committing."
+step "proving the recipe epochs into a corpus (~7 min)"
+FRAMES=$(mktemp -d); trap 'rm -rf "$FRAMES"' EXIT
+( cd "$OUT" && \
+  BBREF_CORPUS_ASSETS=$ASSETS \
+  BB_BINARY_PATH=$ROOT/fixtures/bb_capture_proxy.py BB_REAL=$BB ACVM_BINARY_PATH=$ACVM \
+  IPC_FRAME_CAPTURE_DIR=$FRAMES BB_POOL_SIZE=1 BB_RNG_SEED=12345 \
+  node --experimental-strip-types --experimental-transform-types --no-warnings driver.ts )
+
+step "packing"
+# One pooled bb means one connection carries the whole rollup; anything else is a stray client.
+STREAM=$(ls -S "$FRAMES"/*.req | head -1)
+python3 fixtures/replay.py --list "$STREAM" | tail -5
+zstd -3 -T0 -q -f -o "$OUT/rollup-${PIN:0:7}.corpus.zst" "$STREAM"
+printf '\ncorpus: %s (%s)\n' "$OUT/rollup-${PIN:0:7}.corpus.zst" \
+    "$(du -h "$OUT/rollup-${PIN:0:7}.corpus.zst" | cut -f1)"
+echo "verify it:  fixtures/conformance.sh $OUT/rollup-${PIN:0:7}.corpus.zst"

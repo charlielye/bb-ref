@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Regenerates the M6 merge / batch merge fixtures under fixtures/data/<pin7>/instance/merge/ (gitignored) with the
-# bb-side dumper (fixtures/bb-patch/bbref_dump.test.cpp, built into dsl_tests).
+# bb-side dumper (BbRefDump in the pinned tree, built into dsl_tests).
 set -euo pipefail
 F=$(cd "$(dirname "$0")" && pwd)
 BIN=${BB_BUILD:-$F/../../aztec-packages2/barretenberg/cpp/build}/bin/dsl_tests

@@ -125,6 +125,23 @@ Notes that will save someone a day:
 5. Upstream: the RNG env hook; landing the bbapi→ipc-codegen migration (the schema-gen
    branch); publishing `@aztec/ipc-codegen`. Each one shrinks the pin branch.
 
+## The runner is also the benchmark
+
+Replay walks the corpus frame by frame, so every run times every operation. Two modes over the
+same corpus: **conformance** (seeded, manifest thread policy, single pass, byte-verdicts +
+timings) and **bench** (unseeded, production thread counts, warmup + N reps, timings only — ZK
+and Chonk operations get honest multithreaded numbers that the concurrency-1 conformance pass
+cannot give). Reports are JSON plus a rendered table (frame, circuit, bb, bb-ref, ratio), so
+bb-vs-bb-ref and pin-to-pin regressions are diffable. The chonk pinned flows (fixtures/flows/,
+downloaded at bb's own hash) give benchmark parity with bb's chonk bench on identical inputs.
+
+Diagnosis when a frame diverges: verdicts are per frame ("frame 37, CircuitProve
+rollup_tx_merge, proof differs at byte N"), `--extract <n>` writes a self-contained one-frame
+mini-corpus (bytecode + witness + settings) for a seconds-long repro loop, and beneath that the
+dev microscope takes over (instance dump -> per-polynomial diff -> first divergent row -> op
+tracers). Chonk frames are stateful: extraction takes the whole dependent sequence, whose
+boundaries the manifest records.
+
 ## Three tiers of setup
 
 Only the first is the common case; the other two exist so that heavier work is opt-in.
