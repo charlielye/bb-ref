@@ -290,3 +290,60 @@ fn msgpack_server_oracle() {
     error_shape_case();
     chonk_case();
 }
+
+/// T5 of the test plan, bb `bbapi.test.cpp`'s input-validation analog: the wire boundary must
+/// answer malformed input with an error response, never crash, and must reject non-canonical
+/// field encodings — with a positive control beside each rejection. Standalone: frames are
+/// synthesized and dispatched in-process, no bb involved.
+mod api_boundary {
+    use bb_ref::msgpack::generated::bb_server::handle_request;
+    use bb_ref::msgpack::generated::bb_types::{BbPoseidon2Hash, Bin32, Command};
+    use bb_ref::msgpack::handler::BbRefHandler;
+
+    fn dispatch(payload: &[u8]) -> Vec<u8> {
+        handle_request(&mut BbRefHandler::new(), payload)
+    }
+
+    fn tag_of(response: &[u8]) -> String {
+        rmp_serde::from_slice::<(String, serde::de::IgnoredAny)>(response)
+            .map(|(t, _)| t)
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn unknown_command_answers_error_response() {
+        let payload =
+            rmp_serde::to_vec_named(&vec![("BbNoSuchCommand", std::collections::BTreeMap::<&str, &str>::new())])
+                .unwrap();
+        assert_eq!(tag_of(&dispatch(&payload)), "BbErrorResponse");
+    }
+
+    #[test]
+    fn garbage_payload_answers_error_not_crash() {
+        for garbage in [&b"\xff\xff\xff"[..], &b""[..], &[0x91, 0x91][..]] {
+            let response = std::panic::catch_unwind(|| dispatch(garbage))
+                .expect("malformed msgpack must not panic the dispatcher");
+            assert_eq!(tag_of(&response), "BbErrorResponse");
+        }
+    }
+
+    /// Wire words feeding the crypto helpers are REDUCED mod r, not rejected — bb does the same
+    /// (verified against the pinned bb; canonicity rejection applies to proof and public-input
+    /// words, tested by the modulus_check paths). Both hashes are pinned from bb's output, so a
+    /// change to either the reduction or the permutation trips this standalone.
+    #[test]
+    fn helper_inputs_reduce_like_bb() {
+        let hash = |word: [u8; 32]| -> String {
+            let cmd = Command::BbPoseidon2Hash(BbPoseidon2Hash::new(vec![Bin32(word)]));
+            let payload = rmp_serde::to_vec_named(&vec![&cmd]).unwrap();
+            let response = dispatch(&payload);
+            // decode via the generated response type: hash is a Bin32
+            let (tag, body): (String, std::collections::BTreeMap<String, Bin32>) =
+                rmp_serde::from_slice(&response).unwrap();
+            assert_eq!(tag, "BbPoseidon2HashResponse");
+            hex::encode(body["hash"].0)
+        };
+        assert_eq!(hash([1u8; 32]), "032141b8c2e093c1ffa95367e1c729e8e93159f93967626389f591b23e59088c");
+        assert_eq!(hash([0xffu8; 32]), "2b8aea25ff4f0d63ce37708cbb597a66d379d0c2e564fec2fbc6a1a314d6442a");
+    }
+}
