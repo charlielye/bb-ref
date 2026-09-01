@@ -157,3 +157,28 @@ mod tests {
         let _ = Vk::<Bn254>::from_bytes(&b[..b.len() - 1], 3);
     }
 }
+
+#[cfg(test)]
+mod keccak_vk_tests {
+    use super::*;
+    use crate::base::group::KeccakBn254;
+    use crate::base::G1Affine;
+    use ark_ec::AffineRepr;
+
+    /// The Keccak flavor's VK codec (U256 transcript fields) must round-trip through bb's
+    /// on-disk 32-byte big-endian format, like the Poseidon2 one above.
+    #[test]
+    fn keccak_vk_bytes_roundtrip() {
+        let g = G1Affine::generator();
+        let vk = Vk::<KeccakBn254> {
+            log_circuit_size: Fr::from(5u8),
+            num_public_inputs: Fr::from(2u8),
+            pub_inputs_offset: Fr::from(1u8),
+            comms: vec![g, (g + g).into(), g],
+        };
+        let bytes = vk.to_bytes();
+        let back = Vk::<KeccakBn254>::from_bytes(&bytes, 3);
+        assert_eq!(back.to_bytes(), bytes);
+        assert_eq!(back.log_n_value(), 5);
+    }
+}

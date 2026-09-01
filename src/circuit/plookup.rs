@@ -621,3 +621,66 @@ mod tests {
         assert_eq!(out, a ^ b);
     }
 }
+
+#[cfg(test)]
+mod table_consistency_tests {
+    use super::*;
+    use crate::base::field::{u256, u256_to_u64};
+
+    fn key(f: &Fr) -> u64 {
+        u256_to_u64(&u256(f))
+    }
+
+    /// Every basic table reachable from any multi-table must agree with `eval` on its rows.
+    /// Rows are built by counter enumeration, `eval` recomputes each value arithmetically — two
+    /// code paths, so a drifted normalization constant or slice width fails here with the
+    /// table's name instead of as a VK mismatch in a differential run.
+    #[test]
+    fn every_referenced_basic_table_matches_eval() {
+        let mut multis = vec![
+            MultiTableId::Sha256ChInput,
+            MultiTableId::Sha256ChOutput,
+            MultiTableId::Sha256MajInput,
+            MultiTableId::Sha256MajOutput,
+            MultiTableId::Sha256WitnessInput,
+            MultiTableId::Sha256WitnessOutput,
+            MultiTableId::KeccakThetaOutput,
+            MultiTableId::KeccakChiOutput,
+            MultiTableId::KeccakFormatInput,
+            MultiTableId::KeccakFormatOutput,
+            MultiTableId::Uint32Xor,
+            MultiTableId::Uint32And,
+        ];
+        for lane in 0..25u8 {
+            multis.push(MultiTableId::KeccakNormalizeAndRotate(lane));
+        }
+        for axis in 0..4u8 {
+            for is_lo in [true, false] {
+                multis.push(MultiTableId::Secp256r1FixedBase { axis, is_lo });
+            }
+        }
+        let mut seen: Vec<BasicTableId> = vec![];
+        for m in multis {
+            let mt = get_multitable(m);
+            assert_eq!(mt.basic_table_ids.len(), mt.get_table_values.len());
+            for (&bid, tv) in mt.basic_table_ids.iter().zip(&mt.get_table_values) {
+                if bid == BasicTableId::StrausEcPoint || seen.contains(&bid) {
+                    continue;
+                }
+                seen.push(bid);
+                let t = create_basic_table(bid, 1);
+                assert!(t.size() > 0, "{bid:?} is empty");
+                let step = (t.size() / 64).max(1);
+                for r in (0..t.size()).step_by(step).chain([t.size() - 1]) {
+                    let k0 = key(&t.columns[0][r]);
+                    if t.use_twin_keys {
+                        let k1 = key(&t.columns[1][r]);
+                        assert_eq!(tv.eval([k0, k1])[0], t.columns[2][r], "{bid:?} row {r}");
+                    } else {
+                        assert_eq!(tv.eval([k0, 0]), [t.columns[1][r], t.columns[2][r]], "{bid:?} row {r}");
+                    }
+                }
+            }
+        }
+    }
+}

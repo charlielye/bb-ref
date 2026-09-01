@@ -184,11 +184,18 @@ fn circuit_case(name: &str, dir: &Path, oracle: &str, ipa: bool, threads: Option
 
     let cmds = vec![
         Command::BbCircuitComputeVk(BbCircuitComputeVk {
-            circuit: CircuitInputNoVK { name: name.into(), bytecode: bytecode.clone() },
+            circuit: CircuitInputNoVK {
+                name: name.into(),
+                bytecode: bytecode.clone(),
+            },
             settings: s.clone(),
         }),
         Command::BbCircuitProve(BbCircuitProve {
-            circuit: CircuitInput { name: name.into(), bytecode, verification_key: vec![] },
+            circuit: CircuitInput {
+                name: name.into(),
+                bytecode,
+                verification_key: vec![],
+            },
             witness,
             settings: s.clone(),
         }),
@@ -286,7 +293,13 @@ fn msgpack_server_oracle() {
         None,
     );
     circuit_case("a_1_mul_keccak", &fixture("keccak/a_1_mul"), "keccak", false, None);
-    circuit_case("rollup_parity_root", &fixture("backend/rollup_parity_root"), "poseidon2", false, None);
+    circuit_case(
+        "rollup_parity_root",
+        &fixture("backend/rollup_parity_root"),
+        "poseidon2",
+        false,
+        None,
+    );
     error_shape_case();
     chonk_case();
 }
@@ -312,9 +325,11 @@ mod api_boundary {
 
     #[test]
     fn unknown_command_answers_error_response() {
-        let payload =
-            rmp_serde::to_vec_named(&vec![("BbNoSuchCommand", std::collections::BTreeMap::<&str, &str>::new())])
-                .unwrap();
+        let payload = rmp_serde::to_vec_named(&vec![(
+            "BbNoSuchCommand",
+            std::collections::BTreeMap::<&str, &str>::new(),
+        )])
+        .unwrap();
         assert_eq!(tag_of(&dispatch(&payload)), "BbErrorResponse");
     }
 
@@ -343,7 +358,13 @@ mod api_boundary {
             assert_eq!(tag, "BbPoseidon2HashResponse");
             hex::encode(body["hash"].0)
         };
-        assert_eq!(hash([1u8; 32]), "032141b8c2e093c1ffa95367e1c729e8e93159f93967626389f591b23e59088c");
-        assert_eq!(hash([0xffu8; 32]), "2b8aea25ff4f0d63ce37708cbb597a66d379d0c2e564fec2fbc6a1a314d6442a");
+        assert_eq!(
+            hash([1u8; 32]),
+            "032141b8c2e093c1ffa95367e1c729e8e93159f93967626389f591b23e59088c"
+        );
+        assert_eq!(
+            hash([0xffu8; 32]),
+            "2b8aea25ff4f0d63ce37708cbb597a66d379d0c2e564fec2fbc6a1a314d6442a"
+        );
     }
 }

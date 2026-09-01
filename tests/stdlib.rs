@@ -9,24 +9,24 @@ use bb_ref::base::transcript::Transcript;
 use bb_ref::base::{CommitmentKey, Fq, Fr, GrumpkinAffine, NativeTranscript, OsRng};
 use bb_ref::circuit::{Builder, EccOpQueue};
 use bb_ref::honk::circuit_checker::check_circuit;
+use bb_ref::honk::flavor::FlavorDesc;
 use bb_ref::honk::oink_prover::prove_oink;
 use bb_ref::honk::prover_instance::ProverInstance;
-use bb_ref::honk::flavor::FlavorDesc;
 use bb_ref::honk::{MEGA_APP, MEGA_KERNEL, ULTRA};
 use bb_ref::stdlib::bigfield::BigField;
 use bb_ref::stdlib::biggroup::{Element, Scalar};
 use bb_ref::stdlib::byte_array::ByteArray;
-use bb_ref::stdlib::ecdsa::ecdsa_verify_signature;
-use bb_ref::stdlib::keccak;
-use bb_ref::stdlib::logic::create_logic_constraint;
-use bb_ref::stdlib::sha256;
-use num_bigint::BigUint;
 use bb_ref::stdlib::cycle_group::{CycleGroup, CycleScalar};
+use bb_ref::stdlib::ecdsa::ecdsa_verify_signature;
 use bb_ref::stdlib::field::split_unique;
 use bb_ref::stdlib::hash::StdPoseidon2;
 use bb_ref::stdlib::io::{AppIo, DataBusDepot, HidingKernelIo, KernelIo, MAX_APPS_PER_KERNEL};
+use bb_ref::stdlib::keccak;
+use bb_ref::stdlib::logic::create_logic_constraint;
+use bb_ref::stdlib::sha256;
 use bb_ref::stdlib::{BoolT, Ctx, FieldT, GoblinElement, StdBn254};
 use common::eccvm_ops::g1_times;
+use num_bigint::BigUint;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -183,7 +183,18 @@ fn flavor_of(name: &str) -> &'static FlavorDesc {
     if name == "biggroup_bn254_ops" || name == "row_disabling_fq" || name == "wnaf_range_fq" {
         return &ULTRA;
     }
-    if ["sha256", "bigfield", "biggroup", "secp256r1", "ecdsa", "keccak", "logic"].iter().any(|p| name.starts_with(p)) {
+    if [
+        "sha256",
+        "bigfield",
+        "biggroup",
+        "secp256r1",
+        "ecdsa",
+        "keccak",
+        "logic",
+    ]
+    .iter()
+    .any(|p| name.starts_with(p))
+    {
         &MEGA_APP
     } else {
         &MEGA_KERNEL
@@ -193,10 +204,13 @@ fn flavor_of(name: &str) -> &'static FlavorDesc {
 type P256Fq = BigField<ark_secp256r1::Fq>;
 
 fn p256(limbs: [u64; 4]) -> ark_secp256r1::Fq {
-    ark_secp256r1::Fq::from(BigUint::from_slice(&limbs.iter().flat_map(|l| [*l as u32, (*l >> 32) as u32]).collect::<Vec<_>>()))
+    ark_secp256r1::Fq::from(BigUint::from_slice(
+        &limbs
+            .iter()
+            .flat_map(|l| [*l as u32, (*l >> 32) as u32])
+            .collect::<Vec<_>>(),
+    ))
 }
-
-
 
 fn wnaf_range_fq(ctx: &Ctx) {
     use bb_ref::base::field::{from_u256, U256};
@@ -232,8 +246,18 @@ fn row_disabling_fq(ctx: &Ctx) {
 }
 
 fn bigfield_ops(ctx: &Ctx) {
-    let a_n = p256([0x1234567890abcdef, 0xfedcba0987654321, 0x0f0e0d0c0b0a0908, 0x0706050403020100]);
-    let c_n = p256([0x00000000000000ff, 0x1111111111111111, 0x2222222222222222, 0x3333333333333333]);
+    let a_n = p256([
+        0x1234567890abcdef,
+        0xfedcba0987654321,
+        0x0f0e0d0c0b0a0908,
+        0x0706050403020100,
+    ]);
+    let c_n = p256([
+        0x00000000000000ff,
+        0x1111111111111111,
+        0x2222222222222222,
+        0x3333333333333333,
+    ]);
     let a = P256Fq::from_witness(ctx, &a_n);
     let c = P256Fq::from_witness(ctx, &c_n);
     let k = P256Fq::from_u64(0x9999);
@@ -269,7 +293,9 @@ fn bigfield_ops(ctx: &Ctx) {
     r.assert_equal(&a);
     let acc = P256Fq::sum(&[sq, ma, mm, dm, msd, cn, ka, ak, amk, kq, sm, p5, ng, sa]);
     acc.assert_zero_if(&f);
-    let out = acc.get_limb(0).element
+    let out = acc
+        .get_limb(0)
+        .element
         .add(&acc.get_limb(1).element)
         .add(&acc.get_limb(2).element)
         .add(&acc.get_limb(3).element)
@@ -305,12 +331,26 @@ fn biggroup_ops(ctx: &Ctx) {
     tr("conditionals");
     let _res = s.validate_on_curve(false);
     tr("validate");
-    let scalar = |limbs: [u64; 4]| ark_secp256r1::Fr::from(BigUint::from_slice(&limbs.iter().flat_map(|l| [*l as u32, (*l >> 32) as u32]).collect::<Vec<_>>()));
+    let scalar = |limbs: [u64; 4]| {
+        ark_secp256r1::Fr::from(BigUint::from_slice(
+            &limbs
+                .iter()
+                .flat_map(|l| [*l as u32, (*l >> 32) as u32])
+                .collect::<Vec<_>>(),
+        ))
+    };
     let u1 = Scalar::<P256>::from_witness(ctx, &scalar([0x1234567890abcdef, 0x0fedcba098765432, 0, 0]));
     let u2 = Scalar::<P256>::from_witness(ctx, &scalar([0xabcdef0123456789, 0x1122334455667788, 0, 0]));
-    let (u1_n, u2_n) = (scalar([0x1234567890abcdef, 0x0fedcba098765432, 0, 0]), scalar([0xabcdef0123456789, 0x1122334455667788, 0, 0]));
+    let (u1_n, u2_n) = (
+        scalar([0x1234567890abcdef, 0x0fedcba098765432, 0, 0]),
+        scalar([0xabcdef0123456789, 0x1122334455667788, 0, 0]),
+    );
     let msm = Element::<P256>::batch_mul(&[p.clone(), q.clone()], &[u1.clone(), u2], 128, false);
-    assert_eq!(msm.get_value(), (p_n * u1_n + q_n * u2_n).into_affine(), "biggroup batch_mul value");
+    assert_eq!(
+        msm.get_value(),
+        (p_n * u1_n + q_n * u2_n).into_affine(),
+        "biggroup batch_mul value"
+    );
     tr("batch_mul");
     let sm = p.scalar_mul(&u1, 128);
     tr("scalar_mul");
@@ -342,21 +382,52 @@ fn biggroup_bn254_ops(ctx: &Ctx) {
     let cs = Element::<Bn>::conditional_assign(&f, &p, &q);
     let _res = s.validate_on_curve(false);
     tr("ops");
-    let u1 = FieldT::from_witness(ctx, from_hex("0abc1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab"));
-    let u2 = FieldT::from_witness(ctx, from_hex("00000000000000000000000000000000abcdef0123456789abcdef0123456789"));
-    let u3 = FieldT::from_witness(ctx, from_hex("00000000000000000000000000000000112233445566778899aabbccddeeff00"));
+    let u1 = FieldT::from_witness(
+        ctx,
+        from_hex("0abc1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab"),
+    );
+    let u2 = FieldT::from_witness(
+        ctx,
+        from_hex("00000000000000000000000000000000abcdef0123456789abcdef0123456789"),
+    );
+    let u3 = FieldT::from_witness(
+        ctx,
+        from_hex("00000000000000000000000000000000112233445566778899aabbccddeeff00"),
+    );
     let m1 = Element::<Bn>::batch_mul(&[p.clone(), q.clone()], &[u1.clone(), u2.clone()], 0, true);
-    assert_eq!(m1.get_value(), (p_n * u1.get_value() + q_n * u2.get_value()).into_affine(), "bn254 edgecase batch_mul value");
+    assert_eq!(
+        m1.get_value(),
+        (p_n * u1.get_value() + q_n * u2.get_value()).into_affine(),
+        "bn254 edgecase batch_mul value"
+    );
     tr("batch_mul_edgecases");
     let m2 = Element::<Bn>::batch_mul(&[p.clone(), q.clone()], &[u2.clone(), u3.clone()], 128, false);
-    assert_eq!(m2.get_value(), (p_n * u2.get_value() + q_n * u3.get_value()).into_affine(), "bn254 small batch_mul value");
+    assert_eq!(
+        m2.get_value(),
+        (p_n * u2.get_value() + q_n * u3.get_value()).into_affine(),
+        "bn254 small batch_mul value"
+    );
     tr("batch_mul_small");
     let const_g = Element::<Bn>::constant_point(Some(ctx.clone()), &g);
-    let m3 = Element::<Bn>::batch_mul(&[p.clone(), const_g], &[u3.clone(), FieldT::constant(Fr::from(5u64))], 0, false);
+    let m3 = Element::<Bn>::batch_mul(
+        &[p.clone(), const_g],
+        &[u3.clone(), FieldT::constant(Fr::from(5u64))],
+        0,
+        false,
+    );
     tr("batch_mul_mixed_constant");
     let sm = p.scalar_mul(&u1, 0);
     tr("scalar_mul");
-    let sum = s.add(&d).add(&dd).add(&n).add(&cn).add(&cs).add(&m1).add(&m2).add(&m3).add(&sm);
+    let sum = s
+        .add(&d)
+        .add(&dd)
+        .add(&n)
+        .add(&cn)
+        .add(&cs)
+        .add(&m1)
+        .add(&m2)
+        .add(&m3)
+        .add(&sm);
     let e = Element::<Bn>::from_witness(ctx, &sum.get_value());
     sum.incomplete_assert_equal(&e);
     tr("assert");
@@ -365,19 +436,40 @@ fn biggroup_bn254_ops(ctx: &Ctx) {
 fn secp256r1_mul(ctx: &Ctx) {
     use ark_ec::{AffineRepr, CurveGroup};
     let tr = |l: &str| bb_ref::circuit::builder::trace_phase(&format!("secp256r1_mul: {l}"));
-    let scalar = |limbs: [u64; 4]| ark_secp256r1::Fr::from(BigUint::from_slice(&limbs.iter().flat_map(|l| [*l as u32, (*l >> 32) as u32]).collect::<Vec<_>>()));
+    let scalar = |limbs: [u64; 4]| {
+        ark_secp256r1::Fr::from(BigUint::from_slice(
+            &limbs
+                .iter()
+                .flat_map(|l| [*l as u32, (*l >> 32) as u32])
+                .collect::<Vec<_>>(),
+        ))
+    };
     let g = ark_secp256r1::Affine::generator();
-    let u1_n = scalar([0x1234567890abcdef, 0xfedcba0987654321, 0x0f0e0d0c0b0a0908, 0x0706050403020100]);
+    let u1_n = scalar([
+        0x1234567890abcdef,
+        0xfedcba0987654321,
+        0x0f0e0d0c0b0a0908,
+        0x0706050403020100,
+    ]);
     let u1 = Scalar::<P256>::from_witness(ctx, &u1_n);
     let t1 = Element::<P256>::secp256r1_fixed_base_mul(&u1);
     assert_eq!(t1.get_value(), (g * u1_n).into_affine(), "fixed-base mul value");
     tr("fixed_base_mul");
     let q_n = (g * ark_secp256r1::Fr::from(11u64)).into_affine();
     let q = Element::<P256>::from_witness(ctx, &q_n);
-    let u2_n = scalar([0xabcdef0123456789, 0x1122334455667788, 0x99aabbccddeeff00, 0x0123456789abcdef]);
+    let u2_n = scalar([
+        0xabcdef0123456789,
+        0x1122334455667788,
+        0x99aabbccddeeff00,
+        0x0123456789abcdef,
+    ]);
     let u2 = Scalar::<P256>::from_witness(ctx, &u2_n);
     let (res, ok) = Element::<P256>::secp256r1_ecdsa_mul(&q, &u1, &u2);
-    assert_eq!(res.get_value(), (g * u1_n + q_n * u2_n).into_affine(), "ecdsa mul value");
+    assert_eq!(
+        res.get_value(),
+        (g * u1_n + q_n * u2_n).into_affine(),
+        "ecdsa mul value"
+    );
     tr("ecdsa_mul");
     ok.assert_equal(&BoolT::constant(true));
     let e1 = Element::<P256>::from_witness(ctx, &t1.get_value());
@@ -404,13 +496,34 @@ fn ecdsa_r1(ctx: &Ctx) {
 /// Reference Keccak-f[1600] (FIPS 202).
 fn keccak_f1600(state: &mut [u64; 25]) {
     const RC: [u64; 24] = [
-        0x0000000000000001, 0x0000000000008082, 0x800000000000808a, 0x8000000080008000, 0x000000000000808b,
-        0x0000000080000001, 0x8000000080008081, 0x8000000000008009, 0x000000000000008a, 0x0000000000000088,
-        0x0000000080008009, 0x000000008000000a, 0x000000008000808b, 0x800000000000008b, 0x8000000000008089,
-        0x8000000000008003, 0x8000000000008002, 0x8000000000000080, 0x000000000000800a, 0x800000008000000a,
-        0x8000000080008081, 0x8000000000008080, 0x0000000080000001, 0x8000000080008008,
+        0x0000000000000001,
+        0x0000000000008082,
+        0x800000000000808a,
+        0x8000000080008000,
+        0x000000000000808b,
+        0x0000000080000001,
+        0x8000000080008081,
+        0x8000000000008009,
+        0x000000000000008a,
+        0x0000000000000088,
+        0x0000000080008009,
+        0x000000008000000a,
+        0x000000008000808b,
+        0x800000000000008b,
+        0x8000000000008089,
+        0x8000000000008003,
+        0x8000000000008002,
+        0x8000000000000080,
+        0x000000000000800a,
+        0x800000008000000a,
+        0x8000000080008081,
+        0x8000000000008080,
+        0x0000000080000001,
+        0x8000000080008008,
     ];
-    const ROT: [u32; 25] = [0, 1, 62, 28, 27, 36, 44, 6, 55, 20, 3, 10, 43, 25, 39, 41, 45, 15, 21, 8, 18, 2, 61, 56, 14];
+    const ROT: [u32; 25] = [
+        0, 1, 62, 28, 27, 36, 44, 6, 55, 20, 3, 10, 43, 25, 39, 41, 45, 15, 21, 8, 18, 2, 61, 56, 14,
+    ];
     for rc in RC {
         let c: [u64; 5] = std::array::from_fn(|x| (0..5).fold(0, |acc, y| acc ^ state[y * 5 + x]));
         let d: [u64; 5] = std::array::from_fn(|x| c[(x + 4) % 5] ^ c[(x + 1) % 5].rotate_left(1));
@@ -460,7 +573,9 @@ fn logic_ops(ctx: &Ctx) {
 }
 
 fn sha256_block(ctx: &Ctx) {
-    const IV: [u64; 8] = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+    const IV: [u64; 8] = [
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+    ];
     let h: [FieldT; 8] = std::array::from_fn(|i| w(ctx, IV[i]));
     let input: [FieldT; 16] = std::array::from_fn(|i| w(ctx, (i as u64 * 0x01010101 + 0x61626364) & 0xffffffff));
     let out = sha256::sha256_block(&h, &input);
@@ -496,7 +611,11 @@ fn sha256_compress(h: [u32; 8], block: &[u32; 16]) -> [u32; 8] {
     for i in 0..64 {
         let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
         let ch = (e & f) ^ (!e & g);
-        let t1 = hh.wrapping_add(s1).wrapping_add(ch).wrapping_add(K[i]).wrapping_add(w[i]);
+        let t1 = hh
+            .wrapping_add(s1)
+            .wrapping_add(ch)
+            .wrapping_add(K[i])
+            .wrapping_add(w[i]);
         let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
         let maj = (a & b) ^ (a & c) ^ (b & c);
         let t2 = s0.wrapping_add(maj);

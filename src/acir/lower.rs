@@ -18,17 +18,17 @@ use crate::chonk::kernel::{complete_kernel_circuit_logic, VkWitnesses};
 use crate::circuit::builder::MulQuad;
 use crate::circuit::mega::BilinearBatchedEqGate;
 use crate::circuit::{Builder, EccOpQueue, IS_CONSTANT};
-use crate::stdlib::cycle_group::{CycleGroup, CycleScalar};
-use crate::stdlib::io::{AppIo, KernelIo, MAX_APPS_PER_KERNEL};
-use crate::stdlib::memory::{RamTable, RomTable};
 use crate::stdlib::biggroup::Element;
 use crate::stdlib::byte_array::ByteArray;
+use crate::stdlib::cycle_group::{CycleGroup, CycleScalar};
 use crate::stdlib::ecdsa::ecdsa_verify_signature;
+use crate::stdlib::io::{AppIo, KernelIo, MAX_APPS_PER_KERNEL};
 use crate::stdlib::keccak;
 use crate::stdlib::logic::create_logic_constraint;
+use crate::stdlib::memory::{RamTable, RomTable};
 use crate::stdlib::{poseidon2, sha256, BoolT, Ctx, FieldT, StdBn254};
-use ark_ff::{BigInteger, PrimeField};
 use ark_ec::{AffineRepr, CurveGroup};
+use ark_ff::{BigInteger, PrimeField};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -405,24 +405,43 @@ fn classify(circuit: &Circuit, is_mega: bool) -> (Constraints, Vec<u32>) {
                     c.note_input(&l.rhs);
                     c.note(l.output);
                     let is_xor_gate = matches!(bb, BlackBoxFuncCall::XOR(_));
-                    c.logic.push(LogicConstraint { logic: l.clone(), is_xor_gate });
+                    c.logic.push(LogicConstraint {
+                        logic: l.clone(),
+                        is_xor_gate,
+                    });
                 }
                 BlackBoxFuncCall::Keccakf1600(k) => {
                     assert!(k.inputs.len() == 25 && k.outputs.len() == 25);
                     k.inputs.iter().for_each(|i| c.note_input(i));
                     let result = k.outputs.iter().map(|w| c.note(*w)).collect();
-                    c.keccak.push(KeccakConstraint { state: k.inputs.clone(), result });
+                    c.keccak.push(KeccakConstraint {
+                        state: k.inputs.clone(),
+                        result,
+                    });
                 }
                 BlackBoxFuncCall::EcdsaSecp256r1(e) => {
-                    assert!(e.public_key_x.len() == 32 && e.public_key_y.len() == 32 && e.signature.len() == 64 && e.hashed_message.len() == 32);
+                    assert!(
+                        e.public_key_x.len() == 32
+                            && e.public_key_y.len() == 32
+                            && e.signature.len() == 64
+                            && e.hashed_message.len() == 32
+                    );
                     c.note_input(&e.predicate);
-                    let witnesses = |c: &mut Constraints, inputs: &[FunctionInput]| inputs.iter().map(|i| c.input(i)).collect();
+                    let witnesses =
+                        |c: &mut Constraints, inputs: &[FunctionInput]| inputs.iter().map(|i| c.input(i)).collect();
                     let hashed_message = witnesses(&mut c, &e.hashed_message);
                     let signature = witnesses(&mut c, &e.signature);
                     let pub_x = witnesses(&mut c, &e.public_key_x);
                     let pub_y = witnesses(&mut c, &e.public_key_y);
                     let result = c.note(e.output);
-                    c.ecdsa_r1.push(EcdsaConstraint { hashed_message, signature, pub_x, pub_y, predicate: e.predicate.clone(), result });
+                    c.ecdsa_r1.push(EcdsaConstraint {
+                        hashed_message,
+                        signature,
+                        pub_x,
+                        pub_y,
+                        predicate: e.predicate.clone(),
+                        result,
+                    });
                 }
                 BlackBoxFuncCall::Poseidon2Permutation { inputs, outputs } => {
                     let state = inputs.iter().map(|i| c.input(i)).collect();
@@ -454,7 +473,10 @@ fn classify(circuit: &Circuit, is_mega: bool) -> (Constraints, Vec<u32>) {
                 }
                 BlackBoxFuncCall::RecursiveAggregation(r) => {
                     use crate::acir::honk_recursion as hr;
-                    if matches!(r.proof_type, hr::HONK | hr::ROLLUP_HONK | hr::ROOT_ROLLUP_HONK | hr::CHONK) {
+                    if matches!(
+                        r.proof_type,
+                        hr::HONK | hr::ROLLUP_HONK | hr::ROOT_ROLLUP_HONK | hr::CHONK
+                    ) {
                         assert!(
                             matches!(r.predicate, FunctionInput::Constant(_)),
                             "witness predicates on Honk recursion constraints are not supported"
@@ -729,7 +751,8 @@ fn fields_to_bytes(ctx: &Ctx, fields: &[FieldT]) -> ByteArray {
 /// bb `create_ecdsa_verify_constraints<secp256r1>`: a disabled constraint (predicate false) verifies
 /// a fixed valid-shaped input instead; write-VK mode fills the witnesses with the generator.
 fn create_ecdsa_verify_constraints(ctx: &Ctx, input: &EcdsaConstraint) {
-    let fields = |indices: &[u32]| -> Vec<FieldT> { indices.iter().map(|i| FieldT::from_witness_index(ctx, *i)).collect() };
+    let fields =
+        |indices: &[u32]| -> Vec<FieldT> { indices.iter().map(|i| FieldT::from_witness_index(ctx, *i)).collect() };
     let mut hashed_message_fields = fields(&input.hashed_message);
     let mut r_fields = fields(&input.signature[..32]);
     let mut s_fields = fields(&input.signature[32..]);
@@ -737,9 +760,8 @@ fn create_ecdsa_verify_constraints(ctx: &Ctx, input: &EcdsaConstraint) {
     let mut pub_y_fields = fields(&input.pub_y);
     let result_field = FieldT::from_witness_index(ctx, input.result);
     let predicate = BoolT::from_field(&to_field_ct(ctx, &input.predicate));
-    let coordinate_bytes = |p: &ark_secp256r1::Affine| {
-        (p.x.into_bigint().to_bytes_be(), p.y.into_bigint().to_bytes_be())
-    };
+    let coordinate_bytes =
+        |p: &ark_secp256r1::Affine| (p.x.into_bigint().to_bytes_be(), p.y.into_bigint().to_bytes_be());
     if ctx.borrow().is_write_vk_mode {
         let (gx, gy) = coordinate_bytes(&ark_secp256r1::Affine::generator());
         let mut b = ctx.borrow_mut();
@@ -761,11 +783,22 @@ fn create_ecdsa_verify_constraints(ctx: &Ctx, input: &EcdsaConstraint) {
         let two_g = (ark_secp256r1::Affine::generator() + ark_secp256r1::Affine::generator()).into_affine();
         let (default_x, default_y) = coordinate_bytes(&two_g);
         for i in 0..32 {
-            pub_x_fields[i] = FieldT::conditional_assign(&predicate, &pub_x_fields[i], &FieldT::constant(Fr::from(default_x[i] as u64)));
-            pub_y_fields[i] = FieldT::conditional_assign(&predicate, &pub_y_fields[i], &FieldT::constant(Fr::from(default_y[i] as u64)));
+            pub_x_fields[i] = FieldT::conditional_assign(
+                &predicate,
+                &pub_x_fields[i],
+                &FieldT::constant(Fr::from(default_x[i] as u64)),
+            );
+            pub_y_fields[i] = FieldT::conditional_assign(
+                &predicate,
+                &pub_y_fields[i],
+                &FieldT::constant(Fr::from(default_y[i] as u64)),
+            );
         }
     } else {
-        assert!(predicate.get_value(), "ECDSA constraint with a constant false predicate");
+        assert!(
+            predicate.get_value(),
+            "ECDSA constraint with a constant false predicate"
+        );
     }
     let hashed_message = fields_to_bytes(ctx, &hashed_message_fields);
     let pub_x_bytes = fields_to_bytes(ctx, &pub_x_fields);

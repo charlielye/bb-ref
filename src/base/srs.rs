@@ -143,7 +143,12 @@ impl Srs {
     pub fn bn254_key(&self, num_points: usize) -> CommitmentKey {
         let n = (num_points + 1) & !1usize;
         if self.bn254.len() >= n {
-            Ck { points: PointsView { pool: self.bn254.clone(), len: n } }
+            Ck {
+                points: PointsView {
+                    pool: self.bn254.clone(),
+                    len: n,
+                },
+            }
         } else {
             CommitmentKey::new(num_points)
         }
@@ -151,7 +156,12 @@ impl Srs {
 
     pub fn grumpkin_key(&self, num_points: usize) -> GrumpkinKey {
         if self.grumpkin.len() >= num_points {
-            Ck { points: PointsView { pool: self.grumpkin.clone(), len: num_points } }
+            Ck {
+                points: PointsView {
+                    pool: self.grumpkin.clone(),
+                    len: num_points,
+                },
+            }
         } else {
             GrumpkinKey::new(num_points)
         }
@@ -179,13 +189,19 @@ impl CommitmentKey {
     pub fn new(num_points: usize) -> Self {
         let n = (num_points + 1) & !1usize;
         Self {
-            points: PointsView { pool: std::sync::Arc::new(load_bn254_g1(n)), len: n },
+            points: PointsView {
+                pool: std::sync::Arc::new(load_bn254_g1(n)),
+                len: n,
+            },
         }
     }
     /// A key that cannot commit (for IVC state that is only ever verified against, never proven).
     pub fn empty() -> Self {
         Self {
-            points: PointsView { pool: std::sync::Arc::new(vec![]), len: 0 },
+            points: PointsView {
+                pool: std::sync::Arc::new(vec![]),
+                len: 0,
+            },
         }
     }
 }
@@ -200,5 +216,30 @@ impl GrumpkinKey {
                 len: num_points,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod pool_tests {
+    use super::*;
+
+    /// Server-loaded pools hand out Arc views (rounded up to even, as bb sizes its keys); a
+    /// request past the pool falls back to an exact private load instead of failing.
+    #[test]
+    fn pooled_keys_round_and_fall_back() {
+        if crate::testutil::crs_or_skip().is_none() {
+            return;
+        }
+        let srs = Srs::load(6, 4);
+        assert_eq!(srs.bn254_key(3).points.len(), 4, "rounded up to even, from the pool");
+        assert_eq!(srs.bn254_key(8).points.len(), 8, "past the pool: exact private load");
+        assert_eq!(srs.grumpkin_key(4).points.len(), 4);
+        assert_eq!(srs.grumpkin_key(6).points.len(), 6);
+        assert_eq!(
+            Srs::default().bn254_key(2).points.len(),
+            2,
+            "empty pool always falls back"
+        );
+        assert_eq!(CommitmentKey::empty().points.len(), 0);
     }
 }

@@ -111,7 +111,11 @@ fn mock_flow_byte_exact_with_seed() {
     let mut rng = DebugRng::new(12345);
     let steps = decode_steps(&common::read("acir/mock_1_1/ivc-inputs.msgpack"));
     let (proof, vk) = prove_steps(&steps, CommitmentKey::new(1 << 17), &mut rng, false);
-    assert_eq!(encode_fields(&proof.to_fields()), std::fs::read(dir.join("proof")).unwrap(), "proof bytes");
+    assert_eq!(
+        encode_fields(&proof.to_fields()),
+        std::fs::read(dir.join("proof")).unwrap(),
+        "proof bytes"
+    );
     assert_eq!(vk.to_bytes(), std::fs::read(dir.join("vk")).unwrap(), "vk bytes");
 }
 

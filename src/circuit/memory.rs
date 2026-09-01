@@ -543,3 +543,84 @@ impl Builder {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::base::field::FieldLike;
+    use crate::base::srs::CommitmentKey;
+    use crate::base::transcript::NativeTranscript;
+    use crate::base::Fr;
+    use crate::honk::circuit_checker::check_circuit;
+    use crate::honk::flavor::{Ent, ULTRA};
+    use crate::honk::oink_prover::prove_oink;
+    use crate::honk::prover_instance::ProverInstance;
+
+    /// RAM and paired (sorted-transcript) ROM: reads return the stored values, a RAM write is
+    /// visible to the next read, the finalized circuit satisfies every relation, and a corrupted
+    /// wire on a memory row is caught by the checker. The LogUp ROM scheme is covered by the
+    /// gate-family test in `circuit_checker`; these are the other two schemes.
+    #[test]
+    fn ram_and_paired_rom_read_back_and_localize() {
+        if crate::testutil::crs_or_skip().is_none() {
+            return;
+        }
+        let mut rng = crate::testutil::test_rng();
+        let mut builder = crate::testutil::tiny_circuit(&mut rng);
+
+        let rom = builder.create_rom_array(2);
+        let a = [
+            builder.add_variable(Fr::from(7u64)),
+            builder.add_variable(Fr::from(8u64)),
+        ];
+        let b = [
+            builder.add_variable(Fr::from(9u64)),
+            builder.add_variable(Fr::from(10u64)),
+        ];
+        builder.set_rom_element_pair(rom, 0, a);
+        builder.set_rom_element_pair(rom, 1, b);
+        let idx = builder.add_variable(Fr::from(1u64));
+        let pair = builder.read_rom_array_pair(rom, idx);
+        assert_eq!(builder.get_variable(pair[0]), Fr::from(9u64));
+        assert_eq!(builder.get_variable(pair[1]), Fr::from(10u64));
+
+        let ram = builder.create_ram_array(2);
+        let v0 = builder.add_variable(Fr::from(21u64));
+        let v1 = builder.add_variable(Fr::from(22u64));
+        builder.init_ram_element(ram, 0, v0);
+        builder.init_ram_element(ram, 1, v1);
+        let i0 = builder.add_variable(Fr::from(0u64));
+        let r0 = builder.read_ram_array(ram, i0);
+        assert_eq!(builder.get_variable(r0), Fr::from(21u64));
+        let v2 = builder.add_variable(Fr::from(23u64));
+        builder.write_ram_array(ram, i0, v2);
+        let i0_again = builder.add_variable(Fr::from(0u64));
+        let r1 = builder.read_ram_array(ram, i0_again);
+        assert_eq!(builder.get_variable(r1), Fr::from(23u64));
+
+        assert!(builder.failed.is_none(), "memory circuit must be satisfiable");
+        let mut inst = ProverInstance::from_builder(&ULTRA, &mut builder, &mut rng);
+        let ck = CommitmentKey::new(inst.max_end_index);
+        let vk = inst.compute_vk(&ck);
+        let mut t = NativeTranscript::new();
+        let out = prove_oink(&mut inst, &vk, &ck, &mut t, &mut rng, true);
+        assert_eq!(check_circuit(&inst, &out.params), None, "satisfying circuit must pass");
+
+        // The RAM consistency rows are appended at finalization, so the LAST active memory row
+        // belongs to the sorted RAM transcript; corrupting a wire there must trip the Memory
+        // relation (or Permutation when the wire sits in a copy cycle).
+        let row = inst
+            .poly(Ent::q_memory)
+            .coeffs
+            .iter()
+            .rposition(|c| !c.is_zero())
+            .expect("memory gates exist");
+        let w = inst.layout.idx(Ent::w_4);
+        inst.polys[w].coeffs[row] += Fr::one();
+        let failure = check_circuit(&inst, &out.params).expect("memory corruption must be caught");
+        let rel = format!("{:?}", failure.0);
+        assert!(
+            rel.contains("Memory") || rel.contains("Permutation"),
+            "named relation: {failure:?}"
+        );
+    }
+}

@@ -218,7 +218,10 @@ impl Transcriptable<U256> for Fr {
     }
     fn from_fields(f: &[U256]) -> Self {
         // bb asserts canonicity: value < r.
-        assert!(f[0] < <Fr as ark_ff::PrimeField>::MODULUS, "non-canonical scalar in keccak proof");
+        assert!(
+            f[0] < <Fr as ark_ff::PrimeField>::MODULUS,
+            "non-canonical scalar in keccak proof"
+        );
         from_u256(f[0])
     }
 }
@@ -332,7 +335,10 @@ mod tests {
         let gf: Vec<Fr> = g.to_fields();
         assert_eq!(G1Affine::from_fields(&gf), g);
         let zero4: Vec<Fr> = vec![<Fr as FieldLike>::zero(); 4];
-        assert_eq!(<G1Affine as Transcriptable<Fr>>::to_fields(&G1Affine::identity()), zero4);
+        assert_eq!(
+            <G1Affine as Transcriptable<Fr>>::to_fields(&G1Affine::identity()),
+            zero4
+        );
         assert!(G1Affine::from_fields(&zero4).is_zero());
 
         let h = GrumpkinAffine::generator();
@@ -365,5 +371,41 @@ mod tests {
         assert_eq!(<Fr as Transcriptable<U256>>::from_fields(&xf), x);
         let r = <Fr as PrimeField>::MODULUS;
         assert!(std::panic::catch_unwind(|| <Fr as Transcriptable<U256>>::from_fields(&[r])).is_err());
+    }
+}
+
+#[cfg(test)]
+mod scalar_codec_tests {
+    use super::*;
+
+    /// Integers, bools and fixed arrays are wire types in both transcript fields (Poseidon2
+    /// proofs carry `Fr`, Keccak proofs carry `U256`); each must survive a round trip unchanged.
+    #[test]
+    fn ints_bools_and_arrays_roundtrip_in_both_transcript_fields() {
+        for v in [0u64, 1, u32::MAX as u64 + 1, u64::MAX] {
+            assert_eq!(u64::from_fields(&Transcriptable::<Fr>::to_fields(&v)), v);
+            assert_eq!(u64::from_fields(&Transcriptable::<U256>::to_fields(&v)), v);
+        }
+        for v in [0u32, 1, u32::MAX] {
+            assert_eq!(u32::from_fields(&Transcriptable::<Fr>::to_fields(&v)), v);
+            assert_eq!(u32::from_fields(&Transcriptable::<U256>::to_fields(&v)), v);
+        }
+        for v in [false, true] {
+            assert_eq!(bool::from_fields(&Transcriptable::<Fr>::to_fields(&v)), v);
+            assert_eq!(bool::from_fields(&Transcriptable::<U256>::to_fields(&v)), v);
+        }
+        let arr = [3u32, 5, 7];
+        let fields: Vec<Fr> = arr.to_fields();
+        assert_eq!(fields.len(), <[u32; 3] as Transcriptable<Fr>>::num_fields());
+        assert_eq!(<[u32; 3]>::from_fields(&fields), arr);
+    }
+
+    /// The Keccak transcript splits a 256-bit challenge at bit 127.
+    #[test]
+    fn u256_challenge_splits_at_127_bits() {
+        let c = U256::new([u64::MAX, 77, 3, 1]);
+        let [lo, hi] = c.split_challenge();
+        assert_eq!(lo, u256_low_bits(c, 127));
+        assert_eq!(hi, u256_shr(c, 127));
     }
 }

@@ -98,9 +98,27 @@ impl Builder {
         let masks = |limb_bits: usize| -> [u64; 5] {
             let bits = [
                 if limb_bits >= 14 { 14 } else { limb_bits },
-                if limb_bits >= 28 { 14 } else if limb_bits > 14 { limb_bits - 14 } else { 0 },
-                if limb_bits >= 42 { 14 } else if limb_bits > 28 { limb_bits - 28 } else { 0 },
-                if limb_bits >= 56 { 14 } else if limb_bits > 42 { limb_bits - 42 } else { 0 },
+                if limb_bits >= 28 {
+                    14
+                } else if limb_bits > 14 {
+                    limb_bits - 14
+                } else {
+                    0
+                },
+                if limb_bits >= 42 {
+                    14
+                } else if limb_bits > 28 {
+                    limb_bits - 28
+                } else {
+                    0
+                },
+                if limb_bits >= 56 {
+                    14
+                } else if limb_bits > 42 {
+                    limb_bits - 42
+                } else {
+                    0
+                },
                 if limb_bits > 56 { limb_bits - 56 } else { 0 },
             ];
             bits.map(|b| (1u64 << b) - 1)
@@ -252,7 +270,10 @@ impl Builder {
         let zero = self.zero_idx();
         for input in unique {
             self.nnf_row(NnfSelector::NonNativeField1, [input.a[1], input.b[1], zero, input.lo_0]);
-            self.nnf_row(NnfSelector::NonNativeField2, [input.a[0], input.b[0], input.a[3], input.b[3]]);
+            self.nnf_row(
+                NnfSelector::NonNativeField2,
+                [input.a[0], input.b[0], input.a[3], input.b[3]],
+            );
             self.nnf_row(NnfSelector::NonNativeField3, [input.a[2], input.b[2], zero, input.hi_0]);
             self.nnf_row(NnfSelector::None, [input.a[1], input.b[1], zero, input.hi_1]);
         }
@@ -260,7 +281,12 @@ impl Builder {
 
     /// bb `evaluate_non_native_field_addition` / `_subtraction`: `z = x ± y` limb-wise over four
     /// arithmetic rows (gate values 3, 2, 1, 1), returning the five result witnesses.
-    fn evaluate_non_native_field_add_sub(&mut self, limbs: [AddSimple; 4], limbp: (u32, u32, Fr), subtract: bool) -> [u32; 5] {
+    fn evaluate_non_native_field_add_sub(
+        &mut self,
+        limbs: [AddSimple; 4],
+        limbp: (u32, u32, Fr),
+        subtract: bool,
+    ) -> [u32; 5] {
         let sign = if subtract { -Fr::one() } else { Fr::one() };
         let z: [u32; 4] = std::array::from_fn(|i| {
             let ((x, xm), (y, ym), c) = limbs[i];
@@ -278,7 +304,11 @@ impl Builder {
         let ((x_2, xm2), (y_2, ym2), c2) = limbs[2];
         let ((x_3, xm3), (y_3, ym3), c3) = limbs[3];
         let zero = self.zero_idx();
-        let mut row = GateRow::wires(if subtract { [y_p, x_0, y_0, z_p] } else { [y_p, x_0, y_0, x_p] });
+        let mut row = GateRow::wires(if subtract {
+            [y_p, x_0, y_0, z_p]
+        } else {
+            [y_p, x_0, y_0, x_p]
+        });
         row.q_m = sign * addconstp;
         row.q_c = -c0 * two;
         row.q_2 = -xm0 * two;
@@ -286,7 +316,11 @@ impl Builder {
         row.kind = Kind::Arith;
         row.gate_value = Fr::from(3u64);
         self.append_row(BlockId::Arithmetic, row);
-        let mut row = GateRow::wires(if subtract { [x_p, x_1, y_1, z[0]] } else { [z_p, x_1, y_1, z[0]] });
+        let mut row = GateRow::wires(if subtract {
+            [x_p, x_1, y_1, z[0]]
+        } else {
+            [z_p, x_1, y_1, z[0]]
+        });
         row.q_c = -c1;
         row.q_2 = -xm1;
         row.q_3 = -sign * ym1;

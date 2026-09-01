@@ -2,8 +2,8 @@
 pub mod bigfield;
 pub mod biggroup;
 pub mod biggroup_secp256r1;
-pub mod byte_array;
 pub mod bool;
+pub mod byte_array;
 pub mod curve;
 pub mod cycle_group;
 pub mod ecdsa;

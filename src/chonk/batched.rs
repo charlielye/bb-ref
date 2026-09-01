@@ -7,9 +7,9 @@ use crate::base::codec::Transcriptable;
 use crate::base::field::FieldLike;
 use crate::base::field::{from_u256, u256};
 use crate::base::group::{Curve, GroupLike, PairingPoints};
-use crate::base::transcript::Transcript;
 use crate::base::poly::Poly;
 use crate::base::rng::Rng;
+use crate::base::transcript::Transcript;
 use crate::base::vk::Vk;
 use crate::base::{Bn254, CommitmentKey, Fq, Fr, G1Affine, NativeTranscript};
 use crate::goblin::translator::builder::{split_fq_into_limbs, ACCUMULATORS_BINARY_LIMBS_0};
@@ -30,8 +30,8 @@ use crate::honk::pcs::{
 use crate::honk::prover_instance::ProverInstance;
 use crate::honk::relations::RelationParams;
 use crate::honk::sumcheck::{
-    alpha_powers, evaluate_univariate, full_relation_value, gate_separator_factor,
-    CommittedRounds, HonkRelations, RelationSet, RoundProver, ZkData,
+    alpha_powers, evaluate_univariate, full_relation_value, gate_separator_factor, CommittedRounds, HonkRelations,
+    RelationSet, RoundProver, ZkData,
 };
 use rayon::prelude::*;
 
@@ -124,8 +124,14 @@ pub fn joint_prove(
     let mut zk = ZkData::<Bn254>::new(JOINT_LOG_N, t, ck, rng);
     let d = layout.batched_len;
     let mega_shifted: Vec<usize> = layout.shifted.iter().map(|e| layout.idx(*e)).collect();
-    let mut mega_state =
-        RoundProver::new(&mega.polys, &mega_shifted, true, MEGA_ZK.trace_offset, mega.max_end_index, None);
+    let mut mega_state = RoundProver::new(
+        &mega.polys,
+        &mega_shifted,
+        true,
+        MEGA_ZK.trace_offset,
+        mega.max_end_index,
+        None,
+    );
     let mut trans_state = RoundProver::new(&trans.cols, &[], false, 0, usize::MAX, None);
     let mut committed = CommittedRounds::<Bn254>::new();
     let mut partial_eval = Fr::one();
@@ -421,10 +427,12 @@ where
     let _ = evaluate_univariate::<Fr>;
 
     // --- joint PCS ---
-    let concat_shift_evals =
-        crate::goblin::translator::concat_shift_evaluations(&trans_evals, &challenge);
+    let concat_shift_evals = crate::goblin::translator::concat_shift_evaluations(&trans_evals, &challenge);
     let n_mega_unshifted = layout.num_unshifted();
-    let trans_shifted_evals = PCS_SHIFTED.iter().map(|e| trans_evals[*e].clone()).chain(concat_shift_evals);
+    let trans_shifted_evals = PCS_SHIFTED
+        .iter()
+        .map(|e| trans_evals[*e].clone())
+        .chain(concat_shift_evals);
     let batcher = ClaimBatcher::<C> {
         unshifted_comms: trans_unshifted
             .iter()

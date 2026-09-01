@@ -6,9 +6,9 @@ use super::oink::compute_public_input_delta;
 use super::prover_instance::ProverInstance;
 use super::relations::{lookup_term, table_term, RelationParams, Row};
 use crate::base::field::{batch_invert, grand_product, FieldLike, Fr};
+use crate::base::group::Curve;
 use crate::base::poly::Poly;
 use crate::base::rng::Rng;
-use crate::base::group::Curve;
 use crate::base::transcript::Transcript;
 use crate::base::vk::Vk;
 use crate::base::G1Affine;
@@ -29,8 +29,7 @@ fn commit_and_send<C: Curve<Fr = Fr, G = G1Affine>>(
     t: &mut Transcript<C::TF, C::Hash>,
     ents: &[Ent],
     out: &mut [Option<G1Affine>],
-)
-where
+) where
     Fr: crate::base::codec::Transcriptable<C::TF> + crate::base::codec::FromChallenge<C::TF>,
     G1Affine: crate::base::codec::Transcriptable<C::TF>,
 {

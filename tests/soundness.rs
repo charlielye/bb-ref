@@ -128,7 +128,13 @@ fn ultra_rejects_every_tamper() {
     let mut rng = DebugRng::new(1);
     let (pis, proof, vk) = prove_split(&ULTRA, &mut rng);
     let g2 = bn254_g2();
-    tamper_suite("ultra", &pis, &proof, &|pi, pf, vk| verify_ultra(&ULTRA, vk, pi, pf, &g2), &vk);
+    tamper_suite(
+        "ultra",
+        &pis,
+        &proof,
+        &|pi, pf, vk| verify_ultra(&ULTRA, vk, pi, pf, &g2),
+        &vk,
+    );
 }
 
 #[test]
@@ -136,7 +142,13 @@ fn ultra_zk_rejects_every_tamper() {
     let mut rng = DebugRng::new(2);
     let (pis, proof, vk) = prove_split(&ULTRA_ZK, &mut rng);
     let g2 = bn254_g2();
-    tamper_suite("ultra_zk", &pis, &proof, &|pi, pf, vk| verify_ultra(&ULTRA_ZK, vk, pi, pf, &g2), &vk);
+    tamper_suite(
+        "ultra_zk",
+        &pis,
+        &proof,
+        &|pi, pf, vk| verify_ultra(&ULTRA_ZK, vk, pi, pf, &g2),
+        &vk,
+    );
 }
 
 #[test]
@@ -157,9 +169,7 @@ fn keccak_rejects_every_tamper() {
 
     let to_fr = |w: &U256| bb_ref::base::field::from_u256::<Fr>(*w);
     let inner_fr: Vec<Fr> = inner.iter().map(to_fr).collect();
-    let verify = |pi: &[Fr], pf: &[U256]| -> bool {
-        verify_ultra_keccak(&ULTRA_KECCAK, &vk, pi, pf, &g2)
-    };
+    let verify = |pi: &[Fr], pf: &[U256]| -> bool { verify_ultra_keccak(&ULTRA_KECCAK, &vk, pi, pf, &g2) };
     assert!(verify(&inner_fr, &proof_with_io), "keccak: honest proof must verify");
     for i in 0..proof_with_io.len() {
         let mut p = proof_with_io.clone();
@@ -202,9 +212,8 @@ fn rollup_rejects_every_tamper() {
     let g2 = bn254_g2();
     let grumpkin = bb_ref::base::srs::GrumpkinKey::new(1 << 16);
     let inner = inner.to_vec();
-    let verify = |pi: &[Fr], pf: &[Fr], vk: &Vk<Bn254>| -> bool {
-        verify_ultra_rollup(&ULTRA, vk, pi, pf, &g2, &grumpkin)
-    };
+    let verify =
+        |pi: &[Fr], pf: &[Fr], vk: &Vk<Bn254>| -> bool { verify_ultra_rollup(&ULTRA, vk, pi, pf, &g2, &grumpkin) };
     tamper_suite("rollup", &inner, &proof, &verify, &vk);
 }
 
@@ -244,9 +253,7 @@ fn chonk_rejects_tampers_across_every_section() {
     let vk = ivc.hiding_vk().clone();
     let g2 = bn254_g2();
     let grumpkin = GrumpkinKey::new(FIXED_SIZE);
-    let verify = |p: &ChonkProof, vk: &Vk<Bn254>| -> bool {
-        rejectable(|| chonk_verify(vk, p, &g2, &grumpkin))
-    };
+    let verify = |p: &ChonkProof, vk: &Vk<Bn254>| -> bool { rejectable(|| chonk_verify(vk, p, &g2, &grumpkin)) };
     fn rejectable(f: impl FnOnce() -> bool) -> bool {
         catch_unwind(AssertUnwindSafe(f)).unwrap_or(false)
     }
@@ -281,7 +288,11 @@ fn chonk_rejects_tampers_across_every_section() {
         let mut f = flat.clone();
         f[i] += Fr::one();
         let tampered = ChonkProof::from_fields(&f);
-        assert!(!verify(&tampered, &vk), "flipped chonk proof field {i} of {} must be rejected", flat.len());
+        assert!(
+            !verify(&tampered, &vk),
+            "flipped chonk proof field {i} of {} must be rejected",
+            flat.len()
+        );
     }
 
     // Section truncation: drop the last field of each section in turn.
@@ -295,7 +306,10 @@ fn chonk_rejects_tampers_across_every_section() {
             &mut p.joint_proof,
         ];
         v.into_iter().nth(sec).unwrap().pop();
-        assert!(!verify(&p, &vk), "chonk proof with truncated section {sec} must be rejected");
+        assert!(
+            !verify(&p, &vk),
+            "chonk proof with truncated section {sec} must be rejected"
+        );
     }
 
     let mut wrong_vk = vk.clone();

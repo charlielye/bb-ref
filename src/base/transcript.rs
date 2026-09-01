@@ -2,7 +2,7 @@
 //! `c_{i+1} = H(c_i || round_data)`. Generic over the transcript field so the same code drives
 //! native and in-circuit verifiers.
 
-use super::codec::{ChallengeField, FromChallenge, Transcriptable, TranscriptData};
+use super::codec::{ChallengeField, FromChallenge, TranscriptData, Transcriptable};
 use super::field::FieldLike;
 use super::poseidon2::Hasher;
 use std::marker::PhantomData;

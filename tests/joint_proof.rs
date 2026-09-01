@@ -7,9 +7,7 @@ use bb_ref::base::io::{decode_fields, encode_fields};
 use bb_ref::base::rng::TapeRng;
 use bb_ref::base::srs::bn254_g2;
 use bb_ref::base::{CommitmentKey, Fq, Fr, G1Affine, NativeTranscript, OsRng};
-use bb_ref::chonk::batched::{
-    joint_prove, joint_verify, mega_zk_oink_length_without_public_inputs, JOINT_LOG_N,
-};
+use bb_ref::chonk::batched::{joint_prove, joint_verify, mega_zk_oink_length_without_public_inputs, JOINT_LOG_N};
 use bb_ref::circuit::{Builder, EccOpQueue};
 use bb_ref::goblin::translator::builder::TranslatorCircuit;
 use bb_ref::goblin::translator::{Ent, TranslatorPolys, NUM_OP_QUEUE_WIRES};
@@ -71,8 +69,9 @@ fn batched_matches_bb() {
     let ck = CommitmentKey::new(1 << JOINT_LOG_N);
 
     // MegaZK circuit from the script, VK equal to bb's
-    let text = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/scripts/mega_zk.txt"))
-        .unwrap();
+    let text =
+        std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/scripts/mega_zk.txt"))
+            .unwrap();
     let ctx = Rc::new(RefCell::new(Builder::new_mega(Rc::new(
         RefCell::new(EccOpQueue::new()),
     ))));
@@ -158,8 +157,9 @@ fn batched_byte_exact_with_tape() {
     }
     let mut tape = TapeRng::from_bytes(std::fs::read(dump.join("rng_tape.bin")).unwrap());
     let ck = CommitmentKey::new(1 << JOINT_LOG_N);
-    let text = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/scripts/mega_zk.txt"))
-        .unwrap();
+    let text =
+        std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/scripts/mega_zk.txt"))
+            .unwrap();
     let ctx = Rc::new(RefCell::new(Builder::new_mega(Rc::new(
         RefCell::new(EccOpQueue::new()),
     ))));

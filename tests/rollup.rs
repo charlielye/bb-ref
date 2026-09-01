@@ -89,7 +89,7 @@ fn ultra_rollup_recursion_matches_bb() {
     let ctx = Rc::new(RefCell::new(Builder::new()));
     let (vk_ct, vk_hash_ct) = vk_to_witnesses_ultra(&ctx, &inner_vk);
     let proof_ct = proof_to_witnesses(&ctx, &inner_proof);
-        let output = verify_recursive_ultra_rollup(&ULTRA, &ctx, &vk_ct, &vk_hash_ct, &proof_ct);
+    let output = verify_recursive_ultra_rollup(&ULTRA, &ctx, &vk_ct, &vk_hash_ct, &proof_ct);
     // bb `HonkRecursionConstraintsOutput::finalize(has_ipa_claim=true)` with one nested claim.
     let mut nested_t = StdlibTranscript::from_proof(&output.ipa_proof);
     let accumulator = reduce_verify_ct(&ctx, &output.ipa_claim, &mut nested_t);

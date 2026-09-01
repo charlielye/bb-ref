@@ -15,12 +15,19 @@ Run `tools/check.sh` for the standalone gate, `cargo test --release` for everyth
 
 ## What the standalone layer covers
 
-Coverage of the standalone set alone (2026-09-02): **58% of all lines**, with the verifier core at
-or near full: relations (honk, ECCVM, translator) 100%, IPA 100%, PCS 98%, oink 99%, sumcheck 95%,
-transcript 96%, proof compression 96%, chonk accumulate/prove 93–96%, builder 80%. The uncovered
-mass is the ACIR ingestion path, the generated msgpack code, the CLI, and in-circuit gadgets
-(sha256/keccak/ecdsa) — all exercised by the differential layer, which pins them byte-exactly
-against bb.
+`coverage.sh` reports three tiers, matching how the code splits (2026-09-02):
+
+- **standalone, infra excluded: 69% of lines.** Infra — the generated msgpack code, the thin
+  command adapters, the CLI, io/timing — is excluded outright: its bytes are pinned harder by
+  corpus conformance than line coverage could.
+- **core (also excluding the in-circuit recursion layer): 95%.** Relations (honk, ECCVM,
+  translator) 100%, IPA 99–100%, PCS 98%, oink 99%, sumcheck 95%, plookup tables 97–100%,
+  ROM/RAM 99%, transcript/codec/VK/SRS 92–96%, proof compression 96%, chonk accumulate/prove
+  91–97%. The remainder is differential-only plumbing (the bb-dump loader, unused builder paths).
+- **the in-circuit recursion layer** (stdlib gadgets, ACIR lowering, the recursive verifiers) is
+  differential-owned: its correctness claim is gate-exactness against bb, which the differential
+  layer pins byte-exactly and line coverage cannot establish. Standalone-covering it needs the
+  in-circuit KAT harness, scoped separately.
 
 ## Soundness: every verifier decision has a test that trips it
 

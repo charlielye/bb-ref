@@ -664,9 +664,19 @@ pub fn compute_msm_rows(msms: &[Vec<ScalarMul>], total_muls: u32, num_rows: usiz
     assert_eq!(row_index, num_rows - 1);
     // Slopes: one batched normalization of the accumulators and one batched inversion of the
     // slope denominators (zero denominators stay zero).
-    let p1: Vec<(Fq, Fq)> = Proj::normalize_batch(&ops.iter().map(|o| o.p1).collect::<Vec<_>>()).iter().map(affine_xy).collect();
-    let acc: Vec<(Fq, Fq)> = Proj::normalize_batch(&accumulator_trace).iter().map(affine_xy).collect();
-    let mut inverses: Vec<Fq> = ops.iter().zip(&p1).map(|(op, (x1, y1))| if op.is_double { *y1 + *y1 } else { op.p2.0 - *x1 }).collect();
+    let p1: Vec<(Fq, Fq)> = Proj::normalize_batch(&ops.iter().map(|o| o.p1).collect::<Vec<_>>())
+        .iter()
+        .map(affine_xy)
+        .collect();
+    let acc: Vec<(Fq, Fq)> = Proj::normalize_batch(&accumulator_trace)
+        .iter()
+        .map(affine_xy)
+        .collect();
+    let mut inverses: Vec<Fq> = ops
+        .iter()
+        .zip(&p1)
+        .map(|(op, (x1, y1))| if op.is_double { *y1 + *y1 } else { op.p2.0 - *x1 })
+        .collect();
     crate::base::field::batch_invert(&mut inverses);
     let mut op_idx = 0;
     for (row_index, row) in rows.iter_mut().enumerate().take(num_rows - 1).skip(1) {

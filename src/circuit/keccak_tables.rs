@@ -252,3 +252,50 @@ pub fn rho_multitable(lane: usize) -> MultiTable {
     }
     MultiTable::from_steps(steps, slice_sizes, ids, values)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::base::field::{u256, u256_to_u64};
+
+    fn fr_u64(f: &Fr) -> u64 {
+        u256_to_u64(&u256(f))
+    }
+
+    /// The sparse encoding is the spec: `input_values` puts bit `i` of the key into base-11
+    /// digit `i`, and the output normalization (digits `[0,1]`) maps it back — the two IO tables
+    /// must be exact inverses on every 8-bit lane slice.
+    #[test]
+    fn input_and_output_tables_are_inverses() {
+        for x in 0..(1u64 << IO_TABLE_BITS) {
+            let sparse = fr_u64(&input_values(x)[0]);
+            let mut recovered = 0u64;
+            let (mut s, mut i) = (sparse, 0);
+            while s > 0 {
+                let digit = s % BASE;
+                assert!(digit <= 1, "sparse-of-binary digit must be a bit");
+                recovered += OUTPUT_NORMALIZATION[digit as usize] << i;
+                s /= BASE;
+                i += 1;
+            }
+            assert_eq!(recovered, x);
+            assert_eq!(fr_u64(&input_values(x)[1]), x >> (IO_TABLE_BITS - 1), "msb column");
+        }
+    }
+
+    /// θ renormalization is XOR-parity per digit: after summing ≤ 10 sparse lanes, each base-11
+    /// digit holds an XOR count and must reduce to `digit mod 2`.
+    #[test]
+    fn theta_normalization_is_parity() {
+        for key in [0u64, 1, 10, 7 + 3 * BASE + 10 * pow11(2), pow11(3) * 6 + 5] {
+            let normalized = fr_u64(&theta_values(key)[0]);
+            let (mut k, mut expected, mut shift) = (key, 0u64, 1u64);
+            while k > 0 {
+                expected += (k % BASE % 2) * shift;
+                k /= BASE;
+                shift *= BASE;
+            }
+            assert_eq!(normalized, expected, "key {key}");
+        }
+    }
+}

@@ -3,7 +3,6 @@
 //! `Σ_i γ^i (P_i(x) + α S_i(x)) eq(x, r_i)`, then merge the outputs with powers of `ρ`.
 //! The width is a runtime value (bb instantiates one flavor per width).
 
-use rayon::prelude::*;
 use super::hypernova::{ProverClaim, VerifierClaim};
 use crate::base::codec::FromChallenge;
 use crate::base::field::FieldLike;
@@ -12,6 +11,7 @@ use crate::base::poly::eq_table;
 use crate::base::poly::evaluate_univariate;
 use crate::base::transcript::Transcript;
 use crate::base::{Fr, G1Affine, NativeTranscript, Poly};
+use rayon::prelude::*;
 
 /// bb `CONST_FOLDING_LOG_N`: every batching sumcheck is padded to this many rounds.
 pub const VIRTUAL_LOG_N: usize = super::flavor::CONST_FOLDING_LOG_N;
@@ -138,8 +138,20 @@ pub fn mlb_prove(claims: Vec<ProverClaim>, t: &mut NativeTranscript) -> ProverCl
     let mut new_shifted = Poly::zero(circuit_size);
     let mut non_shifted_evaluation = Fr::zero();
     let mut shifted_evaluation = Fr::zero();
-    new_non_shifted.add_scaled_batch(&claims.iter().zip(&scalars).map(|(c, s)| (&c.non_shifted_polynomial, *s)).collect::<Vec<_>>());
-    new_shifted.add_scaled_batch(&claims.iter().zip(&scalars).map(|(c, s)| (&c.shifted_polynomial, *s)).collect::<Vec<_>>());
+    new_non_shifted.add_scaled_batch(
+        &claims
+            .iter()
+            .zip(&scalars)
+            .map(|(c, s)| (&c.non_shifted_polynomial, *s))
+            .collect::<Vec<_>>(),
+    );
+    new_shifted.add_scaled_batch(
+        &claims
+            .iter()
+            .zip(&scalars)
+            .map(|(c, s)| (&c.shifted_polynomial, *s))
+            .collect::<Vec<_>>(),
+    );
     for i in 0..n {
         non_shifted_evaluation += scalars[i] * evals[i];
         shifted_evaluation += scalars[i] * evals[n + i];

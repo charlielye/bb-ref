@@ -2,9 +2,9 @@
 
 mod common;
 
-/// Chonk native prove/verify
-#[path = "chonk/native.rs"]
-mod native;
 /// real recursive kernels
 #[path = "chonk/kernels.rs"]
 mod kernels;
+/// Chonk native prove/verify
+#[path = "chonk/native.rs"]
+mod native;

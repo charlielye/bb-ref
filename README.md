@@ -15,7 +15,7 @@ engineering, and to stand as an independent implementation that could eventually
 | Less code | ≤ 20% of bb's C++ (no AVM, no benchmarks) | **18.5%** implementation-only (`tools/loc.sh`) |
 | Bit parity | VKs bit-exact, proofs byte-exact, both directions, incl. the wire protocol | **holds** — 62/62 corpus responses byte-identical; every VK and pinned flow byte-equal |
 | Performance | < 1.8× bb, eventually ≤ 1.2× | ~2× on big circuits after removing fixed overheads; per-front work remains (`tools/bench.sh`) |
-| Standalone confidence | ~80% coverage of the verifier core without bb, plus soundness (every tamper rejected) | verifier core 95–100%, whole-tree 58% standalone ([docs/testing.md](docs/testing.md)) |
+| Standalone confidence | ~80% coverage without bb, >95% on the core, plus soundness (every tamper rejected) | core **95%**, standalone overall 69% ([docs/testing.md](docs/testing.md)) |
 
 Out of scope, permanently: the AVM (public-transaction execution), Solidity verifier generation,
 Starknet oracle hash.

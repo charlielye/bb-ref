@@ -7,7 +7,12 @@ use crate::circuit::IS_CONSTANT;
 
 /// bb `plookup_read::get_lookup_accumulators`: constant keys are read natively; witness keys emit
 /// the lookup gates and return the accumulator witnesses.
-pub fn get_lookup_accumulators(id: MultiTableId, key_a: &FieldT, key_b: &FieldT, is_2_to_1_lookup: bool) -> ReadData<FieldT> {
+pub fn get_lookup_accumulators(
+    id: MultiTableId,
+    key_a: &FieldT,
+    key_b: &FieldT,
+    is_2_to_1_lookup: bool,
+) -> ReadData<FieldT> {
     let ctx: Option<Ctx> = key_a.ctx.clone().or_else(|| key_b.ctx.clone());
     let lookup_data = native_accumulators(id, key_a.get_value(), key_b.get_value(), is_2_to_1_lookup);
     let mut columns = [vec![], vec![], vec![]];
@@ -26,12 +31,20 @@ pub fn get_lookup_accumulators(id: MultiTableId, key_a: &FieldT, key_b: &FieldT,
             rhs_index = ctx.borrow_mut().put_constant_variable(key_b.get_value());
         }
         let key_b_witness = (rhs_index != IS_CONSTANT).then_some(rhs_index);
-        let witnesses = ctx.borrow_mut().create_gates_from_plookup_accumulators(id, &lookup_data, lhs_index, key_b_witness);
+        let witnesses =
+            ctx.borrow_mut()
+                .create_gates_from_plookup_accumulators(id, &lookup_data, lhs_index, key_b_witness);
         for c in 0..3 {
-            columns[c] = witnesses.columns[c].iter().map(|w| FieldT::from_witness_index(&ctx, *w)).collect();
+            columns[c] = witnesses.columns[c]
+                .iter()
+                .map(|w| FieldT::from_witness_index(&ctx, *w))
+                .collect();
         }
     }
-    ReadData { columns, lookup_entries: lookup_data.lookup_entries }
+    ReadData {
+        columns,
+        lookup_entries: lookup_data.lookup_entries,
+    }
 }
 
 fn accumulators_1(id: MultiTableId, key: &FieldT) -> ReadData<FieldT> {

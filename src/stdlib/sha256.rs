@@ -56,7 +56,12 @@ struct SparseWitnessLimbs {
 impl SparseWitnessLimbs {
     fn new(normal: FieldT) -> Self {
         let z = || k(Fr::zero());
-        Self { normal, sparse_limbs: [z(), z(), z(), z()], rotated_limb_corrections: [z(), z(), z(), z()], has_sparse_limbs: false }
+        Self {
+            normal,
+            sparse_limbs: [z(), z(), z(), z()],
+            rotated_limb_corrections: [z(), z(), z(), z()],
+            has_sparse_limbs: false,
+        }
     }
 }
 
@@ -68,7 +73,10 @@ struct SparseValue {
 
 impl SparseValue {
     fn new(normal: FieldT) -> Self {
-        Self { normal, sparse: k(Fr::zero()) }
+        Self {
+            normal,
+            sparse: k(Fr::zero()),
+        }
     }
 }
 
@@ -82,7 +90,10 @@ fn convert_witness(input: &FieldT) -> SparseWitnessLimbs {
 }
 
 fn extend_witness(w_in: &[FieldT; 16]) -> [FieldT; 64] {
-    let ctx: Ctx = w_in.iter().find_map(|w| w.ctx.clone()).expect("sha256 inputs must include a witness");
+    let ctx: Ctx = w_in
+        .iter()
+        .find_map(|w| w.ctx.clone())
+        .expect("sha256 inputs must include a witness");
     let mut w_sparse: Vec<SparseWitnessLimbs> = w_in.iter().map(|w| SparseWitnessLimbs::new(w.clone())).collect();
     let (left_mult, right_mult) = (left_multipliers(), right_multipliers());
     for i in 16..64 {
@@ -126,11 +137,17 @@ fn extend_witness(w_in: &[FieldT; 16]) -> [FieldT; 64] {
 }
 
 fn map_into_choose_sparse_form(input: &FieldT) -> SparseValue {
-    SparseValue { normal: input.clone(), sparse: read_from_1_to_2_table(Sha256ChInput, input) }
+    SparseValue {
+        normal: input.clone(),
+        sparse: read_from_1_to_2_table(Sha256ChInput, input),
+    }
 }
 
 fn map_into_maj_sparse_form(input: &FieldT) -> SparseValue {
-    SparseValue { normal: input.clone(), sparse: read_from_1_to_2_table(Sha256MajInput, input) }
+    SparseValue {
+        normal: input.clone(),
+        sparse: read_from_1_to_2_table(Sha256MajInput, input),
+    }
 }
 
 /// Σ1(e) + Ch(e, f, g), setting `e.sparse` on the way.

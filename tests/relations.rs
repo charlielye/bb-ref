@@ -14,7 +14,7 @@ use bb_ref::base::{Fq, Fr};
 #[test]
 fn eccvm_corruptions_are_named_and_localized() {
     use bb_ref::goblin::eccvm::check::{check_circuit, eccvm_relation_params};
-    use bb_ref::goblin::eccvm::{Ent, EccvmPolys};
+    use bb_ref::goblin::eccvm::{EccvmPolys, Ent};
     use common::eccvm_ops::build_ops;
 
     let q = build_ops("mixed");
@@ -34,16 +34,26 @@ fn eccvm_corruptions_are_named_and_localized() {
     bad.cols[col].coeffs[row] += Fq::from(1u64);
     let (rel, _, at) = check_circuit(&bad, &params).expect("corruption caught");
     assert!(format!("{rel:?}").contains("Transcript"), "named: {rel:?}");
-    assert!(at.is_some_and(|r| r.abs_diff(row) <= 1), "localized near row {row}, got {at:?}");
+    assert!(
+        at.is_some_and(|r| r.abs_diff(row) <= 1),
+        "localized near row {row}, got {at:?}"
+    );
 
     // msm_pc: the point counter inside the MSM rows.
     let col = Ent::msm_pc as usize;
-    let row = polys.cols[col].coeffs.iter().position(|v| !v.is_zero()).expect("msm rows exist");
+    let row = polys.cols[col]
+        .coeffs
+        .iter()
+        .position(|v| !v.is_zero())
+        .expect("msm rows exist");
     let mut bad = polys.clone();
     bad.cols[col].coeffs[row] += Fq::from(1u64);
     let (rel, _, _) = check_circuit(&bad, &params).expect("corruption caught");
     let name = format!("{rel:?}");
-    assert!(name.contains("Msm") || name.contains("MSM") || name.contains("Set"), "named: {name}");
+    assert!(
+        name.contains("Msm") || name.contains("MSM") || name.contains("Set"),
+        "named: {name}"
+    );
 }
 
 /// Translator: a queue-derived circuit satisfies all relations; corrupting a decomposition
@@ -51,8 +61,8 @@ fn eccvm_corruptions_are_named_and_localized() {
 #[test]
 fn translator_corruptions_are_named() {
     use bb_ref::base::field::FieldLike as _;
-    use bb_ref::goblin::translator::check::{check_circuit, translator_relation_params};
     use bb_ref::goblin::translator::builder::TranslatorCircuit;
+    use bb_ref::goblin::translator::check::{check_circuit, translator_relation_params};
     use bb_ref::goblin::translator::{Ent, TranslatorPolys};
     use common::translator_fixture::build_translator_queue_from_rng;
 
@@ -69,15 +79,26 @@ fn translator_corruptions_are_named() {
     assert_eq!(check_circuit(&polys, &params), None, "satisfying circuit");
 
     let col = Ent::p_x_low_limbs_range_constraint_0 as usize;
-    let row = polys.cols[col].coeffs.iter().position(|v| !v.is_zero()).expect("active row");
+    let row = polys.cols[col]
+        .coeffs
+        .iter()
+        .position(|v| !v.is_zero())
+        .expect("active row");
     let mut bad = polys.clone();
     bad.cols[col].coeffs[row] += Fr::from(1u64);
     let (rel, _, _) = check_circuit(&bad, &params).expect("corruption caught");
     let name = format!("{rel:?}");
-    assert!(name.contains("Decomposition") || name.contains("Range"), "named: {name}");
+    assert!(
+        name.contains("Decomposition") || name.contains("Range"),
+        "named: {name}"
+    );
 
     let col = Ent::z_perm as usize;
-    let row = polys.cols[col].coeffs.iter().position(|v| !v.is_zero()).expect("z_perm active");
+    let row = polys.cols[col]
+        .coeffs
+        .iter()
+        .position(|v| !v.is_zero())
+        .expect("z_perm active");
     let mut bad = polys.clone();
     bad.cols[col].coeffs[row] += Fr::from(1u64);
     let (rel, _, _) = check_circuit(&bad, &params).expect("corruption caught");

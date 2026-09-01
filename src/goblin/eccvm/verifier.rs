@@ -110,8 +110,10 @@ where
     let v_powers = rho_powers(&v, NUM_TRANSLATION_EVALUATIONS, 0);
     // bb `batch_evaluations`: one chunk-16 mult_madd, not a per-term sum.
     let batched_evaluation = crate::goblin::ipa::batch_evaluations(&translation_evaluations, &v_powers);
-    let translation_column_commitments: Vec<C::G> =
-        TRANSLATION_ENTITIES.iter().map(|e| commitments[*e as usize].clone()).collect();
+    let translation_column_commitments: Vec<C::G> = TRANSLATION_ENTITIES
+        .iter()
+        .map(|e| commitments[*e as usize].clone())
+        .collect();
     claims.push(VerifierOpeningClaim {
         commitment: C::G::batch_mul(&translation_column_commitments, &v_powers),
         challenge: x.clone(),

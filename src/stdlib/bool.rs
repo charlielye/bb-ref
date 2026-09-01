@@ -60,7 +60,11 @@ impl BoolT {
     pub fn fix_witness(&self) {
         assert!(!self.is_constant());
         let value = Fr::from(self.get_value() as u64);
-        self.ctx.as_ref().unwrap().borrow_mut().fix_witness(self.witness_index(), value);
+        self.ctx
+            .as_ref()
+            .unwrap()
+            .borrow_mut()
+            .fix_witness(self.witness_index(), value);
     }
     /// bb `field_t::operator bool_t`: reinterpret a field element as a boolean (bool gate on its witness).
     pub fn from_field(f: &FieldT) -> Self {

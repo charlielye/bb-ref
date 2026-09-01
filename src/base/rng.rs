@@ -214,3 +214,56 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The C++ standard's own KAT: the 10000th output of a default-seeded (5489) `mt19937_64`
+    /// is 9981545732273789042. Seeded parity with bb rests entirely on this generator.
+    #[test]
+    fn mt19937_64_matches_the_cpp_standard_kat() {
+        let mut mt = Mt19937_64::new(5489);
+        for _ in 0..9999 {
+            mt.next_u64();
+        }
+        assert_eq!(mt.next_u64(), 9981545732273789042);
+    }
+
+    /// bb packs four u64 draws into a u256 low limb first.
+    #[test]
+    fn debug_rng_packs_four_draws_low_limb_first() {
+        let mut raw = Mt19937_64::new(7);
+        let expected = [raw.next_u64(), raw.next_u64(), raw.next_u64(), raw.next_u64()];
+        let u = DebugRng::new(7).next_u256();
+        assert_eq!(u, U256::new(expected));
+    }
+
+    #[test]
+    fn tape_rng_replays_32_le_bytes_per_draw() {
+        let mut bytes = vec![0u8; 64];
+        bytes[0] = 1; // limb 0 = 1
+        bytes[40] = 2; // second draw, limb 1 = 2
+        let mut tape = TapeRng::from_bytes(bytes);
+        assert_eq!(tape.remaining(), 64);
+        assert_eq!(tape.next_u256(), U256::new([1, 0, 0, 0]));
+        assert_eq!(tape.next_u256(), U256::new([0, 2, 0, 0]));
+        assert_eq!(tape.remaining(), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "RNG tape exhausted")]
+    fn tape_exhaustion_panics() {
+        let mut tape = TapeRng::from_bytes(vec![0u8; 16]);
+        let _ = tape.next_u256();
+    }
+
+    /// `random_element()` must produce valid group elements while consuming bb's draw pattern.
+    #[test]
+    fn random_affine_is_on_curve() {
+        for _ in 0..4 {
+            let p = global_random_affine::<ark_bn254::g1::Config>();
+            assert!(p.is_on_curve());
+        }
+    }
+}

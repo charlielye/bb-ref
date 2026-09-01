@@ -207,7 +207,7 @@ where
         commitments: msm_commitments,
         scalars,
         evaluation_point: z,
-            evaluation: C::Fr::zero(),
+        evaluation: C::Fr::zero(),
     };
     let pairing_points = kzg_reduce_verify_batch_opening_claim(claim, t, 3 * NUM_WIRES + 4);
     MergeOutput {

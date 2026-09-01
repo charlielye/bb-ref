@@ -133,3 +133,32 @@ pub fn multitable(axis: u8, is_lo: bool) -> MultiTable {
             .collect(),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_ec::AffineRepr;
+
+    fn secfr(v: BigUint) -> ark_secp256r1::Fr {
+        ark_secp256r1::Fr::from(v)
+    }
+
+    /// The defining property of the table: `entry(w, k) = 2^w·H + (k · 2^{bits before w})·G`, so
+    /// chain-adding one looked-up point per window and subtracting `total_offset` yields `s·G`.
+    /// Checked against plain arkworks scalar multiplication, independent of the table builder.
+    #[test]
+    fn entries_are_window_offsets_plus_generator_multiples() {
+        let g = Affine::<Config>::generator().into_group();
+        let h = table_offset_generator().into_group();
+        let mut bits_before = 0usize;
+        for w in 0..NUM_WINDOWS {
+            for k in [0usize, 1, table_size(w) as usize - 1] {
+                let expected = h * secfr(BigUint::from(1u64) << w) + g * secfr(BigUint::from(k as u64) << bits_before);
+                assert_eq!(entry(w, k).into_group(), expected, "window {w}, k {k}");
+            }
+            bits_before += window_bits(w);
+        }
+        let all_offsets = h * secfr((BigUint::from(1u64) << NUM_WINDOWS) - 1u64);
+        assert_eq!(total_offset().into_group(), all_offsets);
+    }
+}

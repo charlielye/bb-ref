@@ -134,3 +134,53 @@ impl From<&ChonkProof> for Wire {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample() -> ChonkProof {
+        let mut n = 0u64;
+        let mut seq = |len: usize| -> Vec<Fr> {
+            (0..len)
+                .map(|_| {
+                    n += 1;
+                    Fr::from(n)
+                })
+                .collect()
+        };
+        ChonkProof {
+            hiding_oink_proof: seq(5),
+            merge_proof: seq(MERGE_PROOF_SIZE),
+            eccvm_proof: seq(ECCVM_PROOF_LENGTH),
+            ipa_proof: seq(TRIPLE_IPA_PROOF_LENGTH),
+            joint_proof: seq(JOINT_PROOF_LENGTH),
+        }
+    }
+
+    /// The Oink section is the variable-length remainder; the fixed tails must land back in
+    /// their own sub-proofs.
+    #[test]
+    fn fields_roundtrip_preserves_section_boundaries() {
+        let p = sample();
+        let q = ChonkProof::from_fields(&p.to_fields());
+        assert_eq!(q.hiding_oink_proof, p.hiding_oink_proof);
+        assert_eq!(q.merge_proof, p.merge_proof);
+        assert_eq!(q.eccvm_proof, p.eccvm_proof);
+        assert_eq!(q.ipa_proof, p.ipa_proof);
+        assert_eq!(q.joint_proof, p.joint_proof);
+    }
+
+    #[test]
+    fn msgpack_roundtrips() {
+        let p = sample();
+        let q = ChonkProof::from_msgpack(&p.to_msgpack());
+        assert_eq!(q.to_fields(), p.to_fields());
+    }
+
+    #[test]
+    #[should_panic(expected = "too short")]
+    fn short_proof_rejected() {
+        let _ = ChonkProof::from_fields(&[Fr::from(1u64); 10]);
+    }
+}

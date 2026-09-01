@@ -442,12 +442,7 @@ impl Builder {
     }
 
     /// bb `create_lookup_gate` with zero step sizes (standalone read, e.g. a Straus plookup table).
-    pub fn create_standalone_lookup_gate(
-        &mut self,
-        wires: [u32; 3],
-        table: usize,
-        entry: super::plookup::LookupEntry,
-    ) {
+    pub fn create_standalone_lookup_gate(&mut self, wires: [u32; 3], table: usize, entry: super::plookup::LookupEntry) {
         self.create_lookup_gate(wires, table, entry, [Fr::zero(), Fr::zero(), Fr::zero()]);
     }
 
@@ -483,7 +478,13 @@ impl Builder {
             read_data.columns[0].push(first_idx);
             read_data.columns[1].push(second_idx);
             read_data.columns[2].push(third_idx);
-            let step = |c: usize| if is_last { Fr::zero() } else { -multi_table.column_step_sizes[c][i + 1] };
+            let step = |c: usize| {
+                if is_last {
+                    Fr::zero()
+                } else {
+                    -multi_table.column_step_sizes[c][i + 1]
+                }
+            };
             self.create_lookup_gate(
                 [first_idx, second_idx, third_idx],
                 table,

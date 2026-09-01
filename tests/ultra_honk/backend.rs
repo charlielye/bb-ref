@@ -79,9 +79,22 @@ fn check_nozk_opts(name: &str, has_ipa_claim: bool) {
     assert_eq!(inst.public_inputs, expected.public_inputs, "{name}: public inputs");
     let mut first: Option<usize> = None;
     for (e, (a, b)) in inst.layout.unshifted.iter().zip(inst.polys.iter().zip(&expected.polys)) {
-        let diffs: Vec<usize> = a.coeffs.iter().zip(&b.coeffs).enumerate().filter(|(_, (x, y))| x != y).map(|(i, _)| i).collect();
+        let diffs: Vec<usize> = a
+            .coeffs
+            .iter()
+            .zip(&b.coeffs)
+            .enumerate()
+            .filter(|(_, (x, y))| x != y)
+            .map(|(i, _)| i)
+            .collect();
         if !diffs.is_empty() {
-            eprintln!("{name}: {} differs at {} rows; first {:?} last {:?}", e.name(), diffs.len(), &diffs[..diffs.len().min(4)], diffs.last());
+            eprintln!(
+                "{name}: {} differs at {} rows; first {:?} last {:?}",
+                e.name(),
+                diffs.len(),
+                &diffs[..diffs.len().min(4)],
+                diffs.last()
+            );
             for &i in diffs.iter().take(3) {
                 eprintln!("  row {i}: mine {:?} bb {:?}", a.coeffs[i], b.coeffs[i]);
             }
@@ -314,7 +327,11 @@ fn backend_write_vk_instance_diff() {
         eprintln!("skipping {name}: no write-vk dump");
         return;
     }
-    let ipa = SUPPORTED.iter().find(|(n, _)| *n == name).map(|(_, i)| *i).unwrap_or(true);
+    let ipa = SUPPORTED
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, i)| *i)
+        .unwrap_or(true);
     let circuit = decode_program(&std::fs::read(artifact(&name)).expect("program.json"));
     let mut builder = bb_ref::acir::lower::build_circuit_opts(&circuit, None, ipa);
     let inst = ProverInstance::from_builder(&ULTRA, &mut builder, &mut OsRng);

@@ -3,16 +3,16 @@
 use super::batched::{joint_verify, mega_zk_oink_length_without_public_inputs};
 use super::proof::ChonkProof;
 use crate::base::codec::Transcriptable;
+use crate::base::group::Curve;
 use crate::base::group::{G2Points, PairingPoints};
 use crate::base::vk::Vk;
 use crate::base::{Bn254, Fr, G1Affine, GrumpkinKey, NativeTranscript};
 use crate::goblin::eccvm::verifier::eccvm_verify;
 use crate::goblin::ipa::triple_ipa_verify;
+use crate::goblin::ipa::TripleIpaClaim;
 use crate::goblin::merge::{merge_verify, MergeInputs};
 use crate::honk::flavor::{Ent, MEGA_ZK};
 use crate::honk::oink::verify_oink;
-use crate::base::group::Curve;
-use crate::goblin::ipa::TripleIpaClaim;
 use crate::honk::ultra_verifier::default_io_pairing_points;
 use crate::stdlib::curve::{StdUltraBn254, StdUltraGrumpkin};
 use crate::stdlib::{Ctx, FieldT};
@@ -169,8 +169,13 @@ pub fn chonk_verify_recursive(
 ) -> ChonkRecursiveOutput {
     use super::proof::{ECCVM_PROOF_LENGTH, JOINT_PROOF_LENGTH, TRIPLE_IPA_PROOF_LENGTH};
     use crate::goblin::merge::MergeInputs;
-    let fixed = crate::goblin::merge::MERGE_PROOF_SIZE + ECCVM_PROOF_LENGTH + TRIPLE_IPA_PROOF_LENGTH + JOINT_PROOF_LENGTH;
-    assert!(proof_fields.len() >= fixed, "Chonk proof too short: {}", proof_fields.len());
+    let fixed =
+        crate::goblin::merge::MERGE_PROOF_SIZE + ECCVM_PROOF_LENGTH + TRIPLE_IPA_PROOF_LENGTH + JOINT_PROOF_LENGTH;
+    assert!(
+        proof_fields.len() >= fixed,
+        "Chonk proof too short: {}",
+        proof_fields.len()
+    );
     let mut rest = proof_fields;
     let mut take = |n: usize| {
         let (head, tail) = rest.split_at(n);

@@ -58,9 +58,7 @@ pub fn instance_and_ck(
 pub fn crs_or_skip() -> Option<()> {
     let dir = std::env::var("CRS_PATH")
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| {
-            std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".bb-crs")
-        });
+        .unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".bb-crs"));
     if dir.join("bn254_g1.dat").exists() {
         Some(())
     } else {

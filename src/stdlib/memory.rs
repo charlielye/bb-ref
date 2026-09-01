@@ -114,8 +114,14 @@ pub struct TwinRomTable {
 
 impl TwinRomTable {
     pub fn new(raw_entries: Vec<[FieldT; 2]>) -> Self {
-        let ctx = raw_entries.iter().find_map(|e| e[0].ctx.clone().or_else(|| e[1].ctx.clone()));
-        Self { ctx, raw_entries, rom_id: None }
+        let ctx = raw_entries
+            .iter()
+            .find_map(|e| e[0].ctx.clone().or_else(|| e[1].ctx.clone()));
+        Self {
+            ctx,
+            raw_entries,
+            rom_id: None,
+        }
     }
     pub fn len(&self) -> usize {
         self.raw_entries.len()
@@ -156,7 +162,10 @@ impl TwinRomTable {
     }
     pub fn read(&mut self, index: &FieldT) -> [FieldT; 2] {
         let native_index = Builder::low_u64(&index.get_value()) as usize;
-        assert!(native_index < self.raw_entries.len(), "twin_rom_table: access out of bounds");
+        assert!(
+            native_index < self.raw_entries.len(),
+            "twin_rom_table: access out of bounds"
+        );
         if index.is_constant() {
             return self.read_const(native_index);
         }
@@ -167,6 +176,9 @@ impl TwinRomTable {
         let ctx = self.ctx.clone().unwrap();
         let w = index.get_witness_index();
         let out = ctx.borrow_mut().read_rom_array_pair(id, w);
-        [FieldT::from_witness_index(&ctx, out[0]), FieldT::from_witness_index(&ctx, out[1])]
+        [
+            FieldT::from_witness_index(&ctx, out[0]),
+            FieldT::from_witness_index(&ctx, out[1]),
+        ]
     }
 }

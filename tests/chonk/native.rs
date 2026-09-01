@@ -95,9 +95,12 @@ fn pinned_flows_byte_exact_with_seed() {
     use bb_ref::base::rng::DebugRng;
     use bb_ref::base::CommitmentKey;
     let root = common::fixture_dir("chonk_flows");
-    let flows = std::env::var("BB_FLOWS").map(std::path::PathBuf::from).unwrap_or_else(|_| {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../aztec-packages2/barretenberg/cpp/chonk-pinned-flows")
-    });
+    let flows = std::env::var("BB_FLOWS")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../aztec-packages2/barretenberg/cpp/chonk-pinned-flows")
+        });
     let (Ok(entries), true) = (std::fs::read_dir(&root), flows.exists()) else {
         eprintln!("skipping pinned flows: no dump or no flows");
         return;
@@ -114,8 +117,16 @@ fn pinned_flows_byte_exact_with_seed() {
         let steps = decode_steps(&std::fs::read(&inputs).unwrap());
         let max_size = steps.iter().map(|s| 1usize << s.vk.log_n()).max().unwrap().max(1 << 17);
         let (proof, vk) = prove_steps(&steps, CommitmentKey::new(max_size), &mut rng, false);
-        assert_eq!(encode_fields(&proof.to_fields()), std::fs::read(dir.join("proof")).unwrap(), "{name}: proof bytes");
-        assert_eq!(vk.to_bytes(), std::fs::read(dir.join("vk")).unwrap(), "{name}: vk bytes");
+        assert_eq!(
+            encode_fields(&proof.to_fields()),
+            std::fs::read(dir.join("proof")).unwrap(),
+            "{name}: proof bytes"
+        );
+        assert_eq!(
+            vk.to_bytes(),
+            std::fs::read(dir.join("vk")).unwrap(),
+            "{name}: vk bytes"
+        );
         n += 1;
     }
     assert!(n > 0, "no flows compared");

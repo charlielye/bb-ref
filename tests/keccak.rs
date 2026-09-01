@@ -5,9 +5,9 @@
 mod common;
 use bb_ref::acir::format::{decode_program, decode_witness};
 use bb_ref::acir::lower::build_circuit;
-use bb_ref::base::{CommitmentKey, Fr, KeccakBn254, OsRng, U256};
 use bb_ref::base::srs::bn254_g2;
 use bb_ref::base::vk::Vk;
+use bb_ref::base::{CommitmentKey, Fr, KeccakBn254, OsRng, U256};
 use bb_ref::honk::prover_instance::ProverInstance;
 use bb_ref::honk::ultra_prover::prove_ultra_as;
 use bb_ref::honk::ultra_verifier::verify_ultra_keccak;
@@ -35,7 +35,10 @@ fn read_words(path: &std::path::Path) -> Vec<U256> {
 
 fn words_to_frs(words: &[U256]) -> Vec<Fr> {
     use bb_ref::base::codec::Transcriptable;
-    words.iter().map(|w| <Fr as Transcriptable<U256>>::from_fields(&[*w])).collect()
+    words
+        .iter()
+        .map(|w| <Fr as Transcriptable<U256>>::from_fields(&[*w]))
+        .collect()
 }
 
 fn build(dir: &std::path::Path) -> ProverInstance {
@@ -115,16 +118,27 @@ fn rollup_root_witness_byte_exact() {
     let mut inst = ProverInstance::from_builder(&ULTRA_KECCAK, &mut builder, &mut rng);
     let ck = CommitmentKey::new(inst.max_end_index);
     let vk = keccak_vk(&inst, &ck);
-    assert_eq!(vk.to_bytes(), std::fs::read(golden.join("vk")).unwrap(), "rollup_root: vk bytes");
+    assert_eq!(
+        vk.to_bytes(),
+        std::fs::read(golden.join("vk")).unwrap(),
+        "rollup_root: vk bytes"
+    );
     let hash_bytes: Vec<u8> = bb_ref::base::keccak::u256_to_bytes_be(&vk.hash()).to_vec();
-    assert_eq!(hash_bytes, std::fs::read(golden.join("vk_hash")).unwrap(), "rollup_root: vk_hash");
+    assert_eq!(
+        hash_bytes,
+        std::fs::read(golden.join("vk_hash")).unwrap(),
+        "rollup_root: vk_hash"
+    );
     let user_pis = read_words(&golden.join("public_inputs"));
     let proof = prove_ultra_as::<KeccakBn254>(&mut inst, &vk, &mut rng);
     let bb_proof = read_words(&golden.join("proof"));
     let mine = &proof[user_pis.len()..];
     assert_eq!(mine.len(), bb_proof.len(), "rollup_root: proof length");
     if let Some(i) = mine.iter().zip(&bb_proof).position(|(a, b)| a != b) {
-        panic!("rollup_root: proof differs at word {i}: {:?} vs {:?}", mine[i], bb_proof[i]);
+        panic!(
+            "rollup_root: proof differs at word {i}: {:?} vs {:?}",
+            mine[i], bb_proof[i]
+        );
     }
     assert!(
         verify_ultra_keccak(&ULTRA_KECCAK, &vk, &words_to_frs(&user_pis), &bb_proof, &bn254_g2()),

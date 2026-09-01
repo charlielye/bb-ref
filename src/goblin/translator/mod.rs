@@ -441,11 +441,7 @@ pub fn reconstruct_concatenated_evaluations<T: FieldLike>(groups: &[Vec<T>], u: 
 /// bb `set_minicircuit_evaluations` + `complete_full_circuit_evaluations`: assemble the verifier's
 /// claimed evaluations of all 190 entities from the transmitted values and the challenge; returns
 /// the reconstructed evaluations of the shifted concatenated polynomials (needed by the PCS only).
-pub fn complete_evaluations<T: FieldLike>(
-    full_circuit: &[T],
-    minicircuit: &[T],
-    u: &[T],
-) -> Vec<T> {
+pub fn complete_evaluations<T: FieldLike>(full_circuit: &[T], minicircuit: &[T], u: &[T]) -> Vec<T> {
     assert_eq!(full_circuit.len(), FULL_CIRCUIT_ENTITIES.len());
     assert_eq!(minicircuit.len(), NUM_MINICIRCUIT_EVALUATIONS);
     let mut evals: Vec<T> = (0..NUM_ALL_ENTITIES).map(|_| T::zero()).collect();
