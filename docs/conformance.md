@@ -1,10 +1,12 @@
-# Conformance: the target architecture
+# Conformance
 
 Where [oracle.md](oracle.md) describes the *development* microscope (per-polynomial trace
-diffs against a dev pin), this describes the end-state **conformance suite**: anyone clones
-this repo and mechanically verifies that bb-ref and barretenberg are bit-identical across
-the entire proving stack. Status: design agreed, phased below; the dev oracles keep working
-throughout and remain the divergence-hunting layer underneath.
+diffs against a dev pin), this describes the **conformance suite**, now built: anyone clones
+this repo and mechanically verifies that bb-ref and barretenberg are bit-identical across the
+proving stack. The commands are `tools/regen/regen_corpus.sh` (produce the corpus + goldens),
+`tools/conformance.sh` (replay + byte-compare) and `tools/bench.sh` (timings); this document
+records the design and its rationale. The dev oracles remain the divergence-hunting layer
+underneath.
 
 ## The shape
 
@@ -148,32 +150,31 @@ Only the first is the common case; the other two exist so that heavier work is o
 
 | tier | who | needs | how |
 |---|---|---|---|
-| **1. Run the suite** | anyone with a clone | a released `bb` binary (downloaded, matching the pin) + the committed corpus file | `./bootstrap.sh && cargo test --test conformance` |
-| **2. Custom bb** | anyone testing an unreleased bb | + the `pin/aztec-packages` submodule, bb built from source | `git submodule update --init --depth 1 pin/aztec-packages && ./pin/build.sh` |
-| **3. Rebuild the corpus** | maintainers, once per pin | + the pin's `labs` submodule (yarn-project) and its patch overlay, an AVM-capable bb, a real proving run | `./tools/regen/regen_corpus.sh <dir>` |
+| **1. Verify bb-ref** | anyone with a clone | the corpus + goldens pair (`tools/corpus/*.zst`) | `tools/conformance.sh tools/corpus/rollup-<pin7>.corpus.zst` — replays bb-ref only, against the recorded bb answers |
+| **2. Re-prove bb too** | anyone distrusting the goldens, or testing an unreleased bb | + a bb built from the `pin/aztec-packages` submodule | same, `--with-bb` |
+| **3. Rebuild the corpus** | maintainers, once per pin | + the pin's labs workspace built, an AVM-capable bb, a ~15 min proving run | `tools/regen/regen_corpus.sh [--harvest]` |
 
-Tier 1 needs no submodule, no C++ toolchain and no acvm: replay carries its own witnesses, so
-nothing is compiled or executed — the corpus is fed to two binaries and their response streams are
-diffed. Tier 2 adds only the bb build. Tier 3 is the full stack and is the only tier that proves
-anything new.
+Tier 1 needs no submodule, no C++ toolchain and no acvm: the goldens ARE bb's recorded answers, so
+only bb-ref runs. Tier 3 is produce-only (harvest + drive + pack; it never replays) and works from
+a clean checkout — the pinned tree carries nothing but reviewable commits.
 
-## Capture status
+*(Future: pin = a released bb tag with a downloaded binary, once the pin branch's commits land
+upstream; the branch converges to a bare tag.)*
 
-One seeded, `--disable_zk` e2e run at the dev pin produced a coherent leaf-to-root epoch
-covering 12 of the 13 in-scope rollup circuits, preserved with a per-operation manifest
-(`~/aztec-repos/bb-ref-corpus/9df414e-epoch-run/`). Its artifacts reproduce exactly under a
-fresh seeded run, so they are golden-quality as captured. Shape levers, for a future
-re-capture: a checkpoint is a slot's worth of blocks, `blockDurationMs` sets the per-slot
-block budget (3000→2, 2000→3, 1000→8), and the txs-per-block cap must be lowered
-(`setConfig({maxTxsPerBlock: 1})`) or a concurrent wave collapses into one block.
-`checkpoint_padding` is unreachable from any live-chain shape — it needs an epoch holding
-exactly one checkpoint, while the sequencer cuts one per slot and fills idle slots with
-empty blocks — so it waits on the generator. Its VK is already covered by the VK sweep.
+## The corpus
+
+The recipe-driven generator (`tools/corpus/{harvest,driver}.ts`) composes exact epoch shapes over
+real harvested leaf txs and proves them through ONE pooled bb behind the capture proxy: 62 frames
+covering all 13 in-scope rollup circuits — including `checkpoint_padding`, which no live-chain
+shape can reach (it needs an epoch holding exactly one checkpoint) and which the recipe's second
+epoch exists solely to produce. Regeneration is deterministic in content (identical witnesses;
+only job-dispatch order varies) and takes ~5 min of harvest (rare; only a protocol change
+invalidates the leaf assets) plus ~11 min of proving.
 
 ## Open items
 
-- The schema-gen branch (fresh re-cut of the #23612 work) and the RNG-hook commit on top —
-  the submodule target.
-- Re-pin migration from the current dev commit-pin: regenerate every dev fixture at the new
-  pin and re-green the dev oracles; divergences found are the changelog of bb changes since
-  the old pin.
+- Land the pin branch's commits upstream (BB_RNG_SEED, BB_RNG_COUNT, envelope file framing, the
+  BB_POOL_SIZE labs patch, the dumper), converging the pin to a bare release tag with a
+  downloadable binary.
+- Extend the corpus beyond the private rollup path: public txs (AVM-adjacent frames stay
+  replay-skipped), and the chonk wire sessions as a second recorded stream.
