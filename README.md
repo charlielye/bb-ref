@@ -61,6 +61,7 @@ graph LR
 tools/regen/regen_corpus.sh          # rebuild the corpus from the pinned tree (produce-only)
 tools/conformance.sh <corpus.zst>    # replay it into bb-ref vs recorded bb goldens, byte compare
 tools/bench.sh <corpus.zst> --both   # per-operation timings, bb vs bb-ref (--threads <n>)
+tools/bench_chonk.sh                 # client-IVC proving over the pinned tx flows, bb vs bb-ref
 tools/check.sh                       # the standalone gate: unit tests with no bb, corpus, or fixtures
 tools/coverage.sh                    # line coverage of the standalone test set
 tools/loc.sh [--no-tests]            # bb C++ vs bb-ref Rust, side by side

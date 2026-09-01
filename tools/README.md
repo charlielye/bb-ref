@@ -6,6 +6,7 @@ Three commands, in the order you use them.
 regen/regen_corpus.sh              rebuild the corpus from the pinned aztec-packages (~13 min)
 conformance.sh <corpus>      replay it into bb-ref against the recorded goldens (--with-bb re-proves bb too)
 bench.sh <corpus> [binary]   replay it frame by frame and print per-operation timings
+bench_chonk.sh [flow ...]    chonk (client IVC) proving over the pinned tx flows, bb vs bb-ref
 ```
 
 Regeneration only *produces* the artifact (corpus + goldens); it never replays it — verification
