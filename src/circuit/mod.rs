@@ -3,6 +3,7 @@
 pub mod aes_tables;
 pub mod blake_tables;
 pub mod builder;
+pub mod ecc_generator_tables;
 pub mod keccak_tables;
 pub mod mega;
 pub mod memory;

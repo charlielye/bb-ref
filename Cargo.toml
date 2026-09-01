@@ -23,6 +23,7 @@ blake3 = "1.8.5"
 rayon = "1.11"
 num-bigint = "0.4"
 ark-secp256r1 = "0.6.0"
+ark-secp256k1 = "0.6.0"
 
 [profile.dev]
 opt-level = 1

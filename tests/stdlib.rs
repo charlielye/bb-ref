@@ -480,6 +480,30 @@ fn secp256r1_mul(ctx: &Ctx) {
     res.incomplete_assert_equal(&e2);
 }
 
+/// The bb `ecdsa_k1` program: RFC6979-deterministic secp256k1 signature over sha256("bbref")
+/// under private key 0xd67a…36c2, verified in-circuit (vectors recomputed independently).
+fn ecdsa_k1(ctx: &Ctx) {
+    use bb_ref::stdlib::biggroup::{Element, Fq as FqOf};
+    use bb_ref::stdlib::ecdsa::ecdsa_verify_signature_secp256k1;
+    type K1Fq = FqOf<ark_secp256k1::Config>;
+    let bytes = |h: &str| ByteArray::from_bytes(ctx, &hex::decode(h).unwrap());
+    // Mirrors the C++ program's construction order: each pubkey coordinate's byte array is
+    // immediately converted to a bigfield before the next input is created.
+    let hashed_message = bytes("69d71da14505d0c5b0c6e07648a158fb1d8f10e1747eb5d60724fe9faae8ecc7");
+    let pub_x = K1Fq::from_bytes(&bytes(
+        "7ed9c5daf5f460a6fd41b119e24484997ba3685fbfa6a388927ba258a04fbae9",
+    ));
+    let pub_y = K1Fq::from_bytes(&bytes(
+        "02fba55d69d5ef8ca6675106c6892e83403310242ee0350c61777a589ccf1019",
+    ));
+    let public_key = Element::<ark_secp256k1::Config>::new(pub_x, pub_y, false);
+    let r = bytes("723e7496477b809ab69fd8db02c1fb2b410acb4d31a458f1981443d66320b549");
+    let s = bytes("14860b4eed233c7bab73483c1ba25b7588689902086fb8597f54add7c7859742");
+    let result = ecdsa_verify_signature_secp256k1(&hashed_message, &public_key, &r, &s);
+    assert!(result.get_value(), "k1 ecdsa signature should verify");
+    result.assert_equal(&BoolT::constant(true));
+}
+
 /// The bb `aes128_cbc_<n>` program: n packed 16-byte witness blocks encrypted under a witness
 /// iv + key, outputs bound to packed fresh output witnesses (mirroring the dsl arm).
 fn aes128_cbc(ctx: &Ctx, num_blocks: usize) {
@@ -522,7 +546,11 @@ fn blake_hash(ctx: &Ctx, n: usize, is_blake3: bool) {
         let byte = FieldT::from_witness(ctx, Fr::from(((i * mult + off) & 0xff) as u64));
         arr.write(&ByteArray::from_field(&byte, 1));
     }
-    let out = if is_blake3 { blake3s::hash(&arr) } else { blake2s::hash(&arr) };
+    let out = if is_blake3 {
+        blake3s::hash(&arr)
+    } else {
+        blake2s::hash(&arr)
+    };
     for b in out.bytes() {
         b.assert_equal(&FieldT::from_witness(ctx, b.get_value()));
     }
@@ -841,6 +869,7 @@ fn run(ctx: &Ctx, name: &str) {
         "biggroup_bn254_ops" => biggroup_bn254_ops(ctx),
         "secp256r1_mul" => secp256r1_mul(ctx),
         "ecdsa_r1" => ecdsa_r1(ctx),
+        "ecdsa_k1" => ecdsa_k1(ctx),
         _ if name.starts_with("aes128_cbc_") => aes128_cbc(ctx, suffix("aes128_cbc_") as usize),
         _ if name.starts_with("blake2s_hash_") => blake_hash(ctx, suffix("blake2s_hash_") as usize, false),
         _ if name.starts_with("blake3_hash_") => blake_hash(ctx, suffix("blake3_hash_") as usize, true),
@@ -887,6 +916,7 @@ pub const PROGRAMS: &[&str] = &[
     "biggroup_bn254_ops",
     "secp256r1_mul",
     "ecdsa_r1",
+    "ecdsa_k1",
     "aes128_cbc_2",
     "blake2s_hash_5",
     "blake2s_hash_65",

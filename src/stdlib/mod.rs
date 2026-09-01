@@ -1,11 +1,12 @@
 #![doc = include_str!("README.md")]
 pub mod aes128;
 pub mod bigfield;
+pub mod biggroup;
+pub mod biggroup_secp256k1;
+pub mod biggroup_secp256r1;
 pub mod blake2s;
 pub mod blake3s;
 pub mod blake_util;
-pub mod biggroup;
-pub mod biggroup_secp256r1;
 pub mod bool;
 pub mod byte_array;
 pub mod curve;

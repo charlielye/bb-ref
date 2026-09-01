@@ -54,7 +54,7 @@ pub struct ChainAddAccumulator<P: BigGroupCurve> {
 }
 
 impl<P: BigGroupCurve> ChainAddAccumulator<P> {
-    fn from_element(input: &Element<P>) -> Self {
+    pub(crate) fn from_element(input: &Element<P>) -> Self {
         let z = Fq::<P>::zero;
         Self {
             x1_prev: z(),
@@ -775,7 +775,7 @@ impl<P: BigGroupCurve> Element<P> {
 
     // ---- ROM point tables ----
 
-    fn create_group_element_rom_tables(
+    pub(crate) fn create_group_element_rom_tables(
         rom_data: &[Self],
         limb_max: &mut [BigUint; NUM_LIMBS * 2],
     ) -> [TwinRomTable; NUM_LIMBS + 1] {
@@ -803,7 +803,7 @@ impl<P: BigGroupCurve> Element<P> {
             TwinRomTable::new(prime),
         ]
     }
-    fn read_group_element_rom_tables(
+    pub(crate) fn read_group_element_rom_tables(
         tables: &mut [TwinRomTable; NUM_LIMBS + 1],
         index: &FieldT,
         limb_max: &[BigUint; NUM_LIMBS * 2],
@@ -1379,6 +1379,12 @@ impl BigGroupCurve for ark_bn254::g1::Config {
             BigUint::parse_bytes(b"019d6e473e9b638cfe2b8f232288a075050a381b745cffaa9f9264121567315b", 16).unwrap(),
         );
         Affine::new_unchecked(x, y)
+    }
+}
+
+impl BigGroupCurve for ark_secp256k1::Config {
+    fn biggroup_offset_generator() -> Affine<Self> {
+        unreachable!("secp256k1 uses the bespoke endomorphism mul, never the generic Strauss MSM")
     }
 }
 
