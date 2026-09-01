@@ -10,7 +10,10 @@ cargo llvm-cov --release --no-report --lib
 cargo llvm-cov --release --no-report --test soundness
 cargo llvm-cov --release --no-report --test relations
 cargo llvm-cov --release --no-report --test msgpack_server -- api_boundary
-cargo llvm-cov report --release
+# The raw report is 13 columns wide; keep filename, functions and lines.
+slim() { awk 'NF >= 10 && $1 !~ /^-+$/ && $1 != "Filename" { printf "%-36s %10s %8s %8s\n", $1, $7, $9, $10 }'; }
+printf '%-36s %10s %8s %8s\n' Filename Functions Missed Lines
+cargo llvm-cov report --release | slim
 
 # Two denominators, matching the goals: ~80% standalone overall, >95% on the core.
 # - infra (msgpack, the CLI, io/timing, testutil) is excluded outright: generated code and thin
@@ -21,7 +24,7 @@ INFRA='(^|/)src/(msgpack/|bin/|testutil\.rs|base/io\.rs|base/timing\.rs)'
 IN_CIRCUIT='(^|/)src/(stdlib/|acir/|rollup/(mod|ipa_recursive)\.rs)'
 echo
 echo "== standalone (infra excluded) =="
-cargo llvm-cov report --release --summary-only --ignore-filename-regex "$INFRA" | tail -2
+cargo llvm-cov report --release --summary-only --ignore-filename-regex "$INFRA" | slim | tail -1
 echo
 echo "== core (infra + in-circuit recursion layer excluded; the >95% target) =="
-cargo llvm-cov report --release --summary-only --ignore-filename-regex "$INFRA|$IN_CIRCUIT" | tail -2
+cargo llvm-cov report --release --summary-only --ignore-filename-regex "$INFRA|$IN_CIRCUIT" | slim | tail -1
