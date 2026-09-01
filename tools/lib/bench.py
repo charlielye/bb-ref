@@ -25,23 +25,32 @@ def run(corpus_path, binary, extra_args):
         stderr=subprocess.DEVNULL,
     )
     rows = []
-    for request_id, payload, raw in frames(data):
-        start = time.perf_counter()
-        server.stdin.write(raw)
-        server.stdin.flush()
-        header = server.stdout.read(4)
-        if len(header) < 4:
-            raise SystemExit(f"server closed after {len(rows)} frames (id={request_id})")
-        length = struct.unpack("<I", header)[0]
-        body = b""
-        while len(body) < length:
-            chunk = server.stdout.read(length - len(body))
-            if not chunk:
-                raise SystemExit("truncated response")
-            body += chunk
-        rows.append((describe(payload), time.perf_counter() - start, len(raw), len(body)))
-    server.stdin.close()
-    server.wait(timeout=30)
+    # bb handles SIGINT gracefully (finishes the in-flight proof before exiting), so a Ctrl-C that
+    # kills this driver would leave bb proving for minutes. Own the child's lifetime: on ANY exit,
+    # close its stdin, give it a moment, then kill outright.
+    try:
+        for request_id, payload, raw in frames(data):
+            start = time.perf_counter()
+            server.stdin.write(raw)
+            server.stdin.flush()
+            header = server.stdout.read(4)
+            if len(header) < 4:
+                raise SystemExit(f"server closed after {len(rows)} frames (id={request_id})")
+            length = struct.unpack("<I", header)[0]
+            body = b""
+            while len(body) < length:
+                chunk = server.stdout.read(length - len(body))
+                if not chunk:
+                    raise SystemExit("truncated response")
+                body += chunk
+            rows.append((describe(payload), time.perf_counter() - start, len(raw), len(body)))
+    finally:
+        try:
+            server.stdin.close()
+            server.wait(timeout=10)
+        except (subprocess.TimeoutExpired, OSError):
+            server.kill()
+            server.wait()
     return rows
 
 
