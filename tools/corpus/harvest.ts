@@ -4,7 +4,7 @@
 // dedicated proving PXE. Each unsent tx has its OWN sender: txs proven against the same PXE state
 // from one sender select the same notes and collide on nullifiers.
 //
-// Driven by ../regen/corpus.sh; plain node against the built pin workspace (the node_modules
+// Driven by ../regen/regen_corpus.sh; plain node against the built pin workspace (the node_modules
 // symlink beside this file), no test runner and no changes to the pinned tree:
 //   BBREF_HARVEST_OUT=<dir> FAKE_PROOFS=1 node --experimental-strip-types \
 //     --experimental-transform-types harvest.ts
@@ -37,7 +37,7 @@ const logger = createLogger('bbref-harvest');
 
 async function main() {
   if (!OUT) {
-    throw new Error('set BBREF_HARVEST_OUT (see ../regen/corpus.sh)');
+    throw new Error('set BBREF_HARVEST_OUT (see ../regen/regen_corpus.sh)');
   }
   // 2 base roles (admin, recipient) + NUM_SENDERS independent senders.
   const fundedAccounts = await generateSchnorrAccounts(2 + NUM_SENDERS);

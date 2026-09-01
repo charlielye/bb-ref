@@ -6,7 +6,7 @@
 //! `[u32 len][u64 request_id][payload]`, one strictly serial connection per file pair (the run is
 //! captured with one prover agent, so response order is deterministic). Point at it with
 //! `BBREF_CORPUS=<dir>`; without it the test skips (the corpus is a multi-GB artifact regenerated
-//! by `tools/regen/corpus.sh`, not a committed fixture).
+//! by `tools/regen/regen_corpus.sh`, not a committed fixture).
 //!
 //! Per connection, each request frame is dispatched through bb-ref's generated handler and the
 //! response compared against the recording. The captured `.resp` *is* bb's answer, so bb needs no
@@ -47,7 +47,7 @@ fn command_name(payload: &[u8]) -> String {
 #[test]
 fn corpus_replay() {
     let Ok(dir) = std::env::var("BBREF_CORPUS") else {
-        eprintln!("skipping: set BBREF_CORPUS=<capture dir> (see tools/regen/corpus.sh)");
+        eprintln!("skipping: set BBREF_CORPUS=<capture dir> (see tools/regen/regen_corpus.sh)");
         return;
     };
     let mut req_files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)

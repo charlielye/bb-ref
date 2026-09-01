@@ -16,7 +16,7 @@
 // checkpoint) exists solely for CheckpointPaddingRollup, which fires only when a lone checkpoint
 // leaves the root rollup's second input unfilled.
 //
-// Driven by ../regen/corpus.sh, which builds the pinned tree, runs the harvest when the leaf
+// Driven by ../regen/regen_corpus.sh, which builds the pinned tree, runs the harvest when the leaf
 // assets are missing, and starts this with the environment it needs. Plain node, no test runner:
 //   node --experimental-strip-types --experimental-transform-types driver.ts
 import { BBNativeRollupProver } from '@aztec/bb-prover';
@@ -173,7 +173,7 @@ async function openWorldState(dir: string, rollupAddress: EthAddress, tip: L2Blo
 
 async function main() {
   if (!ASSETS) {
-    throw new Error('set BBREF_CORPUS_ASSETS to the harvested leaf assets (see ../regen/corpus.sh)');
+    throw new Error('set BBREF_CORPUS_ASSETS to the harvested leaf assets (see ../regen/regen_corpus.sh)');
   }
   {
     // Tx deserialization decompresses chonk proofs through the bb.js singleton (BB_BINARY_PATH,

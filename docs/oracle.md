@@ -82,6 +82,6 @@ far:
 ## Re-pinning
 
 Re-pointing bb-ref at a new bb commit is a deliberate procedure: rebase the pin branch onto it,
-update `tools/PIN`, run `tools/regen/corpus.sh` and every `regen_*.sh`, re-harvest
+update `tools/PIN`, run `tools/regen/regen_corpus.sh` and every `regen_*.sh`, re-harvest
 witness-bearing fixtures, and run the full suite. Divergences found are chased with the ladder above — they are the changelog
 of what bb changed, which is half the value of maintaining the mirror.

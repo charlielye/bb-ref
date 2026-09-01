@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Rebuild the conformance corpus from scratch: one script, from a bare checkout to a corpus file.
 #
-#   tools/regen/corpus.sh [--harvest]
+#   tools/regen/regen_corpus.sh [--harvest]
 #
 # What it does, skipping whatever is already current:
 #   1. checks out the pinned aztec-packages (tools/PIN) into pin/aztec-packages
