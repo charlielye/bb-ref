@@ -29,14 +29,24 @@ bb_start=$(date +%s.%N)
 ninja -C "$BB_BUILD" bb
 bb_secs=$(elapsed "$bb_start" "$(date +%s.%N)")
 
-echo "=== building bb-ref"
+echo "=== building bb-ref (with dependencies)"
 ref_start=$(date +%s.%N)
 CARGO_TARGET_DIR=target-buildtime cargo build --release --quiet
 ref_secs=$(elapsed "$ref_start" "$(date +%s.%N)")
 
+# rebuild only the crate's own code against the already-built dependencies -- the analog of
+# `ninja bb` reusing the cmake-built third-party objects
+echo "=== building bb-ref (crate only)"
+CARGO_TARGET_DIR=target-buildtime cargo clean --release --quiet -p bb-ref
+crate_start=$(date +%s.%N)
+CARGO_TARGET_DIR=target-buildtime cargo build --release --quiet
+crate_secs=$(elapsed "$crate_start" "$(date +%s.%N)")
+
 rm -rf "$BB_BUILD" target-buildtime
 
-printf '\n%-8s %10s\n' '' 'seconds'
-printf '%-8s %10s\n' bb "$bb_secs"
-printf '%-8s %10s\n' bb-ref "$ref_secs"
-awk -v a="$bb_secs" -v b="$ref_secs" 'BEGIN { printf "%-8s %9.1fx\n", "ratio", a / b }'
+printf '\n%-22s %8s\n' '' 'seconds'
+printf '%-22s %8s\n' 'bb' "$bb_secs"
+printf '%-22s %8s\n' 'bb-ref (with deps)' "$ref_secs"
+printf '%-22s %8s\n' 'bb-ref (crate only)' "$crate_secs"
+awk -v a="$bb_secs" -v b="$ref_secs" -v c="$crate_secs" \
+    'BEGIN { printf "%-22s %7.1fx / %.1fx\n", "ratio", a / b, a / c }'
