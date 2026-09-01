@@ -1,5 +1,6 @@
 //! Circuit construction: variables, copy constraints, gates and the execution trace
 //! (bb `stdlib_circuit_builders/{circuit_builder_base,ultra_circuit_builder,rom_ram_logic}`).
+pub mod aes_tables;
 pub mod blake_tables;
 pub mod builder;
 pub mod keccak_tables;

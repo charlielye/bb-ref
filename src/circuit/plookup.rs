@@ -33,6 +33,9 @@ pub enum BasicTableId {
     KeccakOutput,
     BlakeXorRotate(u8),
     BlakeXorRotate0Slice5Mod4,
+    AesSparseMap,
+    AesSboxMap,
+    AesSparseNormalize,
     UintXor(u8),
     UintAnd(u8),
 }
@@ -55,6 +58,9 @@ pub enum MultiTableId {
     BlakeXorRotate16,
     BlakeXorRotate8,
     BlakeXorRotate7,
+    AesNormalize,
+    AesInput,
+    AesSbox,
     Uint32Xor,
     Uint32And,
 }
@@ -88,6 +94,10 @@ pub enum TableValues {
         rotation: u8,
         filter: bool,
     },
+    /// `(sparse(S(x)), sparse(3·S(x)))` of the byte whose sparse form is the key.
+    AesSbox,
+    /// The LSB of every base-9 digit, repacked in base 9.
+    AesSparseNormalize,
     UintXor,
     UintAnd,
 }
@@ -123,6 +133,8 @@ impl TableValues {
             TableValues::BlakeXor { rotation, filter } => {
                 super::blake_tables::xor_rotate_values(rotation as u32, filter, key)
             }
+            TableValues::AesSbox => super::aes_tables::sbox_values(key),
+            TableValues::AesSparseNormalize => super::aes_tables::normalization_values(key),
             TableValues::UintXor => super::uint_tables::values(key, true),
             TableValues::UintAnd => super::uint_tables::values(key, false),
             TableValues::FixedBase { axis, window } => super::secp256r1_fixed_base::extract_axis(
@@ -283,6 +295,9 @@ pub fn get_multitable(id: MultiTableId) -> &'static MultiTable {
         tables.push((KeccakChiOutput, super::keccak_tables::chi_multitable()));
         tables.push((KeccakFormatInput, super::keccak_tables::input_multitable()));
         tables.push((KeccakFormatOutput, super::keccak_tables::output_multitable()));
+        for id in [AesNormalize, AesInput, AesSbox] {
+            tables.push((id, super::aes_tables::multitable(id)));
+        }
         tables.push((BlakeXor, super::blake_tables::xor_multitable()));
         tables.push((BlakeXorRotate16, super::blake_tables::xor_rotate_16_multitable()));
         tables.push((BlakeXorRotate8, super::blake_tables::xor_rotate_8_multitable()));
@@ -384,6 +399,9 @@ pub fn create_basic_table(id: BasicTableId, table_index: usize) -> BasicTable {
         Secp256r1FixedBase { axis, window } => {
             super::secp256r1_fixed_base::basic_table(id, table_index, axis, window as usize)
         }
+        AesSparseMap => sparse_table_with_rotation(id, table_index, super::aes_tables::AES_BASE, 8, 0),
+        AesSboxMap => super::aes_tables::sbox_table(id, table_index),
+        AesSparseNormalize => super::aes_tables::sparse_normalization_table(id, table_index),
         BlakeXorRotate(rotation) => super::blake_tables::xor_rotate_table(id, table_index, 6, rotation as u32, false),
         BlakeXorRotate0Slice5Mod4 => {
             super::blake_tables::xor_rotate_table(id, table_index, super::blake_tables::BITS_IN_LAST_SLICE, 0, true)

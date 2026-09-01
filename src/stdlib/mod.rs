@@ -1,4 +1,5 @@
 #![doc = include_str!("README.md")]
+pub mod aes128;
 pub mod bigfield;
 pub mod blake2s;
 pub mod blake3s;

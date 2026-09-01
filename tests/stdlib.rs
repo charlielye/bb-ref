@@ -480,6 +480,38 @@ fn secp256r1_mul(ctx: &Ctx) {
     res.incomplete_assert_equal(&e2);
 }
 
+/// The bb `aes128_cbc_<n>` program: n packed 16-byte witness blocks encrypted under a witness
+/// iv + key, outputs bound to packed fresh output witnesses (mirroring the dsl arm).
+fn aes128_cbc(ctx: &Ctx, num_blocks: usize) {
+    use bb_ref::base::field::u256;
+    let pack16 = |seed: u64| {
+        let mut converted = FieldT::constant(Fr::from(0u64));
+        for i in 0..16u64 {
+            converted = converted.mul(&FieldT::constant(Fr::from(256u64)));
+            let byte = FieldT::from_witness(ctx, Fr::from((seed + i * 5) & 0xff));
+            byte.create_range_constraint(8);
+            converted = converted.add(&byte);
+        }
+        converted
+    };
+    let input: Vec<FieldT> = (0..num_blocks).map(|blk| pack16(blk as u64 * 16 + 1)).collect();
+    let iv = pack16(0xa0);
+    let key = pack16(0x30);
+    let out = bb_ref::stdlib::aes128::encrypt_buffer_cbc(&input, &iv, &key);
+    for o in &out {
+        let mut converted = FieldT::constant(Fr::from(0u64));
+        let v = u256(&o.get_value());
+        for i in 0..16u32 {
+            converted = converted.mul(&FieldT::constant(Fr::from(256u64)));
+            let byte_val = ((v >> (8 * (15 - i))).0[0]) & 0xff;
+            let byte = FieldT::from_witness(ctx, Fr::from(byte_val));
+            byte.create_range_constraint(8);
+            converted = converted.add(&byte);
+        }
+        o.assert_equal(&converted);
+    }
+}
+
 /// The bb `blake{2s,3}_hash_<n>` programs: n single-byte witnesses hashed, output bytes bound to
 /// fresh witnesses (mirroring the dsl arm's result binding).
 fn blake_hash(ctx: &Ctx, n: usize, is_blake3: bool) {
@@ -809,6 +841,7 @@ fn run(ctx: &Ctx, name: &str) {
         "biggroup_bn254_ops" => biggroup_bn254_ops(ctx),
         "secp256r1_mul" => secp256r1_mul(ctx),
         "ecdsa_r1" => ecdsa_r1(ctx),
+        _ if name.starts_with("aes128_cbc_") => aes128_cbc(ctx, suffix("aes128_cbc_") as usize),
         _ if name.starts_with("blake2s_hash_") => blake_hash(ctx, suffix("blake2s_hash_") as usize, false),
         _ if name.starts_with("blake3_hash_") => blake_hash(ctx, suffix("blake3_hash_") as usize, true),
         "keccak_permutation" => keccak_permutation(ctx),
@@ -854,6 +887,7 @@ pub const PROGRAMS: &[&str] = &[
     "biggroup_bn254_ops",
     "secp256r1_mul",
     "ecdsa_r1",
+    "aes128_cbc_2",
     "blake2s_hash_5",
     "blake2s_hash_65",
     "blake3_hash_5",
