@@ -43,15 +43,15 @@ graph LR
 
 | module | contents |
 | --- | --- |
-| [`base`](src/base) | field/group traits over arkworks, Poseidon2 & Keccak transcripts, codecs, SRS, polynomials |
-| [`circuit`](src/circuit) | the one builder (Ultra + Mega), trace blocks, op queue, databus, plookup tables |
-| [`stdlib`](src/stdlib) | in-circuit types: `FieldT`, bigfield, biggroup, `cycle_group`, goblin elements |
-| [`honk`](src/honk) | flavors-as-data, relations, sumcheck, Shplemini/KZG, Oink, Ultra prover/verifier, HyperNova |
-| [`goblin`](src/goblin) | merge, IPA/TripleIPA, ECCVM, Translator |
-| [`chonk`](src/chonk) | the IVC driver, joint MegaZK+Translator proof, kernel circuit logic, proof compression |
-| [`acir`](src/acir) | ACIR ingestion, protocol-opcode lowering, recursion constraints, write-VK mocks |
-| [`rollup`](src/rollup) | backend-side recursion: in-circuit Ultra verifier, IPA accumulation, RollupIO |
-| [`msgpack`](src/msgpack) | bb's wire protocol: generated types + the command handler (`bb-ref msgpack run`) |
+| [`base`](src/base/README.md) | field/group traits over arkworks, Poseidon2 & Keccak transcripts, codecs, SRS, polynomials |
+| [`circuit`](src/circuit/README.md) | the one builder (Ultra + Mega), trace blocks, op queue, databus, plookup tables |
+| [`stdlib`](src/stdlib/README.md) | in-circuit types: `FieldT`, bigfield, biggroup, `cycle_group`, goblin elements |
+| [`honk`](src/honk/README.md) | flavors-as-data, relations, sumcheck, Shplemini/KZG, Oink, Ultra prover/verifier, HyperNova |
+| [`goblin`](src/goblin/README.md) | merge, IPA/TripleIPA, ECCVM, Translator |
+| [`chonk`](src/chonk/README.md) | the IVC driver, joint MegaZK+Translator proof, kernel circuit logic, proof compression |
+| [`acir`](src/acir/README.md) | ACIR ingestion, protocol-opcode lowering, recursion constraints, write-VK mocks |
+| [`rollup`](src/rollup/README.md) | backend-side recursion: in-circuit Ultra verifier, IPA accumulation, RollupIO |
+| [`msgpack`](src/msgpack/README.md) | bb's wire protocol: generated types + the command handler (`bb-ref msgpack run`) |
 | [`tests/`](tests) | differential suites (vs `tests/data/` fixtures) + standalone soundness/relations suites |
 | [`tools/`](tools) | the commands below, their support libs, and the fixture regenerators |
 
