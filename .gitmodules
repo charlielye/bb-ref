@@ -3,3 +3,4 @@
 	url = https://github.com/AztecProtocol/aztec-packages
 	branch = cl/bb-ref-conformance
 	shallow = true
+	ignore = dirty
