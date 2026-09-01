@@ -103,3 +103,57 @@ impl Vk<Bn254> {
         super::codec::fr_to_usize(&self.num_public_inputs)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::base::G1Affine;
+    use ark_ec::AffineRepr;
+
+    fn sample() -> Vk<Bn254> {
+        let g = G1Affine::generator();
+        Vk {
+            log_circuit_size: Fr::from(5u8),
+            num_public_inputs: Fr::from(2u8),
+            pub_inputs_offset: Fr::from(1u8),
+            comms: vec![g, (g + g).into(), g],
+        }
+    }
+
+    #[test]
+    fn fields_and_bytes_roundtrip() {
+        let vk = sample();
+        // Vk's derived PartialEq needs C: PartialEq; compare through the canonical encoding instead.
+        assert_eq!(Vk::<Bn254>::from_fields(&vk.to_fields(), 3).to_fields(), vk.to_fields());
+        assert_eq!(Vk::<Bn254>::from_bytes(&vk.to_bytes(), 3).to_bytes(), vk.to_bytes());
+        assert_eq!(vk.to_fields().len(), Vk::<Bn254>::num_fields(3));
+    }
+
+    /// The hash binds every part of the VK: metadata and commitments alike.
+    #[test]
+    fn hash_binds_metadata_and_commitments() {
+        let vk = sample();
+        let h = vk.hash();
+        let mut m = vk.clone();
+        m.log_circuit_size = Fr::from(6u8);
+        assert_ne!(m.hash(), h);
+        let mut c = vk.clone();
+        c.comms[2] = (c.comms[2] + G1Affine::generator()).into();
+        assert_ne!(c.hash(), h);
+        assert_eq!(vk.hash(), h);
+    }
+
+    #[test]
+    #[should_panic(expected = "wrong number of fields")]
+    fn wrong_field_count_rejected() {
+        let f = sample().to_fields();
+        let _ = Vk::<Bn254>::from_fields(&f, 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "not a multiple of 32")]
+    fn truncated_bytes_rejected() {
+        let b = sample().to_bytes();
+        let _ = Vk::<Bn254>::from_bytes(&b[..b.len() - 1], 3);
+    }
+}

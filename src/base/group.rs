@@ -212,3 +212,42 @@ pub type G2Points = [G2Affine; 2];
 pub fn pairing_check(p0: G1Affine, p1: G1Affine, g2: &G2Points) -> bool {
     ark_bn254::Bn254::multi_pairing([p0, p1], [g2[0], g2[1]]).0.is_one()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::base::srs::{bn254_g2, load_bn254_g1};
+    use ark_ec::AffineRepr;
+
+    /// e(τG, [1]₂) · e(−G, [τ]₂) = 1: the one pairing pair constructible without knowing τ,
+    /// because the SRS's second G1 point is τG. Needs the CRS.
+    #[test]
+    fn pairing_check_accepts_srs_relation() {
+        if crate::testutil::crs_or_skip().is_none() {
+            return;
+        }
+        let g1 = load_bn254_g1(2);
+        let g2 = bn254_g2();
+        assert!(pairing_check(g1[1], -G1Affine::generator(), &g2));
+        // and the tamper control: any other pair of small multiples fails
+        assert!(!pairing_check(g1[1], G1Affine::generator(), &g2));
+        assert!(!pairing_check(G1Affine::generator(), -G1Affine::generator(), &g2));
+    }
+
+    #[test]
+    fn aggregate_multiple_is_deterministic_and_input_bound() {
+        let g = G1Affine::generator();
+        let p = |a: u64, b: u64| PairingPoints::<Bn254> {
+            p0: (g * Fr::from(a)).into(),
+            p1: (g * Fr::from(b)).into(),
+        };
+        let one = PairingPoints::<Bn254>::aggregate_multiple(&[p(3, 4)]);
+        assert_eq!((one.p0, one.p1), (p(3, 4).p0, p(3, 4).p1));
+
+        let a = PairingPoints::<Bn254>::aggregate_multiple(&[p(3, 4), p(5, 6)]);
+        let b = PairingPoints::<Bn254>::aggregate_multiple(&[p(3, 4), p(5, 6)]);
+        assert_eq!((a.p0, a.p1), (b.p0, b.p1));
+        let c = PairingPoints::<Bn254>::aggregate_multiple(&[p(3, 4), p(5, 7)]);
+        assert_ne!(a.p1, c.p1, "the aggregate must bind every input point");
+    }
+}

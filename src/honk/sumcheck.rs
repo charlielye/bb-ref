@@ -1262,3 +1262,95 @@ where
         round_evaluations: committed.evaluations,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::base::transcript::NativeTranscript;
+    use crate::base::{Bn254, Fr};
+
+    /// One relation, one subrelation: `w0 · w1 == 0` on every row. The relation itself has degree 2
+    /// (partial length 3); the batched univariate carries one more point for the linear
+    /// gate-separator factor, exactly like bb's `BATCHED_RELATION_PARTIAL_LENGTH`.
+    struct ProductVanishes;
+    impl RelationSet<Fr> for ProductVanishes {
+        fn num_relations(&self) -> usize {
+            1
+        }
+        fn num_subrelations(&self, _r: usize) -> usize {
+            1
+        }
+        fn linearly_independent(&self, _r: usize, _j: usize) -> bool {
+            true
+        }
+        fn offset_only(&self, _r: usize) -> bool {
+            false
+        }
+        fn accumulate(&self, _r: usize, acc: &mut [Fr], row: &[Fr], _p: &RelationParams<Fr>, scaling: &Fr) {
+            acc[0] += row[0] * row[1] * scaling;
+        }
+        fn partial_length(&self, _r: usize) -> usize {
+            3
+        }
+    }
+
+    fn spec(log_n: usize) -> SumcheckSpec {
+        SumcheckSpec {
+            witness_end: 1 << log_n,
+            active_prefix_end: None,
+            virtual_log_n: log_n,
+            has_zk: false,
+            row_disabling: false,
+            trace_offset: 0,
+            committed: false,
+            batched_len: 4,
+            shifted_sources: vec![],
+            num_entities: 2,
+        }
+    }
+
+    fn run(w0: Vec<u64>, w1: Vec<u64>) -> (SumcheckOutput<Bn254>, Vec<Fr>, Vec<Fr>) {
+        let log_n = w0.len().trailing_zeros() as usize;
+        let polys =
+            [w0, w1].map(|w| Polynomial::from_coeffs(w.into_iter().map(Fr::from).collect()));
+        let params = RelationParams::default();
+        let alpha = Fr::from(0u64); // one subrelation: no batching challenge is consumed
+        let betas: Vec<Fr> = (0..log_n).map(|i| Fr::from(3 + i as u64)).collect();
+
+        let mut pt = NativeTranscript::new();
+        let out = prove_sumcheck::<Bn254>(
+            &ProductVanishes,
+            &spec(log_n),
+            &polys,
+            &mut pt,
+            &alpha,
+            &betas,
+            &params,
+            None,
+            None,
+        );
+        let proof = pt.export_proof();
+
+        let mut vt = NativeTranscript::from_proof(&proof);
+        let v = verify_sumcheck::<Bn254>(&ProductVanishes, &spec(log_n), &mut vt, &[], &params, &betas);
+        (v, out.challenge, out.evals)
+    }
+
+    /// A satisfying trace round-trips: the verifier accepts and lands on the prover's challenge
+    /// point and claimed evaluations.
+    #[test]
+    fn round_trip_on_satisfying_trace() {
+        let (v, p_challenge, p_evals) = run(vec![0, 5, 0, 7], vec![3, 0, 9, 0]);
+        assert!(v.verified);
+        assert_eq!(v.challenge, p_challenge);
+        assert_eq!(v.evals, p_evals);
+    }
+
+    /// One violating row (w0·w1 ≠ 0) makes the honestly-computed proof claim a nonzero sum, which
+    /// the first round check (u(0) + u(1) == target) rejects.
+    #[test]
+    fn violating_row_rejected_at_first_round() {
+        let (v, _, _) = run(vec![0, 5, 2, 7], vec![3, 0, 9, 0]);
+        assert!(!v.verified);
+    }
+}

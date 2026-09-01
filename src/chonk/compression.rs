@@ -352,3 +352,74 @@ mod tests {
 }
 
 
+
+#[cfg(test)]
+mod roundtrip_tests {
+    use super::*;
+    use crate::base::codec::Transcriptable;
+    use crate::base::{Fr, G1Affine, GrumpkinAffine};
+    use ark_ec::AffineRepr;
+    use ark_ff::UniformRand;
+
+    /// A synthetic proof whose field layout follows the walk exactly: random scalars, real curve
+    /// points (compression recovers y from x, so points must be on-curve).
+    fn synthetic_proof(mega_num_public_inputs: usize) -> ChonkProof {
+        let mut rng = ark_std::test_rng();
+        let mut flat: Vec<Fr> = Vec::new();
+        for e in walk_chonk(mega_num_public_inputs) {
+            match e {
+                Bn254Scalar => flat.push(Fr::rand(&mut rng)),
+                Bn254Commitment => {
+                    let p: G1Affine = (G1Affine::generator() * Fr::rand(&mut rng)).into();
+                    flat.extend(Transcriptable::<Fr>::to_fields(&p));
+                }
+                GrumpkinScalar => {
+                    let v = Fq::rand(&mut rng);
+                    let (lo, hi) = split_fq(v);
+                    flat.extend([lo, hi]);
+                }
+                GrumpkinCommitment => {
+                    let p: GrumpkinAffine =
+                        (GrumpkinAffine::generator() * Fq::rand(&mut rng)).into();
+                    flat.extend(Transcriptable::<Fr>::to_fields(&p));
+                }
+            }
+        }
+        ChonkProof::from_fields(&flat)
+    }
+
+    #[test]
+    fn compress_decompress_roundtrips() {
+        let proof = synthetic_proof(3);
+        let compressed = compress_chonk_proof(&proof);
+        assert_eq!(mega_num_public_inputs_from_len(compressed.len()), Ok(3));
+        let back = decompress_chonk_proof(&compressed, 3).unwrap();
+        assert_eq!(back.to_fields(), proof.to_fields());
+        // and the other direction: bytes -> proof -> the same bytes
+        assert_eq!(compress_chonk_proof(&back), compressed);
+    }
+
+    #[test]
+    fn malformed_bytes_rejected_not_panicking() {
+        let compressed = compress_chonk_proof(&synthetic_proof(1));
+        // truncation mid-element
+        assert!(decompress_chonk_proof(&compressed[..compressed.len() - 1], 1).is_err());
+        // a scalar >= r
+        let mut c = compressed.clone();
+        c[..32].copy_from_slice(&[0xffu8; 32]);
+        c[0] = 0x7f; // clear the sign bit so it parses as a scalar, not a point
+        assert!(decompress_chonk_proof(&c, 1).is_err());
+        // an x-coordinate that is not on the curve, in the first commitment slot
+        let b = <ark_bn254::g1::Config as ark_ec::short_weierstrass::SWCurveConfig>::COEFF_B;
+        let off_curve_x = (1u8..)
+            .map(Fq::from)
+            .find(|x| (*x * x * x + b).sqrt().is_none())
+            .unwrap();
+        let first_comm = walk_chonk(1).iter().position(|e| *e == Bn254Commitment).unwrap();
+        let mut c = compressed.clone();
+        let mut w = crate::base::field::to_bytes_be(&off_curve_x);
+        w[0] &= 0x7f;
+        c[first_comm * 32..(first_comm + 1) * 32].copy_from_slice(&w);
+        assert!(decompress_chonk_proof(&c, 1).is_err());
+    }
+}

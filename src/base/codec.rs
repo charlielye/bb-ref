@@ -293,3 +293,77 @@ impl ChallengeField for U256 {
         [u256_low_bits(*self, 127), u256_shr(*self, 127)]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::base::field::FieldLike;
+    use ark_ec::AffineRepr;
+    use ark_ff::{PrimeField, UniformRand};
+
+    #[test]
+    fn fq_roundtrips_at_boundaries() {
+        let mut rng = ark_std::test_rng();
+        for v in [Fq::from(0u8), Fq::from(1u8), -Fq::from(1u8), Fq::rand(&mut rng)] {
+            let f: Vec<Fr> = v.to_fields();
+            assert_eq!(Fq::from_fields(&f), v);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "fq limb 0 out of range")]
+    fn fq_low_limb_over_range_rejected() {
+        let too_wide = from_u256::<Fr>(U256::from(1u8) << LOWER_BITS);
+        let _ = Fq::from_fields(&[too_wide, <Fr as FieldLike>::zero()]);
+    }
+
+    /// Limbs in range but reassembling to a value ≥ q must panic (non-canonical), as bb does.
+    #[test]
+    #[should_panic]
+    fn fq_non_canonical_value_rejected() {
+        let mut f: Vec<Fr> = (-Fq::from(1u8)).to_fields();
+        f[0] += Fr::one();
+        let _ = Fq::from_fields(&f);
+    }
+
+    #[test]
+    fn points_roundtrip_and_infinity_is_all_zero() {
+        let g = G1Affine::generator();
+        let gf: Vec<Fr> = g.to_fields();
+        assert_eq!(G1Affine::from_fields(&gf), g);
+        let zero4: Vec<Fr> = vec![<Fr as FieldLike>::zero(); 4];
+        assert_eq!(<G1Affine as Transcriptable<Fr>>::to_fields(&G1Affine::identity()), zero4);
+        assert!(G1Affine::from_fields(&zero4).is_zero());
+
+        let h = GrumpkinAffine::generator();
+        let hf: Vec<Fr> = h.to_fields();
+        assert_eq!(GrumpkinAffine::from_fields(&hf), h);
+        assert!(GrumpkinAffine::from_fields(&[<Fr as FieldLike>::zero(); 2]).is_zero());
+    }
+
+    #[test]
+    #[should_panic(expected = "not on the curve")]
+    fn bn254_off_curve_point_rejected() {
+        let mut f: Vec<Fr> = G1Affine::generator().to_fields();
+        f[2] += Fr::one();
+        let _ = G1Affine::from_fields(&f);
+    }
+
+    #[test]
+    #[should_panic(expected = "not on the curve")]
+    fn grumpkin_off_curve_point_rejected() {
+        let mut f: Vec<Fr> = GrumpkinAffine::generator().to_fields();
+        f[1] += Fr::one();
+        let _ = GrumpkinAffine::from_fields(&f);
+    }
+
+    /// The keccak codec must reject a wire scalar ≥ r; canonical values round-trip.
+    #[test]
+    fn keccak_scalar_canonicity() {
+        let x = -Fr::from(1u8);
+        let xf: Vec<U256> = Transcriptable::<U256>::to_fields(&x);
+        assert_eq!(<Fr as Transcriptable<U256>>::from_fields(&xf), x);
+        let r = <Fr as PrimeField>::MODULUS;
+        assert!(std::panic::catch_unwind(|| <Fr as Transcriptable<U256>>::from_fields(&[r])).is_err());
+    }
+}

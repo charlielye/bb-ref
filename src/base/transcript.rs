@@ -234,3 +234,107 @@ impl<TF: ChallengeField, H: Hasher<TF>> Transcript<TF, H> {
 
 /// The native transcript: bn254 Fr with Poseidon2.
 pub type NativeTranscript = Transcript<super::field::Fr, super::poseidon2::Poseidon2>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::base::field::FieldLike;
+    use crate::base::Fr;
+
+    fn fr(n: u64) -> Fr {
+        Fr::from(n)
+    }
+
+    /// Prover and verifier drive the same duplex: sending x then challenging equals loading the
+    /// exported proof and receiving x then challenging.
+    #[test]
+    fn prover_verifier_symmetry() {
+        let mut p = NativeTranscript::new();
+        p.send("a", &fr(7));
+        p.send_vec("b", &[fr(8), fr(9)]);
+        let pc: Fr = p.challenge("alpha");
+        let proof = p.export_proof();
+
+        let mut v = NativeTranscript::from_proof(&proof);
+        assert_eq!(v.receive::<Fr>("a"), fr(7));
+        assert_eq!(v.receive_vec::<Fr>("b", 2), vec![fr(8), fr(9)]);
+        assert_eq!(v.challenge::<Fr>("alpha"), pc);
+    }
+
+    /// The duplex chains: a later challenge depends on the previous challenge, not only on the
+    /// current round's data.
+    #[test]
+    fn challenges_chain_across_rounds() {
+        let run = |first: u64| {
+            let mut t = NativeTranscript::new();
+            t.send("a", &fr(first));
+            let _: Fr = t.challenge("c1");
+            t.send("b", &fr(5));
+            t.challenge::<Fr>("c2")
+        };
+        assert_ne!(run(1), run(2), "same round-2 data must not collapse distinct histories");
+    }
+
+    /// Fiat-Shamir tamper sensitivity: flipping any sent element changes the challenge.
+    #[test]
+    fn tampered_element_changes_challenge() {
+        let challenge_for = |x: Fr| {
+            let mut t = NativeTranscript::new();
+            t.send("a", &x);
+            t.challenge::<Fr>("c")
+        };
+        let c = challenge_for(fr(3));
+        assert_ne!(challenge_for(fr(3) + Fr::one()), c);
+        assert!(!c.is_zero());
+    }
+
+    /// Unwritten data (`add_to_hash_buffer`, e.g. the VK hash) binds the challenge without
+    /// entering the proof.
+    #[test]
+    fn hash_buffer_binds_but_does_not_write() {
+        let mut a = NativeTranscript::new();
+        a.add_to_hash_buffer("vk", &fr(1));
+        a.send("x", &fr(9));
+        let ca: Fr = a.challenge("c");
+        assert_eq!(a.export_proof(), vec![fr(9)]);
+
+        let mut b = NativeTranscript::new();
+        b.add_to_hash_buffer("vk", &fr(2));
+        b.send("x", &fr(9));
+        assert_ne!(b.challenge::<Fr>("c"), ca);
+    }
+
+    /// One hash yields two short challenges (lo/hi limbs); an odd request rolls a fresh hash for
+    /// the last one and both limbs of a pair differ.
+    #[test]
+    fn short_challenges_split_and_differ() {
+        let mut t = NativeTranscript::new();
+        t.send("a", &fr(4));
+        let cs: Vec<Fr> = t.short_challenges(&["u", "v", "w"]);
+        assert_eq!(cs.len(), 3);
+        assert!(cs[0] != cs[1] && cs[1] != cs[2] && cs[0] != cs[2]);
+    }
+
+    #[test]
+    fn dyadic_powers_square_repeatedly() {
+        let mut t = NativeTranscript::new();
+        t.send("a", &fr(11));
+        let d: Vec<Fr> = t.dyadic_powers("delta", 3);
+        assert_eq!(d[1], d[0].sqr());
+        assert_eq!(d[2], d[1].sqr());
+    }
+
+    #[test]
+    #[should_panic(expected = "proof too short")]
+    fn over_read_panics_with_label() {
+        let mut v = NativeTranscript::from_proof(&[fr(1)]);
+        let _ = v.receive_vec::<Fr>("univariate", 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "first challenge requested before any data")]
+    fn challenge_before_data_panics() {
+        let mut t = NativeTranscript::new();
+        let _: Fr = t.challenge("c");
+    }
+}
