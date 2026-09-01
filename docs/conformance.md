@@ -150,7 +150,7 @@ Only the first is the common case; the other two exist so that heavier work is o
 |---|---|---|---|
 | **1. Run the suite** | anyone with a clone | a released `bb` binary (downloaded, matching the pin) + the committed corpus file | `./bootstrap.sh && cargo test --test conformance` |
 | **2. Custom bb** | anyone testing an unreleased bb | + the `pin/aztec-packages` submodule, bb built from source | `git submodule update --init --depth 1 pin/aztec-packages && ./pin/build.sh` |
-| **3. Rebuild the corpus** | maintainers, once per pin | + the pin's `labs` submodule (yarn-project) and its patch overlay, an AVM-capable bb, a real proving run | `./tools/regen_corpus.sh <dir>` |
+| **3. Rebuild the corpus** | maintainers, once per pin | + the pin's `labs` submodule (yarn-project) and its patch overlay, an AVM-capable bb, a real proving run | `./tools/regen/corpus.sh <dir>` |
 
 Tier 1 needs no submodule, no C++ toolchain and no acvm: replay carries its own witnesses, so
 nothing is compiled or executed — the corpus is fed to two binaries and their response streams are

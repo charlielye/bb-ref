@@ -26,6 +26,23 @@ decompress() { case "$CORPUS" in *.zst) zstd -dcq "$CORPUS";; *) cat "$CORPUS";;
 out=$(mktemp -d); trap 'rm -rf "$out"' EXIT
 keep() { trap - EXIT; echo "streams kept in $out"; }
 echo "corpus:  $CORPUS"
+# Fast path: a goldens file recorded at capture time is bb's answer to these exact frames, so only
+# bb-ref needs to run. Pass --with-bb (or delete the goldens) to re-prove through bb as well.
+GOLDENS=${CORPUS%.corpus.zst}.goldens.zst
+if [ -f "$GOLDENS" ] && [ "${3:-}" != "--with-bb" ]; then
+    echo "goldens: $GOLDENS (bb replay skipped; --with-bb forces it)"
+    decompress | ./target/release/bb-ref msgpack run --input - > "$out/ref.resp" 2>"$out/ref.err" || {
+        echo "bb-ref failed:"; tail -3 "$out/ref.err"; exit 1; }
+    zstd -dcq "$GOLDENS" > "$out/bb.resp"
+    if cmp -s "$out/bb.resp" "$out/ref.resp"; then
+        echo "CONFORMANT: $(python3 tools/lib/replay.py --count "$out/bb.resp") responses byte-identical"
+        exit 0
+    fi
+    echo "DIVERGED:"
+    python3 tools/lib/replay.py --diff "$CORPUS" "$out/bb.resp" "$out/ref.resp"
+    keep
+    exit 1
+fi
 echo "bb:      $BB"
 decompress | "$BB" msgpack run --input - > "$out/bb.resp" 2>"$out/bb.err" || {
     echo "bb failed:"; tail -3 "$out/bb.err"; exit 1; }

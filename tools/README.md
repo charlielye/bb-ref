@@ -3,10 +3,13 @@
 Three commands, in the order you use them.
 
 ```
-regen_corpus.sh              rebuild the corpus from the pinned aztec-packages (~13 min)
-conformance.sh <corpus>      replay it into bb and bb-ref; compare responses byte for byte
+regen/corpus.sh              rebuild the corpus from the pinned aztec-packages (~13 min)
+conformance.sh <corpus>      replay it into bb-ref against the recorded goldens (--with-bb re-proves bb too)
 bench.sh <corpus> [binary]   replay it frame by frame and print per-operation timings
 ```
+
+Regeneration only *produces* the artifact (corpus + goldens); it never replays it — verification
+belongs to conformance.sh and bench.sh alone.
 
 A **corpus** is the exact bytes a real prover sent to bb: `[u32 len][u64 request_id][payload]`
 frames, recorded off a live proving run. bb and bb-ref both read that framing from a file, a pipe,
@@ -20,7 +23,7 @@ our own, no rehydration step, and what we test is what the node actually sent.
 | `corpus/leaf-assets/` | real client-proven txs + the chain state they anchor to (regenerated rarely) |
 | `corpus/*.corpus.zst` | the corpus itself; gitignored, ~83 MB |
 | `lib/` | support: `replay.py` (list/diff/extract), `bench.py`, `bb_capture_proxy.py` (records a run) |
-| `regen/` | regenerators for the committed differential fixtures under `tests/data/` |
+| `regen/` | all regenerators: `corpus.sh` plus the per-milestone `tests/data/` generators |
 
 ## Diagnosing a divergence
 
