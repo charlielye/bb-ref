@@ -16,6 +16,10 @@ cd "$(dirname "$0")/.."
 CORPUS=${1:?usage: bench.sh <corpus[.zst]> [binary]}
 BIN=${2:-./bin/bb}
 : "${BB_RNG_SEED:=12345}"
-export BB_RNG_SEED
-# Unset for benchmarking: production thread counts are the point, unlike a conformance replay.
+# The two binaries default to DIFFERENT thread caps (bb: min(32, cores); bb-ref: rayon min(48,
+# cores)), so a fair comparison pins both to one explicit count. THREADS=<n> overrides; 32 is
+# bb's production default cap.
+: "${THREADS:=32}"
+export BB_RNG_SEED HARDWARE_CONCURRENCY=$THREADS RAYON_NUM_THREADS=$THREADS
+echo "threads: $THREADS (both binaries)"
 exec python3 tools/lib/bench.py "$CORPUS" "$BIN" "${@:3}"
