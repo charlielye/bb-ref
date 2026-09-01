@@ -6,7 +6,7 @@ pub const PIN: &str = "9df414e";
 
 pub fn fixture_dir(rel: &str) -> PathBuf {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("fixtures/legacy/data")
+        .join("tests/data")
         .join(PIN);
     root.join(rel)
 }

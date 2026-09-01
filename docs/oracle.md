@@ -23,7 +23,7 @@ Not everything can be compared the same way, because bb draws randomness. Three 
 
 ## Fixture machinery
 
-- **The pin** ([`fixtures/PIN`](../fixtures/PIN)): one bb commit. Every fixture is generated
+- **The pin** ([`tools/PIN`](../tools/PIN)): one bb commit. Every fixture is generated
   from it; tests assert the fixture pin matches.
 - **The dumper** (`BbRefDump`, in the pinned tree at
   `barretenberg/cpp/src/barretenberg/dsl/acir_format/bbref_dump.test.cpp`, built by
@@ -34,8 +34,8 @@ Not everything can be compared the same way, because bb draws randomness. Three 
   named stdlib micro-programs (`Stdlib`), op-queue/merge/ECCVM/translator/chonk fixtures —
   driven by `BBREF_*` env vars. bb production code is never modified (the one exception is
   the env-gated RNG seed/tape patch in `numeric/random/engine.cpp`).
-- **Regen scripts** (`fixtures/regen_*.sh`): rebuild every fixture from the pin. Small
-  fixtures are committed under `fixtures/legacy/data/<pin7>/`; bulky instance dumps are gitignored
+- **Regen scripts** (`tools/regen/regen_*.sh`): rebuild every fixture from the pin. Small
+  fixtures are committed under `tests/data/<pin7>/`; bulky instance dumps are gitignored
   and regenerated on demand.
 - **Harvested fixtures**: circuits whose witnesses embed real recursive proofs (the rollup
   tree) cannot be executed from sample inputs — they are harvested from a live proving run
@@ -57,7 +57,7 @@ Not everything can be compared the same way, because bb draws randomness. Three 
 
 When a big oracle fails, **reduce to a micro-oracle**: add a named program to the dumper
 (both copies!) reproducing the suspect expression over deterministic witnesses, mirror it in
-`tests/m13_stdlib.rs`, and iterate at ten-second cadence instead of minutes.
+`tests/stdlib.rs`, and iterate at ten-second cadence instead of minutes.
 
 ## Debugging a divergence
 
@@ -82,6 +82,6 @@ far:
 ## Re-pinning
 
 Re-pointing bb-ref at a new bb commit is a deliberate procedure: rebase the pin branch onto it,
-update `fixtures/PIN`, run `fixtures/regen_corpus.sh` and every `regen_*.sh`, re-harvest
+update `tools/PIN`, run `tools/regen_corpus.sh` and every `regen_*.sh`, re-harvest
 witness-bearing fixtures, and run the full suite. Divergences found are chased with the ladder above — they are the changelog
 of what bb changed, which is half the value of maintaining the mirror.

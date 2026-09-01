@@ -14,3 +14,5 @@ pub mod honk;
 pub mod msgpack;
 pub mod rollup;
 pub mod stdlib;
+#[cfg(test)]
+pub mod testutil;

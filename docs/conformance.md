@@ -111,7 +111,7 @@ Notes that will save someone a day:
 
 ## Phases
 
-1. Submodule the pin branch (shallow) + `pin/build.sh`; rewire `fixtures/PIN`/regen/tests
+1. Submodule the pin branch (shallow) + `pin/build.sh`; rewire `tools/PIN`/regen/tests
    to derive from the submodule (keep an `AZTEC_REPO` override for dev boxes).
 2. Generate the bb-ref server from `bb_schema.json` (separate thin crate; core stays
    IPC-free); wire handlers onto existing prove/write_vk/verify/chonk functions, and serve
@@ -132,7 +132,7 @@ same corpus: **conformance** (seeded, manifest thread policy, single pass, byte-
 timings) and **bench** (unseeded, production thread counts, warmup + N reps, timings only — ZK
 and Chonk operations get honest multithreaded numbers that the concurrency-1 conformance pass
 cannot give). Reports are JSON plus a rendered table (frame, circuit, bb, bb-ref, ratio), so
-bb-vs-bb-ref and pin-to-pin regressions are diffable. The chonk pinned flows (fixtures/flows/,
+bb-vs-bb-ref and pin-to-pin regressions are diffable. The chonk pinned flows (tools/flows/ (planned),
 downloaded at bb's own hash) give benchmark parity with bb's chonk bench on identical inputs.
 
 Diagnosis when a frame diverges: verdicts are per frame ("frame 37, CircuitProve
@@ -150,7 +150,7 @@ Only the first is the common case; the other two exist so that heavier work is o
 |---|---|---|---|
 | **1. Run the suite** | anyone with a clone | a released `bb` binary (downloaded, matching the pin) + the committed corpus file | `./bootstrap.sh && cargo test --test conformance` |
 | **2. Custom bb** | anyone testing an unreleased bb | + the `pin/aztec-packages` submodule, bb built from source | `git submodule update --init --depth 1 pin/aztec-packages && ./pin/build.sh` |
-| **3. Rebuild the corpus** | maintainers, once per pin | + the pin's `labs` submodule (yarn-project) and its patch overlay, an AVM-capable bb, a real proving run | `./fixtures/regen_corpus.sh <dir>` |
+| **3. Rebuild the corpus** | maintainers, once per pin | + the pin's `labs` submodule (yarn-project) and its patch overlay, an AVM-capable bb, a real proving run | `./tools/regen_corpus.sh <dir>` |
 
 Tier 1 needs no submodule, no C++ toolchain and no acvm: replay carries its own witnesses, so
 nothing is compiled or executed — the corpus is fed to two binaries and their response streams are

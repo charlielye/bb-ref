@@ -38,7 +38,7 @@ fn repo_root() -> PathBuf {
 }
 
 fn fixture(rel: &str) -> PathBuf {
-    repo_root().join("fixtures/legacy/data/9df414e").join(rel)
+    repo_root().join("tests/data/9df414e").join(rel)
 }
 
 /// The raw gzipped ACIR buffer out of a program.json wrapper.

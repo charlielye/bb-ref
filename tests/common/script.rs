@@ -1,4 +1,4 @@
-//! Interpreter for the circuit scripts in `fixtures/scripts/` (mirrors `run_script` in the bb-side
+//! Interpreter for the circuit scripts in `tests/data/scripts/` (mirrors `run_script` in the bb-side
 //! `bbref_dump.test.cpp`): one builder call per line.
 use bb_ref::base::field::{from_bytes_be, FieldLike};
 use bb_ref::base::{Fq, Fr, G1Affine};
