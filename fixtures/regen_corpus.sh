@@ -66,14 +66,14 @@ step "proving the recipe epochs into a corpus (~7 min)"
 FRAMES=$(mktemp -d); trap 'rm -rf "$FRAMES"' EXIT
 ( cd "$OUT" && \
   BBREF_CORPUS_ASSETS=$ASSETS \
-  BB_BINARY_PATH=$ROOT/fixtures/bb_capture_proxy.py BB_REAL=$BB ACVM_BINARY_PATH=$ACVM \
+  BB_BINARY_PATH=$ROOT/fixtures/lib/bb_capture_proxy.py BB_REAL=$BB ACVM_BINARY_PATH=$ACVM \
   IPC_FRAME_CAPTURE_DIR=$FRAMES BB_POOL_SIZE=1 BB_RNG_SEED=12345 \
   node --experimental-strip-types --experimental-transform-types --no-warnings driver.ts )
 
 step "packing"
 # One pooled bb means one connection carries the whole rollup; anything else is a stray client.
 STREAM=$(ls -S "$FRAMES"/*.req | head -1)
-python3 fixtures/replay.py --list "$STREAM" | tail -5
+python3 fixtures/lib/replay.py --list "$STREAM" | tail -5
 zstd -3 -T0 -q -f -o "$OUT/rollup-${PIN:0:7}.corpus.zst" "$STREAM"
 printf '\ncorpus: %s (%s)\n' "$OUT/rollup-${PIN:0:7}.corpus.zst" \
     "$(du -h "$OUT/rollup-${PIN:0:7}.corpus.zst" | cut -f1)"

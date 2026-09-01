@@ -35,7 +35,7 @@ Not everything can be compared the same way, because bb draws randomness. Three 
   driven by `BBREF_*` env vars. bb production code is never modified (the one exception is
   the env-gated RNG seed/tape patch in `numeric/random/engine.cpp`).
 - **Regen scripts** (`fixtures/regen_*.sh`): rebuild every fixture from the pin. Small
-  fixtures are committed under `fixtures/data/<pin7>/`; bulky instance dumps are gitignored
+  fixtures are committed under `fixtures/legacy/data/<pin7>/`; bulky instance dumps are gitignored
   and regenerated on demand.
 - **Harvested fixtures**: circuits whose witnesses embed real recursive proofs (the rollup
   tree) cannot be executed from sample inputs — they are harvested from a live proving run

@@ -18,4 +18,4 @@ BIN=${2:-./bin/bb}
 : "${BB_RNG_SEED:=12345}"
 export BB_RNG_SEED
 # Unset for benchmarking: production thread counts are the point, unlike a conformance replay.
-exec python3 fixtures/bench.py "$CORPUS" "$BIN" "${@:3}"
+exec python3 fixtures/lib/bench.py "$CORPUS" "$BIN" "${@:3}"

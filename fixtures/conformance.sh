@@ -6,7 +6,7 @@
 # The corpus is a recorded wire stream ([u32 len][u64 request_id][payload] frames); both servers
 # read that framing from a file or stdin, so the check is a pipe into each and a byte compare of
 # what comes back. A difference is reported as the frame index and command that first diverged --
-# `fixtures/replay.py --extract N` cuts that frame (with the preceding frames of its connection,
+# `fixtures/lib/replay.py --extract N` cuts that frame (with the preceding frames of its connection,
 # since Chonk sequences are stateful) into a standalone corpus for a fast repro loop.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -33,10 +33,10 @@ decompress | ./target/release/bb-ref msgpack run --input - > "$out/ref.resp" 2>"
     echo "bb-ref failed:"; tail -3 "$out/ref.err"; exit 1; }
 
 if cmp -s "$out/bb.resp" "$out/ref.resp"; then
-    echo "CONFORMANT: $(python3 fixtures/replay.py --count "$out/bb.resp") responses byte-identical"
+    echo "CONFORMANT: $(python3 fixtures/lib/replay.py --count "$out/bb.resp") responses byte-identical"
 else
     echo "DIVERGED:"
-    python3 fixtures/replay.py --diff "$CORPUS" "$out/bb.resp" "$out/ref.resp"
+    python3 fixtures/lib/replay.py --diff "$CORPUS" "$out/bb.resp" "$out/ref.resp"
     keep
     exit 1
 fi
