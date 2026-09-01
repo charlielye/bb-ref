@@ -29,7 +29,7 @@ Not everything can be compared the same way, because bb draws randomness. Three 
   `barretenberg/cpp/src/barretenberg/dsl/acir_format/bbref_dump.test.cpp`, built by
   `ninja dsl_tests`): a test-only C++ file carried as a commit on the pin branch rather than a
   patch applied over it.
-  Its `BbRefDump.*` tests dump whatever a milestone needs — full proving instances
+  Its `BbRefDump.*` tests dump whatever a fixture set needs — full proving instances
   (`UltraInstance`: every polynomial, VK, proof), write-VK circuit shapes (`UltraWriteVk`),
   named stdlib micro-programs (`Stdlib`), op-queue/merge/ECCVM/translator/chonk fixtures —
   driven by `BBREF_*` env vars. bb production code is never modified (the one exception is

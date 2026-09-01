@@ -61,7 +61,7 @@ of-two term flips a reduction decision far downstream).
 2. When porting new bb code, transcribe the statement structure — temporaries, order,
    redundancy — not the algebra. Cite the bb source (`/// bb \`file::function\`: …`).
 3. When the oracle reports a divergence, do not guess: the op-trace tooling
-   (docs/oracle.md) pinpoints the operation. Every divergence so far has been one of the
+   (docs/oracle.md) pinpoints the operation. Every divergence falls into one of the
    four classes above.
 
 ## If we ever stop matching bb

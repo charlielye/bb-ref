@@ -15,7 +15,8 @@ Run `tools/check.sh` for the standalone gate, `cargo test --release` for everyth
 
 ## What the standalone layer covers
 
-`coverage.sh` reports three tiers, matching how the code splits (2026-09-02):
+`coverage.sh` reports three tiers, matching how the code splits (the figures below are a
+snapshot — the script prints the live ones):
 
 - **standalone, infra excluded: 69% of lines.** Infra — the generated msgpack code, the thin
   command adapters, the CLI, io/timing — is excluded outright: its bytes are pinned harder by

@@ -1,7 +1,7 @@
 # Conformance
 
 Where [oracle.md](oracle.md) describes the *development* microscope (per-polynomial trace
-diffs against a dev pin), this describes the **conformance suite**, now built: anyone clones
+diffs against a dev pin), this describes the **conformance suite**: anyone clones
 this repo and mechanically verifies that bb-ref and barretenberg are bit-identical across the
 proving stack. The commands are `tools/regen/regen_corpus.sh` (produce the corpus + goldens),
 `tools/conformance.sh` (replay + byte-compare) and `tools/bench.sh` (timings); this document

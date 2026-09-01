@@ -23,7 +23,7 @@ our own, no rehydration step, and what we test is what the node actually sent.
 | `corpus/leaf-assets/` | real client-proven txs + the chain state they anchor to (regenerated rarely) |
 | `corpus/*.corpus.zst` | the corpus itself; gitignored, ~83 MB |
 | `lib/` | support: `replay.py` (list/diff/extract), `bench.py`, `bb_capture_proxy.py` (records a run) |
-| `regen/` | all regenerators: `corpus.sh` plus the per-milestone `tests/data/` generators |
+| `regen/` | all regenerators: `regen_corpus.sh` plus the `tests/data/` unit-fixture generators |
 
 ## Diagnosing a divergence
 
