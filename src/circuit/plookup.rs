@@ -31,6 +31,8 @@ pub enum BasicTableId {
     KeccakChi,
     KeccakInput,
     KeccakOutput,
+    BlakeXorRotate(u8),
+    BlakeXorRotate0Slice5Mod4,
     UintXor(u8),
     UintAnd(u8),
 }
@@ -49,6 +51,10 @@ pub enum MultiTableId {
     KeccakChiOutput,
     KeccakFormatInput,
     KeccakFormatOutput,
+    BlakeXor,
+    BlakeXorRotate16,
+    BlakeXorRotate8,
+    BlakeXorRotate7,
     Uint32Xor,
     Uint32And,
 }
@@ -77,6 +83,11 @@ pub enum TableValues {
     KeccakTheta,
     KeccakChi,
     KeccakInput,
+    /// `ROTR^{rotation}(a ^ b)` over 32 bits; `filter` keeps only the two least significant bits.
+    BlakeXor {
+        rotation: u8,
+        filter: bool,
+    },
     UintXor,
     UintAnd,
 }
@@ -109,6 +120,9 @@ impl TableValues {
             TableValues::KeccakTheta => super::keccak_tables::theta_values(key[0]),
             TableValues::KeccakChi => super::keccak_tables::chi_values(key[0]),
             TableValues::KeccakInput => super::keccak_tables::input_values(key[0]),
+            TableValues::BlakeXor { rotation, filter } => {
+                super::blake_tables::xor_rotate_values(rotation as u32, filter, key)
+            }
             TableValues::UintXor => super::uint_tables::values(key, true),
             TableValues::UintAnd => super::uint_tables::values(key, false),
             TableValues::FixedBase { axis, window } => super::secp256r1_fixed_base::extract_axis(
@@ -269,6 +283,10 @@ pub fn get_multitable(id: MultiTableId) -> &'static MultiTable {
         tables.push((KeccakChiOutput, super::keccak_tables::chi_multitable()));
         tables.push((KeccakFormatInput, super::keccak_tables::input_multitable()));
         tables.push((KeccakFormatOutput, super::keccak_tables::output_multitable()));
+        tables.push((BlakeXor, super::blake_tables::xor_multitable()));
+        tables.push((BlakeXorRotate16, super::blake_tables::xor_rotate_16_multitable()));
+        tables.push((BlakeXorRotate8, super::blake_tables::xor_rotate_8_multitable()));
+        tables.push((BlakeXorRotate7, super::blake_tables::xor_rotate_7_multitable()));
         tables.push((Uint32Xor, super::uint_tables::uint32_multitable(true)));
         tables.push((Uint32And, super::uint_tables::uint32_multitable(false)));
         tables
@@ -365,6 +383,10 @@ pub fn create_basic_table(id: BasicTableId, table_index: usize) -> BasicTable {
         Sha256Base16Rotate2 => sparse_table_with_rotation(id, table_index, 16, 11, 2),
         Secp256r1FixedBase { axis, window } => {
             super::secp256r1_fixed_base::basic_table(id, table_index, axis, window as usize)
+        }
+        BlakeXorRotate(rotation) => super::blake_tables::xor_rotate_table(id, table_index, 6, rotation as u32, false),
+        BlakeXorRotate0Slice5Mod4 => {
+            super::blake_tables::xor_rotate_table(id, table_index, super::blake_tables::BITS_IN_LAST_SLICE, 0, true)
         }
         KeccakRho(bits) => super::keccak_tables::rho_table(id, table_index, bits as usize),
         KeccakTheta => super::keccak_tables::theta_table(id, table_index),

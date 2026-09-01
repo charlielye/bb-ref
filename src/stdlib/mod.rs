@@ -1,5 +1,8 @@
 #![doc = include_str!("README.md")]
 pub mod bigfield;
+pub mod blake2s;
+pub mod blake3s;
+pub mod blake_util;
 pub mod biggroup;
 pub mod biggroup_secp256r1;
 pub mod bool;

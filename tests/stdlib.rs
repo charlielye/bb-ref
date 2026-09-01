@@ -185,6 +185,8 @@ fn flavor_of(name: &str) -> &'static FlavorDesc {
     }
     if [
         "sha256",
+        "blake",
+        "aes128",
         "bigfield",
         "biggroup",
         "secp256r1",
@@ -476,6 +478,22 @@ fn secp256r1_mul(ctx: &Ctx) {
     t1.incomplete_assert_equal(&e1);
     let e2 = Element::<P256>::from_witness(ctx, &res.get_value());
     res.incomplete_assert_equal(&e2);
+}
+
+/// The bb `blake{2s,3}_hash_<n>` programs: n single-byte witnesses hashed, output bytes bound to
+/// fresh witnesses (mirroring the dsl arm's result binding).
+fn blake_hash(ctx: &Ctx, n: usize, is_blake3: bool) {
+    use bb_ref::stdlib::{blake2s, blake3s};
+    let (mult, off) = if is_blake3 { (11, 5) } else { (7, 3) };
+    let mut arr = ByteArray::constant_padding(0, 0);
+    for i in 0..n {
+        let byte = FieldT::from_witness(ctx, Fr::from(((i * mult + off) & 0xff) as u64));
+        arr.write(&ByteArray::from_field(&byte, 1));
+    }
+    let out = if is_blake3 { blake3s::hash(&arr) } else { blake2s::hash(&arr) };
+    for b in out.bytes() {
+        b.assert_equal(&FieldT::from_witness(ctx, b.get_value()));
+    }
 }
 
 fn ecdsa_r1(ctx: &Ctx) {
@@ -791,6 +809,8 @@ fn run(ctx: &Ctx, name: &str) {
         "biggroup_bn254_ops" => biggroup_bn254_ops(ctx),
         "secp256r1_mul" => secp256r1_mul(ctx),
         "ecdsa_r1" => ecdsa_r1(ctx),
+        _ if name.starts_with("blake2s_hash_") => blake_hash(ctx, suffix("blake2s_hash_") as usize, false),
+        _ if name.starts_with("blake3_hash_") => blake_hash(ctx, suffix("blake3_hash_") as usize, true),
         "keccak_permutation" => keccak_permutation(ctx),
         "logic_ops" => logic_ops(ctx),
         _ if name.starts_with("poseidon2_hash_") => poseidon2_hash(ctx, suffix("poseidon2_hash_")),
@@ -834,6 +854,10 @@ pub const PROGRAMS: &[&str] = &[
     "biggroup_bn254_ops",
     "secp256r1_mul",
     "ecdsa_r1",
+    "blake2s_hash_5",
+    "blake2s_hash_65",
+    "blake3_hash_5",
+    "blake3_hash_65",
     "keccak_permutation",
     "logic_ops",
 ];

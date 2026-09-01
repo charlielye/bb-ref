@@ -72,7 +72,39 @@ impl ByteArray {
             values,
         }
     }
+    /// bb `byte_array::constant_padding`: constant bytes, no witnesses or constraints.
+    pub fn constant_padding(num_bytes: usize, value: u8) -> Self {
+        Self {
+            ctx: None,
+            values: vec![FieldT::constant(Fr::from(value as u64)); num_bytes],
+        }
+    }
+    pub fn reverse(&self) -> Self {
+        Self {
+            ctx: self.ctx.clone(),
+            values: self.values.iter().rev().cloned().collect(),
+        }
+    }
+    /// bb `byte_array::write_at`: overwrite bytes starting at `offset` (growing if needed).
+    pub fn write_at(&mut self, other: &ByteArray, offset: usize) {
+        if self.ctx.is_none() {
+            self.ctx = other.ctx.clone();
+        }
+        for (i, v) in other.values.iter().enumerate() {
+            if offset + i < self.values.len() {
+                self.values[offset + i] = v.clone();
+            } else {
+                self.values.push(v.clone());
+            }
+        }
+    }
+    pub fn slice_from(&self, offset: usize) -> Self {
+        self.slice(offset, self.values.len() - offset)
+    }
     pub fn write(&mut self, other: &ByteArray) {
+        if self.ctx.is_none() {
+            self.ctx = other.ctx.clone();
+        }
         self.values.extend(other.values.iter().cloned());
     }
     pub fn slice(&self, offset: usize, length: usize) -> Self {
@@ -95,6 +127,9 @@ impl ByteArray {
             })
             .collect();
         FieldT::accumulate(&scaled)
+    }
+    pub fn bytes(&self) -> &[FieldT] {
+        &self.values
     }
     pub fn len(&self) -> usize {
         self.values.len()

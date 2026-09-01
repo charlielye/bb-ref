@@ -1,0 +1,5 @@
+dyadic_size=32768
+num_public_inputs=0
+pub_inputs_offset=1
+final_active_wire_idx=4473
+max_end_index=17409
