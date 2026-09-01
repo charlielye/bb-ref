@@ -234,14 +234,18 @@ fn circuit_prove_impl(cmd: BbCircuitProve) -> Result<BbCircuitProveResponse, Str
     let (flavor, ipa) = select_flavor(&cmd.settings)?;
     let keccak = flavor.name.contains("Keccak");
 
+    crate::base::timing::phase("cmd: start");
     let circuit = decode_program_raw(&cmd.circuit.bytecode);
     let mut rng = GlobalProxy;
     let witness = decode_witness_raw(&cmd.witness, &mut rng);
+    crate::base::timing::phase("cmd: decode");
     let mut builder = build_circuit_opts(&circuit, Some(&witness), ipa);
+    crate::base::timing::phase("cmd: build");
     if let Some(msg) = &builder.failed {
         return Err(format!("circuit is not satisfied: {msg}"));
     }
     let mut inst = ProverInstance::from_builder(flavor, &mut builder, &mut rng);
+    crate::base::timing::phase("cmd: instance");
 
     // bb validates IO/IPA consistency after instance construction.
     if ipa && inst.ipa_proof.is_empty() {
@@ -255,6 +259,7 @@ fn circuit_prove_impl(cmd: BbCircuitProve) -> Result<BbCircuitProveResponse, Str
     }
 
     let ck = CommitmentKey::new(inst.max_end_index);
+    crate::base::timing::phase("cmd: commitment key");
     let num_public_inputs = inst.public_inputs.len();
     let io_size = io_public_inputs_size(ipa);
     if num_public_inputs < io_size {
@@ -303,10 +308,12 @@ fn circuit_prove_impl(cmd: BbCircuitProve) -> Result<BbCircuitProveResponse, Str
         )
     };
 
+    crate::base::timing::phase("cmd: prove+vk");
     if !native_verify(flavor, ipa, &vk_bytes, &public_inputs, &proof) {
         return Err("Failed to verify the generated proof!".into());
     }
 
+    crate::base::timing::phase("cmd: self-verify");
     Ok(BbCircuitProveResponse {
         public_inputs,
         proof,

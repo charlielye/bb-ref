@@ -909,7 +909,9 @@ pub fn build_circuit_opts(circuit: &Circuit, witness: Option<&[Fr]>, has_ipa_cla
     let chonk_recursion = std::mem::take(&mut c.chonk_recursion);
     let is_write_vk = witness.is_none();
     let builder = Builder::from_acir(&witness_or_zeros(witness, &c), public_inputs, is_write_vk);
+    crate::base::timing::phase("build: from_acir");
     let ctx = lower(builder, c);
+    crate::base::timing::phase("build: lower opcodes");
     if honk_recursion.is_empty() && chonk_recursion.is_empty() && !has_ipa_claim {
         add_default_pairing_points(&mut ctx.borrow_mut());
     } else {
@@ -920,6 +922,7 @@ pub fn build_circuit_opts(circuit: &Circuit, witness: Option<&[Fr]>, has_ipa_cla
             is_write_vk,
             has_ipa_claim,
         );
+        crate::base::timing::phase("build: recursion+io");
     }
     into_builder(ctx)
 }

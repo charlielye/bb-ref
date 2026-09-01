@@ -93,12 +93,15 @@ pub fn compute_opening_proof(ck: &GrumpkinKey, poly: &[Fq], challenge: &Fq, t: &
         assert!(!Zero::is_zero(&u), "IPA round challenge is zero");
         let u_inv = u.inverse().unwrap();
         challenge_product *= u;
-        let mut folded_g = Vec::with_capacity(half);
         for i in 0..half {
             a_vec[i] = u_inv * a_vec[i] + a_vec[half + i];
             b_vec[i] = u * b_vec[i] + b_vec[half + i];
-            folded_g.push(g_vec[i] * u + g_vec[half + i]);
         }
+        // The G fold is ~2^16 full scalar muls across the rounds — the dominant cost of this
+        // prover — and every element is independent.
+        use rayon::prelude::*;
+        let folded_g: Vec<ark_grumpkin::Projective> =
+            (0..half).into_par_iter().map(|i| g_vec[i] * u + g_vec[half + i]).collect();
         let normalized = ark_grumpkin::Projective::normalize_batch(&folded_g);
         g_vec[..half].copy_from_slice(&normalized);
         round_size = half;
