@@ -137,6 +137,11 @@ fn msgpack_run(input_path: &str) {
     use bb_ref::msgpack::handler::BbRefHandler;
     use std::io::{Read, Write};
 
+    // Startup, not first-command: the largest served circuit is the 2^23 rollup root, and the
+    // ECCVM's Grumpkin IPA runs at 2^16. The handler owns the pool; nothing is global.
+    let srs = bb_ref::base::srs::Srs::load((1 << 23) + 2, 1 << 16);
+    bb_ref::base::timing::phase("srs preload");
+
     let mut input: Box<dyn Read> = if input_path == "-" || input_path.is_empty() {
         Box::new(std::io::stdin())
     } else {
@@ -145,7 +150,7 @@ fn msgpack_run(input_path: &str) {
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
 
-    let mut handler = BbRefHandler::new();
+    let mut handler = BbRefHandler::new(srs);
     loop {
         let mut len_buf = [0u8; 4];
         match input.read_exact(&mut len_buf) {

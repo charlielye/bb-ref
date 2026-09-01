@@ -26,8 +26,11 @@ pub fn load_bn254_g1(n: usize) -> Vec<G1Affine> {
     let mut buf = vec![0u8; n * 64];
     f.read_exact(&mut buf)
         .unwrap_or_else(|e| panic!("CRS file too small for {n} points: {e}"));
+    // Montgomery-converting 2 x 8.4M coordinates dominates a full-size load; every chunk is
+    // independent.
+    use rayon::prelude::*;
     let points: Vec<G1Affine> = buf
-        .chunks(64)
+        .par_chunks(64)
         .map(|c| G1Affine::new_unchecked(from_bytes_be::<Fq>(&c[0..32]), from_bytes_be::<Fq>(&c[32..64])))
         .collect();
     assert_eq!(points[0], G1Affine::generator(), "unexpected first CRS point");
@@ -86,10 +89,73 @@ mod tests {
     }
 }
 
+/// A sized view into an SRS point pool. Keys constructed from the preloaded global pool share it
+/// (an Arc clone); keys built outside a server share nothing and own their exact slice. Deref to
+/// `[G]` keeps every `key.points[..]` call site oblivious.
+pub struct PointsView<G> {
+    pool: std::sync::Arc<Vec<G>>,
+    len: usize,
+}
+
+impl<G> std::ops::Deref for PointsView<G> {
+    type Target = [G];
+    fn deref(&self) -> &[G] {
+        &self.pool[..self.len]
+    }
+}
+
 /// KZG commitment key: the first `n` (rounded up to even, as bb does) SRS points.
 /// Monomial commitment key `[tau^i]` over either curve (bb `CommitmentKey<Curve>`).
 pub struct Ck<G: AffineRepr> {
-    pub points: Vec<G>,
+    pub points: PointsView<G>,
+}
+
+/// The SRS pools a long-lived server loads once at startup and hands to its handler (bb memoizes
+/// its CRS globally; here the server owns it and threads it down — no globals). Keys are Arc views
+/// into the pools, so handing one out is free.
+#[derive(Clone)]
+pub struct Srs {
+    bn254: std::sync::Arc<Vec<G1Affine>>,
+    grumpkin: std::sync::Arc<Vec<GrumpkinAffine>>,
+}
+
+impl Default for Srs {
+    /// Empty pools: every key request falls back to an exact on-demand load. The behavior of a
+    /// process that never preloads (tests, one-shot CLI commands).
+    fn default() -> Self {
+        Self {
+            bn254: std::sync::Arc::new(vec![]),
+            grumpkin: std::sync::Arc::new(vec![]),
+        }
+    }
+}
+
+impl Srs {
+    /// `bn254_n` must cover the largest circuit served (2^23 for the rollup root); an oversized
+    /// request later falls back to a private exact load rather than failing.
+    pub fn load(bn254_n: usize, grumpkin_n: usize) -> Self {
+        Self {
+            bn254: std::sync::Arc::new(load_bn254_g1(bn254_n)),
+            grumpkin: std::sync::Arc::new(load_grumpkin_g1(grumpkin_n)),
+        }
+    }
+
+    pub fn bn254_key(&self, num_points: usize) -> CommitmentKey {
+        let n = (num_points + 1) & !1usize;
+        if self.bn254.len() >= n {
+            Ck { points: PointsView { pool: self.bn254.clone(), len: n } }
+        } else {
+            CommitmentKey::new(num_points)
+        }
+    }
+
+    pub fn grumpkin_key(&self, num_points: usize) -> GrumpkinKey {
+        if self.grumpkin.len() >= num_points {
+            Ck { points: PointsView { pool: self.grumpkin.clone(), len: num_points } }
+        } else {
+            GrumpkinKey::new(num_points)
+        }
+    }
 }
 
 impl<G: AffineRepr> Ck<G>
@@ -113,12 +179,14 @@ impl CommitmentKey {
     pub fn new(num_points: usize) -> Self {
         let n = (num_points + 1) & !1usize;
         Self {
-            points: load_bn254_g1(n),
+            points: PointsView { pool: std::sync::Arc::new(load_bn254_g1(n)), len: n },
         }
     }
     /// A key that cannot commit (for IVC state that is only ever verified against, never proven).
     pub fn empty() -> Self {
-        Self { points: vec![] }
+        Self {
+            points: PointsView { pool: std::sync::Arc::new(vec![]), len: 0 },
+        }
     }
 }
 
@@ -127,7 +195,10 @@ pub type GrumpkinKey = Ck<GrumpkinAffine>;
 impl GrumpkinKey {
     pub fn new(num_points: usize) -> Self {
         Self {
-            points: load_grumpkin_g1(num_points),
+            points: PointsView {
+                pool: std::sync::Arc::new(load_grumpkin_g1(num_points)),
+                len: num_points,
+            },
         }
     }
 }

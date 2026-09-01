@@ -16,7 +16,7 @@ use crate::base::field::{to_bytes_be, Fr as FrField, U256};
 use crate::base::keccak::u256_to_bytes_be;
 use crate::base::poseidon2::{self, Hasher};
 use crate::base::rng::GlobalProxy;
-use crate::base::srs::bn254_g2;
+use crate::base::srs::{bn254_g2, Srs};
 use crate::base::{Bn254, CommitmentKey, GrumpkinKey, KeccakBn254, Vk as VkGeneric};
 use crate::chonk::ivc::Chonk;
 use crate::chonk::proof::ChonkProof as RefChonkProof;
@@ -126,11 +126,14 @@ struct Loaded {
 pub struct BbRefHandler {
     ivc: Option<Chonk>,
     loaded: Option<Loaded>,
+    srs: Srs,
 }
 
 impl BbRefHandler {
-    pub fn new() -> Self {
-        Self::default()
+    /// `srs` is the server's preloaded pool; `Srs::default()` (empty, load-on-demand) suits
+    /// one-shot and test use.
+    pub fn new(srs: Srs) -> Self {
+        Self { srs, ..Self::default() }
     }
 }
 
@@ -183,6 +186,7 @@ fn chonk_proof_to_wire(p: &crate::chonk::proof::ChonkProof) -> crate::msgpack::g
 fn native_verify(
     flavor: &'static FlavorDesc,
     ipa: bool,
+    srs: &Srs,
     vk_bytes: &[u8],
     public_inputs: &[Bin32],
     proof: &[Bin32],
@@ -193,7 +197,7 @@ fn native_verify(
             let vk = VkGeneric::<Bn254>::from_bytes(vk_bytes, flavor.layout().num_precomputed);
             let pis: Vec<FrField> = public_inputs.iter().map(fr_from_wire).collect();
             let pf: Vec<FrField> = proof.iter().map(fr_from_wire).collect();
-            verify_ultra_rollup(flavor, &vk, &pis, &pf, &bn254_g2(), &GrumpkinKey::new(1 << 16))
+            verify_ultra_rollup(flavor, &vk, &pis, &pf, &bn254_g2(), &srs.grumpkin_key(1 << 16))
         } else if keccak {
             let vk = VkGeneric::<KeccakBn254>::from_bytes(vk_bytes, flavor.layout().num_precomputed);
             let pis: Vec<FrField> = public_inputs.iter().map(fr_from_wire).collect();
@@ -228,7 +232,7 @@ fn scopeguard_draws(before: u64, name: String) -> DrawReport {
 }
 
 
-fn circuit_prove_impl(cmd: BbCircuitProve) -> Result<BbCircuitProveResponse, String> {
+fn circuit_prove_impl(cmd: BbCircuitProve, srs: &Srs) -> Result<BbCircuitProveResponse, String> {
     let draws_before = crate::base::rng::GLOBAL_DRAWS.load(std::sync::atomic::Ordering::Relaxed);
     let _guard = scopeguard_draws(draws_before, cmd.circuit.name.clone());
     let (flavor, ipa) = select_flavor(&cmd.settings)?;
@@ -258,7 +262,7 @@ fn circuit_prove_impl(cmd: BbCircuitProve) -> Result<BbCircuitProveResponse, Str
         );
     }
 
-    let ck = CommitmentKey::new(inst.max_end_index);
+    let ck = srs.bn254_key(inst.max_end_index);
     crate::base::timing::phase("cmd: commitment key");
     let num_public_inputs = inst.public_inputs.len();
     let io_size = io_public_inputs_size(ipa);
@@ -309,7 +313,7 @@ fn circuit_prove_impl(cmd: BbCircuitProve) -> Result<BbCircuitProveResponse, Str
     };
 
     crate::base::timing::phase("cmd: prove+vk");
-    if !native_verify(flavor, ipa, &vk_bytes, &public_inputs, &proof) {
+    if !native_verify(flavor, ipa, srs, &vk_bytes, &public_inputs, &proof) {
         return Err("Failed to verify the generated proof!".into());
     }
 
@@ -321,14 +325,14 @@ fn circuit_prove_impl(cmd: BbCircuitProve) -> Result<BbCircuitProveResponse, Str
     })
 }
 
-fn circuit_compute_vk_impl(cmd: BbCircuitComputeVk) -> Result<BbCircuitComputeVkResponse, String> {
+fn circuit_compute_vk_impl(cmd: BbCircuitComputeVk, srs: &Srs) -> Result<BbCircuitComputeVkResponse, String> {
     let (flavor, ipa) = select_flavor(&cmd.settings)?;
     let keccak = flavor.name.contains("Keccak");
     let circuit = decode_program_raw(&cmd.circuit.bytecode);
     let mut rng = GlobalProxy;
     let mut builder = build_circuit_opts(&circuit, None, ipa);
     let inst = ProverInstance::from_builder(flavor, &mut builder, &mut rng);
-    let ck = CommitmentKey::new(inst.max_end_index);
+    let ck = srs.bn254_key(inst.max_end_index);
     let d = if keccak {
         vk_data_keccak(&as_keccak_vk(inst.compute_vk(&ck)))
     } else {
@@ -362,10 +366,10 @@ fn circuit_kind(kind: u8) -> Result<CircuitKind, String> {
 
 /// Ensure the session's commitment key covers a circuit of the given log size (bb sizes its
 /// global CRS on demand; our key is a plain SRS slice, re-loaded when it must grow).
-fn ensure_ck(ivc: &mut Chonk, log_n: usize) {
+fn ensure_ck(ivc: &mut Chonk, srs: &Srs, log_n: usize) {
     let needed = (1usize << log_n).max(1 << 17);
     if ivc.ck.points.len() < needed {
-        ivc.ck = CommitmentKey::new(needed);
+        ivc.ck = srs.bn254_key(needed);
     }
 }
 
@@ -382,11 +386,11 @@ macro_rules! unsupported {
 
 impl Handler for BbRefHandler {
     fn circuit_prove(&mut self, cmd: BbCircuitProve, respond: Responder<BbCircuitProveResponse>) {
-        run_catching(respond, || circuit_prove_impl(cmd));
+        run_catching(respond, || circuit_prove_impl(cmd, &self.srs));
     }
 
     fn circuit_compute_vk(&mut self, cmd: BbCircuitComputeVk, respond: Responder<BbCircuitComputeVkResponse>) {
-        run_catching(respond, || circuit_compute_vk_impl(cmd));
+        run_catching(respond, || circuit_compute_vk_impl(cmd, &self.srs));
     }
 
     fn circuit_verify(&mut self, cmd: BbCircuitVerify, respond: Responder<BbCircuitVerifyResponse>) {
@@ -404,7 +408,7 @@ impl Handler for BbRefHandler {
             };
             modulus_check(&cmd.public_inputs, "public input")?;
             modulus_check(&cmd.proof, "proof element")?;
-            let verified = native_verify(flavor, ipa, &cmd.verification_key, &cmd.public_inputs, &cmd.proof);
+            let verified = native_verify(flavor, ipa, &self.srs, &cmd.verification_key, &cmd.public_inputs, &cmd.proof);
             Ok(BbCircuitVerifyResponse { verified })
         });
     }
@@ -479,7 +483,7 @@ impl Handler for BbRefHandler {
                 .map(|k| circuit_kind(*k))
                 .collect::<Result<Vec<_>, _>>()?;
             // The key grows as circuits load; the translator's 2^17 is the floor.
-            self.ivc = Some(Chonk::new(kinds, CommitmentKey::new(1 << 17)));
+            self.ivc = Some(Chonk::new(kinds, self.srs.bn254_key(1 << 17)));
             self.loaded = None;
             Ok(BbChonkStartResponse {})
         });
@@ -512,7 +516,7 @@ impl Handler for BbRefHandler {
             let vk = (!step.vk_bytes.is_empty())
                 .then(|| VkGeneric::<Bn254>::from_bytes(&step.vk_bytes, step.kind.flavor().layout().num_precomputed));
             if let Some(vk) = &vk {
-                ensure_ck(ivc, vk.log_n());
+                ensure_ck(ivc, &self.srs, vk.log_n());
             }
             let mut rng = GlobalProxy;
             let witness = decode_witness_raw(&cmd.witness, &mut rng);
@@ -538,7 +542,7 @@ impl Handler for BbRefHandler {
             let proof = ivc.prove(&mut rng);
             let hiding_vk = ivc.hiding_vk().clone();
             // bb sanity-checks the freshly produced proof in-process.
-            if !chonk_verify(&hiding_vk, &proof, &bn254_g2(), &GrumpkinKey::new(ECCVM_FIXED_SIZE)) {
+            if !chonk_verify(&hiding_vk, &proof, &bn254_g2(), &self.srs.grumpkin_key(ECCVM_FIXED_SIZE)) {
                 return Err("Failed to verify the generated proof!".into());
             }
             *ivc_slot = None;
@@ -567,7 +571,7 @@ impl Handler for BbRefHandler {
                 ipa_proof: de(&cmd.proof.ipa_proof),
                 joint_proof: de(&cmd.proof.joint_proof),
             };
-            chonk_verify(&vk, &proof, &bn254_g2(), &GrumpkinKey::new(ECCVM_FIXED_SIZE))
+            chonk_verify(&vk, &proof, &bn254_g2(), &self.srs.grumpkin_key(ECCVM_FIXED_SIZE))
         }))
         .unwrap_or(false);
         respond.ok(BbChonkVerifyResponse { valid });
@@ -580,7 +584,7 @@ impl Handler for BbRefHandler {
             let mut rng = GlobalProxy;
             let mut builder = build_circuit_mega(&circuit, None, None, &mut rng);
             let inst = ProverInstance::from_builder(kind.flavor(), &mut builder, &mut rng);
-            let ck = CommitmentKey::new(inst.max_end_index);
+            let ck = self.srs.bn254_key(inst.max_end_index);
             let d = vk_data_poseidon2(&inst.compute_vk(&ck));
             Ok(BbChonkComputeVkResponse {
                 bytes: d.bytes,

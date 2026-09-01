@@ -114,7 +114,7 @@ fn run_both(name: &str, cmds: &[Command], threads: Option<u32>) -> (Vec<Vec<u8>>
     let bb_frames = split_frames(&out.stdout);
 
     set_global(Box::new(DebugRng::new(12345)));
-    let mut handler = BbRefHandler::new();
+    let mut handler = BbRefHandler::new(bb_ref::base::srs::Srs::default());
     let ours: Vec<Vec<u8>> = cmds
         .iter()
         .map(|c| handle_request(&mut handler, &rmp_serde::to_vec_named(&vec![c]).unwrap()))
@@ -301,7 +301,7 @@ mod api_boundary {
     use bb_ref::msgpack::handler::BbRefHandler;
 
     fn dispatch(payload: &[u8]) -> Vec<u8> {
-        handle_request(&mut BbRefHandler::new(), payload)
+        handle_request(&mut BbRefHandler::new(bb_ref::base::srs::Srs::default()), payload)
     }
 
     fn tag_of(response: &[u8]) -> String {

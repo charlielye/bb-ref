@@ -75,7 +75,7 @@ fn corpus_replay() {
 
         // One handler per connection: bb state (the Chonk session) is per-process, and the
         // capture spawns one bb per connection.
-        let mut handler = BbRefHandler::new();
+        let mut handler = BbRefHandler::new(bb_ref::base::srs::Srs::default());
         for (idx, ((req_id, payload), (gold_id, gold_payload))) in requests.iter().zip(&golden).enumerate() {
             assert_eq!(req_id, gold_id, "{conn}#{idx}: response id mismatch in the recording");
             let cmd = command_name(payload);

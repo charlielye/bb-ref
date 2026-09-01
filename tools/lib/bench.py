@@ -7,6 +7,7 @@ production traffic rather than a synthetic harness. Run against bb and bb-ref fo
 pair -- same corpus, same seed, same thread policy.
 """
 import collections
+import msgpack
 import struct
 import subprocess
 import sys
@@ -28,6 +29,13 @@ def run(corpus_path, binary, extra_args):
     # bb handles SIGINT gracefully (it finishes the in-flight proof first), so Ctrl-C must kill the
     # child outright; a clean end of the corpus still lets it exit on stdin EOF.
     try:
+        # Unmeasured warmup: server startup (SRS preload, allocator growth) must not bill the
+        # first frame. A one-word Poseidon2Hash round-trips through the whole pipeline.
+        warmup = msgpack.packb([["BbPoseidon2Hash", {"inputs": [b"\x00" * 32]}]], use_bin_type=True)
+        server.stdin.write(struct.pack("<I", 8 + len(warmup)) + struct.pack("<Q", 0) + warmup)
+        server.stdin.flush()
+        wlen = struct.unpack("<I", server.stdout.read(4))[0]
+        server.stdout.read(wlen)
         for request_id, payload, raw in frames(data):
             start = time.perf_counter()
             server.stdin.write(raw)
