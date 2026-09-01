@@ -1,6 +1,6 @@
 //! Serde shapes of the ACIR `Program` and `WitnessStack` as Noir serializes them (msgpack, format
 //! marker 2 or 3: structs as maps or positional arrays, enums as `{Variant: payload}` or a bare
-//! variant name). Only the opcodes bb-ref lowers are modelled; everything else is skipped.
+//! variant name).
 
 use crate::base::field::from_bytes_be;
 use crate::base::rng::Rng;
@@ -36,16 +36,16 @@ pub struct Sha256Compression {
 
 #[derive(Deserialize, Debug, Clone)]
 pub enum BlackBoxFuncCall {
-    AES128Encrypt(IgnoredAny),
+    AES128Encrypt(Aes128Encrypt),
     AND(Logic),
     XOR(Logic),
     RANGE {
         input: FunctionInput,
         num_bits: u32,
     },
-    Blake2s(IgnoredAny),
-    Blake3(IgnoredAny),
-    EcdsaSecp256k1(IgnoredAny),
+    Blake2s(BlakeHash),
+    Blake3(BlakeHash),
+    EcdsaSecp256k1(EcdsaSecp256r1),
     EcdsaSecp256r1(EcdsaSecp256r1),
     MultiScalarMul(MultiScalarMul),
     EmbeddedCurveAdd(EmbeddedCurveAdd),
@@ -75,6 +75,21 @@ pub struct Keccakf1600 {
 }
 
 /// secp256r1 ECDSA verification over byte-wise inputs (32 bytes per coordinate, 64 per signature).
+#[derive(Deserialize, Debug, Clone)]
+pub struct Aes128Encrypt {
+    pub inputs: Vec<FunctionInput>,
+    pub iv: Vec<FunctionInput>,
+    pub key: Vec<FunctionInput>,
+    pub outputs: Vec<Witness>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct BlakeHash {
+    pub inputs: Vec<FunctionInput>,
+    pub outputs: Vec<Witness>,
+}
+
+/// Shared by the EcdsaSecp256r1 and EcdsaSecp256k1 opcodes (identical payloads).
 #[derive(Deserialize, Debug, Clone)]
 pub struct EcdsaSecp256r1 {
     pub public_key_x: Vec<FunctionInput>,

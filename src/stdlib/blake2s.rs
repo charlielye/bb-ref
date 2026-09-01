@@ -104,3 +104,24 @@ pub fn hash(input: &ByteArray) -> ByteArray {
     }
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::circuit::{Builder, EccOpQueue};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    /// RFC 7693 Appendix A: blake2s("abc") — the value pin against the standard, independent of bb.
+    #[test]
+    fn matches_rfc7693_kat() {
+        let ctx = Rc::new(RefCell::new(Builder::new_mega(Rc::new(
+            RefCell::new(EccOpQueue::new()),
+        ))));
+        let input = ByteArray::from_bytes(&ctx, b"abc");
+        let digest = hash(&input);
+        let hex: String = digest.get_value().iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(hex, "508c5e8c327c14e2e1a72ba34eeb452f37458b209ed63a294d999b4c86675982");
+        assert!(ctx.borrow().failed.is_none());
+    }
+}

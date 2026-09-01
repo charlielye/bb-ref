@@ -40,11 +40,12 @@ executes. Consequences:
   fires once. Rust clones would reduce twice — use `FieldLike::dbl()` / `mul_self()`
   (which pass the same reference twice) wherever bb writes `x + x` / `x * x`.
 
-## Deliberately absent
+## Coverage of bb's gadget surface
 
-bb's blake2s/blake3 and AES128 gadgets are not ported: no protocol circuit uses them —
-they exist in bb only because its ACIR frontend serves arbitrary Noir programs, and an app
-circuit that used one fails loudly at lowering (`unsupported black box function`), never
-silently. `byte_array` is the minimal slice used by SHA-256/ECDSA. When a new circuit
-needs a gadget, port it then, against a micro-oracle (see the `BbRefDump.Stdlib` named
+Every gadget reachable from an ACIR black-box function is ported gate-exact — including
+blake2s/blake3, AES-128 and ECDSA over both secp256k1 and secp256r1, which no protocol
+circuit uses but any app circuit can reach through the Noir stdlib. The ACIR lowering in
+[`acir`](../acir/README.md) covers the full black-box enum with no fallback arm, so a new
+opcode appearing at a re-pin fails to compile rather than panicking at runtime. When bb
+grows a new gadget, port it against a micro-oracle (see the `BbRefDump.Stdlib` named
 programs).

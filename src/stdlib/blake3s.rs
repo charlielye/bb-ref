@@ -139,3 +139,24 @@ pub fn hash(input: &ByteArray) -> ByteArray {
     hasher_update(&mut hasher, input);
     hasher_finalize(&hasher)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::circuit::{Builder, EccOpQueue};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    /// The official BLAKE3 test vector for "abc" — the value pin against the standard.
+    #[test]
+    fn matches_official_kat() {
+        let ctx = Rc::new(RefCell::new(Builder::new_mega(Rc::new(
+            RefCell::new(EccOpQueue::new()),
+        ))));
+        let input = ByteArray::from_bytes(&ctx, b"abc");
+        let digest = hash(&input);
+        let hex: String = digest.get_value().iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(hex, "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85");
+        assert!(ctx.borrow().failed.is_none());
+    }
+}

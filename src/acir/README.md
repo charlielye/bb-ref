@@ -2,8 +2,8 @@
 
 The front door: Noir compiles programs to ACIR bytecode, and this module turns that bytecode into
 [`circuit`](../circuit/README.md) builders — for a single Ultra circuit, or a whole private transaction's
-worth of Mega circuits fed to [`chonk`](../chonk/README.md). It is bb's `dsl/acir_format` reduced to the
-opcodes the protocol circuits actually use.
+worth of Mega circuits fed to [`chonk`](../chonk/README.md). It mirrors bb's `dsl/acir_format` across the full
+ACIR black-box surface.
 
 | file | what it is |
 |---|---|
@@ -22,5 +22,5 @@ opcodes the protocol circuits actually use.
   every value the verifier *branches on* (batch-merge subtable sizes) is right; everything else
   is random — drawn from the session RNG, so mock generation participates in draw-count parity
   ([base/README](../base/README.md)).
-- **Unknown opcodes are skipped, not rejected**, mirroring bb: the protocol circuits are the
-  scope, and a bytecode using an unported gadget fails at witness-solving distance, not here.
+- **The black-box surface is complete**: every ACIR black-box function bb lowers has an arm
+  here (no fallback), so any Noir program that proves under bb proves under bb-ref.
