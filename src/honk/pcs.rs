@@ -1014,3 +1014,56 @@ where
     t.send(&format!("{prefix}quotient_commitment"), &ck.commit(&q));
     LibraPolys([g_poly.clone(), a, q])
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::base::G1Affine;
+    use ark_ff::UniformRand;
+
+    fn poly(rng: &mut impl rand::RngCore, n: usize) -> Polynomial<Fr> {
+        Polynomial::from_coeffs((0..n).map(|_| Fr::rand(rng)).collect())
+    }
+
+    /// Shplonk batches two claims into one, KZG opens it, and the resulting pairing points satisfy
+    /// the SRS relation; tampering any claimed evaluation breaks the pairing. This is the whole
+    /// commitment layer round-tripping on 8-coefficient polynomials.
+    #[test]
+    fn shplonk_kzg_round_trip_and_evaluation_binding() {
+        if crate::testutil::crs_or_skip().is_none() {
+            return;
+        }
+        let mut rng = ark_std::test_rng();
+        let ck = CommitmentKey::new(8);
+        let g2 = crate::base::srs::bn254_g2();
+        let (pa, pb) = (poly(&mut rng, 8), poly(&mut rng, 8));
+        let (xa, xb) = (Fr::rand(&mut rng), Fr::rand(&mut rng));
+        let (ca, cb) = (ck.commit(&pa), ck.commit(&pb));
+
+        let claims = [
+            ProverClaim { poly: pa.clone(), challenge: xa, evaluation: pa.evaluate(&xa), gemini_fold: false },
+            ProverClaim { poly: pb.clone(), challenge: xb, evaluation: pb.evaluate(&xb), gemini_fold: false },
+        ];
+        let mut pt = NativeTranscript::new();
+        pt.add_to_hash_buffer("init", &Fr::from(1u8));
+        let out = shplonk_prove::<Bn254>(0, &claims, &[], &[], &ck, &mut pt);
+        kzg_open::<Bn254>(out.claim, &ck, &mut pt);
+        let proof = pt.export_proof();
+
+        let verify = |eval_a: Fr| -> bool {
+            let mut vt = NativeTranscript::new();
+            vt.add_to_hash_buffer("init", &Fr::from(1u8));
+            vt.load_proof(&proof);
+            let vclaims = [
+                VerifierOpeningClaim::<Bn254> { commitment: ca, challenge: xa, evaluation: eval_a },
+                VerifierOpeningClaim::<Bn254> { commitment: cb, challenge: xb, evaluation: pb.evaluate(&xb) },
+            ];
+            let batch = shplonk_verify::<Bn254>(&vclaims, G1Affine::generator(), &mut vt);
+            let n = batch.commitments.len();
+            kzg_reduce_verify_batch_opening_claim::<Bn254>(batch, &mut vt, n + 1).check(&g2)
+        };
+
+        assert!(verify(pa.evaluate(&xa)), "honest evaluations must verify");
+        assert!(!verify(pa.evaluate(&xa) + Fr::from(1u8)), "a wrong claimed evaluation must fail the pairing");
+    }
+}

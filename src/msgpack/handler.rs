@@ -87,7 +87,8 @@ fn is_canonical_fr(b: &Bin32) -> bool {
 }
 
 /// The keccak flavors share the poseidon2 VK's commitments under the U256 codec.
-fn as_keccak_vk(vk: VkGeneric<Bn254>) -> VkGeneric<KeccakBn254> {
+/// Reinterpret a native VK under the keccak transcript codec (same data, different wire type).
+pub fn as_keccak_vk(vk: VkGeneric<Bn254>) -> VkGeneric<KeccakBn254> {
     VkGeneric::<KeccakBn254> {
         log_circuit_size: vk.log_circuit_size,
         num_public_inputs: vk.num_public_inputs,

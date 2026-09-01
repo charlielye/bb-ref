@@ -52,3 +52,47 @@ pub fn check_circuit(inst: &ProverInstance, params: &RelationParams<Fr>) -> Opti
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::base::rng::Rng;
+    use crate::base::srs::CommitmentKey;
+    use crate::base::transcript::NativeTranscript;
+    use crate::honk::flavor::{Ent, ULTRA};
+    use crate::honk::oink_prover::prove_oink;
+    use crate::honk::prover_instance::ProverInstance;
+
+    /// Build a one-gate circuit, derive the Oink witness, and demand every relation vanishes; then
+    /// corrupt one wire on an active arithmetic row and demand the checker names the arithmetic
+    /// relation AT THAT ROW. This is the regression-localization contract: a bad builder or
+    /// relation edit fails here with a name, not as "proof byte N differs" in a differential test.
+    #[test]
+    fn checker_accepts_satisfying_and_localizes_corruption() {
+        if crate::testutil::crs_or_skip().is_none() {
+            return;
+        }
+        let mut rng = crate::testutil::test_rng();
+        let mut builder = crate::testutil::tiny_circuit(&mut rng);
+        let mut inst = ProverInstance::from_builder(&ULTRA, &mut builder, &mut rng);
+        let ck = CommitmentKey::new(inst.max_end_index);
+        let vk = inst.compute_vk(&ck);
+        let mut t = NativeTranscript::new();
+        let out = prove_oink(&mut inst, &vk, &ck, &mut t, &mut rng, true);
+
+        assert_eq!(check_circuit(&inst, &out.params), None, "satisfying circuit must pass");
+
+        // The last arithmetic row is our add gate; its w_o is a singleton wire (no copy cycle), so
+        // the corruption must surface as an Arithmetic failure, not a Permutation one. (Corrupting
+        // a copied wire, e.g. on the public-input rows, is caught by Permutation instead.)
+        let gate_row = {
+            let q = inst.poly(Ent::q_arith);
+            q.coeffs.iter().rposition(|c| !c.is_zero()).expect("an arithmetic gate exists")
+        };
+        let w_o = inst.layout.idx(Ent::w_o);
+        inst.polys[w_o].coeffs[gate_row] += Fr::one();
+        let failure = check_circuit(&inst, &out.params).expect("corruption must be caught");
+        assert_eq!(failure.2, Some(gate_row), "failure localized to the corrupted row");
+        assert!(format!("{:?}", failure.0).contains("Arithmetic"), "named relation: {failure:?}");
+    }
+}
