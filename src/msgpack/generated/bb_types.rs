@@ -12,27 +12,17 @@ pub const SCHEMA_HASH: &str = "b810acd96b1f46bde9238cb762e828eb5ab7075cb4c322623
 pub struct Bin32(pub [u8; 32]);
 
 impl Bin32 {
-    pub fn from_bytes(bytes: [u8; 32]) -> Self {
-        Self(bytes)
-    }
-    pub fn to_bytes(&self) -> &[u8; 32] {
-        &self.0
-    }
-    pub fn as_slice(&self) -> &[u8] {
-        &self.0
-    }
+    pub fn from_bytes(bytes: [u8; 32]) -> Self { Self(bytes) }
+    pub fn to_bytes(&self) -> &[u8; 32] { &self.0 }
+    pub fn as_slice(&self) -> &[u8] { &self.0 }
 }
 
 impl From<[u8; 32]> for Bin32 {
-    fn from(bytes: [u8; 32]) -> Self {
-        Self(bytes)
-    }
+    fn from(bytes: [u8; 32]) -> Self { Self(bytes) }
 }
 
 impl From<&[u8; 32]> for Bin32 {
-    fn from(bytes: &[u8; 32]) -> Self {
-        Self(*bytes)
-    }
+    fn from(bytes: &[u8; 32]) -> Self { Self(*bytes) }
 }
 
 // Bin32 replaced loose Vec<u8> scalars. Deref plus the cross-type equalities
@@ -48,58 +38,41 @@ impl TryFrom<Vec<u8>> for Bin32 {
 
 impl std::ops::Deref for Bin32 {
     type Target = [u8];
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
+    fn deref(&self) -> &Self::Target { &self.0 }
 }
 
 impl PartialEq<Vec<u8>> for Bin32 {
-    fn eq(&self, other: &Vec<u8>) -> bool {
-        self.0.as_slice() == other.as_slice()
-    }
+    fn eq(&self, other: &Vec<u8>) -> bool { self.0.as_slice() == other.as_slice() }
 }
 
 impl PartialEq<Bin32> for Vec<u8> {
-    fn eq(&self, other: &Bin32) -> bool {
-        self.as_slice() == other.0.as_slice()
-    }
+    fn eq(&self, other: &Bin32) -> bool { self.as_slice() == other.0.as_slice() }
 }
 
 impl<const N: usize> PartialEq<[u8; N]> for Bin32 {
-    fn eq(&self, other: &[u8; N]) -> bool {
-        self.0.as_slice() == other.as_slice()
-    }
+    fn eq(&self, other: &[u8; N]) -> bool { self.0.as_slice() == other.as_slice() }
 }
 
 impl<const N: usize> PartialEq<Bin32> for [u8; N] {
-    fn eq(&self, other: &Bin32) -> bool {
-        self.as_slice() == other.0.as_slice()
-    }
+    fn eq(&self, other: &Bin32) -> bool { self.as_slice() == other.0.as_slice() }
 }
 
 impl AsRef<[u8]> for Bin32 {
-    fn as_ref(&self) -> &[u8] {
-        &self.0
-    }
+    fn as_ref(&self) -> &[u8] { &self.0 }
 }
 
 impl Serialize for Bin32 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
+    where S: serde::Serializer {
         serializer.serialize_bytes(&self.0)
     }
 }
 
 impl<'de> Deserialize<'de> for Bin32 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
+    where D: serde::Deserializer<'de> {
         let bytes: Vec<u8> = <Vec<u8>>::deserialize(deserializer)?;
-        let arr: [u8; 32] = bytes
-            .try_into()
+        let arr: [u8; 32] = bytes.try_into()
             .map_err(|v: Vec<u8>| serde::de::Error::invalid_length(v.len(), &"32 bytes"))?;
         Ok(Bin32(arr))
     }
@@ -116,31 +89,21 @@ pub type Uint256 = Bin32;
 mod serde_bytes {
     use serde::{Deserialize, Deserializer, Serializer};
     pub fn serialize<S>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_bytes(bytes)
-    }
+    where S: Serializer { serializer.serialize_bytes(bytes) }
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        <Vec<u8>>::deserialize(deserializer)
-    }
+    where D: Deserializer<'de> { <Vec<u8>>::deserialize(deserializer) }
 }
 
 mod serde_vec_bytes {
-    use serde::de::{SeqAccess, Visitor};
+    use serde::{Deserialize, Deserializer, Serializer, Serialize};
     use serde::ser::SerializeSeq;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::de::{SeqAccess, Visitor};
 
     #[derive(Serialize, Deserialize)]
     struct BytesWrapper(#[serde(with = "super::serde_bytes")] Vec<u8>);
 
     pub fn serialize<S>(vec: &Vec<Vec<u8>>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
+    where S: Serializer {
         let mut seq = serializer.serialize_seq(Some(vec.len()))?;
         for bytes in vec {
             seq.serialize_element(&BytesWrapper(bytes.clone()))?;
@@ -148,9 +111,7 @@ mod serde_vec_bytes {
         seq.end()
     }
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<Vec<u8>>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
+    where D: Deserializer<'de> {
         struct VecVecU8Visitor;
         impl<'de> Visitor<'de> for VecVecU8Visitor {
             type Value = Vec<Vec<u8>>;
@@ -158,9 +119,7 @@ mod serde_vec_bytes {
                 formatter.write_str("a sequence of byte arrays")
             }
             fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-            where
-                A: SeqAccess<'de>,
-            {
+            where A: SeqAccess<'de> {
                 let mut vec = Vec::new();
                 while let Some(wrapper) = seq.next_element::<BytesWrapper>()? {
                     vec.push(wrapper.0);
@@ -173,17 +132,15 @@ mod serde_vec_bytes {
 }
 
 mod serde_bytes_array {
-    use serde::de::{SeqAccess, Visitor};
-    use serde::ser::SerializeTuple;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::ser::SerializeTuple;
+    use serde::de::{SeqAccess, Visitor};
 
     #[derive(Serialize, Deserialize)]
     struct BytesWrapper(#[serde(with = "super::serde_bytes")] Vec<u8>);
 
     pub fn serialize<S, const N: usize>(arr: &[Vec<u8>; N], serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
+    where S: Serializer {
         let mut tup = serializer.serialize_tuple(N)?;
         for bytes in arr {
             tup.serialize_element(&BytesWrapper(bytes.clone()))?;
@@ -191,9 +148,7 @@ mod serde_bytes_array {
         tup.end()
     }
     pub fn deserialize<'de, D, const N: usize>(deserializer: D) -> Result<[Vec<u8>; N], D::Error>
-    where
-        D: Deserializer<'de>,
-    {
+    where D: Deserializer<'de> {
         struct ArrayVisitor<const N: usize>;
         impl<'de, const N: usize> Visitor<'de> for ArrayVisitor<N> {
             type Value = [Vec<u8>; N];
@@ -201,15 +156,11 @@ mod serde_bytes_array {
                 write!(formatter, "an array of {N} byte arrays")
             }
             fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-            where
-                A: SeqAccess<'de>,
-            {
+            where A: SeqAccess<'de> {
                 let mut arr: [Vec<u8>; N] = std::array::from_fn(|_| Vec::new());
                 for (i, item) in arr.iter_mut().enumerate() {
-                    *item = seq
-                        .next_element::<BytesWrapper>()?
-                        .ok_or_else(|| serde::de::Error::invalid_length(i, &self))?
-                        .0;
+                    *item = seq.next_element::<BytesWrapper>()?
+                        .ok_or_else(|| serde::de::Error::invalid_length(i, &self))?.0;
                 }
                 Ok(arr)
             }
@@ -219,19 +170,15 @@ mod serde_bytes_array {
 }
 
 mod serde_fixed_bytes {
-    use serde::de::Visitor;
     use serde::{Deserializer, Serializer};
+    use serde::de::Visitor;
 
     pub fn serialize<S, const N: usize>(bytes: &[u8; N], serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
+    where S: Serializer {
         serializer.serialize_bytes(bytes)
     }
     pub fn deserialize<'de, D, const N: usize>(deserializer: D) -> Result<[u8; N], D::Error>
-    where
-        D: Deserializer<'de>,
-    {
+    where D: Deserializer<'de> {
         struct FixedBytesVisitor<const N: usize>;
         impl<'de, const N: usize> Visitor<'de> for FixedBytesVisitor<N> {
             type Value = [u8; N];
@@ -239,20 +186,15 @@ mod serde_fixed_bytes {
                 write!(formatter, "{N} bytes")
             }
             fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
+            where E: serde::de::Error {
                 v.try_into().map_err(|_| E::invalid_length(v.len(), &self))
             }
             fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-            where
-                A: serde::de::SeqAccess<'de>,
-            {
+            where A: serde::de::SeqAccess<'de> {
                 // Tolerated for peers that still send a sequence of integers.
                 let mut arr = [0u8; N];
                 for (i, slot) in arr.iter_mut().enumerate() {
-                    *slot = seq
-                        .next_element::<u8>()?
+                    *slot = seq.next_element::<u8>()?
                         .ok_or_else(|| serde::de::Error::invalid_length(i, &self))?;
                 }
                 Ok(arr)
@@ -269,18 +211,14 @@ mod serde_opt_bytes {
     struct BytesWrapper(#[serde(with = "super::serde_bytes")] Vec<u8>);
 
     pub fn serialize<S>(opt: &Option<Vec<u8>>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
+    where S: Serializer {
         match opt {
             Some(bytes) => serializer.serialize_some(&BytesWrapper(bytes.clone())),
             None => serializer.serialize_none(),
         }
     }
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
+    where D: Deserializer<'de> {
         Ok(Option::<BytesWrapper>::deserialize(deserializer)?.map(|w| w.0))
     }
 }
@@ -356,7 +294,9 @@ pub struct BbAvmProve {
 
 impl BbAvmProve {
     pub fn new(inputs: Vec<u8>) -> Self {
-        Self { inputs }
+        Self {
+            inputs,
+        }
     }
 }
 
@@ -370,7 +310,10 @@ pub struct BbAvmVerify {
 
 impl BbAvmVerify {
     pub fn new(proof: Vec<Fr>, public_inputs: Vec<u8>) -> Self {
-        Self { proof, public_inputs }
+        Self {
+            proof,
+            public_inputs,
+        }
     }
 }
 
@@ -383,7 +326,9 @@ pub struct BbAvmCheckCircuit {
 
 impl BbAvmCheckCircuit {
     pub fn new(inputs: Vec<u8>) -> Self {
-        Self { inputs }
+        Self {
+            inputs,
+        }
     }
 }
 
@@ -442,7 +387,10 @@ pub struct BbCircuitComputeVk {
 
 impl BbCircuitComputeVk {
     pub fn new(circuit: CircuitInputNoVK, settings: ProofSystemSettings) -> Self {
-        Self { circuit, settings }
+        Self {
+            circuit,
+            settings,
+        }
     }
 }
 
@@ -475,12 +423,7 @@ pub struct BbCircuitVerify {
 }
 
 impl BbCircuitVerify {
-    pub fn new(
-        verification_key: Vec<u8>,
-        public_inputs: Vec<Uint256>,
-        proof: Vec<Uint256>,
-        settings: ProofSystemSettings,
-    ) -> Self {
+    pub fn new(verification_key: Vec<u8>, public_inputs: Vec<Uint256>, proof: Vec<Uint256>, settings: ProofSystemSettings) -> Self {
         Self {
             verification_key,
             public_inputs,
@@ -499,7 +442,10 @@ pub struct BbChonkComputeVk {
 
 impl BbChonkComputeVk {
     pub fn new(circuit: CircuitInputNoVK, kind: u8) -> Self {
-        Self { circuit, kind }
+        Self {
+            circuit,
+            kind,
+        }
     }
 }
 
@@ -512,7 +458,9 @@ pub struct BbChonkStart {
 
 impl BbChonkStart {
     pub fn new(kinds: Vec<u8>) -> Self {
-        Self { kinds }
+        Self {
+            kinds,
+        }
     }
 }
 
@@ -525,7 +473,10 @@ pub struct BbChonkLoad {
 
 impl BbChonkLoad {
     pub fn new(circuit: CircuitInput, kind: u8) -> Self {
-        Self { circuit, kind }
+        Self {
+            circuit,
+            kind,
+        }
     }
 }
 
@@ -538,17 +489,23 @@ pub struct BbChonkAccumulate {
 
 impl BbChonkAccumulate {
     pub fn new(witness: Vec<u8>) -> Self {
-        Self { witness }
+        Self {
+            witness,
+        }
     }
 }
 
 /// BbChonkProve
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BbChonkProve {}
+pub struct BbChonkProve {
+
+}
 
 impl BbChonkProve {
     pub fn new() -> Self {
-        Self {}
+        Self {
+
+        }
     }
 }
 
@@ -562,7 +519,10 @@ pub struct BbChonkVerify {
 
 impl BbChonkVerify {
     pub fn new(proof: ChonkProof, vk: Vec<u8>) -> Self {
-        Self { proof, vk }
+        Self {
+            proof,
+            vk,
+        }
     }
 }
 
@@ -576,7 +536,10 @@ pub struct BbChonkVerifyFromFields {
 
 impl BbChonkVerifyFromFields {
     pub fn new(proof: Vec<Fr>, vk: Vec<u8>) -> Self {
-        Self { proof, vk }
+        Self {
+            proof,
+            vk,
+        }
     }
 }
 
@@ -590,7 +553,10 @@ pub struct BbChonkBatchVerify {
 
 impl BbChonkBatchVerify {
     pub fn new(proofs: Vec<ChonkProof>, vks: Vec<Vec<u8>>) -> Self {
-        Self { proofs, vks }
+        Self {
+            proofs,
+            vks,
+        }
     }
 }
 
@@ -603,7 +569,9 @@ pub struct BbVkAsFields {
 
 impl BbVkAsFields {
     pub fn new(verification_key: Vec<u8>) -> Self {
-        Self { verification_key }
+        Self {
+            verification_key,
+        }
     }
 }
 
@@ -616,7 +584,9 @@ pub struct BbMegaVkAsFields {
 
 impl BbMegaVkAsFields {
     pub fn new(verification_key: Vec<u8>) -> Self {
-        Self { verification_key }
+        Self {
+            verification_key,
+        }
     }
 }
 
@@ -629,7 +599,9 @@ pub struct BbMegaAppVkAsFields {
 
 impl BbMegaAppVkAsFields {
     pub fn new(verification_key: Vec<u8>) -> Self {
-        Self { verification_key }
+        Self {
+            verification_key,
+        }
     }
 }
 
@@ -642,7 +614,9 @@ pub struct BbMegaKernelVkAsFields {
 
 impl BbMegaKernelVkAsFields {
     pub fn new(verification_key: Vec<u8>) -> Self {
-        Self { verification_key }
+        Self {
+            verification_key,
+        }
     }
 }
 
@@ -655,7 +629,9 @@ pub struct BbMegaZKVkAsFields {
 
 impl BbMegaZKVkAsFields {
     pub fn new(verification_key: Vec<u8>) -> Self {
-        Self { verification_key }
+        Self {
+            verification_key,
+        }
     }
 }
 
@@ -685,7 +661,10 @@ pub struct BbChonkCheckPrecomputedVk {
 
 impl BbChonkCheckPrecomputedVk {
     pub fn new(circuit: CircuitInput, kind: u8) -> Self {
-        Self { circuit, kind }
+        Self {
+            circuit,
+            kind,
+        }
     }
 }
 
@@ -713,7 +692,9 @@ pub struct BbChonkCompressProof {
 
 impl BbChonkCompressProof {
     pub fn new(proof: ChonkProof) -> Self {
-        Self { proof }
+        Self {
+            proof,
+        }
     }
 }
 
@@ -726,7 +707,9 @@ pub struct BbChonkDecompressProof {
 
 impl BbChonkDecompressProof {
     pub fn new(compressed_proof: Vec<u8>) -> Self {
-        Self { compressed_proof }
+        Self {
+            compressed_proof,
+        }
     }
 }
 
@@ -738,7 +721,9 @@ pub struct BbPoseidon2Hash {
 
 impl BbPoseidon2Hash {
     pub fn new(inputs: Vec<Fr>) -> Self {
-        Self { inputs }
+        Self {
+            inputs,
+        }
     }
 }
 
@@ -750,7 +735,9 @@ pub struct BbPoseidon2Permutation {
 
 impl BbPoseidon2Permutation {
     pub fn new(inputs: [Fr; 4]) -> Self {
-        Self { inputs }
+        Self {
+            inputs,
+        }
     }
 }
 
@@ -763,7 +750,10 @@ pub struct BbPedersenCommit {
 
 impl BbPedersenCommit {
     pub fn new(inputs: Vec<Fr>, hash_index: u32) -> Self {
-        Self { inputs, hash_index }
+        Self {
+            inputs,
+            hash_index,
+        }
     }
 }
 
@@ -776,7 +766,10 @@ pub struct BbPedersenHash {
 
 impl BbPedersenHash {
     pub fn new(inputs: Vec<Fr>, hash_index: u32) -> Self {
-        Self { inputs, hash_index }
+        Self {
+            inputs,
+            hash_index,
+        }
     }
 }
 
@@ -790,7 +783,10 @@ pub struct BbPedersenHashBuffer {
 
 impl BbPedersenHashBuffer {
     pub fn new(input: Vec<u8>, hash_index: u32) -> Self {
-        Self { input, hash_index }
+        Self {
+            input,
+            hash_index,
+        }
     }
 }
 
@@ -803,7 +799,9 @@ pub struct BbBlake2s {
 
 impl BbBlake2s {
     pub fn new(data: Vec<u8>) -> Self {
-        Self { data }
+        Self {
+            data,
+        }
     }
 }
 
@@ -816,7 +814,9 @@ pub struct BbBlake2sToField {
 
 impl BbBlake2sToField {
     pub fn new(data: Vec<u8>) -> Self {
-        Self { data }
+        Self {
+            data,
+        }
     }
 }
 
@@ -875,7 +875,10 @@ pub struct BbGrumpkinMul {
 
 impl BbGrumpkinMul {
     pub fn new(point: GrumpkinPoint, scalar: Fq) -> Self {
-        Self { point, scalar }
+        Self {
+            point,
+            scalar,
+        }
     }
 }
 
@@ -888,7 +891,10 @@ pub struct BbGrumpkinAdd {
 
 impl BbGrumpkinAdd {
     pub fn new(point_a: GrumpkinPoint, point_b: GrumpkinPoint) -> Self {
-        Self { point_a, point_b }
+        Self {
+            point_a,
+            point_b,
+        }
     }
 }
 
@@ -901,7 +907,10 @@ pub struct BbGrumpkinBatchMul {
 
 impl BbGrumpkinBatchMul {
     pub fn new(points: Vec<GrumpkinPoint>, scalar: Fq) -> Self {
-        Self { points, scalar }
+        Self {
+            points,
+            scalar,
+        }
     }
 }
 
@@ -913,7 +922,9 @@ pub struct BbGrumpkinGetRandomFr {
 
 impl BbGrumpkinGetRandomFr {
     pub fn new(dummy: u8) -> Self {
-        Self { dummy }
+        Self {
+            dummy,
+        }
     }
 }
 
@@ -926,7 +937,9 @@ pub struct BbGrumpkinReduce512 {
 
 impl BbGrumpkinReduce512 {
     pub fn new(input: Vec<u8>) -> Self {
-        Self { input }
+        Self {
+            input,
+        }
     }
 }
 
@@ -939,7 +952,10 @@ pub struct BbSecp256k1Mul {
 
 impl BbSecp256k1Mul {
     pub fn new(point: Secp256k1Point, scalar: Secp256k1Fr) -> Self {
-        Self { point, scalar }
+        Self {
+            point,
+            scalar,
+        }
     }
 }
 
@@ -951,7 +967,9 @@ pub struct BbSecp256k1GetRandomFr {
 
 impl BbSecp256k1GetRandomFr {
     pub fn new(dummy: u8) -> Self {
-        Self { dummy }
+        Self {
+            dummy,
+        }
     }
 }
 
@@ -964,7 +982,9 @@ pub struct BbSecp256k1Reduce512 {
 
 impl BbSecp256k1Reduce512 {
     pub fn new(input: Vec<u8>) -> Self {
-        Self { input }
+        Self {
+            input,
+        }
     }
 }
 
@@ -976,7 +996,9 @@ pub struct BbBn254FrSqrt {
 
 impl BbBn254FrSqrt {
     pub fn new(input: Fr) -> Self {
-        Self { input }
+        Self {
+            input,
+        }
     }
 }
 
@@ -988,7 +1010,9 @@ pub struct BbBn254FqSqrt {
 
 impl BbBn254FqSqrt {
     pub fn new(input: Fq) -> Self {
-        Self { input }
+        Self {
+            input,
+        }
     }
 }
 
@@ -1001,7 +1025,10 @@ pub struct BbBn254G1Mul {
 
 impl BbBn254G1Mul {
     pub fn new(point: Bn254G1Point, scalar: Fr) -> Self {
-        Self { point, scalar }
+        Self {
+            point,
+            scalar,
+        }
     }
 }
 
@@ -1014,7 +1041,10 @@ pub struct BbBn254G2Mul {
 
 impl BbBn254G2Mul {
     pub fn new(point: Bn254G2Point, scalar: Fr) -> Self {
-        Self { point, scalar }
+        Self {
+            point,
+            scalar,
+        }
     }
 }
 
@@ -1026,7 +1056,9 @@ pub struct BbBn254G1IsOnCurve {
 
 impl BbBn254G1IsOnCurve {
     pub fn new(point: Bn254G1Point) -> Self {
-        Self { point }
+        Self {
+            point,
+        }
     }
 }
 
@@ -1039,7 +1071,9 @@ pub struct BbBn254G1FromCompressed {
 
 impl BbBn254G1FromCompressed {
     pub fn new(compressed: [u8; 32]) -> Self {
-        Self { compressed }
+        Self {
+            compressed,
+        }
     }
 }
 
@@ -1051,7 +1085,9 @@ pub struct BbSchnorrComputePublicKey {
 
 impl BbSchnorrComputePublicKey {
     pub fn new(private_key: Fq) -> Self {
-        Self { private_key }
+        Self {
+            private_key,
+        }
     }
 }
 
@@ -1099,7 +1135,9 @@ pub struct BbEcdsaSecp256k1ComputePublicKey {
 
 impl BbEcdsaSecp256k1ComputePublicKey {
     pub fn new(private_key: Secp256k1Fr) -> Self {
-        Self { private_key }
+        Self {
+            private_key,
+        }
     }
 }
 
@@ -1111,7 +1149,9 @@ pub struct BbEcdsaSecp256r1ComputePublicKey {
 
 impl BbEcdsaSecp256r1ComputePublicKey {
     pub fn new(private_key: Secp256r1Fr) -> Self {
-        Self { private_key }
+        Self {
+            private_key,
+        }
     }
 }
 
@@ -1125,7 +1165,10 @@ pub struct BbEcdsaSecp256k1ConstructSignature {
 
 impl BbEcdsaSecp256k1ConstructSignature {
     pub fn new(message: Vec<u8>, private_key: Secp256k1Fr) -> Self {
-        Self { message, private_key }
+        Self {
+            message,
+            private_key,
+        }
     }
 }
 
@@ -1139,7 +1182,10 @@ pub struct BbEcdsaSecp256r1ConstructSignature {
 
 impl BbEcdsaSecp256r1ConstructSignature {
     pub fn new(message: Vec<u8>, private_key: Secp256r1Fr) -> Self {
-        Self { message, private_key }
+        Self {
+            message,
+            private_key,
+        }
     }
 }
 
@@ -1157,7 +1203,12 @@ pub struct BbEcdsaSecp256k1RecoverPublicKey {
 
 impl BbEcdsaSecp256k1RecoverPublicKey {
     pub fn new(message: Vec<u8>, r: [u8; 32], s: [u8; 32], v: u8) -> Self {
-        Self { message, r, s, v }
+        Self {
+            message,
+            r,
+            s,
+            v,
+        }
     }
 }
 
@@ -1175,7 +1226,12 @@ pub struct BbEcdsaSecp256r1RecoverPublicKey {
 
 impl BbEcdsaSecp256r1RecoverPublicKey {
     pub fn new(message: Vec<u8>, r: [u8; 32], s: [u8; 32], v: u8) -> Self {
-        Self { message, r, s, v }
+        Self {
+            message,
+            r,
+            s,
+            v,
+        }
     }
 }
 
@@ -1290,11 +1346,15 @@ impl BbChonkBatchVerifierQueue {
 
 /// BbChonkBatchVerifierStop
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BbChonkBatchVerifierStop {}
+pub struct BbChonkBatchVerifierStop {
+
+}
 
 impl BbChonkBatchVerifierStop {
     pub fn new() -> Self {
-        Self {}
+        Self {
+
+        }
     }
 }
 
@@ -1308,7 +1368,10 @@ pub struct BbSrsInitGrumpkinSrs {
 
 impl BbSrsInitGrumpkinSrs {
     pub fn new(points_buf: Vec<u8>, num_points: u32) -> Self {
-        Self { points_buf, num_points }
+        Self {
+            points_buf,
+            num_points,
+        }
     }
 }
 
@@ -1375,15 +1438,21 @@ pub struct BbChonkComputeVkResponse {
 
 /// BbChonkStartResponse
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BbChonkStartResponse {}
+pub struct BbChonkStartResponse {
+
+}
 
 /// BbChonkLoadResponse
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BbChonkLoadResponse {}
+pub struct BbChonkLoadResponse {
+
+}
 
 /// BbChonkAccumulateResponse
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BbChonkAccumulateResponse {}
+pub struct BbChonkAccumulateResponse {
+
+}
 
 /// BbChonkProveResponse
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1701,15 +1770,21 @@ pub struct BbSrsInitSrsResponse {
 
 /// BbChonkBatchVerifierStartResponse
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BbChonkBatchVerifierStartResponse {}
+pub struct BbChonkBatchVerifierStartResponse {
+
+}
 
 /// BbChonkBatchVerifierQueueResponse
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BbChonkBatchVerifierQueueResponse {}
+pub struct BbChonkBatchVerifierQueueResponse {
+
+}
 
 /// BbChonkBatchVerifierStopResponse
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BbChonkBatchVerifierStopResponse {}
+pub struct BbChonkBatchVerifierStopResponse {
+
+}
 
 /// BbSrsInitGrumpkinSrsResponse
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1794,9 +1869,7 @@ pub enum Command {
 
 impl Serialize for Command {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
+    where S: serde::Serializer {
         use serde::ser::SerializeTuple;
         let mut tuple = serializer.serialize_tuple(2)?;
         match self {
@@ -2063,9 +2136,7 @@ impl Serialize for Command {
 
 impl<'de> Deserialize<'de> for Command {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
+    where D: serde::Deserializer<'de> {
         use serde::de::{SeqAccess, Visitor};
         struct CommandVisitor;
 
@@ -2075,466 +2146,331 @@ impl<'de> Deserialize<'de> for Command {
                 formatter.write_str("a 2-element array [name, payload]")
             }
             fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-            where
-                A: SeqAccess<'de>,
-            {
-                let name: String = seq
-                    .next_element()?
+            where A: SeqAccess<'de> {
+                let name: String = seq.next_element()?
                     .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
                 match name.as_str() {
                     "BbAvmProve" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbAvmProve(data))
                     }
                     "BbAvmVerify" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbAvmVerify(data))
                     }
                     "BbAvmCheckCircuit" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbAvmCheckCircuit(data))
                     }
                     "BbCircuitProve" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbCircuitProve(data))
                     }
                     "BbCircuitComputeVk" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbCircuitComputeVk(data))
                     }
                     "BbCircuitStats" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbCircuitStats(data))
                     }
                     "BbCircuitVerify" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbCircuitVerify(data))
                     }
                     "BbChonkComputeVk" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbChonkComputeVk(data))
                     }
                     "BbChonkStart" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbChonkStart(data))
                     }
                     "BbChonkLoad" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbChonkLoad(data))
                     }
                     "BbChonkAccumulate" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbChonkAccumulate(data))
                     }
                     "BbChonkProve" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbChonkProve(data))
                     }
                     "BbChonkVerify" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbChonkVerify(data))
                     }
                     "BbChonkVerifyFromFields" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbChonkVerifyFromFields(data))
                     }
                     "BbChonkBatchVerify" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbChonkBatchVerify(data))
                     }
                     "BbVkAsFields" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbVkAsFields(data))
                     }
                     "BbMegaVkAsFields" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbMegaVkAsFields(data))
                     }
                     "BbMegaAppVkAsFields" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbMegaAppVkAsFields(data))
                     }
                     "BbMegaKernelVkAsFields" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbMegaKernelVkAsFields(data))
                     }
                     "BbMegaZKVkAsFields" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbMegaZKVkAsFields(data))
                     }
                     "BbCircuitWriteSolidityVerifier" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbCircuitWriteSolidityVerifier(data))
                     }
                     "BbChonkCheckPrecomputedVk" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbChonkCheckPrecomputedVk(data))
                     }
                     "BbChonkStats" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbChonkStats(data))
                     }
                     "BbChonkCompressProof" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbChonkCompressProof(data))
                     }
                     "BbChonkDecompressProof" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbChonkDecompressProof(data))
                     }
                     "BbPoseidon2Hash" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbPoseidon2Hash(data))
                     }
                     "BbPoseidon2Permutation" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbPoseidon2Permutation(data))
                     }
                     "BbPedersenCommit" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbPedersenCommit(data))
                     }
                     "BbPedersenHash" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbPedersenHash(data))
                     }
                     "BbPedersenHashBuffer" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbPedersenHashBuffer(data))
                     }
                     "BbBlake2s" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbBlake2s(data))
                     }
                     "BbBlake2sToField" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbBlake2sToField(data))
                     }
                     "BbAesEncrypt" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbAesEncrypt(data))
                     }
                     "BbAesDecrypt" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbAesDecrypt(data))
                     }
                     "BbGrumpkinMul" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbGrumpkinMul(data))
                     }
                     "BbGrumpkinAdd" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbGrumpkinAdd(data))
                     }
                     "BbGrumpkinBatchMul" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbGrumpkinBatchMul(data))
                     }
                     "BbGrumpkinGetRandomFr" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbGrumpkinGetRandomFr(data))
                     }
                     "BbGrumpkinReduce512" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbGrumpkinReduce512(data))
                     }
                     "BbSecp256k1Mul" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbSecp256k1Mul(data))
                     }
                     "BbSecp256k1GetRandomFr" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbSecp256k1GetRandomFr(data))
                     }
                     "BbSecp256k1Reduce512" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbSecp256k1Reduce512(data))
                     }
                     "BbBn254FrSqrt" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbBn254FrSqrt(data))
                     }
                     "BbBn254FqSqrt" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbBn254FqSqrt(data))
                     }
                     "BbBn254G1Mul" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbBn254G1Mul(data))
                     }
                     "BbBn254G2Mul" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbBn254G2Mul(data))
                     }
                     "BbBn254G1IsOnCurve" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbBn254G1IsOnCurve(data))
                     }
                     "BbBn254G1FromCompressed" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbBn254G1FromCompressed(data))
                     }
                     "BbSchnorrComputePublicKey" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbSchnorrComputePublicKey(data))
                     }
                     "BbSchnorrConstructSignature" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbSchnorrConstructSignature(data))
                     }
                     "BbSchnorrVerifySignature" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbSchnorrVerifySignature(data))
                     }
                     "BbEcdsaSecp256k1ComputePublicKey" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbEcdsaSecp256k1ComputePublicKey(data))
                     }
                     "BbEcdsaSecp256r1ComputePublicKey" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbEcdsaSecp256r1ComputePublicKey(data))
                     }
                     "BbEcdsaSecp256k1ConstructSignature" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbEcdsaSecp256k1ConstructSignature(data))
                     }
                     "BbEcdsaSecp256r1ConstructSignature" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbEcdsaSecp256r1ConstructSignature(data))
                     }
                     "BbEcdsaSecp256k1RecoverPublicKey" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbEcdsaSecp256k1RecoverPublicKey(data))
                     }
                     "BbEcdsaSecp256r1RecoverPublicKey" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbEcdsaSecp256r1RecoverPublicKey(data))
                     }
                     "BbEcdsaSecp256k1VerifySignature" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbEcdsaSecp256k1VerifySignature(data))
                     }
                     "BbEcdsaSecp256r1VerifySignature" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbEcdsaSecp256r1VerifySignature(data))
                     }
                     "BbSrsInitSrs" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbSrsInitSrs(data))
                     }
                     "BbChonkBatchVerifierStart" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbChonkBatchVerifierStart(data))
                     }
                     "BbChonkBatchVerifierQueue" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbChonkBatchVerifierQueue(data))
                     }
                     "BbChonkBatchVerifierStop" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbChonkBatchVerifierStop(data))
                     }
                     "BbSrsInitGrumpkinSrs" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbSrsInitGrumpkinSrs(data))
                     }
-                    _ => Err(serde::de::Error::unknown_variant(
-                        &name,
-                        &[
-                            "BbAvmProve",
-                            "BbAvmVerify",
-                            "BbAvmCheckCircuit",
-                            "BbCircuitProve",
-                            "BbCircuitComputeVk",
-                            "BbCircuitStats",
-                            "BbCircuitVerify",
-                            "BbChonkComputeVk",
-                            "BbChonkStart",
-                            "BbChonkLoad",
-                            "BbChonkAccumulate",
-                            "BbChonkProve",
-                            "BbChonkVerify",
-                            "BbChonkVerifyFromFields",
-                            "BbChonkBatchVerify",
-                            "BbVkAsFields",
-                            "BbMegaVkAsFields",
-                            "BbMegaAppVkAsFields",
-                            "BbMegaKernelVkAsFields",
-                            "BbMegaZKVkAsFields",
-                            "BbCircuitWriteSolidityVerifier",
-                            "BbChonkCheckPrecomputedVk",
-                            "BbChonkStats",
-                            "BbChonkCompressProof",
-                            "BbChonkDecompressProof",
-                            "BbPoseidon2Hash",
-                            "BbPoseidon2Permutation",
-                            "BbPedersenCommit",
-                            "BbPedersenHash",
-                            "BbPedersenHashBuffer",
-                            "BbBlake2s",
-                            "BbBlake2sToField",
-                            "BbAesEncrypt",
-                            "BbAesDecrypt",
-                            "BbGrumpkinMul",
-                            "BbGrumpkinAdd",
-                            "BbGrumpkinBatchMul",
-                            "BbGrumpkinGetRandomFr",
-                            "BbGrumpkinReduce512",
-                            "BbSecp256k1Mul",
-                            "BbSecp256k1GetRandomFr",
-                            "BbSecp256k1Reduce512",
-                            "BbBn254FrSqrt",
-                            "BbBn254FqSqrt",
-                            "BbBn254G1Mul",
-                            "BbBn254G2Mul",
-                            "BbBn254G1IsOnCurve",
-                            "BbBn254G1FromCompressed",
-                            "BbSchnorrComputePublicKey",
-                            "BbSchnorrConstructSignature",
-                            "BbSchnorrVerifySignature",
-                            "BbEcdsaSecp256k1ComputePublicKey",
-                            "BbEcdsaSecp256r1ComputePublicKey",
-                            "BbEcdsaSecp256k1ConstructSignature",
-                            "BbEcdsaSecp256r1ConstructSignature",
-                            "BbEcdsaSecp256k1RecoverPublicKey",
-                            "BbEcdsaSecp256r1RecoverPublicKey",
-                            "BbEcdsaSecp256k1VerifySignature",
-                            "BbEcdsaSecp256r1VerifySignature",
-                            "BbSrsInitSrs",
-                            "BbChonkBatchVerifierStart",
-                            "BbChonkBatchVerifierQueue",
-                            "BbChonkBatchVerifierStop",
-                            "BbSrsInitGrumpkinSrs",
-                        ],
-                    )),
+                    _ => Err(serde::de::Error::unknown_variant(&name, &["BbAvmProve", "BbAvmVerify", "BbAvmCheckCircuit", "BbCircuitProve", "BbCircuitComputeVk", "BbCircuitStats", "BbCircuitVerify", "BbChonkComputeVk", "BbChonkStart", "BbChonkLoad", "BbChonkAccumulate", "BbChonkProve", "BbChonkVerify", "BbChonkVerifyFromFields", "BbChonkBatchVerify", "BbVkAsFields", "BbMegaVkAsFields", "BbMegaAppVkAsFields", "BbMegaKernelVkAsFields", "BbMegaZKVkAsFields", "BbCircuitWriteSolidityVerifier", "BbChonkCheckPrecomputedVk", "BbChonkStats", "BbChonkCompressProof", "BbChonkDecompressProof", "BbPoseidon2Hash", "BbPoseidon2Permutation", "BbPedersenCommit", "BbPedersenHash", "BbPedersenHashBuffer", "BbBlake2s", "BbBlake2sToField", "BbAesEncrypt", "BbAesDecrypt", "BbGrumpkinMul", "BbGrumpkinAdd", "BbGrumpkinBatchMul", "BbGrumpkinGetRandomFr", "BbGrumpkinReduce512", "BbSecp256k1Mul", "BbSecp256k1GetRandomFr", "BbSecp256k1Reduce512", "BbBn254FrSqrt", "BbBn254FqSqrt", "BbBn254G1Mul", "BbBn254G2Mul", "BbBn254G1IsOnCurve", "BbBn254G1FromCompressed", "BbSchnorrComputePublicKey", "BbSchnorrConstructSignature", "BbSchnorrVerifySignature", "BbEcdsaSecp256k1ComputePublicKey", "BbEcdsaSecp256r1ComputePublicKey", "BbEcdsaSecp256k1ConstructSignature", "BbEcdsaSecp256r1ConstructSignature", "BbEcdsaSecp256k1RecoverPublicKey", "BbEcdsaSecp256r1RecoverPublicKey", "BbEcdsaSecp256k1VerifySignature", "BbEcdsaSecp256r1VerifySignature", "BbSrsInitSrs", "BbChonkBatchVerifierStart", "BbChonkBatchVerifierQueue", "BbChonkBatchVerifierStop", "BbSrsInitGrumpkinSrs"])),
                 }
             }
         }
@@ -2614,9 +2550,7 @@ pub enum Response {
 
 impl Serialize for Response {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
+    where S: serde::Serializer {
         use serde::ser::SerializeTuple;
         let mut tuple = serializer.serialize_tuple(2)?;
         match self {
@@ -2887,9 +2821,7 @@ impl Serialize for Response {
 
 impl<'de> Deserialize<'de> for Response {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
+    where D: serde::Deserializer<'de> {
         use serde::de::{SeqAccess, Visitor};
         struct ResponseVisitor;
 
@@ -2899,473 +2831,336 @@ impl<'de> Deserialize<'de> for Response {
                 formatter.write_str("a 2-element array [name, payload]")
             }
             fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-            where
-                A: SeqAccess<'de>,
-            {
-                let name: String = seq
-                    .next_element()?
+            where A: SeqAccess<'de> {
+                let name: String = seq.next_element()?
                     .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
                 match name.as_str() {
                     "BbAvmProveResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbAvmProveResponse(data))
                     }
                     "BbAvmVerifyResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbAvmVerifyResponse(data))
                     }
                     "BbAvmCheckCircuitResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbAvmCheckCircuitResponse(data))
                     }
                     "BbCircuitProveResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbCircuitProveResponse(data))
                     }
                     "BbCircuitComputeVkResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbCircuitComputeVkResponse(data))
                     }
                     "BbCircuitStatsResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbCircuitStatsResponse(data))
                     }
                     "BbCircuitVerifyResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbCircuitVerifyResponse(data))
                     }
                     "BbChonkComputeVkResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbChonkComputeVkResponse(data))
                     }
                     "BbChonkStartResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbChonkStartResponse(data))
                     }
                     "BbChonkLoadResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbChonkLoadResponse(data))
                     }
                     "BbChonkAccumulateResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbChonkAccumulateResponse(data))
                     }
                     "BbChonkProveResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbChonkProveResponse(data))
                     }
                     "BbChonkVerifyResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbChonkVerifyResponse(data))
                     }
                     "BbChonkVerifyFromFieldsResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbChonkVerifyFromFieldsResponse(data))
                     }
                     "BbChonkBatchVerifyResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbChonkBatchVerifyResponse(data))
                     }
                     "BbVkAsFieldsResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbVkAsFieldsResponse(data))
                     }
                     "BbMegaVkAsFieldsResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbMegaVkAsFieldsResponse(data))
                     }
                     "BbMegaAppVkAsFieldsResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbMegaAppVkAsFieldsResponse(data))
                     }
                     "BbMegaKernelVkAsFieldsResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbMegaKernelVkAsFieldsResponse(data))
                     }
                     "BbMegaZKVkAsFieldsResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbMegaZKVkAsFieldsResponse(data))
                     }
                     "BbCircuitWriteSolidityVerifierResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbCircuitWriteSolidityVerifierResponse(data))
                     }
                     "BbChonkCheckPrecomputedVkResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbChonkCheckPrecomputedVkResponse(data))
                     }
                     "BbChonkStatsResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbChonkStatsResponse(data))
                     }
                     "BbChonkCompressProofResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbChonkCompressProofResponse(data))
                     }
                     "BbChonkDecompressProofResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbChonkDecompressProofResponse(data))
                     }
                     "BbPoseidon2HashResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbPoseidon2HashResponse(data))
                     }
                     "BbPoseidon2PermutationResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbPoseidon2PermutationResponse(data))
                     }
                     "BbPedersenCommitResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbPedersenCommitResponse(data))
                     }
                     "BbPedersenHashResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbPedersenHashResponse(data))
                     }
                     "BbPedersenHashBufferResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbPedersenHashBufferResponse(data))
                     }
                     "BbBlake2sResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbBlake2sResponse(data))
                     }
                     "BbBlake2sToFieldResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbBlake2sToFieldResponse(data))
                     }
                     "BbAesEncryptResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbAesEncryptResponse(data))
                     }
                     "BbAesDecryptResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbAesDecryptResponse(data))
                     }
                     "BbGrumpkinMulResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbGrumpkinMulResponse(data))
                     }
                     "BbGrumpkinAddResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbGrumpkinAddResponse(data))
                     }
                     "BbGrumpkinBatchMulResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbGrumpkinBatchMulResponse(data))
                     }
                     "BbGrumpkinGetRandomFrResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbGrumpkinGetRandomFrResponse(data))
                     }
                     "BbGrumpkinReduce512Response" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbGrumpkinReduce512Response(data))
                     }
                     "BbSecp256k1MulResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbSecp256k1MulResponse(data))
                     }
                     "BbSecp256k1GetRandomFrResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbSecp256k1GetRandomFrResponse(data))
                     }
                     "BbSecp256k1Reduce512Response" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbSecp256k1Reduce512Response(data))
                     }
                     "BbBn254FrSqrtResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbBn254FrSqrtResponse(data))
                     }
                     "BbBn254FqSqrtResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbBn254FqSqrtResponse(data))
                     }
                     "BbBn254G1MulResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbBn254G1MulResponse(data))
                     }
                     "BbBn254G2MulResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbBn254G2MulResponse(data))
                     }
                     "BbBn254G1IsOnCurveResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbBn254G1IsOnCurveResponse(data))
                     }
                     "BbBn254G1FromCompressedResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbBn254G1FromCompressedResponse(data))
                     }
                     "BbSchnorrComputePublicKeyResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbSchnorrComputePublicKeyResponse(data))
                     }
                     "BbSchnorrConstructSignatureResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbSchnorrConstructSignatureResponse(data))
                     }
                     "BbSchnorrVerifySignatureResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbSchnorrVerifySignatureResponse(data))
                     }
                     "BbEcdsaSecp256k1ComputePublicKeyResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbEcdsaSecp256k1ComputePublicKeyResponse(data))
                     }
                     "BbEcdsaSecp256r1ComputePublicKeyResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbEcdsaSecp256r1ComputePublicKeyResponse(data))
                     }
                     "BbEcdsaSecp256k1ConstructSignatureResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbEcdsaSecp256k1ConstructSignatureResponse(data))
                     }
                     "BbEcdsaSecp256r1ConstructSignatureResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbEcdsaSecp256r1ConstructSignatureResponse(data))
                     }
                     "BbEcdsaSecp256k1RecoverPublicKeyResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbEcdsaSecp256k1RecoverPublicKeyResponse(data))
                     }
                     "BbEcdsaSecp256r1RecoverPublicKeyResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbEcdsaSecp256r1RecoverPublicKeyResponse(data))
                     }
                     "BbEcdsaSecp256k1VerifySignatureResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbEcdsaSecp256k1VerifySignatureResponse(data))
                     }
                     "BbEcdsaSecp256r1VerifySignatureResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbEcdsaSecp256r1VerifySignatureResponse(data))
                     }
                     "BbSrsInitSrsResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbSrsInitSrsResponse(data))
                     }
                     "BbChonkBatchVerifierStartResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbChonkBatchVerifierStartResponse(data))
                     }
                     "BbChonkBatchVerifierQueueResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbChonkBatchVerifierQueueResponse(data))
                     }
                     "BbChonkBatchVerifierStopResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbChonkBatchVerifierStopResponse(data))
                     }
                     "BbSrsInitGrumpkinSrsResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbSrsInitGrumpkinSrsResponse(data))
                     }
                     "BbErrorResponse" => {
-                        let data = seq
-                            .next_element()?
+                        let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbErrorResponse(data))
                     }
-                    _ => Err(serde::de::Error::unknown_variant(
-                        &name,
-                        &[
-                            "BbAvmProveResponse",
-                            "BbAvmVerifyResponse",
-                            "BbAvmCheckCircuitResponse",
-                            "BbCircuitProveResponse",
-                            "BbCircuitComputeVkResponse",
-                            "BbCircuitStatsResponse",
-                            "BbCircuitVerifyResponse",
-                            "BbChonkComputeVkResponse",
-                            "BbChonkStartResponse",
-                            "BbChonkLoadResponse",
-                            "BbChonkAccumulateResponse",
-                            "BbChonkProveResponse",
-                            "BbChonkVerifyResponse",
-                            "BbChonkVerifyFromFieldsResponse",
-                            "BbChonkBatchVerifyResponse",
-                            "BbVkAsFieldsResponse",
-                            "BbMegaVkAsFieldsResponse",
-                            "BbMegaAppVkAsFieldsResponse",
-                            "BbMegaKernelVkAsFieldsResponse",
-                            "BbMegaZKVkAsFieldsResponse",
-                            "BbCircuitWriteSolidityVerifierResponse",
-                            "BbChonkCheckPrecomputedVkResponse",
-                            "BbChonkStatsResponse",
-                            "BbChonkCompressProofResponse",
-                            "BbChonkDecompressProofResponse",
-                            "BbPoseidon2HashResponse",
-                            "BbPoseidon2PermutationResponse",
-                            "BbPedersenCommitResponse",
-                            "BbPedersenHashResponse",
-                            "BbPedersenHashBufferResponse",
-                            "BbBlake2sResponse",
-                            "BbBlake2sToFieldResponse",
-                            "BbAesEncryptResponse",
-                            "BbAesDecryptResponse",
-                            "BbGrumpkinMulResponse",
-                            "BbGrumpkinAddResponse",
-                            "BbGrumpkinBatchMulResponse",
-                            "BbGrumpkinGetRandomFrResponse",
-                            "BbGrumpkinReduce512Response",
-                            "BbSecp256k1MulResponse",
-                            "BbSecp256k1GetRandomFrResponse",
-                            "BbSecp256k1Reduce512Response",
-                            "BbBn254FrSqrtResponse",
-                            "BbBn254FqSqrtResponse",
-                            "BbBn254G1MulResponse",
-                            "BbBn254G2MulResponse",
-                            "BbBn254G1IsOnCurveResponse",
-                            "BbBn254G1FromCompressedResponse",
-                            "BbSchnorrComputePublicKeyResponse",
-                            "BbSchnorrConstructSignatureResponse",
-                            "BbSchnorrVerifySignatureResponse",
-                            "BbEcdsaSecp256k1ComputePublicKeyResponse",
-                            "BbEcdsaSecp256r1ComputePublicKeyResponse",
-                            "BbEcdsaSecp256k1ConstructSignatureResponse",
-                            "BbEcdsaSecp256r1ConstructSignatureResponse",
-                            "BbEcdsaSecp256k1RecoverPublicKeyResponse",
-                            "BbEcdsaSecp256r1RecoverPublicKeyResponse",
-                            "BbEcdsaSecp256k1VerifySignatureResponse",
-                            "BbEcdsaSecp256r1VerifySignatureResponse",
-                            "BbSrsInitSrsResponse",
-                            "BbChonkBatchVerifierStartResponse",
-                            "BbChonkBatchVerifierQueueResponse",
-                            "BbChonkBatchVerifierStopResponse",
-                            "BbSrsInitGrumpkinSrsResponse",
-                            "BbErrorResponse",
-                        ],
-                    )),
+                    _ => Err(serde::de::Error::unknown_variant(&name, &["BbAvmProveResponse", "BbAvmVerifyResponse", "BbAvmCheckCircuitResponse", "BbCircuitProveResponse", "BbCircuitComputeVkResponse", "BbCircuitStatsResponse", "BbCircuitVerifyResponse", "BbChonkComputeVkResponse", "BbChonkStartResponse", "BbChonkLoadResponse", "BbChonkAccumulateResponse", "BbChonkProveResponse", "BbChonkVerifyResponse", "BbChonkVerifyFromFieldsResponse", "BbChonkBatchVerifyResponse", "BbVkAsFieldsResponse", "BbMegaVkAsFieldsResponse", "BbMegaAppVkAsFieldsResponse", "BbMegaKernelVkAsFieldsResponse", "BbMegaZKVkAsFieldsResponse", "BbCircuitWriteSolidityVerifierResponse", "BbChonkCheckPrecomputedVkResponse", "BbChonkStatsResponse", "BbChonkCompressProofResponse", "BbChonkDecompressProofResponse", "BbPoseidon2HashResponse", "BbPoseidon2PermutationResponse", "BbPedersenCommitResponse", "BbPedersenHashResponse", "BbPedersenHashBufferResponse", "BbBlake2sResponse", "BbBlake2sToFieldResponse", "BbAesEncryptResponse", "BbAesDecryptResponse", "BbGrumpkinMulResponse", "BbGrumpkinAddResponse", "BbGrumpkinBatchMulResponse", "BbGrumpkinGetRandomFrResponse", "BbGrumpkinReduce512Response", "BbSecp256k1MulResponse", "BbSecp256k1GetRandomFrResponse", "BbSecp256k1Reduce512Response", "BbBn254FrSqrtResponse", "BbBn254FqSqrtResponse", "BbBn254G1MulResponse", "BbBn254G2MulResponse", "BbBn254G1IsOnCurveResponse", "BbBn254G1FromCompressedResponse", "BbSchnorrComputePublicKeyResponse", "BbSchnorrConstructSignatureResponse", "BbSchnorrVerifySignatureResponse", "BbEcdsaSecp256k1ComputePublicKeyResponse", "BbEcdsaSecp256r1ComputePublicKeyResponse", "BbEcdsaSecp256k1ConstructSignatureResponse", "BbEcdsaSecp256r1ConstructSignatureResponse", "BbEcdsaSecp256k1RecoverPublicKeyResponse", "BbEcdsaSecp256r1RecoverPublicKeyResponse", "BbEcdsaSecp256k1VerifySignatureResponse", "BbEcdsaSecp256r1VerifySignatureResponse", "BbSrsInitSrsResponse", "BbChonkBatchVerifierStartResponse", "BbChonkBatchVerifierQueueResponse", "BbChonkBatchVerifierStopResponse", "BbSrsInitGrumpkinSrsResponse", "BbErrorResponse"])),
                 }
             }
         }

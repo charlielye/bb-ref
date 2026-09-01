@@ -2,8 +2,8 @@
 //! Bb IPC client API
 
 use super::backend::Backend;
-use super::bb_types::*;
 use super::error::{IpcError, Result};
+use super::bb_types::*;
 
 /// Bb IPC client API
 pub struct BbApi<B: Backend> {
@@ -17,13 +17,13 @@ impl<B: Backend> BbApi<B> {
     }
 
     fn execute(&mut self, command: Command) -> Result<Response> {
-        let input_buffer =
-            rmp_serde::to_vec_named(&vec![command]).map_err(|e| IpcError::Serialization(e.to_string()))?;
+        let input_buffer = rmp_serde::to_vec_named(&vec![command])
+            .map_err(|e| IpcError::Serialization(e.to_string()))?;
 
         let output_buffer = self.backend.call(&input_buffer)?;
 
-        let response: Response =
-            rmp_serde::from_slice(&output_buffer).map_err(|e| IpcError::Deserialization(e.to_string()))?;
+        let response: Response = rmp_serde::from_slice(&output_buffer)
+            .map_err(|e| IpcError::Deserialization(e.to_string()))?;
 
         Ok(response)
     }
@@ -33,8 +33,12 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbAvmProve(BbAvmProve::new(inputs.to_vec()));
         match self.execute(cmd)? {
             Response::BbAvmProveResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
-            _ => Err(IpcError::InvalidResponse("Expected BbAvmProveResponse".to_string())),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
+            _ => Err(IpcError::InvalidResponse(
+                "Expected BbAvmProveResponse".to_string()
+            )),
         }
     }
 
@@ -43,8 +47,12 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbAvmVerify(BbAvmVerify::new(proof, public_inputs.to_vec()));
         match self.execute(cmd)? {
             Response::BbAvmVerifyResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
-            _ => Err(IpcError::InvalidResponse("Expected BbAvmVerifyResponse".to_string())),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
+            _ => Err(IpcError::InvalidResponse(
+                "Expected BbAvmVerifyResponse".to_string()
+            )),
         }
     }
 
@@ -53,78 +61,67 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbAvmCheckCircuit(BbAvmCheckCircuit::new(inputs.to_vec()));
         match self.execute(cmd)? {
             Response::BbAvmCheckCircuitResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbAvmCheckCircuitResponse".to_string(),
+                "Expected BbAvmCheckCircuitResponse".to_string()
             )),
         }
     }
 
     /// Execute BbCircuitProve
-    pub fn circuit_prove(
-        &mut self,
-        circuit: CircuitInput,
-        witness: &[u8],
-        settings: ProofSystemSettings,
-    ) -> Result<BbCircuitProveResponse> {
+    pub fn circuit_prove(&mut self, circuit: CircuitInput, witness: &[u8], settings: ProofSystemSettings) -> Result<BbCircuitProveResponse> {
         let cmd = Command::BbCircuitProve(BbCircuitProve::new(circuit, witness.to_vec(), settings));
         match self.execute(cmd)? {
             Response::BbCircuitProveResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
-            _ => Err(IpcError::InvalidResponse("Expected BbCircuitProveResponse".to_string())),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
+            _ => Err(IpcError::InvalidResponse(
+                "Expected BbCircuitProveResponse".to_string()
+            )),
         }
     }
 
     /// Execute BbCircuitComputeVk
-    pub fn circuit_compute_vk(
-        &mut self,
-        circuit: CircuitInputNoVK,
-        settings: ProofSystemSettings,
-    ) -> Result<BbCircuitComputeVkResponse> {
+    pub fn circuit_compute_vk(&mut self, circuit: CircuitInputNoVK, settings: ProofSystemSettings) -> Result<BbCircuitComputeVkResponse> {
         let cmd = Command::BbCircuitComputeVk(BbCircuitComputeVk::new(circuit, settings));
         match self.execute(cmd)? {
             Response::BbCircuitComputeVkResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbCircuitComputeVkResponse".to_string(),
+                "Expected BbCircuitComputeVkResponse".to_string()
             )),
         }
     }
 
     /// Execute BbCircuitStats
-    pub fn circuit_stats(
-        &mut self,
-        circuit: CircuitInput,
-        include_gates_per_opcode: bool,
-        settings: ProofSystemSettings,
-    ) -> Result<BbCircuitStatsResponse> {
+    pub fn circuit_stats(&mut self, circuit: CircuitInput, include_gates_per_opcode: bool, settings: ProofSystemSettings) -> Result<BbCircuitStatsResponse> {
         let cmd = Command::BbCircuitStats(BbCircuitStats::new(circuit, include_gates_per_opcode, settings));
         match self.execute(cmd)? {
             Response::BbCircuitStatsResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
-            _ => Err(IpcError::InvalidResponse("Expected BbCircuitStatsResponse".to_string())),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
+            _ => Err(IpcError::InvalidResponse(
+                "Expected BbCircuitStatsResponse".to_string()
+            )),
         }
     }
 
     /// Execute BbCircuitVerify
-    pub fn circuit_verify(
-        &mut self,
-        verification_key: &[u8],
-        public_inputs: Vec<Uint256>,
-        proof: Vec<Uint256>,
-        settings: ProofSystemSettings,
-    ) -> Result<BbCircuitVerifyResponse> {
-        let cmd = Command::BbCircuitVerify(BbCircuitVerify::new(
-            verification_key.to_vec(),
-            public_inputs,
-            proof,
-            settings,
-        ));
+    pub fn circuit_verify(&mut self, verification_key: &[u8], public_inputs: Vec<Uint256>, proof: Vec<Uint256>, settings: ProofSystemSettings) -> Result<BbCircuitVerifyResponse> {
+        let cmd = Command::BbCircuitVerify(BbCircuitVerify::new(verification_key.to_vec(), public_inputs, proof, settings));
         match self.execute(cmd)? {
             Response::BbCircuitVerifyResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbCircuitVerifyResponse".to_string(),
+                "Expected BbCircuitVerifyResponse".to_string()
             )),
         }
     }
@@ -134,9 +131,11 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbChonkComputeVk(BbChonkComputeVk::new(circuit, kind));
         match self.execute(cmd)? {
             Response::BbChonkComputeVkResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbChonkComputeVkResponse".to_string(),
+                "Expected BbChonkComputeVkResponse".to_string()
             )),
         }
     }
@@ -146,8 +145,12 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbChonkStart(BbChonkStart::new(kinds.to_vec()));
         match self.execute(cmd)? {
             Response::BbChonkStartResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
-            _ => Err(IpcError::InvalidResponse("Expected BbChonkStartResponse".to_string())),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
+            _ => Err(IpcError::InvalidResponse(
+                "Expected BbChonkStartResponse".to_string()
+            )),
         }
     }
 
@@ -156,8 +159,12 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbChonkLoad(BbChonkLoad::new(circuit, kind));
         match self.execute(cmd)? {
             Response::BbChonkLoadResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
-            _ => Err(IpcError::InvalidResponse("Expected BbChonkLoadResponse".to_string())),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
+            _ => Err(IpcError::InvalidResponse(
+                "Expected BbChonkLoadResponse".to_string()
+            )),
         }
     }
 
@@ -166,20 +173,26 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbChonkAccumulate(BbChonkAccumulate::new(witness.to_vec()));
         match self.execute(cmd)? {
             Response::BbChonkAccumulateResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbChonkAccumulateResponse".to_string(),
+                "Expected BbChonkAccumulateResponse".to_string()
             )),
         }
     }
 
     /// Execute BbChonkProve
-    pub fn chonk_prove(&mut self) -> Result<BbChonkProveResponse> {
+    pub fn chonk_prove(&mut self, ) -> Result<BbChonkProveResponse> {
         let cmd = Command::BbChonkProve(BbChonkProve::new());
         match self.execute(cmd)? {
             Response::BbChonkProveResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
-            _ => Err(IpcError::InvalidResponse("Expected BbChonkProveResponse".to_string())),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
+            _ => Err(IpcError::InvalidResponse(
+                "Expected BbChonkProveResponse".to_string()
+            )),
         }
     }
 
@@ -188,8 +201,12 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbChonkVerify(BbChonkVerify::new(proof, vk.to_vec()));
         match self.execute(cmd)? {
             Response::BbChonkVerifyResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
-            _ => Err(IpcError::InvalidResponse("Expected BbChonkVerifyResponse".to_string())),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
+            _ => Err(IpcError::InvalidResponse(
+                "Expected BbChonkVerifyResponse".to_string()
+            )),
         }
     }
 
@@ -198,25 +215,25 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbChonkVerifyFromFields(BbChonkVerifyFromFields::new(proof, vk.to_vec()));
         match self.execute(cmd)? {
             Response::BbChonkVerifyFromFieldsResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbChonkVerifyFromFieldsResponse".to_string(),
+                "Expected BbChonkVerifyFromFieldsResponse".to_string()
             )),
         }
     }
 
     /// Execute BbChonkBatchVerify
-    pub fn chonk_batch_verify(
-        &mut self,
-        proofs: Vec<ChonkProof>,
-        vks: Vec<Vec<u8>>,
-    ) -> Result<BbChonkBatchVerifyResponse> {
+    pub fn chonk_batch_verify(&mut self, proofs: Vec<ChonkProof>, vks: Vec<Vec<u8>>) -> Result<BbChonkBatchVerifyResponse> {
         let cmd = Command::BbChonkBatchVerify(BbChonkBatchVerify::new(proofs, vks));
         match self.execute(cmd)? {
             Response::BbChonkBatchVerifyResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbChonkBatchVerifyResponse".to_string(),
+                "Expected BbChonkBatchVerifyResponse".to_string()
             )),
         }
     }
@@ -226,8 +243,12 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbVkAsFields(BbVkAsFields::new(verification_key.to_vec()));
         match self.execute(cmd)? {
             Response::BbVkAsFieldsResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
-            _ => Err(IpcError::InvalidResponse("Expected BbVkAsFieldsResponse".to_string())),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
+            _ => Err(IpcError::InvalidResponse(
+                "Expected BbVkAsFieldsResponse".to_string()
+            )),
         }
     }
 
@@ -236,9 +257,11 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbMegaVkAsFields(BbMegaVkAsFields::new(verification_key.to_vec()));
         match self.execute(cmd)? {
             Response::BbMegaVkAsFieldsResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbMegaVkAsFieldsResponse".to_string(),
+                "Expected BbMegaVkAsFieldsResponse".to_string()
             )),
         }
     }
@@ -248,9 +271,11 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbMegaAppVkAsFields(BbMegaAppVkAsFields::new(verification_key.to_vec()));
         match self.execute(cmd)? {
             Response::BbMegaAppVkAsFieldsResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbMegaAppVkAsFieldsResponse".to_string(),
+                "Expected BbMegaAppVkAsFieldsResponse".to_string()
             )),
         }
     }
@@ -260,9 +285,11 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbMegaKernelVkAsFields(BbMegaKernelVkAsFields::new(verification_key.to_vec()));
         match self.execute(cmd)? {
             Response::BbMegaKernelVkAsFieldsResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbMegaKernelVkAsFieldsResponse".to_string(),
+                "Expected BbMegaKernelVkAsFieldsResponse".to_string()
             )),
         }
     }
@@ -272,59 +299,54 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbMegaZKVkAsFields(BbMegaZKVkAsFields::new(verification_key.to_vec()));
         match self.execute(cmd)? {
             Response::BbMegaZKVkAsFieldsResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbMegaZKVkAsFieldsResponse".to_string(),
+                "Expected BbMegaZKVkAsFieldsResponse".to_string()
             )),
         }
     }
 
     /// Execute BbCircuitWriteSolidityVerifier
-    pub fn circuit_write_solidity_verifier(
-        &mut self,
-        verification_key: &[u8],
-        settings: ProofSystemSettings,
-    ) -> Result<BbCircuitWriteSolidityVerifierResponse> {
-        let cmd = Command::BbCircuitWriteSolidityVerifier(BbCircuitWriteSolidityVerifier::new(
-            verification_key.to_vec(),
-            settings,
-        ));
+    pub fn circuit_write_solidity_verifier(&mut self, verification_key: &[u8], settings: ProofSystemSettings) -> Result<BbCircuitWriteSolidityVerifierResponse> {
+        let cmd = Command::BbCircuitWriteSolidityVerifier(BbCircuitWriteSolidityVerifier::new(verification_key.to_vec(), settings));
         match self.execute(cmd)? {
             Response::BbCircuitWriteSolidityVerifierResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbCircuitWriteSolidityVerifierResponse".to_string(),
+                "Expected BbCircuitWriteSolidityVerifierResponse".to_string()
             )),
         }
     }
 
     /// Execute BbChonkCheckPrecomputedVk
-    pub fn chonk_check_precomputed_vk(
-        &mut self,
-        circuit: CircuitInput,
-        kind: u8,
-    ) -> Result<BbChonkCheckPrecomputedVkResponse> {
+    pub fn chonk_check_precomputed_vk(&mut self, circuit: CircuitInput, kind: u8) -> Result<BbChonkCheckPrecomputedVkResponse> {
         let cmd = Command::BbChonkCheckPrecomputedVk(BbChonkCheckPrecomputedVk::new(circuit, kind));
         match self.execute(cmd)? {
             Response::BbChonkCheckPrecomputedVkResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbChonkCheckPrecomputedVkResponse".to_string(),
+                "Expected BbChonkCheckPrecomputedVkResponse".to_string()
             )),
         }
     }
 
     /// Execute BbChonkStats
-    pub fn chonk_stats(
-        &mut self,
-        circuit: CircuitInputNoVK,
-        include_gates_per_opcode: bool,
-    ) -> Result<BbChonkStatsResponse> {
+    pub fn chonk_stats(&mut self, circuit: CircuitInputNoVK, include_gates_per_opcode: bool) -> Result<BbChonkStatsResponse> {
         let cmd = Command::BbChonkStats(BbChonkStats::new(circuit, include_gates_per_opcode));
         match self.execute(cmd)? {
             Response::BbChonkStatsResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
-            _ => Err(IpcError::InvalidResponse("Expected BbChonkStatsResponse".to_string())),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
+            _ => Err(IpcError::InvalidResponse(
+                "Expected BbChonkStatsResponse".to_string()
+            )),
         }
     }
 
@@ -333,9 +355,11 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbChonkCompressProof(BbChonkCompressProof::new(proof));
         match self.execute(cmd)? {
             Response::BbChonkCompressProofResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbChonkCompressProofResponse".to_string(),
+                "Expected BbChonkCompressProofResponse".to_string()
             )),
         }
     }
@@ -345,9 +369,11 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbChonkDecompressProof(BbChonkDecompressProof::new(compressed_proof.to_vec()));
         match self.execute(cmd)? {
             Response::BbChonkDecompressProofResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbChonkDecompressProofResponse".to_string(),
+                "Expected BbChonkDecompressProofResponse".to_string()
             )),
         }
     }
@@ -357,9 +383,11 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbPoseidon2Hash(BbPoseidon2Hash::new(inputs));
         match self.execute(cmd)? {
             Response::BbPoseidon2HashResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbPoseidon2HashResponse".to_string(),
+                "Expected BbPoseidon2HashResponse".to_string()
             )),
         }
     }
@@ -369,9 +397,11 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbPoseidon2Permutation(BbPoseidon2Permutation::new(inputs));
         match self.execute(cmd)? {
             Response::BbPoseidon2PermutationResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbPoseidon2PermutationResponse".to_string(),
+                "Expected BbPoseidon2PermutationResponse".to_string()
             )),
         }
     }
@@ -381,9 +411,11 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbPedersenCommit(BbPedersenCommit::new(inputs, hash_index));
         match self.execute(cmd)? {
             Response::BbPedersenCommitResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbPedersenCommitResponse".to_string(),
+                "Expected BbPedersenCommitResponse".to_string()
             )),
         }
     }
@@ -393,8 +425,12 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbPedersenHash(BbPedersenHash::new(inputs, hash_index));
         match self.execute(cmd)? {
             Response::BbPedersenHashResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
-            _ => Err(IpcError::InvalidResponse("Expected BbPedersenHashResponse".to_string())),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
+            _ => Err(IpcError::InvalidResponse(
+                "Expected BbPedersenHashResponse".to_string()
+            )),
         }
     }
 
@@ -403,9 +439,11 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbPedersenHashBuffer(BbPedersenHashBuffer::new(input.to_vec(), hash_index));
         match self.execute(cmd)? {
             Response::BbPedersenHashBufferResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbPedersenHashBufferResponse".to_string(),
+                "Expected BbPedersenHashBufferResponse".to_string()
             )),
         }
     }
@@ -415,8 +453,12 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbBlake2s(BbBlake2s::new(data.to_vec()));
         match self.execute(cmd)? {
             Response::BbBlake2sResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
-            _ => Err(IpcError::InvalidResponse("Expected BbBlake2sResponse".to_string())),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
+            _ => Err(IpcError::InvalidResponse(
+                "Expected BbBlake2sResponse".to_string()
+            )),
         }
     }
 
@@ -425,42 +467,40 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbBlake2sToField(BbBlake2sToField::new(data.to_vec()));
         match self.execute(cmd)? {
             Response::BbBlake2sToFieldResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbBlake2sToFieldResponse".to_string(),
+                "Expected BbBlake2sToFieldResponse".to_string()
             )),
         }
     }
 
     /// Execute BbAesEncrypt
-    pub fn aes_encrypt(
-        &mut self,
-        plaintext: &[u8],
-        iv: [u8; 16],
-        key: [u8; 16],
-        length: u32,
-    ) -> Result<BbAesEncryptResponse> {
+    pub fn aes_encrypt(&mut self, plaintext: &[u8], iv: [u8; 16], key: [u8; 16], length: u32) -> Result<BbAesEncryptResponse> {
         let cmd = Command::BbAesEncrypt(BbAesEncrypt::new(plaintext.to_vec(), iv, key, length));
         match self.execute(cmd)? {
             Response::BbAesEncryptResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
-            _ => Err(IpcError::InvalidResponse("Expected BbAesEncryptResponse".to_string())),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
+            _ => Err(IpcError::InvalidResponse(
+                "Expected BbAesEncryptResponse".to_string()
+            )),
         }
     }
 
     /// Execute BbAesDecrypt
-    pub fn aes_decrypt(
-        &mut self,
-        ciphertext: &[u8],
-        iv: [u8; 16],
-        key: [u8; 16],
-        length: u32,
-    ) -> Result<BbAesDecryptResponse> {
+    pub fn aes_decrypt(&mut self, ciphertext: &[u8], iv: [u8; 16], key: [u8; 16], length: u32) -> Result<BbAesDecryptResponse> {
         let cmd = Command::BbAesDecrypt(BbAesDecrypt::new(ciphertext.to_vec(), iv, key, length));
         match self.execute(cmd)? {
             Response::BbAesDecryptResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
-            _ => Err(IpcError::InvalidResponse("Expected BbAesDecryptResponse".to_string())),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
+            _ => Err(IpcError::InvalidResponse(
+                "Expected BbAesDecryptResponse".to_string()
+            )),
         }
     }
 
@@ -469,8 +509,12 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbGrumpkinMul(BbGrumpkinMul::new(point, scalar));
         match self.execute(cmd)? {
             Response::BbGrumpkinMulResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
-            _ => Err(IpcError::InvalidResponse("Expected BbGrumpkinMulResponse".to_string())),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
+            _ => Err(IpcError::InvalidResponse(
+                "Expected BbGrumpkinMulResponse".to_string()
+            )),
         }
     }
 
@@ -479,8 +523,12 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbGrumpkinAdd(BbGrumpkinAdd::new(point_a, point_b));
         match self.execute(cmd)? {
             Response::BbGrumpkinAddResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
-            _ => Err(IpcError::InvalidResponse("Expected BbGrumpkinAddResponse".to_string())),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
+            _ => Err(IpcError::InvalidResponse(
+                "Expected BbGrumpkinAddResponse".to_string()
+            )),
         }
     }
 
@@ -489,9 +537,11 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbGrumpkinBatchMul(BbGrumpkinBatchMul::new(points, scalar));
         match self.execute(cmd)? {
             Response::BbGrumpkinBatchMulResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbGrumpkinBatchMulResponse".to_string(),
+                "Expected BbGrumpkinBatchMulResponse".to_string()
             )),
         }
     }
@@ -501,9 +551,11 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbGrumpkinGetRandomFr(BbGrumpkinGetRandomFr::new(dummy));
         match self.execute(cmd)? {
             Response::BbGrumpkinGetRandomFrResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbGrumpkinGetRandomFrResponse".to_string(),
+                "Expected BbGrumpkinGetRandomFrResponse".to_string()
             )),
         }
     }
@@ -513,9 +565,11 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbGrumpkinReduce512(BbGrumpkinReduce512::new(input.to_vec()));
         match self.execute(cmd)? {
             Response::BbGrumpkinReduce512Response(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbGrumpkinReduce512Response".to_string(),
+                "Expected BbGrumpkinReduce512Response".to_string()
             )),
         }
     }
@@ -525,8 +579,12 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbSecp256k1Mul(BbSecp256k1Mul::new(point, scalar));
         match self.execute(cmd)? {
             Response::BbSecp256k1MulResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
-            _ => Err(IpcError::InvalidResponse("Expected BbSecp256k1MulResponse".to_string())),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
+            _ => Err(IpcError::InvalidResponse(
+                "Expected BbSecp256k1MulResponse".to_string()
+            )),
         }
     }
 
@@ -535,9 +593,11 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbSecp256k1GetRandomFr(BbSecp256k1GetRandomFr::new(dummy));
         match self.execute(cmd)? {
             Response::BbSecp256k1GetRandomFrResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbSecp256k1GetRandomFrResponse".to_string(),
+                "Expected BbSecp256k1GetRandomFrResponse".to_string()
             )),
         }
     }
@@ -547,9 +607,11 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbSecp256k1Reduce512(BbSecp256k1Reduce512::new(input.to_vec()));
         match self.execute(cmd)? {
             Response::BbSecp256k1Reduce512Response(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbSecp256k1Reduce512Response".to_string(),
+                "Expected BbSecp256k1Reduce512Response".to_string()
             )),
         }
     }
@@ -559,8 +621,12 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbBn254FrSqrt(BbBn254FrSqrt::new(input));
         match self.execute(cmd)? {
             Response::BbBn254FrSqrtResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
-            _ => Err(IpcError::InvalidResponse("Expected BbBn254FrSqrtResponse".to_string())),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
+            _ => Err(IpcError::InvalidResponse(
+                "Expected BbBn254FrSqrtResponse".to_string()
+            )),
         }
     }
 
@@ -569,8 +635,12 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbBn254FqSqrt(BbBn254FqSqrt::new(input));
         match self.execute(cmd)? {
             Response::BbBn254FqSqrtResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
-            _ => Err(IpcError::InvalidResponse("Expected BbBn254FqSqrtResponse".to_string())),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
+            _ => Err(IpcError::InvalidResponse(
+                "Expected BbBn254FqSqrtResponse".to_string()
+            )),
         }
     }
 
@@ -579,8 +649,12 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbBn254G1Mul(BbBn254G1Mul::new(point, scalar));
         match self.execute(cmd)? {
             Response::BbBn254G1MulResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
-            _ => Err(IpcError::InvalidResponse("Expected BbBn254G1MulResponse".to_string())),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
+            _ => Err(IpcError::InvalidResponse(
+                "Expected BbBn254G1MulResponse".to_string()
+            )),
         }
     }
 
@@ -589,8 +663,12 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbBn254G2Mul(BbBn254G2Mul::new(point, scalar));
         match self.execute(cmd)? {
             Response::BbBn254G2MulResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
-            _ => Err(IpcError::InvalidResponse("Expected BbBn254G2MulResponse".to_string())),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
+            _ => Err(IpcError::InvalidResponse(
+                "Expected BbBn254G2MulResponse".to_string()
+            )),
         }
     }
 
@@ -599,9 +677,11 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbBn254G1IsOnCurve(BbBn254G1IsOnCurve::new(point));
         match self.execute(cmd)? {
             Response::BbBn254G1IsOnCurveResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbBn254G1IsOnCurveResponse".to_string(),
+                "Expected BbBn254G1IsOnCurveResponse".to_string()
             )),
         }
     }
@@ -611,9 +691,11 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbBn254G1FromCompressed(BbBn254G1FromCompressed::new(compressed));
         match self.execute(cmd)? {
             Response::BbBn254G1FromCompressedResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbBn254G1FromCompressedResponse".to_string(),
+                "Expected BbBn254G1FromCompressedResponse".to_string()
             )),
         }
     }
@@ -623,279 +705,221 @@ impl<B: Backend> BbApi<B> {
         let cmd = Command::BbSchnorrComputePublicKey(BbSchnorrComputePublicKey::new(private_key));
         match self.execute(cmd)? {
             Response::BbSchnorrComputePublicKeyResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbSchnorrComputePublicKeyResponse".to_string(),
+                "Expected BbSchnorrComputePublicKeyResponse".to_string()
             )),
         }
     }
 
     /// Execute BbSchnorrConstructSignature
-    pub fn schnorr_construct_signature(
-        &mut self,
-        message_field: Fr,
-        private_key: Fq,
-    ) -> Result<BbSchnorrConstructSignatureResponse> {
+    pub fn schnorr_construct_signature(&mut self, message_field: Fr, private_key: Fq) -> Result<BbSchnorrConstructSignatureResponse> {
         let cmd = Command::BbSchnorrConstructSignature(BbSchnorrConstructSignature::new(message_field, private_key));
         match self.execute(cmd)? {
             Response::BbSchnorrConstructSignatureResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbSchnorrConstructSignatureResponse".to_string(),
+                "Expected BbSchnorrConstructSignatureResponse".to_string()
             )),
         }
     }
 
     /// Execute BbSchnorrVerifySignature
-    pub fn schnorr_verify_signature(
-        &mut self,
-        message_field: Fr,
-        public_key: GrumpkinPoint,
-        s: Fq,
-        e: Fq,
-    ) -> Result<BbSchnorrVerifySignatureResponse> {
+    pub fn schnorr_verify_signature(&mut self, message_field: Fr, public_key: GrumpkinPoint, s: Fq, e: Fq) -> Result<BbSchnorrVerifySignatureResponse> {
         let cmd = Command::BbSchnorrVerifySignature(BbSchnorrVerifySignature::new(message_field, public_key, s, e));
         match self.execute(cmd)? {
             Response::BbSchnorrVerifySignatureResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbSchnorrVerifySignatureResponse".to_string(),
+                "Expected BbSchnorrVerifySignatureResponse".to_string()
             )),
         }
     }
 
     /// Execute BbEcdsaSecp256k1ComputePublicKey
-    pub fn ecdsa_secp256k1_compute_public_key(
-        &mut self,
-        private_key: Secp256k1Fr,
-    ) -> Result<BbEcdsaSecp256k1ComputePublicKeyResponse> {
+    pub fn ecdsa_secp256k1_compute_public_key(&mut self, private_key: Secp256k1Fr) -> Result<BbEcdsaSecp256k1ComputePublicKeyResponse> {
         let cmd = Command::BbEcdsaSecp256k1ComputePublicKey(BbEcdsaSecp256k1ComputePublicKey::new(private_key));
         match self.execute(cmd)? {
             Response::BbEcdsaSecp256k1ComputePublicKeyResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbEcdsaSecp256k1ComputePublicKeyResponse".to_string(),
+                "Expected BbEcdsaSecp256k1ComputePublicKeyResponse".to_string()
             )),
         }
     }
 
     /// Execute BbEcdsaSecp256r1ComputePublicKey
-    pub fn ecdsa_secp256r1_compute_public_key(
-        &mut self,
-        private_key: Secp256r1Fr,
-    ) -> Result<BbEcdsaSecp256r1ComputePublicKeyResponse> {
+    pub fn ecdsa_secp256r1_compute_public_key(&mut self, private_key: Secp256r1Fr) -> Result<BbEcdsaSecp256r1ComputePublicKeyResponse> {
         let cmd = Command::BbEcdsaSecp256r1ComputePublicKey(BbEcdsaSecp256r1ComputePublicKey::new(private_key));
         match self.execute(cmd)? {
             Response::BbEcdsaSecp256r1ComputePublicKeyResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbEcdsaSecp256r1ComputePublicKeyResponse".to_string(),
+                "Expected BbEcdsaSecp256r1ComputePublicKeyResponse".to_string()
             )),
         }
     }
 
     /// Execute BbEcdsaSecp256k1ConstructSignature
-    pub fn ecdsa_secp256k1_construct_signature(
-        &mut self,
-        message: &[u8],
-        private_key: Secp256k1Fr,
-    ) -> Result<BbEcdsaSecp256k1ConstructSignatureResponse> {
-        let cmd = Command::BbEcdsaSecp256k1ConstructSignature(BbEcdsaSecp256k1ConstructSignature::new(
-            message.to_vec(),
-            private_key,
-        ));
+    pub fn ecdsa_secp256k1_construct_signature(&mut self, message: &[u8], private_key: Secp256k1Fr) -> Result<BbEcdsaSecp256k1ConstructSignatureResponse> {
+        let cmd = Command::BbEcdsaSecp256k1ConstructSignature(BbEcdsaSecp256k1ConstructSignature::new(message.to_vec(), private_key));
         match self.execute(cmd)? {
             Response::BbEcdsaSecp256k1ConstructSignatureResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbEcdsaSecp256k1ConstructSignatureResponse".to_string(),
+                "Expected BbEcdsaSecp256k1ConstructSignatureResponse".to_string()
             )),
         }
     }
 
     /// Execute BbEcdsaSecp256r1ConstructSignature
-    pub fn ecdsa_secp256r1_construct_signature(
-        &mut self,
-        message: &[u8],
-        private_key: Secp256r1Fr,
-    ) -> Result<BbEcdsaSecp256r1ConstructSignatureResponse> {
-        let cmd = Command::BbEcdsaSecp256r1ConstructSignature(BbEcdsaSecp256r1ConstructSignature::new(
-            message.to_vec(),
-            private_key,
-        ));
+    pub fn ecdsa_secp256r1_construct_signature(&mut self, message: &[u8], private_key: Secp256r1Fr) -> Result<BbEcdsaSecp256r1ConstructSignatureResponse> {
+        let cmd = Command::BbEcdsaSecp256r1ConstructSignature(BbEcdsaSecp256r1ConstructSignature::new(message.to_vec(), private_key));
         match self.execute(cmd)? {
             Response::BbEcdsaSecp256r1ConstructSignatureResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbEcdsaSecp256r1ConstructSignatureResponse".to_string(),
+                "Expected BbEcdsaSecp256r1ConstructSignatureResponse".to_string()
             )),
         }
     }
 
     /// Execute BbEcdsaSecp256k1RecoverPublicKey
-    pub fn ecdsa_secp256k1_recover_public_key(
-        &mut self,
-        message: &[u8],
-        r: [u8; 32],
-        s: [u8; 32],
-        v: u8,
-    ) -> Result<BbEcdsaSecp256k1RecoverPublicKeyResponse> {
-        let cmd =
-            Command::BbEcdsaSecp256k1RecoverPublicKey(BbEcdsaSecp256k1RecoverPublicKey::new(message.to_vec(), r, s, v));
+    pub fn ecdsa_secp256k1_recover_public_key(&mut self, message: &[u8], r: [u8; 32], s: [u8; 32], v: u8) -> Result<BbEcdsaSecp256k1RecoverPublicKeyResponse> {
+        let cmd = Command::BbEcdsaSecp256k1RecoverPublicKey(BbEcdsaSecp256k1RecoverPublicKey::new(message.to_vec(), r, s, v));
         match self.execute(cmd)? {
             Response::BbEcdsaSecp256k1RecoverPublicKeyResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbEcdsaSecp256k1RecoverPublicKeyResponse".to_string(),
+                "Expected BbEcdsaSecp256k1RecoverPublicKeyResponse".to_string()
             )),
         }
     }
 
     /// Execute BbEcdsaSecp256r1RecoverPublicKey
-    pub fn ecdsa_secp256r1_recover_public_key(
-        &mut self,
-        message: &[u8],
-        r: [u8; 32],
-        s: [u8; 32],
-        v: u8,
-    ) -> Result<BbEcdsaSecp256r1RecoverPublicKeyResponse> {
-        let cmd =
-            Command::BbEcdsaSecp256r1RecoverPublicKey(BbEcdsaSecp256r1RecoverPublicKey::new(message.to_vec(), r, s, v));
+    pub fn ecdsa_secp256r1_recover_public_key(&mut self, message: &[u8], r: [u8; 32], s: [u8; 32], v: u8) -> Result<BbEcdsaSecp256r1RecoverPublicKeyResponse> {
+        let cmd = Command::BbEcdsaSecp256r1RecoverPublicKey(BbEcdsaSecp256r1RecoverPublicKey::new(message.to_vec(), r, s, v));
         match self.execute(cmd)? {
             Response::BbEcdsaSecp256r1RecoverPublicKeyResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbEcdsaSecp256r1RecoverPublicKeyResponse".to_string(),
+                "Expected BbEcdsaSecp256r1RecoverPublicKeyResponse".to_string()
             )),
         }
     }
 
     /// Execute BbEcdsaSecp256k1VerifySignature
-    pub fn ecdsa_secp256k1_verify_signature(
-        &mut self,
-        message: &[u8],
-        public_key: Secp256k1Point,
-        r: [u8; 32],
-        s: [u8; 32],
-        v: u8,
-    ) -> Result<BbEcdsaSecp256k1VerifySignatureResponse> {
-        let cmd = Command::BbEcdsaSecp256k1VerifySignature(BbEcdsaSecp256k1VerifySignature::new(
-            message.to_vec(),
-            public_key,
-            r,
-            s,
-            v,
-        ));
+    pub fn ecdsa_secp256k1_verify_signature(&mut self, message: &[u8], public_key: Secp256k1Point, r: [u8; 32], s: [u8; 32], v: u8) -> Result<BbEcdsaSecp256k1VerifySignatureResponse> {
+        let cmd = Command::BbEcdsaSecp256k1VerifySignature(BbEcdsaSecp256k1VerifySignature::new(message.to_vec(), public_key, r, s, v));
         match self.execute(cmd)? {
             Response::BbEcdsaSecp256k1VerifySignatureResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbEcdsaSecp256k1VerifySignatureResponse".to_string(),
+                "Expected BbEcdsaSecp256k1VerifySignatureResponse".to_string()
             )),
         }
     }
 
     /// Execute BbEcdsaSecp256r1VerifySignature
-    pub fn ecdsa_secp256r1_verify_signature(
-        &mut self,
-        message: &[u8],
-        public_key: Secp256r1Point,
-        r: [u8; 32],
-        s: [u8; 32],
-        v: u8,
-    ) -> Result<BbEcdsaSecp256r1VerifySignatureResponse> {
-        let cmd = Command::BbEcdsaSecp256r1VerifySignature(BbEcdsaSecp256r1VerifySignature::new(
-            message.to_vec(),
-            public_key,
-            r,
-            s,
-            v,
-        ));
+    pub fn ecdsa_secp256r1_verify_signature(&mut self, message: &[u8], public_key: Secp256r1Point, r: [u8; 32], s: [u8; 32], v: u8) -> Result<BbEcdsaSecp256r1VerifySignatureResponse> {
+        let cmd = Command::BbEcdsaSecp256r1VerifySignature(BbEcdsaSecp256r1VerifySignature::new(message.to_vec(), public_key, r, s, v));
         match self.execute(cmd)? {
             Response::BbEcdsaSecp256r1VerifySignatureResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbEcdsaSecp256r1VerifySignatureResponse".to_string(),
+                "Expected BbEcdsaSecp256r1VerifySignatureResponse".to_string()
             )),
         }
     }
 
     /// Execute BbSrsInitSrs
-    pub fn srs_init_srs(
-        &mut self,
-        points_buf: &[u8],
-        num_points: u32,
-        g2_point: &[u8],
-    ) -> Result<BbSrsInitSrsResponse> {
+    pub fn srs_init_srs(&mut self, points_buf: &[u8], num_points: u32, g2_point: &[u8]) -> Result<BbSrsInitSrsResponse> {
         let cmd = Command::BbSrsInitSrs(BbSrsInitSrs::new(points_buf.to_vec(), num_points, g2_point.to_vec()));
         match self.execute(cmd)? {
             Response::BbSrsInitSrsResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
-            _ => Err(IpcError::InvalidResponse("Expected BbSrsInitSrsResponse".to_string())),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
+            _ => Err(IpcError::InvalidResponse(
+                "Expected BbSrsInitSrsResponse".to_string()
+            )),
         }
     }
 
     /// Execute BbChonkBatchVerifierStart
-    pub fn chonk_batch_verifier_start(
-        &mut self,
-        vks: Vec<Vec<u8>>,
-        num_cores: u32,
-        batch_size: u32,
-        fifo_path: String,
-    ) -> Result<BbChonkBatchVerifierStartResponse> {
-        let cmd =
-            Command::BbChonkBatchVerifierStart(BbChonkBatchVerifierStart::new(vks, num_cores, batch_size, fifo_path));
+    pub fn chonk_batch_verifier_start(&mut self, vks: Vec<Vec<u8>>, num_cores: u32, batch_size: u32, fifo_path: String) -> Result<BbChonkBatchVerifierStartResponse> {
+        let cmd = Command::BbChonkBatchVerifierStart(BbChonkBatchVerifierStart::new(vks, num_cores, batch_size, fifo_path));
         match self.execute(cmd)? {
             Response::BbChonkBatchVerifierStartResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbChonkBatchVerifierStartResponse".to_string(),
+                "Expected BbChonkBatchVerifierStartResponse".to_string()
             )),
         }
     }
 
     /// Execute BbChonkBatchVerifierQueue
-    pub fn chonk_batch_verifier_queue(
-        &mut self,
-        request_id: u64,
-        vk_index: u32,
-        proof_fields: Vec<Fr>,
-    ) -> Result<BbChonkBatchVerifierQueueResponse> {
-        let cmd =
-            Command::BbChonkBatchVerifierQueue(BbChonkBatchVerifierQueue::new(request_id, vk_index, proof_fields));
+    pub fn chonk_batch_verifier_queue(&mut self, request_id: u64, vk_index: u32, proof_fields: Vec<Fr>) -> Result<BbChonkBatchVerifierQueueResponse> {
+        let cmd = Command::BbChonkBatchVerifierQueue(BbChonkBatchVerifierQueue::new(request_id, vk_index, proof_fields));
         match self.execute(cmd)? {
             Response::BbChonkBatchVerifierQueueResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbChonkBatchVerifierQueueResponse".to_string(),
+                "Expected BbChonkBatchVerifierQueueResponse".to_string()
             )),
         }
     }
 
     /// Execute BbChonkBatchVerifierStop
-    pub fn chonk_batch_verifier_stop(&mut self) -> Result<BbChonkBatchVerifierStopResponse> {
+    pub fn chonk_batch_verifier_stop(&mut self, ) -> Result<BbChonkBatchVerifierStopResponse> {
         let cmd = Command::BbChonkBatchVerifierStop(BbChonkBatchVerifierStop::new());
         match self.execute(cmd)? {
             Response::BbChonkBatchVerifierStopResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbChonkBatchVerifierStopResponse".to_string(),
+                "Expected BbChonkBatchVerifierStopResponse".to_string()
             )),
         }
     }
 
     /// Execute BbSrsInitGrumpkinSrs
-    pub fn srs_init_grumpkin_srs(
-        &mut self,
-        points_buf: &[u8],
-        num_points: u32,
-    ) -> Result<BbSrsInitGrumpkinSrsResponse> {
+    pub fn srs_init_grumpkin_srs(&mut self, points_buf: &[u8], num_points: u32) -> Result<BbSrsInitGrumpkinSrsResponse> {
         let cmd = Command::BbSrsInitGrumpkinSrs(BbSrsInitGrumpkinSrs::new(points_buf.to_vec(), num_points));
         match self.execute(cmd)? {
             Response::BbSrsInitGrumpkinSrsResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(err.message)),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
             _ => Err(IpcError::InvalidResponse(
-                "Expected BbSrsInitGrumpkinSrsResponse".to_string(),
+                "Expected BbSrsInitGrumpkinSrsResponse".to_string()
             )),
         }
     }
