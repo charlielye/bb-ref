@@ -56,7 +56,6 @@ pub fn check_circuit(inst: &ProverInstance, params: &RelationParams<Fr>) -> Opti
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::base::rng::Rng;
     use crate::base::srs::CommitmentKey;
     use crate::base::transcript::NativeTranscript;
     use crate::honk::flavor::{Ent, ULTRA};
@@ -87,13 +86,19 @@ mod tests {
         // a copied wire, e.g. on the public-input rows, is caught by Permutation instead.)
         let gate_row = {
             let q = inst.poly(Ent::q_arith);
-            q.coeffs.iter().rposition(|c| !c.is_zero()).expect("an arithmetic gate exists")
+            q.coeffs
+                .iter()
+                .rposition(|c| !c.is_zero())
+                .expect("an arithmetic gate exists")
         };
         let w_o = inst.layout.idx(Ent::w_o);
         inst.polys[w_o].coeffs[gate_row] += Fr::one();
         let failure = check_circuit(&inst, &out.params).expect("corruption must be caught");
         assert_eq!(failure.2, Some(gate_row), "failure localized to the corrupted row");
-        assert!(format!("{:?}", failure.0).contains("Arithmetic"), "named relation: {failure:?}");
+        assert!(
+            format!("{:?}", failure.0).contains("Arithmetic"),
+            "named relation: {failure:?}"
+        );
     }
 }
 
@@ -102,7 +107,6 @@ mod gate_family_tests {
     use super::*;
     use crate::base::srs::CommitmentKey;
     use crate::base::transcript::NativeTranscript;
-    use crate::circuit::Builder;
     use crate::honk::flavor::{Ent, ULTRA};
     use crate::honk::oink_prover::prove_oink;
     use crate::honk::prover_instance::ProverInstance;

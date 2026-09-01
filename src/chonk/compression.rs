@@ -6,15 +6,14 @@
 //! the layout below IS the format, walked identically when compressing and decompressing, which is
 //! why the two directions cannot drift apart.
 
-use crate::base::field::{from_bytes_be, to_bytes_be};
+use crate::base::field::to_bytes_be;
 use crate::base::{Fq, Fr};
 use crate::chonk::proof::ChonkProof;
 use crate::goblin::eccvm::{CONST_ECCVM_LOG_N, NUM_ALL_ENTITIES as ECCVM_NUM_ALL, NUM_WITNESS as ECCVM_NUM_WITNESS};
-use crate::goblin::merge::MERGE_PROOF_SIZE;
 use crate::goblin::translator::{
     CONST_TRANSLATOR_LOG_N, FULL_CIRCUIT_ENTITIES, LOG_MINI_CIRCUIT_SIZE, NUM_MINICIRCUIT_EVALUATIONS,
 };
-use ark_ff::{AdditiveGroup, BigInteger, Field, PrimeField};
+use ark_ff::{AdditiveGroup, Field, PrimeField};
 
 /// bb `NUM_SMALL_IPA_TRANSCRIPT_EVALS`.
 const NUM_SMALL_IPA_TRANSCRIPT_EVALS: usize = 4;
@@ -152,8 +151,8 @@ fn walk_chonk(mega_num_public_inputs: usize) -> Vec<Elem> {
 fn field_elements(e: Elem) -> usize {
     match e {
         Bn254Scalar => 1,
-        Bn254Commitment => 4,   // Fq x and y, each as a (lo, hi) Fr pair
-        GrumpkinScalar => 2,    // an Fq carried as a (lo, hi) Fr pair
+        Bn254Commitment => 4,    // Fq x and y, each as a (lo, hi) Fr pair
+        GrumpkinScalar => 2,     // an Fq carried as a (lo, hi) Fr pair
         GrumpkinCommitment => 2, // x and y, each one Fr
     }
 }
@@ -332,6 +331,7 @@ pub fn mega_num_public_inputs_from_len(compressed_bytes: usize) -> Result<usize,
 mod tests {
     use super::*;
     use crate::chonk::proof::{ECCVM_PROOF_LENGTH, JOINT_PROOF_LENGTH, TRIPLE_IPA_PROOF_LENGTH};
+    use crate::goblin::merge::MERGE_PROOF_SIZE;
 
     fn frs(walk: impl Fn(&mut Vec<Elem>)) -> usize {
         let mut v = Vec::new();
@@ -343,15 +343,17 @@ mod tests {
     /// define the compression format, so a drift here silently corrupts every compressed proof.
     #[test]
     fn walk_lengths_match_proof_constants() {
-        assert_eq!(frs(|o| walk_mega_zk_oink(o, 0)), mega_zk_oink_length_without_pub_inputs(), "oink");
+        assert_eq!(
+            frs(|o| walk_mega_zk_oink(o, 0)),
+            mega_zk_oink_length_without_pub_inputs(),
+            "oink"
+        );
         assert_eq!(frs(walk_merge), MERGE_PROOF_SIZE, "merge");
         assert_eq!(frs(walk_eccvm), ECCVM_PROOF_LENGTH, "eccvm");
         assert_eq!(frs(walk_ipa), TRIPLE_IPA_PROOF_LENGTH, "ipa");
         assert_eq!(frs(walk_joint), JOINT_PROOF_LENGTH, "joint");
     }
 }
-
-
 
 #[cfg(test)]
 mod roundtrip_tests {
@@ -379,8 +381,7 @@ mod roundtrip_tests {
                     flat.extend([lo, hi]);
                 }
                 GrumpkinCommitment => {
-                    let p: GrumpkinAffine =
-                        (GrumpkinAffine::generator() * Fq::rand(&mut rng)).into();
+                    let p: GrumpkinAffine = (GrumpkinAffine::generator() * Fq::rand(&mut rng)).into();
                     flat.extend(Transcriptable::<Fr>::to_fields(&p));
                 }
             }

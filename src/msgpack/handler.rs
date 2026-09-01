@@ -8,17 +8,17 @@
 
 use super::generated::bb_server::{Handler, Responder};
 use super::generated::bb_types::*;
-use crate::acir::lower::build_circuit_opts;
-use crate::acir::format::{decode_program_raw, decode_witness_raw};
 use crate::acir::build_circuit_mega;
-use crate::chonk::ivc::CircuitKind;
+use crate::acir::format::{decode_program_raw, decode_witness_raw};
+use crate::acir::lower::build_circuit_opts;
 use crate::base::field::{to_bytes_be, Fr as FrField, U256};
 use crate::base::keccak::u256_to_bytes_be;
 use crate::base::poseidon2::{self, Hasher};
 use crate::base::rng::GlobalProxy;
 use crate::base::srs::{bn254_g2, Srs};
-use crate::base::{Bn254, CommitmentKey, GrumpkinKey, KeccakBn254, Vk as VkGeneric};
+use crate::base::{Bn254, KeccakBn254, Vk as VkGeneric};
 use crate::chonk::ivc::Chonk;
+use crate::chonk::ivc::CircuitKind;
 use crate::chonk::proof::ChonkProof as RefChonkProof;
 use crate::chonk::verifier::chonk_verify;
 use crate::goblin::eccvm::FIXED_SIZE as ECCVM_FIXED_SIZE;
@@ -156,7 +156,6 @@ fn run_catching<R>(respond: Responder<R>, body: impl FnOnce() -> Result<R, Strin
     }
 }
 
-
 /// The wire `ChonkProof` carries the same five sub-proofs as the internal one.
 fn wire_to_chonk_proof(p: &crate::msgpack::generated::bb_types::ChonkProof) -> crate::chonk::proof::ChonkProof {
     let f = |v: &Vec<Bin32>| v.iter().map(fr_from_wire).collect();
@@ -201,10 +200,7 @@ fn native_verify(
         } else if keccak {
             let vk = VkGeneric::<KeccakBn254>::from_bytes(vk_bytes, flavor.layout().num_precomputed);
             let pis: Vec<FrField> = public_inputs.iter().map(fr_from_wire).collect();
-            let pf: Vec<U256> = proof
-                .iter()
-                .map(u256_from_wire)
-                .collect();
+            let pf: Vec<U256> = proof.iter().map(u256_from_wire).collect();
             verify_ultra_keccak(flavor, &vk, &pis, &pf, &bn254_g2())
         } else {
             let vk = VkGeneric::<Bn254>::from_bytes(vk_bytes, flavor.layout().num_precomputed);
@@ -230,7 +226,6 @@ impl Drop for DrawReport {
 fn scopeguard_draws(before: u64, name: String) -> DrawReport {
     DrawReport(before, name)
 }
-
 
 fn circuit_prove_impl(cmd: BbCircuitProve, srs: &Srs) -> Result<BbCircuitProveResponse, String> {
     let draws_before = crate::base::rng::GLOBAL_DRAWS.load(std::sync::atomic::Ordering::Relaxed);
@@ -408,7 +403,14 @@ impl Handler for BbRefHandler {
             };
             modulus_check(&cmd.public_inputs, "public input")?;
             modulus_check(&cmd.proof, "proof element")?;
-            let verified = native_verify(flavor, ipa, &self.srs, &cmd.verification_key, &cmd.public_inputs, &cmd.proof);
+            let verified = native_verify(
+                flavor,
+                ipa,
+                &self.srs,
+                &cmd.verification_key,
+                &cmd.public_inputs,
+                &cmd.proof,
+            );
             Ok(BbCircuitVerifyResponse { verified })
         });
     }
@@ -542,7 +544,12 @@ impl Handler for BbRefHandler {
             let proof = ivc.prove(&mut rng);
             let hiding_vk = ivc.hiding_vk().clone();
             // bb sanity-checks the freshly produced proof in-process.
-            if !chonk_verify(&hiding_vk, &proof, &bn254_g2(), &self.srs.grumpkin_key(ECCVM_FIXED_SIZE)) {
+            if !chonk_verify(
+                &hiding_vk,
+                &proof,
+                &bn254_g2(),
+                &self.srs.grumpkin_key(ECCVM_FIXED_SIZE),
+            ) {
                 return Err("Failed to verify the generated proof!".into());
             }
             *ivc_slot = None;
@@ -684,4 +691,3 @@ impl Handler for BbRefHandler {
         chonk_batch_verifier_stop: BbChonkBatchVerifierStop => BbChonkBatchVerifierStopResponse,
     }
 }
-

@@ -2,7 +2,7 @@
 //! its CSPRNG or by seeding both sides' `mt19937_64` (bb's debug engine, `BB_RNG_SEED`).
 
 use super::field::{Fq, Fr, U256};
-use ark_ff::{AdditiveGroup, BigInteger, PrimeField, UniformRand};
+use ark_ff::{BigInteger, PrimeField, UniformRand};
 
 pub trait Rng {
     /// A uniformly random 256-bit integer (bb `RNG::get_random_uint256`).
@@ -72,7 +72,9 @@ impl Mt19937_64 {
         let mut mt = [0u64; 312];
         mt[0] = seed;
         for i in 1..312 {
-            mt[i] = 6364136223846793005u64.wrapping_mul(mt[i - 1] ^ (mt[i - 1] >> 62)).wrapping_add(i as u64);
+            mt[i] = 6364136223846793005u64
+                .wrapping_mul(mt[i - 1] ^ (mt[i - 1] >> 62))
+                .wrapping_add(i as u64);
         }
         Self { mt, index: 312 }
     }
@@ -192,7 +194,11 @@ where
 {
     use ark_ff::{Field, Zero};
     let modulus: num_bigint::BigUint = P::BaseField::MODULUS.into();
-    assert_eq!(&modulus % 4u64, num_bigint::BigUint::from(3u64), "sqrt convention needs q ≡ 3 mod 4");
+    assert_eq!(
+        &modulus % 4u64,
+        num_bigint::BigUint::from(3u64),
+        "sqrt convention needs q ≡ 3 mod 4"
+    );
     let exponent: num_bigint::BigUint = (&modulus + 1u64) >> 2;
     let limbs = exponent.to_u64_digits();
     loop {

@@ -13,8 +13,7 @@ use crate::base::group::Curve;
 use crate::base::poly::Polynomial;
 use crate::base::rng::{random_field, Rng};
 use crate::base::srs::Ck;
-use crate::base::transcript::{NativeTranscript, Transcript};
-use crate::base::Fr;
+use crate::base::transcript::Transcript;
 use crate::honk::flavor::{Ent, Rel, BUS_SPECS};
 use ark_ec::AffineRepr;
 use ark_ff::PrimeField;
@@ -546,7 +545,11 @@ impl<F: FieldLike + Copy> Accumulators<F> {
             offsets.push(total);
             total += n * d;
         }
-        Self { data: vec![F::zero(); total], offsets, ns }
+        Self {
+            data: vec![F::zero(); total],
+            offsets,
+            ns,
+        }
     }
     fn point(&mut self, ri: usize, k: usize) -> &mut [F] {
         let start = self.offsets[ri] + k * self.ns[ri];
@@ -951,7 +954,11 @@ where
             let end = p.coeffs.iter().rposition(|c| !c.is_zero()).map_or(0, |i| i + 1);
             Column::Borrowed(&p.coeffs[..end])
         };
-        let table = polys.iter().map(trim).chain(shifted_sources.iter().map(|s| Column::ShiftOf(*s))).collect();
+        let table = polys
+            .iter()
+            .map(trim)
+            .chain(shifted_sources.iter().map(|s| Column::ShiftOf(*s)))
+            .collect();
         Self {
             table,
             log_n: n.trailing_zeros() as usize,
@@ -1034,8 +1041,15 @@ where
             let mut univariate =
                 batch_over_relations(rels, &self.ext, &acc, alphas, &betas[round], partial_eval, None, d);
             if self.row_disabling {
-                let head =
-                    accumulate_edges(rels, &self.used, &self.table, 0..self.excluded_head / 2, params, &pows, d);
+                let head = accumulate_edges(
+                    rels,
+                    &self.used,
+                    &self.table,
+                    0..self.excluded_head / 2,
+                    params,
+                    &pows,
+                    d,
+                );
                 let head_uni = batch_over_relations(
                     rels,
                     &self.ext,
@@ -1138,7 +1152,13 @@ where
         }
     }
     /// Commit to the round univariate and send its values at 0 and 1.
-    pub fn process(&mut self, round: usize, univariate: &[C::Fr], ck: &Ck<C::G>, t: &mut crate::base::transcript::Transcript<C::TF, C::Hash>) {
+    pub fn process(
+        &mut self,
+        round: usize,
+        univariate: &[C::Fr],
+        ck: &Ck<C::G>,
+        t: &mut crate::base::transcript::Transcript<C::TF, C::Hash>,
+    ) {
         let domain: Vec<C::Fr> = (0..univariate.len()).map(|k| C::Fr::from_u64(k as u64)).collect();
         let monomial = Polynomial::interpolate(&domain, univariate);
         let commitment = ck.commit(&monomial);
@@ -1311,8 +1331,7 @@ mod tests {
 
     fn run(w0: Vec<u64>, w1: Vec<u64>) -> (SumcheckOutput<Bn254>, Vec<Fr>, Vec<Fr>) {
         let log_n = w0.len().trailing_zeros() as usize;
-        let polys =
-            [w0, w1].map(|w| Polynomial::from_coeffs(w.into_iter().map(Fr::from).collect()));
+        let polys = [w0, w1].map(|w| Polynomial::from_coeffs(w.into_iter().map(Fr::from).collect()));
         let params = RelationParams::default();
         let alpha = Fr::from(0u64); // one subrelation: no batching challenge is consumed
         let betas: Vec<Fr> = (0..log_n).map(|i| Fr::from(3 + i as u64)).collect();

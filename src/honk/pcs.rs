@@ -199,7 +199,6 @@ pub fn eccvm_challenge_coeffs<C: Curve>(x: &C::Fr, v: &C::Fr, num_polys: usize, 
     coeffs
 }
 
-
 /// Commitments to be opened at the sumcheck challenge with their claimed evaluations.
 pub struct ClaimBatcher<C: Curve> {
     pub unshifted_comms: Vec<C::G>,
@@ -434,10 +433,7 @@ pub fn shplemini_verify<C: Curve>(
         // bb `batch_sumcheck_round_claims`: the constant denominators come first, then every
         // `(z - u_i)` (pushing the round commitments), then all the inversions, then the per-round
         // scalars with a local constant-term contribution added once per round.
-        let const_denominators = [
-            F::<C>::one().div(&z),
-            F::<C>::one().div(&(z.clone() - &F::<C>::one())),
-        ];
+        let const_denominators = [F::<C>::one().div(&z), F::<C>::one().div(&(z.clone() - &F::<C>::one()))];
         let mut denominators = Vec::with_capacity(virtual_log_n);
         for (challenge, comm) in multivariate_challenge.iter().zip(sumcheck_round_commitments) {
             denominators.push(z.clone() - challenge);
@@ -584,7 +580,6 @@ pub fn kzg_reduce_verify_batch_opening_claim<C: Curve>(
 
 use crate::base::poly::Poly;
 use crate::base::rng::Rng;
-use crate::base::transcript::NativeTranscript;
 use crate::base::{Bn254, CommitmentKey, Fr};
 use crate::honk::sumcheck::{interpolate_on_subgroup, subgroup_domain, ZkData};
 
@@ -760,9 +755,7 @@ where
     }
 
     // --- Libra opening claims (ZK) ---
-    let libra_claims = libra.map_or(Vec::new(), |polys| {
-        small_ipa_prover_claims::<C>(polys, &r, "Libra:", t)
-    });
+    let libra_claims = libra.map_or(Vec::new(), |polys| small_ipa_prover_claims::<C>(polys, &r, "Libra:", t));
 
     // --- Shplonk ---
     shplonk_prove::<C>(virtual_log_n, &claims, &libra_claims, sumcheck_round_claims, ck, t).claim
@@ -870,8 +863,17 @@ where
 
     // G = Q - sum_i nu^i / (z - x_i) (p_i(X) - v_i)
     let mut g = q;
-    let scalars: Vec<F<C>> = openings.iter().map(|(_, x, _, scale)| *scale * (z - x).invert()).collect();
-    g.add_scaled_batch(&openings.iter().zip(&scalars).map(|((poly, ..), s)| (*poly, -*s)).collect::<Vec<_>>());
+    let scalars: Vec<F<C>> = openings
+        .iter()
+        .map(|(_, x, _, scale)| *scale * (z - x).invert())
+        .collect();
+    g.add_scaled_batch(
+        &openings
+            .iter()
+            .zip(&scalars)
+            .map(|((poly, ..), s)| (*poly, -*s))
+            .collect::<Vec<_>>(),
+    );
     for ((_, _, v, _), s) in openings.iter().zip(&scalars) {
         g.coeffs[0] += *s * v;
     }
@@ -1018,6 +1020,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::base::transcript::NativeTranscript;
     use crate::base::G1Affine;
     use ark_ff::UniformRand;
 
@@ -1041,8 +1044,18 @@ mod tests {
         let (ca, cb) = (ck.commit(&pa), ck.commit(&pb));
 
         let claims = [
-            ProverClaim { poly: pa.clone(), challenge: xa, evaluation: pa.evaluate(&xa), gemini_fold: false },
-            ProverClaim { poly: pb.clone(), challenge: xb, evaluation: pb.evaluate(&xb), gemini_fold: false },
+            ProverClaim {
+                poly: pa.clone(),
+                challenge: xa,
+                evaluation: pa.evaluate(&xa),
+                gemini_fold: false,
+            },
+            ProverClaim {
+                poly: pb.clone(),
+                challenge: xb,
+                evaluation: pb.evaluate(&xb),
+                gemini_fold: false,
+            },
         ];
         let mut pt = NativeTranscript::new();
         pt.add_to_hash_buffer("init", &Fr::from(1u8));
@@ -1055,8 +1068,16 @@ mod tests {
             vt.add_to_hash_buffer("init", &Fr::from(1u8));
             vt.load_proof(&proof);
             let vclaims = [
-                VerifierOpeningClaim::<Bn254> { commitment: ca, challenge: xa, evaluation: eval_a },
-                VerifierOpeningClaim::<Bn254> { commitment: cb, challenge: xb, evaluation: pb.evaluate(&xb) },
+                VerifierOpeningClaim::<Bn254> {
+                    commitment: ca,
+                    challenge: xa,
+                    evaluation: eval_a,
+                },
+                VerifierOpeningClaim::<Bn254> {
+                    commitment: cb,
+                    challenge: xb,
+                    evaluation: pb.evaluate(&xb),
+                },
             ];
             let batch = shplonk_verify::<Bn254>(&vclaims, G1Affine::generator(), &mut vt);
             let n = batch.commitments.len();
@@ -1064,6 +1085,9 @@ mod tests {
         };
 
         assert!(verify(pa.evaluate(&xa)), "honest evaluations must verify");
-        assert!(!verify(pa.evaluate(&xa) + Fr::from(1u8)), "a wrong claimed evaluation must fail the pairing");
+        assert!(
+            !verify(pa.evaluate(&xa) + Fr::from(1u8)),
+            "a wrong claimed evaluation must fail the pairing"
+        );
     }
 }

@@ -8,9 +8,12 @@
 //!   bb-ref prove    --scheme chonk --ivc_inputs_path <ivc-inputs.msgpack> -o <out_dir> [--vk_policy check]
 //!   bb-ref verify   --scheme chonk -k <vk> -p <proof>
 
-use bb_ref::acir::{build_circuit, build_circuit_mega, decode_program, decode_steps, decode_witness, prove_steps};
+use bb_ref::acir::{build_circuit_mega, decode_program, decode_steps, decode_witness, prove_steps};
+use bb_ref::base::field::U256;
 use bb_ref::base::field::{to_bytes_be, Fr};
+use bb_ref::base::group::KeccakBn254;
 use bb_ref::base::io::{decode_fields, encode_fields};
+use bb_ref::base::keccak::u256_to_bytes_be;
 use bb_ref::base::srs::bn254_g2;
 use bb_ref::base::{Bn254, CommitmentKey, GrumpkinKey, OsRng, Vk};
 use bb_ref::chonk::proof::ChonkProof;
@@ -18,19 +21,12 @@ use bb_ref::chonk::verifier::chonk_verify;
 use bb_ref::goblin::eccvm::FIXED_SIZE as ECCVM_FIXED_SIZE;
 use bb_ref::honk::prover_instance::ProverInstance;
 use bb_ref::honk::ultra_prover::prove_ultra;
-use bb_ref::honk::ultra_verifier::verify_ultra;
-use bb_ref::honk::{FlavorDesc, MEGA_APP, MEGA_KERNEL, MEGA_ZK, ULTRA, ULTRA_KECCAK, ULTRA_KECCAK_ZK, ULTRA_ZK};
-use bb_ref::base::field::U256;
-use bb_ref::base::group::KeccakBn254;
-use bb_ref::base::keccak::u256_to_bytes_be;
 use bb_ref::honk::ultra_prover::prove_ultra_as;
+use bb_ref::honk::ultra_verifier::verify_ultra;
+use bb_ref::honk::{FlavorDesc, MEGA_APP, MEGA_KERNEL, MEGA_ZK};
 use bb_ref::rollup::ROLLUP_PUBLIC_INPUTS_SIZE;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-
-fn instance_from_acir(flavor: &'static FlavorDesc, program: &str, witness: Option<&str>) -> ProverInstance {
-    instance_from_acir_opts(flavor, program, witness, false)
-}
 
 fn instance_from_acir_opts(
     flavor: &'static FlavorDesc,
@@ -78,7 +74,12 @@ fn chonk(cmd: &str, flags: &HashMap<String, String>) {
             let steps = decode_steps(&std::fs::read(get("--ivc_inputs_path")).expect("ivc inputs"));
             let check_vks = flags.get("--vk_policy").is_some_and(|v| v == "check");
             // The largest circuit of the flow, or the joint proof's 2^17, sizes the commitment key.
-            let max_size = steps.iter().map(|s| 1usize << s.vk.log_n()).max().unwrap_or(0).max(1 << 17);
+            let max_size = steps
+                .iter()
+                .map(|s| 1usize << s.vk.log_n())
+                .max()
+                .unwrap_or(0)
+                .max(1 << 17);
             let (proof, vk) = prove_steps(&steps, CommitmentKey::new(max_size), rng.as_mut(), check_vks);
             let out = out_dir(flags);
             std::fs::write(out.join("proof"), encode_fields(&proof.to_fields())).unwrap();

@@ -100,8 +100,10 @@ pub fn compute_opening_proof(ck: &GrumpkinKey, poly: &[Fq], challenge: &Fq, t: &
         // The G fold is ~2^16 full scalar muls across the rounds — the dominant cost of this
         // prover — and every element is independent.
         use rayon::prelude::*;
-        let folded_g: Vec<ark_grumpkin::Projective> =
-            (0..half).into_par_iter().map(|i| g_vec[i] * u + g_vec[half + i]).collect();
+        let folded_g: Vec<ark_grumpkin::Projective> = (0..half)
+            .into_par_iter()
+            .map(|i| g_vec[i] * u + g_vec[half + i])
+            .collect();
         let normalized = ark_grumpkin::Projective::normalize_batch(&folded_g);
         g_vec[..half].copy_from_slice(&normalized);
         round_size = half;

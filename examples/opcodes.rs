@@ -1,24 +1,37 @@
 //! Census of the black-box opcodes each step of the pinned flows uses.
-use bb_ref::acir::steps::decode_steps;
 use bb_ref::acir::format::Opcode;
-use bb_ref::base::OsRng;
+use bb_ref::acir::steps::decode_steps;
 use std::collections::BTreeMap;
 fn main() {
     let root = std::env::args().nth(1).expect("flows dir");
     let mut totals: BTreeMap<String, usize> = BTreeMap::new();
     if std::env::args().nth(2).as_deref() == Some("acir_tests") {
         // One line per program that uses a non-protocol black box.
-        let mut progs = std::fs::read_dir(&root).unwrap().map(|e| e.unwrap().path()).collect::<Vec<_>>();
+        let mut progs = std::fs::read_dir(&root)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect::<Vec<_>>();
         progs.sort();
         for prog in progs {
-            let Ok(bytes) = std::fs::read(prog.join("target/program.json")) else { continue };
+            let Ok(bytes) = std::fs::read(prog.join("target/program.json")) else {
+                continue;
+            };
             let circuit = bb_ref::acir::format::decode_program(&bytes);
             let mut counts: BTreeMap<String, usize> = BTreeMap::new();
             for op in &circuit.opcodes {
                 if let Opcode::BlackBoxFuncCall(b) = op {
                     let name = format!("{b:?}");
                     let name = name.split(|c: char| !c.is_alphanumeric()).next().unwrap().to_string();
-                    if matches!(name.as_str(), "RANGE" | "Poseidon2Permutation" | "RecursiveAggregation" | "MultiScalarMul" | "EmbeddedCurveAdd") { continue; }
+                    if matches!(
+                        name.as_str(),
+                        "RANGE"
+                            | "Poseidon2Permutation"
+                            | "RecursiveAggregation"
+                            | "MultiScalarMul"
+                            | "EmbeddedCurveAdd"
+                    ) {
+                        continue;
+                    }
                     *counts.entry(name).or_default() += 1;
                 }
             }
@@ -28,10 +41,15 @@ fn main() {
         }
         return;
     }
-    let mut flows = std::fs::read_dir(&root).unwrap().map(|e| e.unwrap().path()).collect::<Vec<_>>();
+    let mut flows = std::fs::read_dir(&root)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect::<Vec<_>>();
     flows.sort();
     for flow in flows {
-        let Ok(bytes) = std::fs::read(flow.join("ivc-inputs.msgpack")) else { continue };
+        let Ok(bytes) = std::fs::read(flow.join("ivc-inputs.msgpack")) else {
+            continue;
+        };
         let steps = decode_steps(&bytes);
         println!("== {}", flow.file_name().unwrap().to_string_lossy());
         for s in &steps {
@@ -40,7 +58,16 @@ fn main() {
                 if let Opcode::BlackBoxFuncCall(b) = op {
                     let name = format!("{b:?}");
                     let name = name.split(|c: char| !c.is_alphanumeric()).next().unwrap().to_string();
-                    if matches!(name.as_str(), "RANGE" | "Poseidon2Permutation" | "RecursiveAggregation" | "MultiScalarMul" | "EmbeddedCurveAdd") { continue; }
+                    if matches!(
+                        name.as_str(),
+                        "RANGE"
+                            | "Poseidon2Permutation"
+                            | "RecursiveAggregation"
+                            | "MultiScalarMul"
+                            | "EmbeddedCurveAdd"
+                    ) {
+                        continue;
+                    }
                     *counts.entry(name.clone()).or_default() += 1;
                     *totals.entry(name).or_default() += 1;
                 }

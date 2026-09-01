@@ -215,12 +215,11 @@ pub fn full_verify_ct(ctx: &Ctx, claim: &IpaClaimCt, t: &mut StdlibTranscript) {
     let one = FqCt::one();
     let mut s_vec_temporaries: Vec<FqCt> = vec![one.clone(); POLY_LENGTH / 2];
     let mut s_vec: Vec<FqCt> = vec![one.clone(); POLY_LENGTH];
-    let (mut previous_round_s, mut current_round_s): (&mut [FqCt], &mut [FqCt]) =
-        if LOG_POLY_LENGTH % 2 == 0 {
-            (&mut s_vec, &mut s_vec_temporaries)
-        } else {
-            (&mut s_vec_temporaries, &mut s_vec)
-        };
+    let (mut previous_round_s, mut current_round_s): (&mut [FqCt], &mut [FqCt]) = if LOG_POLY_LENGTH % 2 == 0 {
+        (&mut s_vec, &mut s_vec_temporaries)
+    } else {
+        (&mut s_vec_temporaries, &mut s_vec)
+    };
     previous_round_s[0] = one;
     for (i, round_challenge) in round_challenges_inv.iter().enumerate().take(LOG_POLY_LENGTH) {
         let round_size = 1usize << (i + 1);
@@ -230,9 +229,6 @@ pub fn full_verify_ct(ctx: &Ctx, claim: &IpaClaimCt, t: &mut StdlibTranscript) {
         }
         std::mem::swap(&mut previous_round_s, &mut current_round_s);
     }
-    drop(previous_round_s);
-    drop(current_round_s);
-
     let srs = GrumpkinKey::new(POLY_LENGTH);
     let first_term = CycleGroup::batch_mul(
         &[CycleGroup::constant(srs.points[0])],

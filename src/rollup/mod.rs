@@ -5,7 +5,6 @@
 pub mod ipa;
 pub mod ipa_recursive;
 
-use ark_ec::CurveGroup;
 use crate::base::codec::Transcriptable;
 use crate::base::group::PairingPoints;
 use crate::base::transcript::Transcript;
@@ -75,8 +74,12 @@ pub fn aggregate_multiple(
     let challenges: Vec<FieldT> = t.short_challenges(&label_refs);
     let remaining_p0: Vec<G> = points[1..].iter().map(|p| p.p0.clone()).collect();
     let remaining_p1: Vec<G> = points[1..].iter().map(|p| p.p1.clone()).collect();
-    let p0 = points[0].p0.add(&G::batch_mul(&remaining_p0, &challenges, 128, handle_edge_cases));
-    let p1 = points[0].p1.add(&G::batch_mul(&remaining_p1, &challenges, 128, handle_edge_cases));
+    let p0 = points[0]
+        .p0
+        .add(&G::batch_mul(&remaining_p0, &challenges, 128, handle_edge_cases));
+    let p1 = points[0]
+        .p1
+        .add(&G::batch_mul(&remaining_p1, &challenges, 128, handle_edge_cases));
     PairingPoints { p0, p1 }
 }
 
@@ -148,7 +151,10 @@ pub struct RollupRecursiveOutput {
 
 /// bb stdlib `RollupIO::reconstruct_from_public`.
 pub fn reconstruct_rollup_io(public_inputs: &[FieldT]) -> (PairingPoints<StdUltraBn254>, ipa_recursive::IpaClaimCt) {
-    assert!(public_inputs.len() >= ROLLUP_PUBLIC_INPUTS_SIZE, "public inputs too small for RollupIO");
+    assert!(
+        public_inputs.len() >= ROLLUP_PUBLIC_INPUTS_SIZE,
+        "public inputs too small for RollupIO"
+    );
     let f = &public_inputs[public_inputs.len() - ROLLUP_PUBLIC_INPUTS_SIZE..];
     let pairing = PairingPoints {
         p0: G::from_fields(&f[0..4]),
@@ -208,7 +214,6 @@ pub fn verify_ultra_rollup(
     grumpkin_key: &crate::base::GrumpkinKey,
 ) -> bool {
     use crate::base::group::Bn254;
-    use ark_ec::AffineRepr;
     assert!(proof.len() > ipa::IPA_PROOF_LENGTH);
     let (honk_proof, ipa_fields) = proof.split_at(proof.len() - ipa::IPA_PROOF_LENGTH);
     let full: Vec<_> = [public_inputs, honk_proof].concat();

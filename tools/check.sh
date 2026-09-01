@@ -8,4 +8,7 @@ cd "$(dirname "$0")/.."
 tmp=$(mktemp -d)
 trap 'mv "$tmp/data" tests/data 2>/dev/null || true; rm -rf "$tmp"' EXIT
 [ -d tests/data ] && mv tests/data "$tmp/data"
+# Warning-free is part of the gate: incremental builds hide warnings that every fresh build
+# (coverage, CI, a contributor) re-emits. Own target dir so the flag doesn't churn the main cache.
+RUSTFLAGS=-Dwarnings CARGO_TARGET_DIR=target/warnfree cargo check --all-targets --quiet
 cargo test --lib

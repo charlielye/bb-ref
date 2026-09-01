@@ -86,7 +86,8 @@ impl CycleScalar {
         let default_max = crate::stdlib::bigfield::BigField::<crate::base::Fq>::default_maximum_limb();
         if limb0_max > default_max {
             let limb0_max_bits = limb0_max.bits() as usize;
-            let (limb0_lo, limb0_hi) = crate::stdlib::field::no_wrap_split_at(&limb0, LIMB_BITS as usize, limb0_max_bits);
+            let (limb0_lo, limb0_hi) =
+                crate::stdlib::field::no_wrap_split_at(&limb0, LIMB_BITS as usize, limb0_max_bits);
             limb0 = limb0_lo;
             limb1 = limb1.add(&limb0_hi);
             limb1_max += &limb0_max >> LIMB_BITS;
@@ -191,7 +192,11 @@ impl CycleGroup {
     /// bb `from_constant_witness`: fixed witnesses holding a constant point.
     /// bb `cycle_group::from_witness`: plain coordinate witnesses ((0,0) for infinity), on-curve checked.
     pub fn from_witness(ctx: &Ctx, p: GrumpkinAffine) -> Self {
-                let (xv, yv) = if AffineRepr::is_zero(&p) { (Fr::from(0u64), Fr::from(0u64)) } else { (p.x, p.y) };
+        let (xv, yv) = if AffineRepr::is_zero(&p) {
+            (Fr::from(0u64), Fr::from(0u64))
+        } else {
+            (p.x, p.y)
+        };
         let x = FieldT::from_witness(ctx, xv);
         let y = FieldT::from_witness(ctx, yv);
         Self::from_xy(x, y, true)
@@ -612,7 +617,6 @@ impl CycleGroup {
     }
 }
 
-
 /// bb `straus_plookup_table`: a per-point plookup table `{ [G] + i.[P] }` for a CONSTANT base
 /// point; zero construction gates, one lookup gate per read.
 pub struct StrausPlookupTable {
@@ -639,13 +643,15 @@ impl StrausPlookupTable {
             columns[1].push(p.x);
             columns[2].push(p.y);
         }
-        let table = ctx.borrow_mut().register_basic_lookup_table(crate::circuit::plookup::BasicTable {
-            id: crate::circuit::plookup::BasicTableId::StrausEcPoint,
-            table_index: 0,
-            use_twin_keys: false,
-            columns,
-            lookup_gates: vec![],
-        });
+        let table = ctx
+            .borrow_mut()
+            .register_basic_lookup_table(crate::circuit::plookup::BasicTable {
+                id: crate::circuit::plookup::BasicTableId::StrausEcPoint,
+                table_index: 0,
+                use_twin_keys: false,
+                columns,
+                lookup_gates: vec![],
+            });
         Self {
             ctx: ctx.clone(),
             table,
@@ -683,7 +689,11 @@ impl StrausPlookupTable {
 impl CycleGroup {
     /// bb `cycle_group::fixed_batch_mul`: MSM over CONSTANT points via per-point plookup tables.
     pub fn fixed_batch_mul(constant_points: &[Self], scalars: &[CycleScalar], table_bits: usize) -> Self {
-        assert_eq!(constant_points.len(), scalars.len(), "points/scalars size mismatch in fixed_batch_mul");
+        assert_eq!(
+            constant_points.len(),
+            scalars.len(),
+            "points/scalars size mismatch in fixed_batch_mul"
+        );
         if scalars.is_empty() {
             return Self::constant(GrumpkinAffine::zero());
         }
@@ -738,7 +748,6 @@ impl CycleGroup {
         assert!(!scalars.is_empty());
         assert_eq!(scalars.len(), base_points.len());
         assert_eq!(offset_generators.len(), base_points.len() + 1);
-        let num_points = scalars.len();
         let ctx = scalars.iter().find_map(|s| s.ctx()).unwrap();
         assert_eq!(LO_BITS % table_bits, 0, "table_bits must divide LO_BITS");
         let num_rounds = NUM_BITS.div_ceil(table_bits);

@@ -20,7 +20,10 @@ pub enum BasicTableId {
     Sha256Base28Rotate3,
     Sha256Base16,
     Sha256Base16Rotate2,
-    Secp256r1FixedBase { axis: u8, window: u8 },
+    Secp256r1FixedBase {
+        axis: u8,
+        window: u8,
+    },
     /// bb `STRAUS_EC_POINT`: a dynamic per-point table for `cycle_group::fixed_batch_mul`.
     StrausEcPoint,
     KeccakRho(u8),
@@ -54,12 +57,23 @@ pub enum MultiTableId {
 #[derive(Clone, Copy, Debug)]
 pub enum TableValues {
     /// `(sparse(key), sparse(rotate32(key, rotation)))` in the given base.
-    SparseRotation { base: u64, rotation: u32 },
+    SparseRotation {
+        base: u64,
+        rotation: u32,
+    },
     /// The base-digits of `key` mapped through `table`, packed as bits.
-    SparseNormalization { base: u64, table: &'static [u64] },
+    SparseNormalization {
+        base: u64,
+        table: &'static [u64],
+    },
     /// The two limbs of one axis of a secp256r1 fixed-base table entry.
-    FixedBase { axis: u8, window: u8 },
-    KeccakRho { bits: u8 },
+    FixedBase {
+        axis: u8,
+        window: u8,
+    },
+    KeccakRho {
+        bits: u8,
+    },
     KeccakTheta,
     KeccakChi,
     KeccakInput,
@@ -97,9 +111,10 @@ impl TableValues {
             TableValues::KeccakInput => super::keccak_tables::input_values(key[0]),
             TableValues::UintXor => super::uint_tables::values(key, true),
             TableValues::UintAnd => super::uint_tables::values(key, false),
-            TableValues::FixedBase { axis, window } => {
-                super::secp256r1_fixed_base::extract_axis(&super::secp256r1_fixed_base::entry(window as usize, key[0] as usize), axis)
-            }
+            TableValues::FixedBase { axis, window } => super::secp256r1_fixed_base::extract_axis(
+                &super::secp256r1_fixed_base::entry(window as usize, key[0] as usize),
+                axis,
+            ),
         }
     }
 }
@@ -156,12 +171,26 @@ impl MultiTable {
         let steps = |c: &Vec<Fr>| {
             let mut s = vec![Fr::one()];
             for i in 1..c.len() {
-                s.push(if c[i - 1].is_zero() { Fr::zero() } else { c[i] * c[i - 1].invert() });
+                s.push(if c[i - 1].is_zero() {
+                    Fr::zero()
+                } else {
+                    c[i] * c[i - 1].invert()
+                });
             }
             s
         };
-        let column_step_sizes = [steps(&column_coefficients[0]), steps(&column_coefficients[1]), steps(&column_coefficients[2])];
-        Self { basic_table_ids, slice_sizes, column_coefficients, column_step_sizes, get_table_values }
+        let column_step_sizes = [
+            steps(&column_coefficients[0]),
+            steps(&column_coefficients[1]),
+            steps(&column_coefficients[2]),
+        ];
+        Self {
+            basic_table_ids,
+            slice_sizes,
+            column_coefficients,
+            column_step_sizes,
+            get_table_values,
+        }
     }
     /// bb's tables that set the step sizes directly (the ρ tables).
     pub(crate) fn from_steps(
@@ -170,10 +199,22 @@ impl MultiTable {
         basic_table_ids: Vec<BasicTableId>,
         get_table_values: Vec<TableValues>,
     ) -> Self {
-        Self { basic_table_ids, slice_sizes, column_coefficients: [vec![], vec![], vec![]], column_step_sizes, get_table_values }
+        Self {
+            basic_table_ids,
+            slice_sizes,
+            column_coefficients: [vec![], vec![], vec![]],
+            column_step_sizes,
+            get_table_values,
+        }
     }
     /// Coefficients `1, c, c², …` per column (bb's repeated-coefficient constructor).
-    pub(crate) fn repeated(c: [Fr; 3], num_lookups: usize, slice_size: u64, id: BasicTableId, values: TableValues) -> Self {
+    pub(crate) fn repeated(
+        c: [Fr; 3],
+        num_lookups: usize,
+        slice_size: u64,
+        id: BasicTableId,
+        values: TableValues,
+    ) -> Self {
         let geometric = |c: Fr| {
             let mut v = vec![Fr::one()];
             for i in 1..num_lookups {
@@ -199,18 +240,30 @@ pub struct ReadData<T> {
 pub fn get_multitable(id: MultiTableId) -> &'static MultiTable {
     static TABLES: LazyLock<Vec<(MultiTableId, MultiTable)>> = LazyLock::new(|| {
         use MultiTableId::*;
-        let mut tables: Vec<(MultiTableId, MultiTable)> =
-            [Sha256ChInput, Sha256ChOutput, Sha256MajInput, Sha256MajOutput, Sha256WitnessInput, Sha256WitnessOutput]
-                .into_iter()
-                .map(|id| (id, sha256::multitable(id)))
-                .collect();
+        let mut tables: Vec<(MultiTableId, MultiTable)> = [
+            Sha256ChInput,
+            Sha256ChOutput,
+            Sha256MajInput,
+            Sha256MajOutput,
+            Sha256WitnessInput,
+            Sha256WitnessOutput,
+        ]
+        .into_iter()
+        .map(|id| (id, sha256::multitable(id)))
+        .collect();
         for axis in 0..4 {
             for is_lo in [true, false] {
-                tables.push((Secp256r1FixedBase { axis, is_lo }, super::secp256r1_fixed_base::multitable(axis, is_lo)));
+                tables.push((
+                    Secp256r1FixedBase { axis, is_lo },
+                    super::secp256r1_fixed_base::multitable(axis, is_lo),
+                ));
             }
         }
         for lane in 0..25u8 {
-            tables.push((KeccakNormalizeAndRotate(lane), super::keccak_tables::rho_multitable(lane as usize)));
+            tables.push((
+                KeccakNormalizeAndRotate(lane),
+                super::keccak_tables::rho_multitable(lane as usize),
+            ));
         }
         tables.push((KeccakThetaOutput, super::keccak_tables::theta_multitable()));
         tables.push((KeccakChiOutput, super::keccak_tables::chi_multitable()));
@@ -262,18 +315,32 @@ pub fn get_lookup_accumulators(id: MultiTableId, key_a: Fr, key_b: Fr, is_2_to_1
     for i in 0..num_lookups {
         let values = multi_table.get_table_values[i].eval([key_a_slices[i], key_b_slices[i]]);
         raw[0].push(Fr::from(key_a_slices[i]));
-        raw[1].push(if is_2_to_1_lookup { Fr::from(key_b_slices[i]) } else { values[0] });
+        raw[1].push(if is_2_to_1_lookup {
+            Fr::from(key_b_slices[i])
+        } else {
+            values[0]
+        });
         raw[2].push(if is_2_to_1_lookup { values[0] } else { values[1] });
-        lookup_entries.push(LookupEntry { key: [key_a_slices[i], key_b_slices[i]], value: values });
+        lookup_entries.push(LookupEntry {
+            key: [key_a_slices[i], key_b_slices[i]],
+            value: values,
+        });
     }
-    let mut columns = [vec![Fr::zero(); num_lookups], vec![Fr::zero(); num_lookups], vec![Fr::zero(); num_lookups]];
+    let mut columns = [
+        vec![Fr::zero(); num_lookups],
+        vec![Fr::zero(); num_lookups],
+        vec![Fr::zero(); num_lookups],
+    ];
     for c in 0..3 {
         columns[c][num_lookups - 1] = raw[c][num_lookups - 1];
         for i in (1..num_lookups).rev() {
             columns[c][i - 1] = raw[c][i - 1] + columns[c][i] * multi_table.column_step_sizes[c][i];
         }
     }
-    ReadData { columns, lookup_entries }
+    ReadData {
+        columns,
+        lookup_entries,
+    }
 }
 
 /// bb `plookup::create_basic_table`.
@@ -282,7 +349,9 @@ pub fn create_basic_table(id: BasicTableId, table_index: usize) -> BasicTable {
     assert!(table_index > 0);
     match id {
         BasicTableId::StrausEcPoint => unreachable!("Straus tables are registered directly with the builder"),
-        Sha256WitnessNormalize => sparse_normalization_table(id, table_index, 16, 3, &sha256::WITNESS_EXTENSION_NORMALIZATION),
+        Sha256WitnessNormalize => {
+            sparse_normalization_table(id, table_index, 16, 3, &sha256::WITNESS_EXTENSION_NORMALIZATION)
+        }
         Sha256ChNormalize => sparse_normalization_table(id, table_index, 28, 2, &sha256::CHOOSE_NORMALIZATION),
         Sha256MajNormalize => sparse_normalization_table(id, table_index, 16, 3, &sha256::MAJORITY_NORMALIZATION),
         Sha256WitnessSlice3 => sparse_table_with_rotation(id, table_index, 16, 3, 0),
@@ -294,7 +363,9 @@ pub fn create_basic_table(id: BasicTableId, table_index: usize) -> BasicTable {
         Sha256Base28Rotate3 => sparse_table_with_rotation(id, table_index, 28, 10, 3),
         Sha256Base16 => sparse_table_with_rotation(id, table_index, 16, 10, 0),
         Sha256Base16Rotate2 => sparse_table_with_rotation(id, table_index, 16, 11, 2),
-        Secp256r1FixedBase { axis, window } => super::secp256r1_fixed_base::basic_table(id, table_index, axis, window as usize),
+        Secp256r1FixedBase { axis, window } => {
+            super::secp256r1_fixed_base::basic_table(id, table_index, axis, window as usize)
+        }
         KeccakRho(bits) => super::keccak_tables::rho_table(id, table_index, bits as usize),
         KeccakTheta => super::keccak_tables::theta_table(id, table_index),
         KeccakChi => super::keccak_tables::chi_table(id, table_index),
@@ -329,7 +400,13 @@ pub fn map_into_sparse_form(base: u64, input: u64) -> Fr {
     out
 }
 
-fn sparse_table_with_rotation(id: BasicTableId, table_index: usize, base: u64, bits_per_slice: u32, rotation: u32) -> BasicTable {
+fn sparse_table_with_rotation(
+    id: BasicTableId,
+    table_index: usize,
+    base: u64,
+    bits_per_slice: u32,
+    rotation: u32,
+) -> BasicTable {
     let values = TableValues::SparseRotation { base, rotation };
     let mut columns = [Vec::new(), Vec::new(), Vec::new()];
     for i in 0..(1u64 << bits_per_slice) {
@@ -338,10 +415,22 @@ fn sparse_table_with_rotation(id: BasicTableId, table_index: usize, base: u64, b
         columns[1].push(target);
         columns[2].push(rotated);
     }
-    BasicTable { id, table_index, use_twin_keys: false, columns, lookup_gates: vec![] }
+    BasicTable {
+        id,
+        table_index,
+        use_twin_keys: false,
+        columns,
+        lookup_gates: vec![],
+    }
 }
 
-fn sparse_normalization_table(id: BasicTableId, table_index: usize, base: u64, num_bits: u32, table: &'static [u64]) -> BasicTable {
+fn sparse_normalization_table(
+    id: BasicTableId,
+    table_index: usize,
+    base: u64,
+    num_bits: u32,
+    table: &'static [u64],
+) -> BasicTable {
     let values = TableValues::SparseNormalization { base, table };
     let mut columns = [Vec::new(), Vec::new(), Vec::new()];
     for i in 0..base.pow(num_bits) {
@@ -349,7 +438,13 @@ fn sparse_normalization_table(id: BasicTableId, table_index: usize, base: u64, n
         columns[1].push(values.eval([i, 0])[0]);
         columns[2].push(Fr::zero());
     }
-    BasicTable { id, table_index, use_twin_keys: false, columns, lookup_gates: vec![] }
+    BasicTable {
+        id,
+        table_index,
+        use_twin_keys: false,
+        columns,
+        lookup_gates: vec![],
+    }
 }
 
 /// bb `plookup_tables/sha256.hpp`.
@@ -408,30 +503,49 @@ pub mod sha256 {
                 11,
                 WITNESS_EXTENSION_BASE.pow(3),
                 Sha256WitnessNormalize,
-                TableValues::SparseNormalization { base: WITNESS_EXTENSION_BASE, table: &WITNESS_EXTENSION_NORMALIZATION },
+                TableValues::SparseNormalization {
+                    base: WITNESS_EXTENSION_BASE,
+                    table: &WITNESS_EXTENSION_NORMALIZATION,
+                },
             ),
             MultiTableId::Sha256ChOutput => MultiTable::repeated(
                 [Fr::from(CHOOSE_BASE.pow(2)), Fr::from(1u64 << 2), Fr::zero()],
                 16,
                 CHOOSE_BASE.pow(2),
                 Sha256ChNormalize,
-                TableValues::SparseNormalization { base: CHOOSE_BASE, table: &CHOOSE_NORMALIZATION },
+                TableValues::SparseNormalization {
+                    base: CHOOSE_BASE,
+                    table: &CHOOSE_NORMALIZATION,
+                },
             ),
             MultiTableId::Sha256MajOutput => MultiTable::repeated(
                 [Fr::from(MAJORITY_BASE.pow(3)), Fr::from(1u64 << 3), Fr::zero()],
                 11,
                 MAJORITY_BASE.pow(3),
                 Sha256MajNormalize,
-                TableValues::SparseNormalization { base: MAJORITY_BASE, table: &MAJORITY_NORMALIZATION },
+                TableValues::SparseNormalization {
+                    base: MAJORITY_BASE,
+                    table: &MAJORITY_NORMALIZATION,
+                },
             ),
             MultiTableId::Sha256WitnessInput => MultiTable::new(
                 [
-                    vec![Fr::one(), Fr::from(1u64 << 3), Fr::from(1u64 << 10), Fr::from(1u64 << 18)],
+                    vec![
+                        Fr::one(),
+                        Fr::from(1u64 << 3),
+                        Fr::from(1u64 << 10),
+                        Fr::from(1u64 << 18),
+                    ],
                     vec![Fr::zero(); 4],
                     vec![Fr::zero(); 4],
                 ],
                 vec![1 << 3, 1 << 7, 1 << 8, 1 << 14],
-                vec![Sha256WitnessSlice3, Sha256WitnessSlice7Rotate4, Sha256WitnessSlice8Rotate7, Sha256WitnessSlice14Rotate1],
+                vec![
+                    Sha256WitnessSlice3,
+                    Sha256WitnessSlice7Rotate4,
+                    Sha256WitnessSlice8Rotate7,
+                    Sha256WitnessSlice14Rotate1,
+                ],
                 vec![sparse(16, 0), sparse(16, 4), sparse(16, 7), sparse(16, 1)],
             ),
             MultiTableId::Sha256ChInput => {
@@ -470,7 +584,6 @@ pub mod sha256 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::base::field::FieldLike;
 
     /// Table entries are data: a wrong value would still satisfy our own lookup relation (both
     /// sides read the same table), so pin them against the defining function instead. Every row of
@@ -502,12 +615,7 @@ mod tests {
     #[test]
     fn xor_multitable_accumulators_reassemble() {
         let (a, b) = (0x1234_5678u64, 0x9abc_def0u64);
-        let read = get_lookup_accumulators(
-            MultiTableId::Uint32Xor,
-            Fr::from(a),
-            Fr::from(b),
-            true,
-        );
+        let read = get_lookup_accumulators(MultiTableId::Uint32Xor, Fr::from(a), Fr::from(b), true);
         // column 3's first accumulator is the full result of the chained lookups
         let out = crate::base::codec::fr_to_usize(&read.columns[2][0]) as u64;
         assert_eq!(out, a ^ b);

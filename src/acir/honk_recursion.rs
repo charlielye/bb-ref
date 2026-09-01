@@ -47,7 +47,11 @@ fn has_ipa(proof_type: u32) -> bool {
 /// bb `create_mock_honk_vk`: VK metadata for a `1 << VIRTUAL_LOG_N` circuit, every commitment the
 /// bn254 generator.
 fn mock_vk_fields(acir_public_inputs: usize, ipa: bool) -> Vec<Fr> {
-    let io_size = if ipa { crate::rollup::ROLLUP_PUBLIC_INPUTS_SIZE } else { 8 };
+    let io_size = if ipa {
+        crate::rollup::ROLLUP_PUBLIC_INPUTS_SIZE
+    } else {
+        8
+    };
     let mut fields = vec![
         Fr::from(ULTRA.virtual_log_n as u64),
         Fr::from((acir_public_inputs + io_size) as u64),
@@ -361,7 +365,7 @@ fn mock_chonk_proof_fields(acir_public_inputs: usize) -> Vec<Fr> {
 
     // --- ECCVM (Grumpkin commitments, fq field elements as limb pairs) ---
     let start = fields.len();
-    let mut fq_random = |fields: &mut Vec<Fr>, n: usize| {
+    let fq_random = |fields: &mut Vec<Fr>, n: usize| {
         for _ in 0..n {
             let v: Fq = global_field();
             fields.extend(<Fq as Transcriptable<Fr>>::to_fields(&v));
