@@ -25,9 +25,8 @@ def run(corpus_path, binary, extra_args):
         stderr=subprocess.DEVNULL,
     )
     rows = []
-    # bb handles SIGINT gracefully (finishes the in-flight proof before exiting), so a Ctrl-C that
-    # kills this driver would leave bb proving for minutes. Own the child's lifetime: on ANY exit,
-    # close its stdin, give it a moment, then kill outright.
+    # bb handles SIGINT gracefully (it finishes the in-flight proof first), so Ctrl-C must kill the
+    # child outright; a clean end of the corpus still lets it exit on stdin EOF.
     try:
         for request_id, payload, raw in frames(data):
             start = time.perf_counter()
@@ -44,13 +43,14 @@ def run(corpus_path, binary, extra_args):
                     raise SystemExit("truncated response")
                 body += chunk
             rows.append((describe(payload), time.perf_counter() - start, len(raw), len(body)))
-    finally:
-        try:
-            server.stdin.close()
-            server.wait(timeout=10)
-        except (subprocess.TimeoutExpired, OSError):
-            server.kill()
-            server.wait()
+    except BaseException:
+        server.kill()
+        raise
+    server.stdin.close()
+    try:
+        server.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        server.kill()
     return rows
 
 
