@@ -31,7 +31,9 @@ with [docs/oracle.md](docs/oracle.md)'s ladder.
 ## Layout
 
 One crate; layering is enforced by review, not the build system — each module depends only on
-those left of it:
+those left of it. Every module directory has a README covering its purpose, how it fits, and how
+it works — start at [docs/tour.md](docs/tour.md) for the narrative, descend into the module
+READMEs for detail:
 
 ```mermaid
 graph LR
@@ -43,7 +45,7 @@ graph LR
 | --- | --- |
 | [`base`](src/base) | field/group traits over arkworks, Poseidon2 & Keccak transcripts, codecs, SRS, polynomials |
 | [`circuit`](src/circuit) | the one builder (Ultra + Mega), trace blocks, op queue, databus, plookup tables |
-| [`stdlib`](src/stdlib) | in-circuit types: `FieldT`, bigfield, biggroup, `cycle_group`, goblin elements ([README](src/stdlib/README.md)) |
+| [`stdlib`](src/stdlib) | in-circuit types: `FieldT`, bigfield, biggroup, `cycle_group`, goblin elements |
 | [`honk`](src/honk) | flavors-as-data, relations, sumcheck, Shplemini/KZG, Oink, Ultra prover/verifier, HyperNova |
 | [`goblin`](src/goblin) | merge, IPA/TripleIPA, ECCVM, Translator |
 | [`chonk`](src/chonk) | the IVC driver, joint MegaZK+Translator proof, kernel circuit logic, proof compression |
