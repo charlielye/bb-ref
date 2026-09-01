@@ -53,7 +53,7 @@ graph LR
 | [`rollup`](src/rollup/README.md) | backend-side recursion: in-circuit Ultra verifier, IPA accumulation, RollupIO |
 | [`msgpack`](src/msgpack/README.md) | bb's wire protocol: generated types + the command handler (`bb-ref msgpack run`) |
 | [`tests/`](tests) | differential suites (vs `tests/data/` fixtures) + standalone soundness/relations suites |
-| [`tools/`](tools) | the commands below, their support libs, and the fixture regenerators |
+| [`tools/`](tools/README.md) | the commands below, their support libs, and the fixture regenerators |
 
 ## Commands
 

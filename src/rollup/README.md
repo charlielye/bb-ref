@@ -1,8 +1,8 @@
 # rollup — server-side recursion
 
 The backend's flavor of recursion. Rollup circuits are plain Ultra circuits that verify other
-proofs in-circuit — [`honk`](../honk)'s generic verifier instantiated over ULTRA arithmetic with
-[`stdlib`](../stdlib) biggroup commitments and native `FieldT` scalars. This module holds what's
+proofs in-circuit — [`honk`](../honk/README.md)'s generic verifier instantiated over ULTRA arithmetic with
+[`stdlib`](../stdlib/README.md) biggroup commitments and native `FieldT` scalars. This module holds what's
 specific to that instantiation, chiefly the IPA story.
 [Tour, Act IV](../../docs/tour.md#act-iv--the-server-side-the-rollup-tree) covers the tree.
 

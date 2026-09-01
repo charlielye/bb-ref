@@ -5,9 +5,9 @@ values, grouped into blocks by gate type — and this module is the API that fil
 copy constraints, gates, lookup tables, memory, and (for Mega) the Goblin op queue and databus.
 [Tour, Act I §1–2](../../docs/tour.md#act-i--one-ultrahonk-proof) introduces the table model.
 
-Consumers: [`stdlib`](../stdlib) types hold a handle to the builder and emit gates through it;
-[`honk`](../honk)'s `ProverInstance` turns the finished table into polynomials;
-[`goblin`](../goblin) proves the op queue this module records. Mirrors bb
+Consumers: [`stdlib`](../stdlib/README.md) types hold a handle to the builder and emit gates through it;
+[`honk`](../honk/README.md)'s `ProverInstance` turns the finished table into polynomials;
+[`goblin`](../goblin/README.md) proves the op queue this module records. Mirrors bb
 `stdlib_circuit_builders/` restricted to what the pinned flows use — one builder for both Ultra
 and Mega, with the Mega extras split out rather than a class hierarchy.
 

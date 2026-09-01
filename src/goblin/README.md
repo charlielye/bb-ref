@@ -1,8 +1,8 @@
 # goblin — deferred EC arithmetic
 
 Goblin is how client circuits avoid paying for elliptic-curve arithmetic in gates. A Mega circuit
-*records* its EC ops into the op queue instead of constraining them ([`circuit`](../circuit)
-holds the queue, [`stdlib`](../stdlib)'s goblin elements do the recording); this module proves,
+*records* its EC ops into the op queue instead of constraining them ([`circuit`](../circuit/README.md)
+holds the queue, [`stdlib`](../stdlib/README.md)'s goblin elements do the recording); this module proves,
 once per IVC, that the recorded table was computed honestly.
 [Tour, Act III](../../docs/tour.md#act-iii--the-client-side-chonk) shows where each proof slots
 into a Chonk proof.
@@ -26,16 +26,16 @@ Three proofs tie it together:
 | `translator/relations.rs`, `check.rs` | decomposition/accumulation/permutation relations and their row-checker |
 | `ipa.rs` | the Grumpkin inner-product argument + TripleIPA, which opens the ECCVM's three claims with one proof |
 
-All three provers reuse [`honk`](../honk)'s sumcheck and PCS machinery — this module contributes
+All three provers reuse [`honk`](../honk/README.md)'s sumcheck and PCS machinery — this module contributes
 traces and relations, not new protocol.
 
 ## What makes this layer delicate
 
 - **Grumpkin has no pairing**, so ECCVM openings end in IPA, not KZG — and the *client* verifies
-  IPA natively while the *rollup* only accumulates it ([`rollup`](../rollup) discharges it later).
+  IPA natively while the *rollup* only accumulates it ([`rollup`](../rollup/README.md) discharges it later).
 - **The Translator's limb bookkeeping is exact**: micro-limb ranges, quotient bounds and the
   16-fold concatenation are sized to the pinned constants (`CONST_TRANSLATOR_LOG_N`); a value
   that fits mathematically but not in its micro-limb budget fails rows far from the bad op.
 - **Everything meets at the transcript**: ECCVM, Translator, and TripleIPA share evaluation
   challenges through one running transcript, which is why they're proven together in
-  [`chonk`](../chonk)'s joint proof rather than independently.
+  [`chonk`](../chonk/README.md)'s joint proof rather than independently.

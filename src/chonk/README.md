@@ -2,12 +2,12 @@
 
 The client-side scheme that proves a whole private transaction — a chain of app and kernel
 circuits — as one proof. Each kernel *recursively verifies* the circuits since the previous
-kernel (cheaply, via [`honk`](../honk)'s HyperNova folding instead of full verification), and
-the final "hiding kernel" is proven jointly with [`goblin`](../goblin)'s Translator, producing
+kernel (cheaply, via [`honk`](../honk/README.md)'s HyperNova folding instead of full verification), and
+the final "hiding kernel" is proven jointly with [`goblin`](../goblin/README.md)'s Translator, producing
 the five-part `ChonkProof`. [Tour, Act III](../../docs/tour.md#act-iii--the-client-side-chonk)
 is the narrative version of this module.
 
-Upstream, [`acir`](../acir) feeds it circuits lowered from Noir bytecode; downstream, the tube
+Upstream, [`acir`](../acir/README.md) feeds it circuits lowered from Noir bytecode; downstream, the tube
 circuit (a rollup circuit, [Act IV](../../docs/tour.md#act-iv--the-server-side-the-rollup-tree))
 verifies the `ChonkProof` in-circuit — which is why `verifier.rs` is written over the generic
 traits.

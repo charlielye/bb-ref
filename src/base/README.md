@@ -6,8 +6,8 @@ serialization codecs, the SRS, polynomials, and randomness. No proving logic liv
 
 The central design move: [`field.rs`](field.rs)'s `FieldLike` and [`group.rs`](group.rs)'s
 `Curve`/`GroupLike` traits are implemented by both native arkworks types and
-[`stdlib`](../stdlib)'s in-circuit types, so every verifier in [`honk`](../honk)/
-[`goblin`](../goblin)/[`chonk`](../chonk) is written once and runs natively or inside a circuit.
+[`stdlib`](../stdlib/README.md)'s in-circuit types, so every verifier in [`honk`](../honk/README.md)/
+[`goblin`](../goblin/README.md)/[`chonk`](../chonk/README.md) is written once and runs natively or inside a circuit.
 [Tour, Act I](../../docs/tour.md) shows the pieces in motion.
 
 | file | what it is |

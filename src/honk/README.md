@@ -5,9 +5,9 @@ over the relations, open everything with Shplemini/KZG. Plus HyperNova, the fold
 uses to defer that work. [Tour, Act I](../../docs/tour.md#act-i--one-ultrahonk-proof) walks one
 proof through this module end to end.
 
-Everything is written once, generically: the verifiers over [`base`](../base)'s `FieldLike`/`Curve`
-traits (so [`rollup`](../rollup) and [`chonk`](../chonk) can instantiate them in-circuit with
-[`stdlib`](../stdlib) types), and sumcheck over a `RelationSet` (so [`goblin`](../goblin)'s ECCVM
+Everything is written once, generically: the verifiers over [`base`](../base/README.md)'s `FieldLike`/`Curve`
+traits (so [`rollup`](../rollup/README.md) and [`chonk`](../chonk/README.md) can instantiate them in-circuit with
+[`stdlib`](../stdlib/README.md) types), and sumcheck over a `RelationSet` (so [`goblin`](../goblin/README.md)'s ECCVM
 and Translator reuse it with their own relations).
 
 | file | what it is |
