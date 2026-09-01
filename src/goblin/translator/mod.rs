@@ -280,6 +280,7 @@ pub fn fixed_vk_hash() -> Fr {
 
 /// The Translator's polynomials, one per entity: the wires span the mini circuit, everything
 /// else the fixed circuit size (values past a column's end are zero).
+#[derive(Clone)]
 pub struct TranslatorPolys {
     pub cols: Vec<Polynomial<Fr>>,
 }

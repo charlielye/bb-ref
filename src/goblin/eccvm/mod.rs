@@ -226,6 +226,7 @@ pub fn ent(i: usize) -> Ent {
 }
 
 /// The ECCVM's polynomials, one per entity, all of the fixed dyadic size.
+#[derive(Clone)]
 pub struct EccvmPolys {
     pub cols: Vec<Polynomial<Fq>>,
     /// Rows the trace occupies (bb `num_rows`); the rest of the fixed size is padding.

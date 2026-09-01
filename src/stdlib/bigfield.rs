@@ -1728,3 +1728,64 @@ macro_rules! bigfield_assign {
 bigfield_assign!(AddAssign, add_assign, add);
 bigfield_assign!(SubAssign, sub_assign, sub);
 bigfield_assign!(MulAssign, mul_assign, mul);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::base::rng::Rng;
+    use crate::base::srs::CommitmentKey;
+    use crate::base::transcript::NativeTranscript;
+    use crate::base::Fq;
+    use crate::honk::circuit_checker::check_circuit;
+    use crate::honk::flavor::ULTRA;
+    use crate::honk::oink_prover::prove_oink;
+    use crate::honk::prover_instance::ProverInstance;
+    use ark_ff::UniformRand;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    /// Non-native arithmetic at the values that break limb logic (0, 1, q−1, and ALIASED operands
+    /// — the operand-clone-vs-alias class behind several gate-exactness bugs): every emitted gate
+    /// pattern must produce a satisfiable circuit whose relations all vanish, and every in-circuit
+    /// value must equal the native computation.
+    #[test]
+    fn ops_at_boundaries_and_aliases_satisfy_relations() {
+        if crate::testutil::crs_or_skip().is_none() {
+            return;
+        }
+        let mut rng = crate::testutil::test_rng();
+        let ctx = Rc::new(RefCell::new(crate::testutil::tiny_circuit(&mut rng)));
+        {
+            let mut check = |got: &BigField<Fq>, want: Fq, what: &str| {
+                assert_eq!(got.value(), want, "{what}");
+            };
+            let mut ark = ark_std::test_rng();
+            let vals = [Fq::from(0u8), Fq::from(1u8), -Fq::from(1u8), Fq::rand(&mut ark)];
+            for (i, &a) in vals.iter().enumerate() {
+                for &b in &vals[i..] {
+                    let x = BigField::<Fq>::from_witness(&ctx, &a);
+                    let y = BigField::<Fq>::from_witness(&ctx, &b);
+                    check(&x.add(&y), a + b, "add");
+                    check(&x.sub(&y), a - b, "sub");
+                    check(&x.mul(&y), a * b, "mul");
+                }
+                let x = BigField::<Fq>::from_witness(&ctx, &a);
+                // aliased: the SAME element on both sides of the op
+                check(&x.mul(&x), a * a, "x.mul(x)");
+                check(&x.sqr(), a * a, "sqr");
+                check(&x.add(&x), a + a, "x.add(x)");
+                check(&x.sub(&x), Fq::from(0u8), "x.sub(x)");
+                x.self_reduce();
+                check(&x, a, "self_reduce preserves the value");
+            }
+        }
+        let mut builder = Rc::try_unwrap(ctx).ok().unwrap().into_inner();
+        assert!(builder.failed.is_none(), "bigfield ops must be satisfiable: {:?}", builder.failed);
+        let mut inst = ProverInstance::from_builder(&ULTRA, &mut builder, &mut rng);
+        let ck = CommitmentKey::new(inst.max_end_index);
+        let vk = inst.compute_vk(&ck);
+        let mut t = NativeTranscript::new();
+        let out = prove_oink(&mut inst, &vk, &ck, &mut t, &mut rng, true);
+        assert_eq!(check_circuit(&inst, &out.params), None, "all relations vanish");
+    }
+}

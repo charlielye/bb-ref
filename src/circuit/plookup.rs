@@ -466,3 +466,50 @@ pub mod sha256 {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::base::field::FieldLike;
+
+    /// Table entries are data: a wrong value would still satisfy our own lookup relation (both
+    /// sides read the same table), so pin them against the defining function instead. Every row of
+    /// the 6-bit XOR and AND tables must be `key_a (op) key_b`.
+    #[test]
+    fn uint_tables_match_their_defining_functions() {
+        for (id, op) in [
+            (BasicTableId::UintXor(6), (|a, b| a ^ b) as fn(u64, u64) -> u64),
+            (BasicTableId::UintAnd(6), |a, b| a & b),
+        ] {
+            let table = create_basic_table(id, 1);
+            assert!(table.use_twin_keys);
+            assert_eq!(table.size(), 1 << 12, "6-bit twin-key table has 2^12 rows");
+            for r in 0..table.size() {
+                let a = fr_to_u64(&table.columns[0][r]);
+                let b = fr_to_u64(&table.columns[1][r]);
+                let out = fr_to_u64(&table.columns[2][r]);
+                assert_eq!(out, op(a, b), "row {r}: {a} op {b}");
+            }
+        }
+    }
+
+    fn fr_to_u64(f: &Fr) -> u64 {
+        crate::base::codec::fr_to_usize(f) as u64
+    }
+
+    /// The multitable accumulator chain: looking up a 32-bit XOR through the multitable and
+    /// re-assembling the slice outputs reproduces the native XOR.
+    #[test]
+    fn xor_multitable_accumulators_reassemble() {
+        let (a, b) = (0x1234_5678u64, 0x9abc_def0u64);
+        let read = get_lookup_accumulators(
+            MultiTableId::Uint32Xor,
+            Fr::from(a),
+            Fr::from(b),
+            true,
+        );
+        // column 3's first accumulator is the full result of the chained lookups
+        let out = crate::base::codec::fr_to_usize(&read.columns[2][0]) as u64;
+        assert_eq!(out, a ^ b);
+    }
+}
