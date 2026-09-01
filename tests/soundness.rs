@@ -8,6 +8,8 @@
 //! structure (bb aborts there too); a panic counts as a rejection, exactly as the msgpack
 //! boundary's catch_unwind treats it.
 
+mod common;
+
 use bb_ref::acir::lower::add_default_pairing_points;
 use bb_ref::base::field::FieldLike;
 use bb_ref::base::rng::{DebugRng, Rng};
@@ -204,4 +206,101 @@ fn rollup_rejects_every_tamper() {
         verify_ultra_rollup(&ULTRA, vk, pi, pf, &g2, &grumpkin)
     };
     tamper_suite("rollup", &inner, &proof, &verify, &vk);
+}
+
+/// Chonk: the proof a node verifies for every incoming tx. Proving is expensive, so the sweep
+/// samples every SAMPLE-th field plus both boundary fields of each of the five sub-proofs; named
+/// cases cover section truncation and VK tampers. bb's own suite tampers one field per section;
+/// this covers strictly more.
+#[test]
+fn chonk_rejects_tampers_across_every_section() {
+    use bb_ref::base::srs::GrumpkinKey;
+    use bb_ref::chonk::ivc::{Chonk, CircuitKind};
+    use bb_ref::chonk::proof::ChonkProof;
+    use bb_ref::chonk::verifier::chonk_verify;
+    use bb_ref::goblin::eccvm::FIXED_SIZE;
+    use common::mock_ivc::MockIvcCircuits;
+
+    const KINDS: [CircuitKind; 5] = [
+        CircuitKind::App,
+        CircuitKind::App,
+        CircuitKind::Kernel,
+        CircuitKind::Kernel,
+        CircuitKind::HidingKernel,
+    ];
+    let mut rng = DebugRng::new(7);
+    bb_ref::base::rng::set_global(Box::new(DebugRng::new(7)));
+    let mut ivc = Chonk::new(KINDS.to_vec(), CommitmentKey::new(1 << 17));
+    let mut mock = MockIvcCircuits::new();
+    for kind in KINDS {
+        let mut circuit = mock.next_circuit(&mut ivc, &mut rng);
+        assert!(circuit.failed.is_none(), "mock circuit must be satisfiable");
+        if kind == CircuitKind::HidingKernel {
+            let _vk_instance = ProverInstance::from_builder(kind.flavor(), &mut circuit, &mut rng);
+        }
+        ivc.accumulate(&mut circuit, None, &mut rng);
+    }
+    let proof = ivc.prove(&mut rng);
+    let vk = ivc.hiding_vk().clone();
+    let g2 = bn254_g2();
+    let grumpkin = GrumpkinKey::new(FIXED_SIZE);
+    let verify = |p: &ChonkProof, vk: &Vk<Bn254>| -> bool {
+        rejectable(|| chonk_verify(vk, p, &g2, &grumpkin))
+    };
+    fn rejectable(f: impl FnOnce() -> bool) -> bool {
+        catch_unwind(AssertUnwindSafe(f)).unwrap_or(false)
+    }
+
+    assert!(verify(&proof, &vk), "honest chonk proof must verify");
+
+    let flat = proof.to_fields();
+    const SAMPLE: usize = 7;
+    let sections = {
+        let p = &proof;
+        let lens = [
+            p.hiding_oink_proof.len(),
+            p.merge_proof.len(),
+            p.eccvm_proof.len(),
+            p.ipa_proof.len(),
+            p.joint_proof.len(),
+        ];
+        let mut bounds = vec![];
+        let mut off = 0;
+        for l in lens {
+            bounds.push(off);
+            bounds.push(off + l - 1);
+            off += l;
+        }
+        bounds
+    };
+    let mut targets: Vec<usize> = (0..flat.len()).step_by(SAMPLE).collect();
+    targets.extend(sections);
+    targets.sort_unstable();
+    targets.dedup();
+    for i in targets {
+        let mut f = flat.clone();
+        f[i] += Fr::one();
+        let tampered = ChonkProof::from_fields(&f);
+        assert!(!verify(&tampered, &vk), "flipped chonk proof field {i} of {} must be rejected", flat.len());
+    }
+
+    // Section truncation: drop the last field of each section in turn.
+    for sec in 0..5 {
+        let mut p = proof.clone();
+        let v = [
+            &mut p.hiding_oink_proof,
+            &mut p.merge_proof,
+            &mut p.eccvm_proof,
+            &mut p.ipa_proof,
+            &mut p.joint_proof,
+        ];
+        v.into_iter().nth(sec).unwrap().pop();
+        assert!(!verify(&p, &vk), "chonk proof with truncated section {sec} must be rejected");
+    }
+
+    let mut wrong_vk = vk.clone();
+    wrong_vk.comms[0] = (wrong_vk.comms[0] + wrong_vk.comms[1]).into();
+    assert!(!verify(&proof, &wrong_vk), "tampered hiding VK must be rejected");
+
+    assert!(verify(&proof, &vk), "control re-verification");
 }
