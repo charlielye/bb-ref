@@ -239,13 +239,18 @@ one pairing on L1 stands for every private transaction in the epoch.
 
 ## Where to go deeper
 
+Every module has a README — purpose, how it fits, a per-file map, and its traps:
+
 | you want | read |
 |---|---|
-| the table/builder machinery | `src/circuit` (module doc) |
-| relations, flavors, sumcheck, folding | `src/honk` |
-| op queue, ECCVM, Translator, merge, IPA | `src/goblin` |
-| the IVC driver and ChonkProof | `src/chonk` |
+| fields, the transcript, codecs, SRS, randomness | [`src/base`](../src/base/README.md) |
+| the table/builder machinery, op queue, memory, lookup tables | [`src/circuit`](../src/circuit/README.md) |
 | in-circuit types and their gate costs | [`src/stdlib`](../src/stdlib/README.md) |
-| how Noir circuits arrive | `src/acir` |
+| relations, flavors, sumcheck, PCS, folding | [`src/honk`](../src/honk/README.md) |
+| ECCVM, Translator, merge, IPA | [`src/goblin`](../src/goblin/README.md) |
+| the IVC driver, ChonkProof, proof compression | [`src/chonk`](../src/chonk/README.md) |
+| how Noir circuits arrive | [`src/acir`](../src/acir/README.md) |
+| rollup-side recursion and IPA accumulation | [`src/rollup`](../src/rollup/README.md) |
+| the wire protocol bb-ref serves | [`src/msgpack`](../src/msgpack/README.md) |
 | why the code looks the way it does | [gate-exactness.md](gate-exactness.md) |
-| why you should believe any of it | [oracle.md](oracle.md) |
+| why you should believe any of it | [oracle.md](oracle.md), [conformance.md](conformance.md), [testing.md](testing.md) |
