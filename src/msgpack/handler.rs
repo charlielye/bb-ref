@@ -152,6 +152,30 @@ fn run_catching<R>(respond: Responder<R>, body: impl FnOnce() -> Result<R, Strin
     }
 }
 
+
+/// The wire `ChonkProof` carries the same five sub-proofs as the internal one.
+fn wire_to_chonk_proof(p: &crate::msgpack::generated::bb_types::ChonkProof) -> crate::chonk::proof::ChonkProof {
+    let f = |v: &Vec<Bin32>| v.iter().map(fr_from_wire).collect();
+    crate::chonk::proof::ChonkProof {
+        hiding_oink_proof: f(&p.hiding_oink_proof),
+        merge_proof: f(&p.merge_proof),
+        eccvm_proof: f(&p.eccvm_proof),
+        ipa_proof: f(&p.ipa_proof),
+        joint_proof: f(&p.joint_proof),
+    }
+}
+
+fn chonk_proof_to_wire(p: &crate::chonk::proof::ChonkProof) -> crate::msgpack::generated::bb_types::ChonkProof {
+    let f = |v: &Vec<FrField>| v.iter().map(fr_to_wire).collect();
+    crate::msgpack::generated::bb_types::ChonkProof {
+        hiding_oink_proof: f(&p.hiding_oink_proof),
+        merge_proof: f(&p.merge_proof),
+        eccvm_proof: f(&p.eccvm_proof),
+        ipa_proof: f(&p.ipa_proof),
+        joint_proof: f(&p.joint_proof),
+    }
+}
+
 /// bb `_verify<Flavor, IO>`: native verification of a split (public_inputs, proof) pair. Malformed
 /// inputs (wrong sizes, bad points) make the underlying verifier panic; the caller maps that to
 /// `verified: false` like bb's explicit size checks do.
@@ -377,6 +401,28 @@ impl Handler for BbRefHandler {
         });
     }
 
+    fn chonk_compress_proof(&mut self, cmd: BbChonkCompressProof, respond: Responder<BbChonkCompressProofResponse>) {
+        let proof = wire_to_chonk_proof(&cmd.proof);
+        respond.ok(BbChonkCompressProofResponse {
+            compressed_proof: crate::chonk::compression::compress_chonk_proof(&proof),
+        });
+    }
+
+    fn chonk_decompress_proof(
+        &mut self,
+        cmd: BbChonkDecompressProof,
+        respond: Responder<BbChonkDecompressProofResponse>,
+    ) {
+        let r = crate::chonk::compression::mega_num_public_inputs_from_len(cmd.compressed_proof.len())
+            .and_then(|n| crate::chonk::compression::decompress_chonk_proof(&cmd.compressed_proof, n));
+        match r {
+            Ok(proof) => respond.ok(BbChonkDecompressProofResponse {
+                proof: chonk_proof_to_wire(&proof),
+            }),
+            Err(e) => respond.error(e),
+        }
+    }
+
     fn vk_as_fields(&mut self, cmd: BbVkAsFields, respond: Responder<BbVkAsFieldsResponse>) {
         run_catching(respond, || {
             let vk = VkGeneric::<Bn254>::from_bytes(&cmd.verification_key, ULTRA.layout().num_precomputed);
@@ -589,8 +635,6 @@ impl Handler for BbRefHandler {
         circuit_write_solidity_verifier: BbCircuitWriteSolidityVerifier => BbCircuitWriteSolidityVerifierResponse,
         chonk_check_precomputed_vk: BbChonkCheckPrecomputedVk => BbChonkCheckPrecomputedVkResponse,
         chonk_stats: BbChonkStats => BbChonkStatsResponse,
-        chonk_compress_proof: BbChonkCompressProof => BbChonkCompressProofResponse,
-        chonk_decompress_proof: BbChonkDecompressProof => BbChonkDecompressProofResponse,
         pedersen_commit: BbPedersenCommit => BbPedersenCommitResponse,
         pedersen_hash: BbPedersenHash => BbPedersenHashResponse,
         pedersen_hash_buffer: BbPedersenHashBuffer => BbPedersenHashBufferResponse,
