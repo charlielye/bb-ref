@@ -42,7 +42,9 @@ executes. Consequences:
 
 ## Deliberately absent
 
-No `uint`/`safe_uint` (gone from bb at the pin), no pedersen, no merkle gadgets, no
-blake2s/blake3, no AES — nothing off the protocol paths. `byte_array` is the minimal
-slice used by SHA-256/ECDSA. When a new circuit needs a gadget, port it then, against a
-micro-oracle (see the `BbRefDump.Stdlib` named programs).
+bb's blake2s/blake3 and AES128 gadgets are not ported: no protocol circuit uses them —
+they exist in bb only because its ACIR frontend serves arbitrary Noir programs, and an app
+circuit that used one fails loudly at lowering (`unsupported black box function`), never
+silently. `byte_array` is the minimal slice used by SHA-256/ECDSA. When a new circuit
+needs a gadget, port it then, against a micro-oracle (see the `BbRefDump.Stdlib` named
+programs).
