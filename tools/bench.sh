@@ -2,6 +2,8 @@
 # Time every operation in a corpus against one server and print a per-circuit table.
 #
 #   tools/bench.sh <corpus[.zst]> [binary]        # defaults to ./bin/bb
+#   tools/bench.sh <corpus[.zst]> --both           # bb AND bb-ref concurrently, one comparison
+#                                                  # table (needs 2x THREADS of spare cpu)
 #
 # The corpus is real recorded traffic, so this measures the operations a prover actually performs,
 # in the proportions it performs them -- a rollup benchmark that needs no separate harness. Run it
@@ -17,9 +19,9 @@ CORPUS=${1:?usage: bench.sh <corpus[.zst]> [binary]}
 BIN=${2:-./bin/bb}
 : "${BB_RNG_SEED:=12345}"
 # The two binaries default to DIFFERENT thread caps (bb: min(32, cores); bb-ref: rayon min(48,
-# cores)), so a fair comparison pins both to one explicit count. THREADS=<n> overrides; 32 is
-# bb's production default cap.
-: "${THREADS:=32}"
+# cores)), so a fair comparison pins both to one explicit count: min(32, cores) -- 32 is bb's
+# production cap, and never more threads than the machine has. THREADS=<n> overrides.
+: "${THREADS:=$(( $(nproc) < 32 ? $(nproc) : 32 ))}"
 export BB_RNG_SEED HARDWARE_CONCURRENCY=$THREADS RAYON_NUM_THREADS=$THREADS
 echo "threads: $THREADS (both binaries)"
 exec python3 tools/lib/bench.py "$CORPUS" "$BIN" "${@:3}"
