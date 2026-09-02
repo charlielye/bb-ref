@@ -19,7 +19,7 @@ These are the project's binding goals — changes should be judged against them:
 | **Bit parity**: VKs bit-exact, proofs byte-exact, both directions, including the wire protocol | holds — every VK and pinned flow byte-equal |
 | **Circuit gate parity**: every selector, wire and copy-cycle identical to bb's ([docs/gate-exactness.md](docs/gate-exactness.md)) | holds — enforced by the write-VK oracles and stdlib micro-oracles |
 | **Replay the rollup through bb and bb-ref and get the same root proof** | holds — 62/62 corpus responses byte-identical, `rollup_root` included (`tools/conformance.sh`) |
-| **Performance**: within 2× of bb, reducing to ≤ 1.2× in the near future | ~1.8–2× (`tools/bench.sh --both`, `tools/bench_chonk.sh`); per-front roadmap open |
+| **Performance**: within 2× of bb, reducing to ≤ 1.2× in the near future | rollup corpus **1.18×**, chonk flows **1.51×** ([docs/performance.md](docs/performance.md): what closed it, what owns the rest) |
 | **95%+ test coverage on the critical paths**, without redundant tests | core **95%** standalone, plus full soundness sweeps ([docs/testing.md](docs/testing.md)) |
 | **Documentation an engineer can descend**: each component's purpose without the math; first use of any odd name links to its explanation | [tour](docs/tour.md) → module READMEs → [glossary](docs/glossary.md) |
 | **A maintenance process for bb divergence**: diagnose and resolve drift quickly as bb moves | the pin + regen + divergence ladder ([docs/oracle.md](docs/oracle.md)) |
