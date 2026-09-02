@@ -9,10 +9,13 @@ use ark_ff::{Field, PrimeField};
 
 pub fn derive_generators(domain_separator: &[u8], num_generators: usize, starting_index: usize) -> Vec<GrumpkinAffine> {
     assert!(!domain_separator.is_empty());
+    use rayon::prelude::*;
     let mut preimage = [0u8; 64];
     preimage[..32].copy_from_slice(blake3::hash(domain_separator).as_bytes());
     (starting_index..starting_index + num_generators)
+        .into_par_iter()
         .map(|i| {
+            let mut preimage = preimage;
             preimage[32..36].copy_from_slice(&(i as u32).to_be_bytes());
             hash_to_curve(&preimage)
         })

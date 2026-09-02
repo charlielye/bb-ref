@@ -627,6 +627,16 @@ pub struct StrausPlookupTable {
 
 impl StrausPlookupTable {
     pub fn new(ctx: &Ctx, base_point: GrumpkinAffine, offset_generator: GrumpkinAffine, table_bits: usize) -> Self {
+        Self::from_native(ctx, Self::native(base_point, offset_generator, table_bits))
+    }
+
+    /// The ctx-free half of construction, so callers building many tables can compute them in
+    /// parallel and register sequentially (registration order is part of the circuit).
+    pub fn native(
+        base_point: GrumpkinAffine,
+        offset_generator: GrumpkinAffine,
+        table_bits: usize,
+    ) -> Vec<GrumpkinAffine> {
         use ark_ec::CurveGroup;
         let table_size = 1usize << table_bits;
         let mut projective: Vec<Element> = Vec::with_capacity(table_size);
@@ -636,7 +646,10 @@ impl StrausPlookupTable {
             let next = projective[i - 1] + base;
             projective.push(next);
         }
-        let native_table = Element::normalize_batch(&projective);
+        Element::normalize_batch(&projective)
+    }
+
+    pub fn from_native(ctx: &Ctx, native_table: Vec<GrumpkinAffine>) -> Self {
         let mut columns: [Vec<Fr>; 3] = [vec![], vec![], vec![]];
         for (i, p) in native_table.iter().enumerate() {
             columns[0].push(Fr::from(i as u64));
@@ -757,10 +770,17 @@ impl CycleGroup {
             .map(|s| StrausScalarSlices::new(&ctx, s, table_bits))
             .collect();
 
-        let point_tables: Vec<StrausPlookupTable> = base_points
-            .iter()
-            .enumerate()
-            .map(|(i, p)| StrausPlookupTable::new(&ctx, *p, offset_generators[i + 1], table_bits))
+        let native_tables: Vec<Vec<GrumpkinAffine>> = {
+            use rayon::prelude::*;
+            base_points
+                .par_iter()
+                .enumerate()
+                .map(|(i, p)| StrausPlookupTable::native(*p, offset_generators[i + 1], table_bits))
+                .collect()
+        };
+        let point_tables: Vec<StrausPlookupTable> = native_tables
+            .into_iter()
+            .map(|t| StrausPlookupTable::from_native(&ctx, t))
             .collect();
 
         // Native Straus transcript for hints.

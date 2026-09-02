@@ -20,20 +20,60 @@ pub fn crs_dir() -> PathBuf {
 
 /// The first `n` monomial points `[tau^i]_1` from `bn254_g1.dat` (raw 64-byte affine points, x then y,
 /// big-endian). The first point is the generator (1, 2).
+///
+/// Montgomery-converting 2 x 8.4M coordinates dominates a full-size load and recurs on every
+/// one-shot CLI prove, so the converted form is cached next to the source (bb keeps the same
+/// cache as `bn254_g1.mont`): raw little-endian Montgomery limbs, 64 bytes per point.
 pub fn load_bn254_g1(n: usize) -> Vec<G1Affine> {
+    use rayon::prelude::*;
+    let mont_path = crs_dir().join("bn254_g1.ark.mont");
+    if let Ok(f) = std::fs::File::open(&mont_path) {
+        if f.metadata().map_or(0, |m| m.len()) >= (n * 64) as u64 {
+            let mut buf = vec![0u8; n * 64];
+            let mut f = f;
+            f.read_exact(&mut buf).expect("short read on Montgomery SRS cache");
+            let limbs = |c: &[u8]| {
+                let mut l = [0u64; 4];
+                for (k, w) in c.chunks(8).enumerate() {
+                    l[k] = u64::from_le_bytes(w.try_into().unwrap());
+                }
+                unsafe { std::mem::transmute::<[u64; 4], Fq>(l) }
+            };
+            let points: Vec<G1Affine> = buf
+                .par_chunks(64)
+                .map(|c| G1Affine::new_unchecked(limbs(&c[0..32]), limbs(&c[32..64])))
+                .collect();
+            assert_eq!(points[0], G1Affine::generator(), "corrupt Montgomery SRS cache");
+            return points;
+        }
+    }
     let path = crs_dir().join("bn254_g1.dat");
     let mut f = std::fs::File::open(&path).unwrap_or_else(|e| panic!("cannot open {}: {e}", path.display()));
     let mut buf = vec![0u8; n * 64];
     f.read_exact(&mut buf)
         .unwrap_or_else(|e| panic!("CRS file too small for {n} points: {e}"));
-    // Montgomery-converting 2 x 8.4M coordinates dominates a full-size load; every chunk is
-    // independent.
-    use rayon::prelude::*;
     let points: Vec<G1Affine> = buf
         .par_chunks(64)
         .map(|c| G1Affine::new_unchecked(from_bytes_be::<Fq>(&c[0..32]), from_bytes_be::<Fq>(&c[32..64])))
         .collect();
     assert_eq!(points[0], G1Affine::generator(), "unexpected first CRS point");
+    // Best-effort cache write (atomic rename; concurrent losers overwrite with identical bytes).
+    // Only grow the cache: a smaller load must not truncate a bigger one.
+    if std::fs::metadata(&mont_path).map_or(0, |m| m.len()) < (n * 64) as u64 {
+        let mut out: Vec<u8> = Vec::with_capacity(n * 64);
+        for p in &points {
+            for f in [&p.x, &p.y] {
+                let l = unsafe { &*(f as *const Fq as *const [u64; 4]) };
+                for w in l {
+                    out.extend_from_slice(&w.to_le_bytes());
+                }
+            }
+        }
+        let tmp = mont_path.with_extension("mont.tmp");
+        if std::fs::write(&tmp, &out).is_ok() {
+            let _ = std::fs::rename(&tmp, &mont_path);
+        }
+    }
     points
 }
 
