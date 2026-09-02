@@ -1,3 +1,5 @@
+[◄ bb-ref](../README.md)
+
 # The oracle: how correctness is established
 
 bb-ref's correctness claim is differential, not axiomatic: **barretenberg at the pin is the

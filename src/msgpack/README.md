@@ -1,3 +1,5 @@
+[◄ bb-ref](../../README.md)
+
 # msgpack — the wire protocol
 
 How the outside world talks to bb-ref: bb's msgpack command protocol, served byte-compatibly, so

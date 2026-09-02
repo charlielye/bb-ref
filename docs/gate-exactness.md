@@ -1,3 +1,5 @@
+[◄ bb-ref](../README.md)
+
 # The gate-exactness contract
 
 bb-ref's claim is not "implements the same protocol" but "**builds the same circuits**":

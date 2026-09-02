@@ -1,3 +1,5 @@
+[◄ bb-ref](../../README.md)
+
 # rollup — server-side recursion
 
 The backend's flavor of recursion. Rollup circuits are plain Ultra circuits that verify other

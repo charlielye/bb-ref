@@ -1,3 +1,5 @@
+[◄ bb-ref](../../README.md)
+
 # stdlib — in-circuit types
 
 The circuit-side twins of `base`'s native types: values that live inside a circuit under

@@ -1,3 +1,5 @@
+[◄ bb-ref](../../README.md)
+
 # honk — the proving system core
 
 The Honk protocol itself: turn a finished circuit into polynomials, commit to them, run sumcheck

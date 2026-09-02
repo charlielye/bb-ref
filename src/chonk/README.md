@@ -1,3 +1,5 @@
+[◄ bb-ref](../../README.md)
+
 # chonk — client IVC
 
 The client-side scheme that proves a whole private transaction — a chain of app and kernel

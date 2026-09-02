@@ -1,3 +1,5 @@
+[◄ bb-ref](../../README.md)
+
 # base — foundations
 
 The layer everything else stands on: field/group abstractions, the Fiat-Shamir transcript,

@@ -1,3 +1,5 @@
+[◄ bb-ref](../../README.md)
+
 # goblin — deferred EC arithmetic
 
 Goblin is how client circuits avoid paying for elliptic-curve arithmetic in gates. A Mega circuit

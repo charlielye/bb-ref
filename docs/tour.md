@@ -1,3 +1,5 @@
+[◄ bb-ref](../README.md)
+
 # Life of a proof
 
 A ground-up tour of the proving system, following real objects through the codebase. Four

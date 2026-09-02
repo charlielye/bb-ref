@@ -1,3 +1,5 @@
+[◄ bb-ref](../../README.md)
+
 # circuit — the builder
 
 Where circuits come from. A circuit here is a **table** — rows of wire indices plus selector

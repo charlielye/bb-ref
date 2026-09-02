@@ -1,3 +1,5 @@
+[◄ bb-ref](../../README.md)
+
 # acir — Noir ingestion
 
 The front door: Noir compiles programs to ACIR bytecode, and this module turns that bytecode into

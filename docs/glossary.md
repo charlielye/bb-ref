@@ -1,3 +1,5 @@
+[◄ bb-ref](../README.md)
+
 # Glossary
 
 Every recurring name in this codebase, in three sentences or so: what it is, why it exists,
