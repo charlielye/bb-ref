@@ -5,6 +5,8 @@ values, grouped into blocks by gate type — and this module is the API that fil
 copy constraints, gates, lookup tables, memory, and (for Mega) the Goblin op queue and databus.
 [Tour, Act I §1–2](../../docs/tour.md#act-i--one-ultrahonk-proof) introduces the table model.
 
+*Unfamiliar name? Every recurring term is defined in [docs/glossary.md](../../docs/glossary.md).*
+
 Consumers: [`stdlib`](../stdlib/README.md) types hold a handle to the builder and emit gates through it;
 [`honk`](../honk/README.md)'s `ProverInstance` turns the finished table into polynomials;
 [`goblin`](../goblin/README.md) proves the op queue this module records. Mirrors bb

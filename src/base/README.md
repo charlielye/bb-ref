@@ -4,6 +4,8 @@ The layer everything else stands on: field/group abstractions, the Fiat-Shamir t
 serialization codecs, the SRS, polynomials, and randomness. No proving logic lives here — but the
 *discipline* that makes byte-parity with bb possible does.
 
+*Unfamiliar name? Every recurring term is defined in [docs/glossary.md](../../docs/glossary.md).*
+
 The central design move: [`field.rs`](field.rs)'s `FieldLike` and [`group.rs`](group.rs)'s
 `Curve`/`GroupLike` traits are implemented by both native arkworks types and
 [`stdlib`](../stdlib/README.md)'s in-circuit types, so every verifier in [`honk`](../honk/README.md)/

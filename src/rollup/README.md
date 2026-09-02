@@ -6,6 +6,8 @@ proofs in-circuit — [`honk`](../honk/README.md)'s generic verifier instantiate
 specific to that instantiation, chiefly the IPA story.
 [Tour, Act IV](../../docs/tour.md#act-iv--the-server-side-the-rollup-tree) covers the tree.
 
+*Unfamiliar name? Every recurring term is defined in [docs/glossary.md](../../docs/glossary.md).*
+
 The problem it solves: proofs below a rollup node carry Grumpkin IPA claims (from the ECCVM via
 the tube), and Grumpkin has no pairing, so they can't be discharged the KZG way. Instead every
 rollup circuit *accumulates*: it reduces each nested IPA claim in-circuit, combines the

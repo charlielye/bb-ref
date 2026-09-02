@@ -7,6 +7,8 @@ once per IVC, that the recorded table was computed honestly.
 [Tour, Act III](../../docs/tour.md#act-iii--the-client-side-chonk) shows where each proof slots
 into a Chonk proof.
 
+*Unfamiliar name? Every recurring term is defined in [docs/glossary.md](../../docs/glossary.md).*
+
 Three proofs tie it together:
 
 1. **Merge** — the op-queue *table* is well-formed: each circuit's subtable was appended at the

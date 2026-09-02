@@ -6,6 +6,8 @@ makes the generic provers/verifiers in `honk`/`goblin`/`chonk` run unchanged in-
 instantiate them with these types instead of native fields and the same code *builds the
 recursive verifier circuit* instead of verifying.
 
+*Unfamiliar name? Every recurring term is defined in [docs/glossary.md](../../docs/glossary.md).*
+
 Mirrors bb `stdlib/primitives` + `stdlib/hash`. Every public item cites its bb
 counterpart; all of it is **gate-exact** — see
 [docs/gate-exactness.md](../../docs/gate-exactness.md) before changing any expression here.

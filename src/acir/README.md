@@ -5,6 +5,8 @@ The front door: Noir compiles programs to ACIR bytecode, and this module turns t
 worth of Mega circuits fed to [`chonk`](../chonk/README.md). It mirrors bb's `dsl/acir_format` across the full
 ACIR black-box surface.
 
+*Unfamiliar name? Every recurring term is defined in [docs/glossary.md](../../docs/glossary.md).*
+
 | file | what it is |
 |---|---|
 | `format.rs` | serde shapes of the ACIR `Program`/`WitnessStack` exactly as Noir serializes them (msgpack, two format markers); unlowered opcodes are skipped |

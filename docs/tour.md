@@ -239,7 +239,8 @@ one pairing on L1 stands for every private transaction in the epoch.
 
 ## Where to go deeper
 
-Every module has a README — purpose, how it fits, a per-file map, and its traps:
+Every recurring name has a [glossary](glossary.md) entry, and every module has a README —
+purpose, how it fits, a per-file map, and its traps:
 
 | you want | read |
 |---|---|
@@ -253,4 +254,5 @@ Every module has a README — purpose, how it fits, a per-file map, and its trap
 | rollup-side recursion and IPA accumulation | [`src/rollup`](../src/rollup/README.md) |
 | the wire protocol bb-ref serves | [`src/msgpack`](../src/msgpack/README.md) |
 | why the code looks the way it does | [gate-exactness.md](gate-exactness.md) |
+| a name you don't recognize | [glossary.md](glossary.md) |
 | why you should believe any of it | [oracle.md](oracle.md), [conformance.md](conformance.md), [testing.md](testing.md) |

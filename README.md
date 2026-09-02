@@ -75,6 +75,8 @@ implementation with nothing in between — see [tools/README.md](tools/README.md
 
 - **[docs/tour.md](docs/tour.md)** — start here: "life of a proof", the whole system in four
   acts, almost no math.
+- **[docs/glossary.md](docs/glossary.md)** — every funny name (Shplemini, Oink, wNAF, …) in
+  three sentences: what, why, where.
 - **[docs/gate-exactness.md](docs/gate-exactness.md)** — why the code sometimes computes the same
   thing twice on purpose, and why you must not "clean it up".
 - **[docs/oracle.md](docs/oracle.md)** — how correctness is established: differential fixtures,

@@ -7,6 +7,8 @@ the final "hiding kernel" is proven jointly with [`goblin`](../goblin/README.md)
 the five-part `ChonkProof`. [Tour, Act III](../../docs/tour.md#act-iii--the-client-side-chonk)
 is the narrative version of this module.
 
+*Unfamiliar name? Every recurring term is defined in [docs/glossary.md](../../docs/glossary.md).*
+
 Upstream, [`acir`](../acir/README.md) feeds it circuits lowered from Noir bytecode; downstream, the tube
 circuit (a rollup circuit, [Act IV](../../docs/tour.md#act-iv--the-server-side-the-rollup-tree))
 verifies the `ChonkProof` in-circuit — which is why `verifier.rs` is written over the generic

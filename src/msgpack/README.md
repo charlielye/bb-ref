@@ -5,6 +5,8 @@ a node configured to spawn `bb` can spawn `bb-ref msgpack run` instead and never
 are `[u32 len][u64 request_id][payload]` over a file, pipe, socket, or shared memory — the same
 framing the conformance corpus records (see [docs/conformance.md](../../docs/conformance.md)).
 
+*Unfamiliar name? Every recurring term is defined in [docs/glossary.md](../../docs/glossary.md).*
+
 | file | what it is |
 |---|---|
 | `generated/` | **do not edit** — generated from the pin's `bb_schema.json` by ipc-codegen (`dev/regen_msgpack.sh`). One schema defines bb's wire surface; bb's server and this one are both generated from it, so encodings match by construction |
