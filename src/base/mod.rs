@@ -5,6 +5,7 @@ pub mod generators;
 pub mod group;
 pub mod io;
 pub mod keccak;
+pub mod msm;
 pub mod poly;
 pub mod poseidon2;
 pub mod poseidon2_params;

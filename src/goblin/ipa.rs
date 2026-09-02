@@ -15,7 +15,7 @@ type P = Polynomial<Fq>;
 type Proj = ark_grumpkin::Projective;
 
 fn msm(points: &[GrumpkinAffine], scalars: &[Fq]) -> Proj {
-    Proj::msm_unchecked(points, scalars)
+    crate::base::msm::msm(points, scalars)
 }
 
 /// `[1, r, r^2, ..., r^{n-1}]` (bb `IPA::powers_tensor`).

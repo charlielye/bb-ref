@@ -84,7 +84,7 @@ impl EccvmPolys {
 }
 
 fn msm(points: &[GrumpkinAffine], scalars: &[Fq]) -> GrumpkinAffine {
-    ark_grumpkin::Projective::msm_unchecked(points, scalars).into_affine()
+    crate::base::msm::msm(points, scalars).into_affine()
 }
 
 /// bb `ECCVMProver::construct_proof` on `t`; the TripleIPA proof is returned separately.

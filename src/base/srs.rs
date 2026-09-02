@@ -168,7 +168,7 @@ impl Srs {
     }
 }
 
-impl<G: AffineRepr> Ck<G>
+impl<G: super::msm::BatchMsm> Ck<G>
 where
     G::ScalarField: FieldLike,
 {
@@ -180,7 +180,7 @@ where
             "polynomial needs {k} SRS points, key has {}",
             self.points.len()
         );
-        G::Group::msm_unchecked(&self.points[..k], &p.coeffs[..k]).into_affine()
+        G::batch_msm(&self.points[..k], &p.coeffs[..k]).into_affine()
     }
 }
 

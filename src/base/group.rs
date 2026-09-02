@@ -63,7 +63,7 @@ where
     }
     fn batch_mul(points: &[Self], scalars: &[P::ScalarField]) -> Self {
         assert_eq!(points.len(), scalars.len());
-        Projective::<P>::msm_unchecked(points, scalars).into_affine()
+        super::msm::msm(points, scalars).into_affine()
     }
     fn enforce_equal(&self, _other: &Self) {}
 }

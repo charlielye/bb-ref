@@ -408,7 +408,7 @@ where
 impl<C: Curve> ZkData<C>
 where
     C::Fr: PrimeField<BigInt = U256>,
-    C::G: AffineRepr<ScalarField = C::Fr>,
+    C::G: crate::base::msm::BatchMsm<ScalarField = C::Fr>,
 {
     pub fn new(
         num_rounds: usize,
@@ -1142,7 +1142,7 @@ pub struct CommittedRounds<C: Curve> {
 impl<C: Curve> CommittedRounds<C>
 where
     C::Fr: Copy,
-    C::G: AffineRepr<ScalarField = C::Fr>,
+    C::G: crate::base::msm::BatchMsm<ScalarField = C::Fr>,
 {
     pub fn new() -> Self {
         Self {
@@ -1181,7 +1181,7 @@ where
 impl<C: Curve> Default for CommittedRounds<C>
 where
     C::Fr: Copy,
-    C::G: AffineRepr<ScalarField = C::Fr>,
+    C::G: crate::base::msm::BatchMsm<ScalarField = C::Fr>,
 {
     fn default() -> Self {
         Self::new()
@@ -1214,7 +1214,7 @@ pub fn prove_sumcheck<C: Curve>(
 ) -> SumcheckProverOutput<C>
 where
     C::Fr: Copy,
-    C::G: AffineRepr<ScalarField = C::Fr>,
+    C::G: crate::base::msm::BatchMsm<ScalarField = C::Fr>,
     C::Fr: Copy + Send + Sync,
     RelationParams<C::Fr>: Sync,
 {

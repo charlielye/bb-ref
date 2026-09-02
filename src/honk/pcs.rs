@@ -801,7 +801,7 @@ pub fn shplonk_prove<C: Curve>(
 ) -> ShplonkProverOutput<C>
 where
     C::Fr: Copy + Send + Sync,
-    C::G: AffineRepr<ScalarField = C::Fr>,
+    C::G: crate::base::msm::BatchMsm<ScalarField = C::Fr>,
 {
     type F<C> = <C as Curve>::Fr;
     let nu: F<C> = t.challenge("Shplonk:nu");
@@ -918,7 +918,7 @@ pub fn small_subgroup_ipa_prove<C: Curve>(
 ) -> LibraPolys<C::Fr>
 where
     C::Fr: PrimeField<BigInt = U256>,
-    C::G: AffineRepr<ScalarField = C::Fr>,
+    C::G: crate::base::msm::BatchMsm<ScalarField = C::Fr>,
 {
     let challenge_lagrange = libra_challenge_coeffs::<C>(u);
     small_subgroup_ipa_prove_core::<C>(
@@ -948,7 +948,7 @@ pub fn small_subgroup_ipa_prove_core<C: Curve>(
 ) -> LibraPolys<C::Fr>
 where
     C::Fr: PrimeField<BigInt = U256>,
-    C::G: AffineRepr<ScalarField = C::Fr>,
+    C::G: crate::base::msm::BatchMsm<ScalarField = C::Fr>,
 {
     type F<C> = <C as Curve>::Fr;
     let n = C::SUBGROUP_SIZE;

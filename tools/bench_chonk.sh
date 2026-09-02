@@ -14,7 +14,7 @@ cd "$(dirname "$0")/.."
 
 FLOWS_DIR=${BB_FLOWS:-../aztec-packages2/barretenberg/cpp/chonk-pinned-flows}
 BB=./bin/bb
-BBREF=./target/release/bb-ref
+BBREF=${BBREF:-./target/release/bb-ref}
 
 ARGS=()
 THREADS_FLAG=""
@@ -30,7 +30,7 @@ done
 
 [ -d "$FLOWS_DIR" ] || { echo "no flows at $FLOWS_DIR (set BB_FLOWS, or regenerate with dev/regen_chonk_flows.sh)" >&2; exit 1; }
 [ -x "$BB" ] || { echo "no bb at $BB (run tools/regen/regen_corpus.sh to build the pin)" >&2; exit 1; }
-cargo build --release --quiet
+[ "$BBREF" != ./target/release/bb-ref ] || cargo build --release --quiet
 
 if [ ${#ARGS[@]} -gt 0 ]; then
     FLOWS=("${ARGS[@]}")
