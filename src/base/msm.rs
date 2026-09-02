@@ -12,8 +12,13 @@ use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::{AdditiveGroup, Field, PrimeField, Zero};
 use rayon::prelude::*;
 
-/// Below this many points the schedule machinery costs more than it saves.
-const SMALL_N: usize = 384;
+/// Minimum chunk size for the stage-4 tree jobs.
+const MIN_CHUNK: usize = 384;
+
+/// Points per thread below which arkworks' MSM wins (bb gates its pippenger the same way): the
+/// batched-affine advantage needs enough points per bucket, and the schedule machinery has fixed
+/// costs. Measured crossover: 2^15 at 32 threads, at or below 2^14 at 16 (msmbench sweeps).
+const MIN_PTS_PER_THREAD: usize = 1024;
 
 /// Raw pointer wrapper for the column-major digit scatter: each rayon task writes a disjoint cell.
 struct SendPtr<T>(*mut T);
@@ -21,7 +26,7 @@ unsafe impl<T> Sync for SendPtr<T> {}
 
 pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -> Projective<P> {
     let n = points.len().min(scalars.len());
-    if n < SMALL_N {
+    if n < MIN_PTS_PER_THREAD * rayon::current_num_threads() {
         return small_msm(&points[..n], &scalars[..n]);
     }
     let c = window_bits(n);
@@ -147,7 +152,7 @@ pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -
     // reduction work lands on the sequential per-window merge.
     let chunk_len = (8 * half)
         .max(n / (2 * rayon::current_num_threads()).max(1))
-        .max(SMALL_N);
+        .max(MIN_CHUNK);
     let jobs: Vec<(usize, usize)> = (0..num_windows)
         .flat_map(|w| (0..(schedules[w].len().div_ceil(chunk_len)).max(1)).map(move |k| (w, k)))
         .collect();
@@ -420,7 +425,7 @@ mod tests {
 
     #[test]
     fn matches_ark() {
-        for n in [1, 100, SMALL_N, 1000, 5000] {
+        for n in [1, 100, 1000, 5000, 70000] {
             check::<ark_bn254::g1::Config>(n, |_, _| ());
             check::<ark_grumpkin::GrumpkinConfig>(n, |_, _| ());
         }
