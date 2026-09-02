@@ -278,7 +278,7 @@ fn main() {
             let write_vk = flags.contains_key("--write_vk");
             if keccak {
                 let vk = as_keccak_vk(inst.compute_vk(&ck));
-                let proof = prove_ultra_as::<KeccakBn254>(&mut inst, &vk, &mut rng);
+                let proof = prove_ultra_as::<KeccakBn254>(&mut inst, &vk, &bb_ref::base::srs::Srs::default(), &mut rng);
                 write_words(&out.join("public_inputs"), &proof[..num_user_pis]);
                 write_words(&out.join("proof"), &proof[num_user_pis..]);
                 if write_vk {

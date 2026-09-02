@@ -150,6 +150,7 @@ impl Chonk {
                 if next == Some(CircuitKind::HidingKernel) {
                     decider_prove(
                         self.prover_accumulator.as_ref().unwrap(),
+                        &self.ck,
                         &mut self.accumulation_transcript,
                     );
                     self.decider_proof = self.accumulation_transcript.export_proof();

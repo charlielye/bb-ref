@@ -244,6 +244,10 @@ fn circuit_prove_impl(cmd: BbCircuitProve, srs: &Srs) -> Result<BbCircuitProveRe
         return Err(format!("circuit is not satisfied: {msg}"));
     }
     let mut inst = ProverInstance::from_builder(flavor, &mut builder, &mut rng);
+    // The builder and decoded witness are dead weight from here; the prover's peak working set
+    // (instance + sumcheck tables + shplemini batches) is what remains, as in bb.
+    drop(builder);
+    drop(witness);
     crate::base::timing::phase("cmd: instance");
 
     // bb validates IO/IPA consistency after instance construction.
@@ -273,7 +277,7 @@ fn circuit_prove_impl(cmd: BbCircuitProve, srs: &Srs) -> Result<BbCircuitProveRe
         } else {
             as_keccak_vk(inst.compute_vk(&ck))
         };
-        let full = prove_ultra_as::<KeccakBn254>(&mut inst, &vk, &mut rng);
+        let full = prove_ultra_as::<KeccakBn254>(&mut inst, &vk, srs, &mut rng);
         let (pis, pf) = full.split_at(num_inner);
         let vk_response = if vk_provided {
             VkData::default()
@@ -292,7 +296,7 @@ fn circuit_prove_impl(cmd: BbCircuitProve, srs: &Srs) -> Result<BbCircuitProveRe
         } else {
             inst.compute_vk(&ck)
         };
-        let full = prove_ultra(&mut inst, &vk, &mut rng);
+        let full = prove_ultra_as::<Bn254>(&mut inst, &vk, srs, &mut rng);
         let (pis, pf) = full.split_at(num_inner);
         let vk_response = if vk_provided {
             VkData::default()

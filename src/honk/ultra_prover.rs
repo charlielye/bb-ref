@@ -6,17 +6,20 @@ use super::prover_instance::ProverInstance;
 use super::sumcheck::{prove_sumcheck, HonkRelations, SumcheckSpec, ZkData};
 use crate::base::group::Curve;
 use crate::base::rng::Rng;
+use crate::base::srs::Srs;
 use crate::base::transcript::Transcript;
 use crate::base::vk::Vk;
-use crate::base::{Bn254, CommitmentKey, Fr, G1Affine};
+use crate::base::{Bn254, Fr, G1Affine};
 
 /// Produce the full proof (public inputs first, then the Honk proof).
 pub fn prove_ultra(inst: &mut ProverInstance, vk: &Vk<Bn254>, rng: &mut dyn Rng) -> Vec<Fr> {
-    prove_ultra_as::<Bn254>(inst, vk, rng)
+    prove_ultra_as::<Bn254>(inst, vk, &Srs::default(), rng)
 }
 
 /// Generic over the transcript codec/hash: `Bn254` natively, `KeccakBn254` for the Keccak flavors.
-pub fn prove_ultra_as<C>(inst: &mut ProverInstance, vk: &Vk<C>, rng: &mut dyn Rng) -> Vec<C::TF>
+/// The commitment key comes from `srs` — a preloaded pool serves it for free, the default falls
+/// back to an exact on-demand load.
+pub fn prove_ultra_as<C>(inst: &mut ProverInstance, vk: &Vk<C>, srs: &Srs, rng: &mut dyn Rng) -> Vec<C::TF>
 where
     C: Curve<Fr = Fr, G = G1Affine>,
     Fr: crate::base::codec::Transcriptable<C::TF> + crate::base::codec::FromChallenge<C::TF>,
@@ -32,7 +35,7 @@ where
     if flavor.has_zk {
         key_size = key_size.max(2 * Bn254::SUBGROUP_SIZE);
     }
-    let ck = CommitmentKey::new(key_size);
+    let ck = srs.bn254_key(key_size);
     let mut t = Transcript::<C::TF, C::Hash>::new();
 
     let oink = prove_oink_as::<C>(inst, vk, &ck, &mut t, rng, true);
@@ -56,6 +59,7 @@ where
         zk.as_mut(),
         None,
     );
+    crate::base::timing::phase("ultra: sumcheck");
 
     let layout = &inst.layout;
     let unshifted: Vec<&_> = inst.polys.iter().collect();

@@ -8,12 +8,7 @@ use crate::base::group::{Curve, GroupLike, PairingPoints};
 use crate::base::transcript::Transcript;
 use crate::base::{CommitmentKey, NativeTranscript};
 
-pub fn decider_prove(acc: &ProverClaim, t: &mut NativeTranscript) {
-    let actual_size = acc
-        .non_shifted_polynomial
-        .end_index()
-        .max(acc.shifted_polynomial.end_index());
-    let ck = CommitmentKey::new(actual_size);
+pub fn decider_prove(acc: &ProverClaim, ck: &CommitmentKey, t: &mut NativeTranscript) {
     let claim = shplemini_prove::<crate::base::Bn254>(
         &[&acc.non_shifted_polynomial],
         &[&acc.shifted_polynomial],
