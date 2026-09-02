@@ -9,19 +9,22 @@ thread_local! {
     static LAST: Cell<Option<Instant>> = const { Cell::new(None) };
 }
 
-fn rss_gb() -> Option<f64> {
+fn rss_gb() -> Option<(f64, f64)> {
     if std::env::var_os("BBREF_TIMING_RSS").is_none() {
         return None;
     }
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
-    let kb: f64 = status
-        .lines()
-        .find(|l| l.starts_with("VmRSS"))?
-        .split_whitespace()
-        .nth(1)?
-        .parse()
-        .ok()?;
-    Some(kb / 1048576.0)
+    let field = |tag: &str| -> Option<f64> {
+        let kb: f64 = status
+            .lines()
+            .find(|l| l.starts_with(tag))?
+            .split_whitespace()
+            .nth(1)?
+            .parse()
+            .ok()?;
+        Some(kb / 1048576.0)
+    };
+    Some((field("VmRSS")?, field("VmHWM")?))
 }
 
 pub fn phase(label: &str) {
@@ -29,7 +32,9 @@ pub fn phase(label: &str) {
         return;
     }
     let now = Instant::now();
-    let rss = rss_gb().map(|g| format!("  rss={g:.2}GB")).unwrap_or_default();
+    let rss = rss_gb()
+        .map(|(r, h)| format!("  rss={r:.2}GB hwm={h:.2}GB"))
+        .unwrap_or_default();
     LAST.with(|last| {
         if let Some(prev) = last.get() {
             eprintln!("[timing] {label}: {:.2}s{rss}", (now - prev).as_secs_f64());
