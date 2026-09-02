@@ -54,12 +54,25 @@ def run(corpus_path, binary, extra_args):
     except BaseException:
         server.kill()
         raise
+    peak_rss_kb = _vmhwm_kb(server.pid)
     server.stdin.close()
     try:
         server.wait(timeout=10)
     except subprocess.TimeoutExpired:
         server.kill()
-    return rows
+    return rows, peak_rss_kb
+
+
+def _vmhwm_kb(pid):
+    """The server's peak RSS so far (VmHWM), read before it exits; 0 if unavailable."""
+    try:
+        with open(f"/proc/{pid}/status") as f:
+            for line in f:
+                if line.startswith("VmHWM"):
+                    return int(line.split()[1])
+    except OSError:
+        pass
+    return 0
 
 
 def totals_of(rows):
@@ -70,7 +83,8 @@ def totals_of(rows):
     return totals, counts
 
 
-def print_single(binary, rows):
+def print_single(binary, run_result):
+    rows, peak_rss_kb = run_result
     totals, counts = totals_of(rows)
     width = max(len(n) for n in totals)
     print(f"\n{binary}   {len(rows)} operations, {sum(totals.values()):.1f}s total\n")
@@ -79,10 +93,12 @@ def print_single(binary, rows):
     for name, total in totals.most_common():
         print(f"{name:{width}}  {counts[name]:3}  {total:8.2f}s  {total / counts[name]:8.2f}s")
     print("-" * (width + 26))
-    print(f"{'TOTAL':{width}}  {len(rows):3}  {sum(totals.values()):8.2f}s")
+    print(f"{'TOTAL':{width}}  {len(rows):3}  {sum(totals.values()):8.2f}s   peak RSS {peak_rss_kb / 1048576:.2f}GB")
 
 
-def print_both(rows_bb, rows_ref):
+def print_both(run_bb, run_ref):
+    rows_bb, peak_bb = run_bb
+    rows_ref, peak_ref = run_ref
     t_bb, counts = totals_of(rows_bb)
     t_ref, _ = totals_of(rows_ref)
     width = max(len(n) for n in t_bb)
@@ -95,6 +111,7 @@ def print_both(rows_bb, rows_ref):
     print("-" * (width + 36))
     sb, sr = sum(t_bb.values()), sum(t_ref.values())
     print(f"{'TOTAL':{width}}  {len(rows_bb):3}  {sb:8.2f}s  {sr:8.2f}s  {sr / sb:6.2f}x")
+    print(f"peak RSS: bb {peak_bb / 1048576:.2f}GB, bb-ref {peak_ref / 1048576:.2f}GB")
 
 
 def main():

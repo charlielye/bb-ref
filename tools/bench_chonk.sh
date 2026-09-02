@@ -54,27 +54,29 @@ warm=${FLOWS[0]}
 "$BB" prove --scheme chonk --ivc_inputs_path "$FLOWS_DIR/$warm/ivc-inputs.msgpack" -o "$OUT/bb" > /dev/null 2>&1
 "$BBREF" prove --scheme chonk --ivc_inputs_path "$FLOWS_DIR/$warm/ivc-inputs.msgpack" -o "$OUT/ref" > /dev/null 2>&1
 
-time_one() { # binary inputs outdir -> seconds (logs kept quiet unless the run fails)
-    local t0 t1
-    t0=$(date +%s.%N)
-    "$1" prove --scheme chonk --ivc_inputs_path "$2" -o "$3" > /dev/null 2> "$3.log" \
+time_one() { # binary inputs outdir -> "seconds maxrss_kb" (logs kept quiet unless the run fails)
+    /usr/bin/time -f '%e %M' -o "$3.time" \
+        "$1" prove --scheme chonk --ivc_inputs_path "$2" -o "$3" > /dev/null 2> "$3.log" \
         || { cat "$3.log" >&2; exit 1; }
-    t1=$(date +%s.%N)
-    awk -v a="$t0" -v b="$t1" 'BEGIN { printf "%.2f", b - a }'
+    cat "$3.time"
 }
 
-printf '%-58s %8s %8s %7s\n' flow bb bb-ref ratio
+printf '%-58s %8s %8s %7s %8s %8s\n' flow bb bb-ref ratio "bb rss" "ref rss"
 total_bb=0
 total_ref=0
+peak_bb=0
+peak_ref=0
 for flow in "${FLOWS[@]}"; do
     inputs=$FLOWS_DIR/$flow/ivc-inputs.msgpack
     [ -f "$inputs" ] || { echo "skipping $flow: no ivc-inputs.msgpack" >&2; continue; }
-    bb_s=$(time_one "$BB" "$inputs" "$OUT/bb")
-    ref_s=$(time_one "$BBREF" "$inputs" "$OUT/ref")
-    awk -v f="$flow" -v a="$bb_s" -v b="$ref_s" \
-        'BEGIN { printf "%-58s %8.2f %8.2f %6.2fx\n", f, a, b, b / a }'
+    read -r bb_s bb_kb <<< "$(time_one "$BB" "$inputs" "$OUT/bb")"
+    read -r ref_s ref_kb <<< "$(time_one "$BBREF" "$inputs" "$OUT/ref")"
+    awk -v f="$flow" -v a="$bb_s" -v b="$ref_s" -v ak="$bb_kb" -v bk="$ref_kb" \
+        'BEGIN { printf "%-58s %8.2f %8.2f %6.2fx %7.2fG %7.2fG\n", f, a, b, b / a, ak / 1048576, bk / 1048576 }'
     total_bb=$(awk -v t="$total_bb" -v a="$bb_s" 'BEGIN { printf "%.2f", t + a }')
     total_ref=$(awk -v t="$total_ref" -v a="$ref_s" 'BEGIN { printf "%.2f", t + a }')
+    [ "$bb_kb" -gt "$peak_bb" ] && peak_bb=$bb_kb
+    [ "$ref_kb" -gt "$peak_ref" ] && peak_ref=$ref_kb
 done
-awk -v a="$total_bb" -v b="$total_ref" \
-    'BEGIN { printf "%-58s %8.2f %8.2f %6.2fx\n", "TOTAL", a, b, b / a }'
+awk -v a="$total_bb" -v b="$total_ref" -v ak="$peak_bb" -v bk="$peak_ref" \
+    'BEGIN { printf "%-58s %8.2f %8.2f %6.2fx %7.2fG %7.2fG   (rss columns: per-flow peak; TOTAL row: max)\n", "TOTAL", a, b, b / a, ak / 1048576, bk / 1048576 }'
