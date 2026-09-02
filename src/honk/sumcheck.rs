@@ -954,11 +954,13 @@ where
             let end = p.coeffs.iter().rposition(|c| !c.is_zero()).map_or(0, |i| i + 1);
             Column::Borrowed(&p.coeffs[..end])
         };
-        let table = polys
-            .iter()
-            .map(trim)
-            .chain(shifted_sources.iter().map(|s| Column::ShiftOf(*s)))
-            .collect();
+        let table = {
+            // The trailing-zero scans stream every column once; sequential they cost a visible
+            // fraction of the whole sumcheck at large sizes.
+            let mut table: Vec<Column<'a, F>> = polys.par_iter().map(trim).collect();
+            table.extend(shifted_sources.iter().map(|s| Column::ShiftOf(*s)));
+            table
+        };
         Self {
             table,
             log_n: n.trailing_zeros() as usize,
@@ -1221,6 +1223,7 @@ where
     type F<C> = <C as Curve>::Fr;
     let d = spec.batched_len;
     let alphas = alpha_powers(alpha, rels.total_subrelations() - 1);
+    let t_setup = std::time::Instant::now();
     let mut state = RoundProver::new(
         polys,
         &spec.shifted_sources,
@@ -1233,9 +1236,13 @@ where
     let mut challenge = Vec::with_capacity(spec.virtual_log_n);
     let mut partial_eval = F::<C>::one();
     let mut last_univariate = Vec::new();
+    let split_timing = std::env::var_os("BBREF_TIMING").is_some();
+    let (mut t_uni, mut t_fold) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
     for round in 0..spec.virtual_log_n {
         let round_start = relation_stats_enabled().then(std::time::Instant::now);
+        let t0 = std::time::Instant::now();
         let mut univariate = state.univariate(rels, params, betas, &partial_eval, &alphas, d);
+        t_uni += t0.elapsed();
         if let Some(zk) = zk.as_deref_mut() {
             for (k, v) in zk.round_univariate(round, d).into_iter().enumerate() {
                 univariate[k] += v;
@@ -1252,7 +1259,9 @@ where
             t.send_vec(&format!("Sumcheck:univariate_{round}"), &univariate);
         }
         let u: F<C> = t.challenge(&format!("Sumcheck:u_{round}"));
+        let t0 = std::time::Instant::now();
         state.partially_evaluate(&u);
+        t_fold += t0.elapsed();
         if let Some(t0) = round_start {
             eprintln!("[round {round}] {:.1} ms", t0.elapsed().as_secs_f64() * 1e3);
         }
@@ -1265,6 +1274,14 @@ where
     }
     if spec.committed {
         committed.finalize(&last_univariate, challenge.last().unwrap());
+    }
+    if split_timing {
+        eprintln!(
+            "[timing]     sumcheck split: univariate {:.2}s, fold {:.2}s, setup {:.2}s",
+            t_uni.as_secs_f64(),
+            t_fold.as_secs_f64(),
+            t_setup.elapsed().as_secs_f64() - t_uni.as_secs_f64() - t_fold.as_secs_f64()
+        );
     }
     let evals = state.evals();
     t.send_vec("Sumcheck:evaluations", &evals);
