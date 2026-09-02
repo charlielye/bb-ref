@@ -70,10 +70,8 @@ impl ProverInstance {
     /// The verification key: commitments to the precomputed polynomials.
     pub fn compute_vk(&self, ck: &CommitmentKey) -> Vk<Bn254> {
         let m = self.layout.num_masking;
-        let comms = (m..m + self.layout.num_precomputed)
-            .into_par_iter()
-            .map(|i| ck.commit(&self.polys[i]))
-            .collect();
+        let polys: Vec<_> = self.polys[m..m + self.layout.num_precomputed].iter().collect();
+        let comms = ck.batch_commit(&polys);
         Vk {
             log_circuit_size: Fr::from(self.log_n() as u64),
             num_public_inputs: Fr::from(self.public_inputs.len() as u64),

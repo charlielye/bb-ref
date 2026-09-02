@@ -33,7 +33,8 @@ fn commit_and_send<C: Curve<Fr = Fr, G = G1Affine>>(
     Fr: crate::base::codec::Transcriptable<C::TF> + crate::base::codec::FromChallenge<C::TF>,
     G1Affine: crate::base::codec::Transcriptable<C::TF>,
 {
-    let comms: Vec<_> = ents.par_iter().map(|e| ck.commit(inst.poly(*e))).collect();
+    let polys: Vec<_> = ents.iter().map(|e| inst.poly(*e)).collect();
+    let comms: Vec<_> = ck.batch_commit(&polys);
     for (e, c) in ents.iter().zip(&comms) {
         t.send(e.name(), c);
         out[inst.layout.idx(*e)] = Some(*c);

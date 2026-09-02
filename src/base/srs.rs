@@ -172,6 +172,35 @@ impl<G: super::msm::BatchMsm> Ck<G>
 where
     G::ScalarField: FieldLike,
 {
+    /// Commit to many polynomials with bounded MSM concurrency (bb `batch_commit`): each MSM is
+    /// internally parallel, so a few at a time saturate the cores while capping the live
+    /// per-MSM scratch that an unbounded fan-out multiplies.
+    pub fn batch_commit(&self, polys: &[&Polynomial<G::ScalarField>]) -> Vec<G>
+    where
+        G: Send + Sync,
+        G::ScalarField: Send + Sync,
+    {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        const CONCURRENT_MSMS: usize = 8;
+        let mut out: Vec<Option<G>> = vec![None; polys.len()];
+        let slots = super::msm::SendPtr(out.as_mut_ptr());
+        let slots = &slots; // capture the Sync wrapper, not the raw pointer field
+        let next = AtomicUsize::new(0);
+        rayon::scope(|s| {
+            for _ in 0..CONCURRENT_MSMS.min(polys.len()) {
+                s.spawn(|_| loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    if i >= polys.len() {
+                        break;
+                    }
+                    let c = self.commit(polys[i]);
+                    unsafe { *slots.0.add(i) = Some(c) };
+                });
+            }
+        });
+        out.into_iter().map(Option::unwrap).collect()
+    }
+
     /// `sum_i coeffs[i] * [tau^i]`.
     pub fn commit(&self, p: &Polynomial<G::ScalarField>) -> G {
         let k = p.end_index();

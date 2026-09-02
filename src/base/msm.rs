@@ -21,7 +21,8 @@ const MIN_CHUNK: usize = 384;
 const MIN_PTS_PER_THREAD: usize = 1024;
 
 /// Raw pointer wrapper for the column-major digit scatter: each rayon task writes a disjoint cell.
-struct SendPtr<T>(*mut T);
+pub struct SendPtr<T>(pub *mut T);
+unsafe impl<T> Send for SendPtr<T> {}
 unsafe impl<T> Sync for SendPtr<T> {}
 
 pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -> Projective<P> {
@@ -156,24 +157,37 @@ pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -
     let jobs: Vec<(usize, usize)> = (0..num_windows)
         .flat_map(|w| (0..(schedules[w].len().div_ceil(chunk_len)).max(1)).map(move |k| (w, k)))
         .collect();
+    // Points are gathered in bounded blocks and each block tree-reduced before the next is
+    // touched, so a job's live scratch is one block plus its (bucket-count-bounded) survivors —
+    // gathering a whole 2^20-entry slice as 80-byte pairs costs GBs across concurrent MSMs.
+    const GATHER_BLOCK: usize = 1 << 16;
     let survivors: Vec<Vec<(u32, Affine<P>)>> = jobs
         .par_iter()
         .map(|&(w, k)| {
             let sched = &schedules[w];
-            let start = (k * chunk_len).min(sched.len());
-            let slice = &sched[start..((k + 1) * chunk_len).min(sched.len())];
-            // Gather (bucket, signed point); the entry's bucket is its rank's position in the
-            // per-window bucket offsets, tracked incrementally since the schedule is sorted.
+            let job_start = (k * chunk_len).min(sched.len());
+            let job_end = ((k + 1) * chunk_len).min(sched.len());
+            // The entry's bucket is its rank's position in the per-window bucket offsets, tracked
+            // incrementally since the schedule is sorted.
             let starts = &bucket_starts[w];
-            let mut b = starts.partition_point(|&s| s as usize <= start) - 1;
-            let mut work: Vec<(u32, Affine<P>)> = Vec::with_capacity(slice.len());
-            for (j, &e) in slice.iter().enumerate() {
-                while starts[b + 1] as usize <= start + j {
-                    b += 1;
+            let mut b = starts.partition_point(|&s| s as usize <= job_start) - 1;
+            let mut work: Vec<(u32, Affine<P>)> = Vec::new();
+            let mut block: Vec<(u32, Affine<P>)> = Vec::with_capacity(GATHER_BLOCK.min(job_end - job_start));
+            for (block_start, chunk) in (job_start..job_end)
+                .step_by(GATHER_BLOCK)
+                .zip(sched[job_start..job_end].chunks(GATHER_BLOCK))
+            {
+                block.clear();
+                for (j, &e) in chunk.iter().enumerate() {
+                    while starts[b + 1] as usize <= block_start + j {
+                        b += 1;
+                    }
+                    let i = (e & 0x7fff_ffff) as usize;
+                    let p = if e >> 31 == 1 { -points[i] } else { points[i] };
+                    block.push((b as u32, p));
                 }
-                let i = (e & 0x7fff_ffff) as usize;
-                let p = if e >> 31 == 1 { -points[i] } else { points[i] };
-                work.push((b as u32, p));
+                while tree_level(&mut block) {}
+                work.extend_from_slice(&block);
             }
             while tree_level(&mut work) {}
             work
