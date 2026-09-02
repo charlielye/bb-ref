@@ -10,15 +10,22 @@ engineering, and to stand as an independent implementation that could eventually
 
 ## Goals
 
-| goal | target | state |
-| --- | --- | --- |
-| Less code | ≤ 20% of bb's C++ (no AVM, no benchmarks) | **18.5%** implementation-only (`tools/loc.sh`) |
-| Bit parity | VKs bit-exact, proofs byte-exact, both directions, incl. the wire protocol | **holds** — 62/62 corpus responses byte-identical; every VK and pinned flow byte-equal |
-| Performance | < 1.8× bb, eventually ≤ 1.2× | ~2× on big circuits (measure with `tools/bench.sh --both`) |
-| Standalone confidence | ~80% coverage without bb, >95% on the core, plus soundness (every tamper rejected) | core **95%**, standalone overall 69% ([docs/testing.md](docs/testing.md)) |
+These are the project's binding goals — changes should be judged against them:
 
-Out of scope, permanently: the AVM (public-transaction execution), Solidity verifier generation,
-Starknet oracle hash.
+| goal | state |
+| --- | --- |
+| **Minimum lines of code** for a bit-parity reference implementation, in modern idiomatic Rust | **18.5%** of bb's C++ implementation (`tools/loc.sh`) |
+| **Lean on stable, mature dependencies** instead of handwriting (fields/curves: arkworks; msgpack: rmp-serde; parallelism: rayon) | holds — no handwritten field or curve arithmetic |
+| **Bit parity**: VKs bit-exact, proofs byte-exact, both directions, including the wire protocol | holds — every VK and pinned flow byte-equal |
+| **Circuit gate parity**: every selector, wire and copy-cycle identical to bb's ([docs/gate-exactness.md](docs/gate-exactness.md)) | holds — enforced by the write-VK oracles and stdlib micro-oracles |
+| **Replay the rollup through bb and bb-ref and get the same root proof** | holds — 62/62 corpus responses byte-identical, `rollup_root` included (`tools/conformance.sh`) |
+| **Performance**: within 2× of bb, reducing to ≤ 1.2× in the near future | ~1.8–2× (`tools/bench.sh --both`, `tools/bench_chonk.sh`); per-front roadmap open |
+| **95%+ test coverage on the critical paths**, without redundant tests | core **95%** standalone, plus full soundness sweeps ([docs/testing.md](docs/testing.md)) |
+| **Documentation an engineer can descend**: each component's purpose without the math; first use of any odd name links to its explanation | [tour](docs/tour.md) → module READMEs → [glossary](docs/glossary.md) |
+| **A maintenance process for bb divergence**: diagnose and resolve drift quickly as bb moves | the pin + regen + divergence ladder ([docs/oracle.md](docs/oracle.md)) |
+
+Out of scope at this time: the AVM (public-transaction execution) — bb-ref solves for pure
+private-tx rollups. Also out of scope: Solidity verifier generation, Starknet oracle hash.
 
 ## The pin
 
