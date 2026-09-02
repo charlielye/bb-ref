@@ -705,7 +705,7 @@ where
         }
     }
     crate::base::timing::phase("    shplemini: folds");
-    let fold_comms: Vec<_> = folds.par_iter().map(|f| ck.commit(f)).collect();
+    let fold_comms: Vec<_> = ck.batch_commit(&folds.iter().collect::<Vec<_>>());
     crate::base::timing::phase("    shplemini: fold commits");
     for (l, c) in fold_comms.iter().enumerate() {
         t.send(&format!("Gemini:FOLD_{}", l + 1), c);

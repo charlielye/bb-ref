@@ -10,6 +10,7 @@
 
 mod common;
 
+use bb_ref::base::srs::Srs;
 use bb_ref::acir::lower::add_default_pairing_points;
 use bb_ref::base::field::FieldLike;
 use bb_ref::base::rng::{DebugRng, Rng};
@@ -160,7 +161,7 @@ fn keccak_rejects_every_tamper() {
     let vk_native = inst.compute_vk(&ck);
     let vk = bb_ref::msgpack::handler::as_keccak_vk(vk_native);
     let num_inner = inst.public_inputs.len() - 8;
-    let full = prove_ultra_as::<KeccakBn254>(&mut inst, &vk, &mut rng);
+    let full = prove_ultra_as::<KeccakBn254>(&mut inst, &vk, &Srs::default(), &mut rng);
     let (pis_w, proof_w) = full.split_at(inst.public_inputs.len());
     let (inner, io_tail) = pis_w.split_at(num_inner);
     let mut proof_with_io = io_tail.to_vec();
@@ -247,7 +248,7 @@ fn chonk_rejects_tampers_across_every_section() {
         if kind == CircuitKind::HidingKernel {
             let _vk_instance = ProverInstance::from_builder(kind.flavor(), &mut circuit, &mut rng);
         }
-        ivc.accumulate(&mut circuit, None, &mut rng);
+        ivc.accumulate(circuit, None, &mut rng);
     }
     let proof = ivc.prove(&mut rng);
     let vk = ivc.hiding_vk().clone();

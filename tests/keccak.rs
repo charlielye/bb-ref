@@ -3,6 +3,7 @@
 //! verify (fixtures under `keccak/`, produced by `tools/regen/regen_backend.sh`).
 
 mod common;
+use bb_ref::base::srs::Srs;
 use bb_ref::acir::format::{decode_program, decode_witness};
 use bb_ref::acir::lower::build_circuit;
 use bb_ref::base::srs::bn254_g2;
@@ -82,7 +83,7 @@ fn keccak_nozk_byte_exact() {
             "{prog}: vk_hash"
         );
         let user_pis = read_words(&dir.join("public_inputs"));
-        let proof = prove_ultra_as::<KeccakBn254>(&mut inst, &vk, &mut OsRng);
+        let proof = prove_ultra_as::<KeccakBn254>(&mut inst, &vk, &Srs::default(), &mut OsRng);
         let bb_proof = read_words(&dir.join("proof"));
         let mine = &proof[user_pis.len()..];
         assert_eq!(mine.len(), bb_proof.len(), "{prog}: proof length");
@@ -130,7 +131,7 @@ fn rollup_root_witness_byte_exact() {
         "rollup_root: vk_hash"
     );
     let user_pis = read_words(&golden.join("public_inputs"));
-    let proof = prove_ultra_as::<KeccakBn254>(&mut inst, &vk, &mut rng);
+    let proof = prove_ultra_as::<KeccakBn254>(&mut inst, &vk, &Srs::default(), &mut rng);
     let bb_proof = read_words(&golden.join("proof"));
     let mine = &proof[user_pis.len()..];
     assert_eq!(mine.len(), bb_proof.len(), "rollup_root: proof length");

@@ -77,7 +77,7 @@ fn real_flow_circuits_match_bb() {
             "circuit {idx} ({}): VK",
             step.name
         );
-        ivc.accumulate(&mut circuit, Some(step.vk.clone()), &mut rng);
+        ivc.accumulate(circuit, Some(step.vk.clone()), &mut rng);
     }
     eprintln!("{flow}: all {} circuits match bb", steps.len());
 }

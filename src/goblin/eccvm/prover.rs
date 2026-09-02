@@ -106,11 +106,8 @@ pub fn eccvm_prove(q: &EccOpQueue, ck: &GrumpkinKey, t: &mut NativeTranscript, r
     t.send("Gemini:masking_poly_comm", &commitments[0]);
     commitments[1..=NUM_PRECOMPUTED].copy_from_slice(&fixed_vk());
     let witness_range = NUM_PRECOMPUTED + 1..FIRST_SHIFTED - 2;
-    let comms: Vec<GrumpkinAffine> = witness_range
-        .clone()
-        .into_par_iter()
-        .map(|e| ck.commit(&polys.cols[e]))
-        .collect();
+    let witness_polys: Vec<_> = witness_range.clone().map(|e| &polys.cols[e]).collect();
+    let comms: Vec<GrumpkinAffine> = ck.batch_commit(&witness_polys);
     for (e, c) in witness_range.zip(comms) {
         commitments[e] = c;
         t.send(&label(ent(e)), &commitments[e]);

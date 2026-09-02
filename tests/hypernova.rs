@@ -104,7 +104,11 @@ fn check_folding(name: &str, entries: &[(&str, &'static FlavorDesc)], with_prev:
     );
     let expected_acc = read_accumulator(&dump.join("accumulator.bin"));
     assert_eq!(acc.to_verifier_claim(), expected_acc, "{name}: accumulator");
-    decider_prove(&acc, &mut prover.transcript);
+    let deciding_size = acc
+        .non_shifted_polynomial
+        .end_index()
+        .max(acc.shifted_polynomial.end_index());
+    decider_prove(&acc, &CommitmentKey::new(deciding_size), &mut prover.transcript);
     assert_eq!(
         prover.transcript.export_proof(),
         read_proof(&dump.join("decider_proof.bin")),

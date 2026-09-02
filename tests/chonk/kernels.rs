@@ -82,7 +82,7 @@ fn run_ivc(rng: &mut dyn Rng, compare_with: Option<&Path>) -> (Chonk, ChonkProof
                 "circuit {idx}: VK"
             );
         }
-        ivc.accumulate(&mut circuit, None, rng);
+        ivc.accumulate(circuit, None, rng);
     }
     let proof = ivc.prove(rng);
     (ivc, proof)

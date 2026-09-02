@@ -76,7 +76,8 @@ pub fn translator_oink_prove(
         .map(|g| TEnt::concatenated_range_constraints_0 as usize + g)
         .chain((0..ORDERED_LABELS.len()).map(|k| TEnt::ordered_range_constraints_0 as usize + k))
         .collect();
-    let comms: Vec<_> = cols.par_iter().map(|c| ck.commit(&polys.cols[*c])).collect();
+    let col_polys: Vec<_> = cols.iter().map(|c| &polys.cols[*c]).collect();
+    let comms: Vec<_> = ck.batch_commit(&col_polys);
     for (label, c) in CONCATENATED_LABELS.iter().chain(ORDERED_LABELS.iter()).zip(&comms) {
         t.send(label, c);
     }

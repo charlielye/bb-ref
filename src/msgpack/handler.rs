@@ -530,7 +530,7 @@ impl Handler for BbRefHandler {
             if let Some(msg) = &circuit.failed {
                 return Err(format!("circuit is not satisfied: {msg}"));
             }
-            ivc.accumulate(&mut circuit, vk, &mut rng);
+            ivc.accumulate(circuit, vk, &mut rng);
             Ok(BbChonkAccumulateResponse {})
         });
     }

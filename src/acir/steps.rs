@@ -110,8 +110,9 @@ pub fn prove_steps(
             step.name,
             circuit.failed
         );
+        drop(witness);
         crate::base::timing::phase("circuit built");
-        ivc.accumulate(&mut circuit, (!check_vks).then(|| step.vk.clone()), rng);
+        ivc.accumulate(circuit, (!check_vks).then(|| step.vk.clone()), rng);
         if check_vks {
             let computed = match step.kind {
                 CircuitKind::HidingKernel => ivc.hiding_vk(),
