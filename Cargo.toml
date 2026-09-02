@@ -24,6 +24,12 @@ rayon = "1.11"
 num-bigint = "0.4"
 ark-secp256r1 = "0.6.0"
 ark-secp256k1 = "0.6.0"
+mimalloc = "0.1"
+
+[features]
+# Spike: route bn254/grumpkin MSMs to bb's pippenger via tools/bbmsm/shim.cpp. Link flags come
+# from the build command (see the shim header); the default build is unaffected.
+bb-msm = []
 
 [profile.dev]
 opt-level = 1

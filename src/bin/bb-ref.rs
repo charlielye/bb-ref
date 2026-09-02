@@ -8,6 +8,12 @@
 //!   bb-ref prove    --scheme chonk --ivc_inputs_path <ivc-inputs.msgpack> -o <out_dir> [--vk_policy check]
 //!   bb-ref verify   --scheme chonk -k <vk> -p <proof>
 
+// mimalloc keeps freed pages in per-thread pools instead of returning them to the OS; the prover's
+// constant large alloc/free cycle otherwise spends whole seconds re-faulting zeroed pages (the
+// rollup base circuit dropped 14.7s -> 10.3s). Costs peak RSS, which mimalloc purge options can cap.
+#[global_allocator]
+static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use bb_ref::acir::{build_circuit_mega, decode_program, decode_steps, decode_witness, prove_steps};
 use bb_ref::base::field::U256;
 use bb_ref::base::field::{to_bytes_be, Fr};
