@@ -678,7 +678,7 @@ where
     batched_unshifted.add_scaled_batch(&unshifted_terms);
     batched_to_be_shifted.add_scaled_batch(&shifted_terms);
     let mut a_0 = batched_unshifted.clone();
-    a_0.add_scaled(&batched_to_be_shifted.shifted(), &Fr::one());
+    a_0.add_shifted(&batched_to_be_shifted);
     crate::base::timing::phase("    shplemini: batching");
 
     // folds A_{l+1}[j] = A_l[2j] + u_l (A_l[2j+1] - A_l[2j]), l = 0..log_n-2

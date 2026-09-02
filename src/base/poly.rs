@@ -94,6 +94,20 @@ impl<F: FieldLike> Polynomial<F> {
             }
         });
     }
+    /// `self += other.shifted()` without materializing the shift (reads `other` at offset 1).
+    pub fn add_shifted(&mut self, other: &Self)
+    where
+        F: Send + Sync,
+    {
+        assert!(other.coeffs.first().map_or(true, FieldLike::is_zero));
+        const CHUNK: usize = 1 << 12;
+        self.coeffs.par_chunks_mut(CHUNK).enumerate().for_each(|(c, chunk)| {
+            let start = c * CHUNK + 1;
+            for (a, b) in chunk.iter_mut().zip(other.coeffs.iter().skip(start)) {
+                *a += b;
+            }
+        });
+    }
     /// In-place division by `(X - root)`, assuming `root` is a root (bb `factor_roots`).
     pub fn factor_root(&mut self, root: &F) {
         let n = self.coeffs.len();
