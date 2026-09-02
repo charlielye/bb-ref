@@ -39,12 +39,12 @@ impl EccvmPolys {
         let n = self.size();
         let mut denominators: Vec<Fq> = (TRACE_OFFSET..n)
             .into_par_iter()
-            .map(|i| {
-                let row = self.row(i);
-                if lookup_inverse_exists(&row).is_zero() {
+            .map_init(Vec::new, |row, i| {
+                self.row_into(i, row);
+                if lookup_inverse_exists(row).is_zero() {
                     return Fq::zero();
                 }
-                lookup_terms(&row, p).iter().product()
+                lookup_terms(row, p).iter().product()
             })
             .collect();
         batch_invert(&mut denominators);
@@ -55,9 +55,9 @@ impl EccvmPolys {
         }
         let terms: Vec<(Fq, Fq)> = (TRACE_OFFSET..n - 1)
             .into_par_iter()
-            .map(|i| {
-                let row = self.row(i);
-                (set_numerator(&row, p), set_denominator(&row, p))
+            .map_init(Vec::new, |row, i| {
+                self.row_into(i, row);
+                (set_numerator(row, p), set_denominator(row, p))
             })
             .collect();
         let (num, den): (Vec<Fq>, Vec<Fq>) = terms.into_iter().unzip();

@@ -256,11 +256,19 @@ impl EccvmPolys {
     }
     /// All entity values at row `i` (shifted entities read their source at row `i + 1`).
     pub fn row(&self, i: usize) -> Vec<Fq> {
+        let mut out = Vec::new();
+        self.row_into(i, &mut out);
+        out
+    }
+    /// `row` into a reused buffer (the derived-column loops visit every row).
+    pub fn row_into(&self, i: usize, out: &mut Vec<Fq>) {
         let at = |e: usize, r: usize| self.cols[e].coeffs.get(r).copied().unwrap_or_else(|| Fq::from(0u64));
-        (0..FIRST_SHIFTED)
-            .map(|e| at(e, i))
-            .chain(TO_BE_SHIFTED.iter().map(|e| at(*e as usize, i + 1)))
-            .collect()
+        out.clear();
+        out.extend(
+            (0..FIRST_SHIFTED)
+                .map(|e| at(e, i))
+                .chain(TO_BE_SHIFTED.iter().map(|e| at(*e as usize, i + 1))),
+        );
     }
     /// Materialize every shifted column from its source (bb `set_shifted`).
     pub fn set_shifted(&mut self) {

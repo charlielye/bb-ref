@@ -195,15 +195,15 @@ fn add_rom_logup_inverses_to_wire_4(inst: &mut ProverInstance, p: &RelationParam
 fn compute_logderivative_inverses(inst: &mut ProverInstance, p: &RelationParams<Fr>) {
     let denominators: Vec<Fr> = (inst.flavor.trace_offset..inst.max_end_index)
         .into_par_iter()
-        .map(|i| {
+        .map_init(Vec::new, |vals, i| {
             let active = inst.poly(Ent::q_lookup).at(i) == Fr::from(1u64)
                 || inst.poly(Ent::lookup_read_tags).at(i) == Fr::from(1u64);
             if !active {
                 return Fr::zero();
             }
-            let vals = inst.row(i);
+            inst.row_into(i, vals);
             let row = Row {
-                vals: &vals,
+                vals,
                 layout: &inst.layout,
             };
             lookup_term(&row, p) * table_term(&row, p)

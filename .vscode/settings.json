@@ -11,5 +11,6 @@
   "search.exclude": {
     "**/pin/**": true,
     "**/fixtures/data/**": true
-  }
+  },
+  "cSpell.enabled": false
 }

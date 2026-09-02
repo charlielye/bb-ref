@@ -84,16 +84,33 @@ shrinks, so *live allocated bytes at peak* — dhat via `--features heap-profile
 4. Lifetime fixes: each execution step is dropped after accumulation, the translator circuit
    after `from_circuit`.
 
-Native RSS lands at 356 MB vs bb's 312 with `MIMALLOC_PURGE_DELAY=0
-MIMALLOC_ARENA_EAGER_COMMIT=0` (purging costs ~0.8s of the 4.2s wall; without it mimalloc
-retains freed pages and RSS reads ~600 MB — live is 314 MB either way). The remaining
-~30–40 MB over bb at the peak (the joint MegaZK+Translator phase): three tail-indexed
-translator Lagrange columns bb allocates with a start window (12 MB), leading zeros in
-gate-selector columns bb's structured trace skips via start indices (~10 MB per live
-instance), and larger MSM scratch. All are start-window territory — the same crate-wide
-`coeffs`-offset change declined above, now worth ~10% rather than a structural multiple.
+Native RSS reads ~600 MB against bb's 312 while live is 314 MB: the difference is mimalloc
+arena retention, not allocations. The full option sweep (8 threads, interleaved):
+`MIMALLOC_ARENA_EAGER_COMMIT=0` alone 465 MB at +2% wall, `MIMALLOC_PURGE_DELAY=0` alone
+450 MB at +12%, both together 358 MB at +19%. Phase-boundary `mi_collect` — from the main
+thread or broadcast to every rayon worker — releases nothing (the pages are arena-level),
+and cutting the allocation churn itself (12.7 → 8.3 GB total: reused MSM gather/tree scratch,
+reused row buffers in the grand-product and logup loops) moves neither RSS nor wall, since
+mimalloc was already recycling those size classes. Conclusion: run fast by default and treat
+native RSS as an allocator-policy knob for whoever needs it capped; wasm — the target where
+memory actually matters — has no mimalloc, and its linear-memory peak tracks the 314 MB live
+curve. The remaining ~30–40 MB of live delta over bb at the peak (the joint
+MegaZK+Translator phase): three tail-indexed translator Lagrange columns bb allocates with a
+start window (12 MB), leading zeros in gate-selector columns bb's structured trace skips via
+start indices (~10 MB per live instance), and larger MSM scratch. All are start-window
+territory — the same crate-wide `coeffs`-offset change declined above, now worth ~10% rather
+than a structural multiple.
 
-Each of these is a deliberate simplicity/speed trade, consistent with the project's goals.
+The chonk client flow at 8 threads (4.25s vs bb 2.82s) decomposes the same way, measured by
+phase marks against bb's `BB_BENCH` tree: sumchecks own ~0.5s of the gap (folding 0.5s vs
+0.26, joint 0.36 vs 0.17, ECCVM 0.15 vs ~0.06 — the relation-body residual), commitment MSMs
+~0.4s (ours ~1.3× bb's per batch-commit at 2^15–2^17), and the ECCVM TripleIPA ~0.2s
+(0.37s vs ~0.15: the per-round SRS fold is one projective scalar-mul per point where bb's
+`batch_two_round_fold` interleaves four GLV-split Booth digit streams on one shared doubling
+chain — ~4× fewer field muls per point; a plain batched-affine single-scalar fold was tried
+and measured a wash, since affine-with-shared-inversion and Jacobian doubling cost the same
+~6.5 muls, and the win is entirely the 4-way chain sharing). Closing to ≤1.2× on the client
+flow means porting those three, in that order of size.
 The next planned wins are algorithmic rather than micro-architectural — GLV over a
 precomputed φ(SRS) (output-preserving), then protocol-level experiments (GKR for grand
 products, small-value sumcheck) behind feature flags as upstream candidates for bb itself.

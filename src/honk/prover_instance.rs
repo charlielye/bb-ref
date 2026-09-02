@@ -56,16 +56,15 @@ impl ProverInstance {
     }
     /// One row of all entity values (unshifted at `i`, shifted at `i + 1`).
     pub fn row(&self, i: usize) -> Vec<Fr> {
-        let mut r: Vec<Fr> = self.polys.iter().map(|p| p.at(i)).collect();
-        for e in &self.layout.shifted {
-            let p = self.poly(*e);
-            r.push(if i + 1 < p.len() {
-                p.coeffs[i + 1]
-            } else {
-                Fr::from(0u64)
-            });
-        }
-        r
+        let mut out = Vec::new();
+        self.row_into(i, &mut out);
+        out
+    }
+    /// `row` into a reused buffer (the logup-inverse loop visits every row).
+    pub fn row_into(&self, i: usize, out: &mut Vec<Fr>) {
+        out.clear();
+        out.extend(self.polys.iter().map(|p| p.at(i)));
+        out.extend(self.layout.shifted.iter().map(|e| self.poly(*e).at(i + 1)));
     }
     /// The verification key: commitments to the precomputed polynomials.
     pub fn compute_vk(&self, ck: &CommitmentKey) -> Vk<Bn254> {

@@ -163,7 +163,11 @@ pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -
     const GATHER_BLOCK: usize = 1 << 16;
     let survivors: Vec<Vec<(u32, Affine<P>)>> = jobs
         .par_iter()
-        .map(|&(w, k)| {
+        .map_init(
+            // Per-rayon-split scratch, reused across jobs and tree levels: the gather block and
+            // the tree pair/denominator buffers dominate the prover's allocation churn otherwise.
+            || (Vec::new(), Vec::new(), Vec::new()),
+            |(block, pairs, dens), &(w, k)| {
             let sched = &schedules[w];
             let job_start = (k * chunk_len).min(sched.len());
             let job_end = ((k + 1) * chunk_len).min(sched.len());
@@ -172,7 +176,6 @@ pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -
             let starts = &bucket_starts[w];
             let mut b = starts.partition_point(|&s| s as usize <= job_start) - 1;
             let mut work: Vec<(u32, Affine<P>)> = Vec::new();
-            let mut block: Vec<(u32, Affine<P>)> = Vec::with_capacity(GATHER_BLOCK.min(job_end - job_start));
             for (block_start, chunk) in (job_start..job_end)
                 .step_by(GATHER_BLOCK)
                 .zip(sched[job_start..job_end].chunks(GATHER_BLOCK))
@@ -186,12 +189,13 @@ pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -
                     let p = if e >> 31 == 1 { -points[i] } else { points[i] };
                     block.push((b as u32, p));
                 }
-                while tree_level(&mut block) {}
-                work.extend_from_slice(&block);
+                while tree_level(block, pairs, dens) {}
+                work.extend_from_slice(block);
             }
-            while tree_level(&mut work) {}
+            while tree_level(&mut work, pairs, dens) {}
             work
-        })
+            },
+        )
         .collect();
 
     mark("4 tree");
@@ -208,7 +212,8 @@ pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -
             if work.is_empty() {
                 return Projective::<P>::zero();
             }
-            while tree_level(&mut work) {}
+            let (mut pairs, mut dens) = (Vec::new(), Vec::new());
+            while tree_level(&mut work, &mut pairs, &mut dens) {}
             bucket_reduce::<P>(&work, half)
         })
         .collect();
@@ -252,10 +257,14 @@ fn extract_bits(limbs: &[u64], start: usize, len: usize) -> u64 {
 /// One tree level, in place: adjacent same-bucket pairs are batch-added through a single
 /// level-wide inversion, survivors compact to the front. Returns false when every bucket is down
 /// to one point (no pair found). Sequential: the caller's schedule chunks are the parallel unit.
-fn tree_level<P: SWCurveConfig>(work: &mut Vec<(u32, Affine<P>)>) -> bool {
+fn tree_level<P: SWCurveConfig>(
+    work: &mut Vec<(u32, Affine<P>)>,
+    pairs: &mut Vec<(u32, u32)>,
+    dens: &mut Vec<P::BaseField>,
+) -> bool {
     // Pass 1: pick pairs, collect the batched denominators (None = pair sums to infinity).
-    let mut pairs: Vec<(u32, u32)> = Vec::with_capacity(work.len() / 2);
-    let mut dens: Vec<P::BaseField> = Vec::with_capacity(work.len() / 2);
+    pairs.clear();
+    dens.clear();
     let mut i = 0;
     while i + 1 < work.len() {
         let ((ba, a), (bb, b)) = (work[i], work[i + 1]);
@@ -275,10 +284,10 @@ fn tree_level<P: SWCurveConfig>(work: &mut Vec<(u32, Affine<P>)>) -> bool {
     if pairs.is_empty() {
         return false;
     }
-    ark_ff::batch_inversion(&mut dens);
+    ark_ff::batch_inversion(dens);
     // Pass 2: apply sums and compact survivors to the front in one walk.
-    let mut inv = dens.into_iter();
-    let mut pair_it = pairs.into_iter().peekable();
+    let mut inv = dens.iter();
+    let mut pair_it = pairs.iter().copied().peekable();
     let (mut out, mut i) = (0usize, 0usize);
     while i < work.len() {
         match pair_it.peek() {

@@ -64,12 +64,22 @@ pub fn inner_product_prove(ck: &GrumpkinKey, witness: &P, mut b: Vec<Fq>, t: &mu
     let mut a = witness.coeffs.clone();
     let mut g = ck.points[..n].to_vec();
     let mut challenge_product = Fq::one();
+    let stage_timing = std::env::var_os("BBREF_IPA_TIMING").is_some();
+    let (mut t_inner, mut t_msm, mut t_fold_ab, mut t_fold_g) = (
+        std::time::Duration::ZERO,
+        std::time::Duration::ZERO,
+        std::time::Duration::ZERO,
+        std::time::Duration::ZERO,
+    );
     for round in 0..log_n {
         let half = n >> (round + 1);
+        let t0 = std::time::Instant::now();
         let inner_l: Fq = (0..half).into_par_iter().map(|i| a[i] * b[half + i]).sum();
         let inner_r: Fq = (0..half).into_par_iter().map(|i| a[half + i] * b[i]).sum();
+        let t1 = std::time::Instant::now();
         let l = msm(&g[half..2 * half], &a[..half]) + aux_generator * inner_l;
         let r = msm(&g[..half], &a[half..2 * half]) + aux_generator * inner_r;
+        let t2 = std::time::Instant::now();
         let index = log_n - round - 1;
         t.send(&format!("IPA:L_{index}"), &l.into_affine());
         t.send(&format!("IPA:R_{index}"), &r.into_affine());
@@ -77,6 +87,7 @@ pub fn inner_product_prove(ck: &GrumpkinKey, witness: &P, mut b: Vec<Fq>, t: &mu
         assert!(!u.is_zero(), "IPA round challenge is zero");
         let u_inv = u.invert();
         challenge_product *= u;
+        let t3 = std::time::Instant::now();
         let (a_lo, a_hi) = a.split_at_mut(half);
         a_lo.par_iter_mut()
             .zip(&a_hi[..half])
@@ -85,11 +96,24 @@ pub fn inner_product_prove(ck: &GrumpkinKey, witness: &P, mut b: Vec<Fq>, t: &mu
         b_lo.par_iter_mut()
             .zip(&b_hi[..half])
             .for_each(|(lo, hi)| *lo = u * *lo + hi);
+        let t4 = std::time::Instant::now();
         g = Proj::normalize_batch(
             &(0..half)
                 .into_par_iter()
                 .map(|i| g[i] * u + g[half + i])
                 .collect::<Vec<_>>(),
+        );
+        if stage_timing {
+            t_inner += t1 - t0;
+            t_msm += t2 - t1;
+            t_fold_ab += t4 - t3;
+            t_fold_g += t4.elapsed();
+        }
+    }
+    if stage_timing {
+        eprintln!(
+            "[ipa] inner {:?} lr-msm {:?} fold-ab {:?} fold-g {:?}",
+            t_inner, t_msm, t_fold_ab, t_fold_g
         );
     }
     t.send("IPA:G_0", &(g[0] * challenge_product.invert()).into_affine());

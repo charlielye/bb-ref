@@ -42,9 +42,9 @@ impl TranslatorPolys {
     pub fn compute_grand_product(&mut self, p: &RelationParams<Fr>) {
         let terms: Vec<(Fr, Fr)> = (0..CIRCUIT_SIZE - 1)
             .into_par_iter()
-            .map(|i| {
-                let row = self.row(i);
-                (permutation_numerator(&row, p), permutation_denominator(&row, p))
+            .map_init(Vec::new, |row, i| {
+                self.row_into(i, row);
+                (permutation_numerator(row, p), permutation_denominator(row, p))
             })
             .collect();
         let (num, den): (Vec<Fr>, Vec<Fr>) = terms.into_iter().unzip();
