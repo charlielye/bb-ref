@@ -13,6 +13,7 @@ fn check(kind: &str) {
     let params = eccvm_relation_params(Fq::from(2u64), Fq::from(3u64));
     polys.compute_derived(&params);
     assert_eq!(check_circuit(&polys, &params), None, "{kind}: relations vanish");
+    polys.set_shifted();
 
     let dump = common::fixture_dir(&format!("instance/eccvm/{kind}"));
     if let Ok(bytes) = std::fs::read(dump.join("eccvm_columns.bin")) {

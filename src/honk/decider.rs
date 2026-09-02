@@ -10,6 +10,7 @@ use crate::base::{CommitmentKey, NativeTranscript};
 
 pub fn decider_prove(acc: &ProverClaim, ck: &CommitmentKey, t: &mut NativeTranscript) {
     let claim = shplemini_prove::<crate::base::Bn254>(
+        acc.dyadic_size,
         &[&acc.non_shifted_polynomial],
         &[&acc.shifted_polynomial],
         &acc.challenge,

@@ -126,6 +126,7 @@ pub fn joint_prove(
     let d = layout.batched_len;
     let mega_shifted: Vec<usize> = layout.shifted.iter().map(|e| layout.idx(*e)).collect();
     let mut mega_state = RoundProver::new(
+        mega.dyadic_size,
         &mega.polys,
         &mega_shifted,
         true,
@@ -137,6 +138,7 @@ pub fn joint_prove(
     // sources instead of materialized copies.
     let trans_shift_sources: Vec<usize> = (13..=98).collect();
     let mut trans_state = RoundProver::new(
+        CIRCUIT_SIZE,
         &trans.cols[..crate::goblin::translator::FIRST_SHIFTED],
         &trans_shift_sources,
         false,
@@ -208,6 +210,7 @@ pub fn joint_prove(
     let round_claims = sumcheck_round_claims(&committed.univariates, &committed.evaluations, &challenge);
     crate::base::timing::phase("  joint: sumcheck");
     let claim = shplemini_prove::<crate::base::Bn254>(
+        CIRCUIT_SIZE,
         &unshifted,
         &to_be_shifted,
         &challenge,

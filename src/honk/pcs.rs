@@ -640,6 +640,7 @@ pub struct ShplonkProverOutput<C: Curve> {
 /// bb `ShpleminiProver_::prove`: Gemini folds + (ZK) Libra claims + Shplonk batching. Returns the
 /// final opening claim `(G, z, 0)` to be opened with KZG.
 pub fn shplemini_prove<C>(
+    n: usize,
     unshifted: &[&Poly],
     to_be_shifted: &[&Poly],
     u: &[Fr],
@@ -655,8 +656,8 @@ where
 {
     use crate::base::group::Curve;
     let virtual_log_n = u.len();
-    // Shorter polynomials (a smaller circuit batched with a larger one) are zero-extended.
-    let n = unshifted.iter().chain(to_be_shifted).map(|p| p.len()).max().unwrap();
+    // Shorter polynomials (content-sized columns) are zero-extended when batched.
+    debug_assert!(n.is_power_of_two() && unshifted.iter().chain(to_be_shifted).all(|p| p.len() <= n));
     let log_n = n.trailing_zeros() as usize;
 
     // --- Gemini ---

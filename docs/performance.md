@@ -17,6 +17,7 @@ Numbers are from an idle 64-core c7a (both provers pinned to 32 threads, seeded,
 | — private tx base | 8.2s | 10.2s | 1.24× |
 | chonk client flows (11 pinned transactions) | 30.3s | 45.8s | **1.51×** |
 | private tx base peak RSS | 3.4 GB | 5.1 GB (4.6 live) | 1.5× |
+| chonk client flow peak RSS, 8 threads | 312 MB | 358 MB purged / 314 MB live | **1.15×** |
 
 ## What closed the gap (largest first)
 
@@ -59,11 +60,38 @@ the sumcheck univariate/fold/setup split) plus `perf stat` instruction counts:
 - **rayon vs bb's parking pool** — ~40% extra *instructions* at 32 threads is work-stealing
   spin between short parallel sections. On an under-subscribed machine it fills idle cores
   and costs little wall; on a saturated one it competes with real work.
-- **Memory** — of the 1.2GB live delta: the preloaded 2^23-point SRS pool (~0.6GB, a server
-  sizing choice), and dense sumcheck round tables plus ~20% dead dyadic tail in the trace
-  polynomials. A bb-style windowed polynomial was evaluated and declined: it would recover
-  only ~0.3–0.5GB against a change touching every `coeffs` access in the crate
+- **Memory (server)** — of the 1.2GB live delta: the preloaded 2^23-point SRS pool (~0.6GB, a
+  server sizing choice), and dense sumcheck round tables plus ~20% dead dyadic tail in the
+  trace polynomials. A bb-style windowed polynomial was evaluated and declined: it would
+  recover only ~0.3–0.5GB against a change touching every `coeffs` access in the crate
   (never-written tails are already free via `alloc_zeroed`).
+
+## Client memory
+
+The chonk client flow is the memory-sensitive target (browsers; wasm linear memory never
+shrinks, so *live allocated bytes at peak* — dhat via `--features heap-profile`, aggregated by
+`tools/heap_agg.py` — is the metric that transfers, alongside native RSS). Live peak went
+0.51 → 0.31 GB at 8 threads, byte-identical proofs throughout:
+
+1. **Content-sized columns instead of dyadic-sized.** Instance polynomials are allocated to
+   each column's real extent (a 2^17 kernel: 268 → ~60 MB); the translator's sparse Lagrange
+   columns get their bb window's extent; oink sizes the columns it derives. Consumers
+   zero-default past a column's end, so the dyadic size is now passed explicitly wherever it
+   was inferred from a column length (`prove_sumcheck`, `shplemini_prove`).
+2. **Shifted entities as views** on the prove path (translator grand product, ECCVM trace)
+   instead of materialized copies (−90 MB and −55 MB at their phase peaks).
+3. **`TripleIpaInput` borrows the ECCVM trace** rather than cloning all 119 columns (−125 MB).
+4. Lifetime fixes: each execution step is dropped after accumulation, the translator circuit
+   after `from_circuit`.
+
+Native RSS lands at 356 MB vs bb's 312 with `MIMALLOC_PURGE_DELAY=0
+MIMALLOC_ARENA_EAGER_COMMIT=0` (purging costs ~0.8s of the 4.2s wall; without it mimalloc
+retains freed pages and RSS reads ~600 MB — live is 314 MB either way). The remaining
+~30–40 MB over bb at the peak (the joint MegaZK+Translator phase): three tail-indexed
+translator Lagrange columns bb allocates with a start window (12 MB), leading zeros in
+gate-selector columns bb's structured trace skips via start indices (~10 MB per live
+instance), and larger MSM scratch. All are start-window territory — the same crate-wide
+`coeffs`-offset change declined above, now worth ~10% rather than a structural multiple.
 
 Each of these is a deliberate simplicity/speed trade, consistent with the project's goals.
 The next planned wins are algorithmic rather than micro-architectural — GLV over a

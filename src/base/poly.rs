@@ -27,6 +27,10 @@ impl<F: FieldLike> Polynomial<F> {
     pub fn is_empty(&self) -> bool {
         self.coeffs.is_empty()
     }
+    /// The coefficient at `i`, zero past the allocated end (columns are sized to their content).
+    pub fn at(&self, i: usize) -> F {
+        self.coeffs.get(i).cloned().unwrap_or_else(F::zero)
+    }
     /// Index of the last non-zero coefficient plus one.
     pub fn end_index(&self) -> usize {
         self.coeffs.iter().rposition(|c| !c.is_zero()).map_or(0, |i| i + 1)

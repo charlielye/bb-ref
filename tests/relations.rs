@@ -76,6 +76,7 @@ fn translator_corruptions_are_named() {
     let params = translator_relation_params(&v, &x, result_limbs, Fr::from(2u64), Fr::from(3u64));
     let mut polys = TranslatorPolys::from_circuit(&circuit, &masking);
     polys.compute_grand_product(&params);
+    polys.set_shifted();
     assert_eq!(check_circuit(&polys, &params), None, "satisfying circuit");
 
     let col = Ent::p_x_low_limbs_range_constraint_0 as usize;

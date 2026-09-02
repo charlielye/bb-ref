@@ -942,6 +942,7 @@ where
     /// row skipping). `active_prefix_end`: the ECCVM's trace rows, beyond which only the last edge
     /// is evaluated (bb `row_skip_active_prefix_end`).
     pub fn new(
+        n: usize,
         polys: &'a [Polynomial<F>],
         shifted_sources: &[usize],
         row_disabling: bool,
@@ -949,7 +950,7 @@ where
         witness_end: usize,
         active_prefix_end: Option<usize>,
     ) -> Self {
-        let n = polys[0].len();
+        debug_assert!(n.is_power_of_two() && polys.iter().all(|p| p.len() <= n));
         let trim = |p: &'a Polynomial<F>| {
             let end = p.coeffs.iter().rposition(|c| !c.is_zero()).map_or(0, |i| i + 1);
             Column::Borrowed(&p.coeffs[..end])
@@ -1220,6 +1221,7 @@ pub struct SumcheckProverOutput<C: Curve> {
 /// bb `SumcheckProver::prove` (plain, ZK and committed variants). `ck` is required for the
 /// committed variant (to commit to the round univariates).
 pub fn prove_sumcheck<C: Curve>(
+    n: usize,
     rels: &(impl RelationSet<C::Fr> + Sync),
     spec: &SumcheckSpec,
     polys: &[Polynomial<C::Fr>],
@@ -1241,6 +1243,7 @@ where
     let alphas = alpha_powers(alpha, rels.total_subrelations() - 1);
     let t_setup = std::time::Instant::now();
     let mut state = RoundProver::new(
+        n,
         polys,
         &spec.shifted_sources,
         spec.row_disabling,
@@ -1371,6 +1374,7 @@ mod tests {
 
         let mut pt = NativeTranscript::new();
         let out = prove_sumcheck::<Bn254>(
+            1 << log_n,
             &ProductVanishes,
             &spec(log_n),
             &polys,

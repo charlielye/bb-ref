@@ -231,6 +231,7 @@ impl Chonk {
         let circuit = TranslatorCircuit::new(v, x, &q);
         timing::phase("translator circuit");
         let mut polys = TranslatorPolys::from_circuit(&circuit, &TranslatorPolys::random_masking(rng));
+        drop(circuit);
         timing::phase("translator polys");
         joint_prove(&inst, &oink.params, &mut polys, &v, &x, &self.ck, &mut t, rng);
         let joint_proof = t.export_proof();

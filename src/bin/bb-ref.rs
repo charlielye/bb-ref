@@ -91,7 +91,7 @@ fn chonk(cmd: &str, flags: &HashMap<String, String>) {
                 .max()
                 .unwrap_or(0)
                 .max(1 << 17);
-            let (proof, vk) = prove_steps(&steps, CommitmentKey::new(max_size), rng.as_mut(), check_vks);
+            let (proof, vk) = prove_steps(steps, CommitmentKey::new(max_size), rng.as_mut(), check_vks);
             let out = out_dir(flags);
             std::fs::write(out.join("proof"), encode_fields(&proof.to_fields())).unwrap();
             std::fs::write(out.join("vk"), vk.to_bytes()).unwrap();

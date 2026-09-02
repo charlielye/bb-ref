@@ -6,13 +6,17 @@ use bb_ref::base::poly::{eq_table, Polynomial};
 use bb_ref::base::{Fq, GrumpkinKey, NativeTranscript};
 use bb_ref::goblin::ipa::{rho_powers, triple_ipa_prove, triple_ipa_verify, TripleIpaClaims, TripleIpaInput};
 
-fn input(log_n: usize, ck: &GrumpkinKey) -> TripleIpaInput {
+fn make_polys(log_n: usize) -> Vec<Polynomial<Fq>> {
+    let n = 1 << log_n;
+    (0..5)
+        .map(|k| Polynomial::from_coeffs((0..n).map(|i| Fq::from(((k + 1) * 1000 + i + 1) as u64)).collect()))
+        .collect()
+}
+
+fn input<'a>(log_n: usize, ck: &GrumpkinKey, polys: &'a [Polynomial<Fq>]) -> TripleIpaInput<'a> {
     let n = 1 << log_n;
     let u: Vec<Fq> = (0..log_n).map(|i| Fq::from(7 + i as u64)).collect();
     let eq = eq_table(&u, log_n);
-    let polys: Vec<Polynomial<Fq>> = (0..5)
-        .map(|k| Polynomial::from_coeffs((0..n).map(|i| Fq::from(((k + 1) * 1000 + i + 1) as u64)).collect()))
-        .collect();
     let evaluations: Vec<Fq> = polys.iter().map(|p| p.evaluate_mle(&u)).collect();
     let commitments = polys.iter().map(|p| ck.commit(p)).collect::<Vec<_>>();
     let shifted_eval = |p: &Polynomial<Fq>| (0..n - 1).map(|i| eq[i] * p.coeffs[i + 1]).sum::<Fq>();
@@ -33,8 +37,8 @@ fn input(log_n: usize, ck: &GrumpkinKey) -> TripleIpaInput {
             univariate_challenge: x,
             univariate_evaluation: univariate.evaluate(&x),
         },
-        shifted_polys: sources.iter().map(|&s| polys[s].clone()).collect(),
-        unshifted_polys: polys,
+        shifted_polys: sources.iter().map(|&s| &polys[s]).collect(),
+        unshifted_polys: polys.iter().collect(),
         univariate_poly: univariate,
     }
 }
@@ -46,7 +50,8 @@ fn check(log_n: usize) {
         return;
     }
     let ck = GrumpkinKey::new(1 << log_n);
-    let input = input(log_n, &ck);
+    let polys = make_polys(log_n);
+    let input = input(log_n, &ck, &polys);
     let mut t = NativeTranscript::new();
     triple_ipa_prove(&ck, &input, &mut t);
     let proof = t.export_proof();

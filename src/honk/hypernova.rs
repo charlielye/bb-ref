@@ -156,6 +156,7 @@ pub fn instance_to_accumulator(
     crate::base::timing::phase("  fold: oink");
     let betas: Vec<Fr> = t.dyadic_powers("HypernovaFoldingProver:gate_challenge", flavor.virtual_log_n);
     let sc = prove_sumcheck::<Bn254>(
+        inst.dyadic_size,
         &HonkRelations {
             flavor,
             layout: &inst.layout,

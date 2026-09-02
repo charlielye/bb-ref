@@ -94,13 +94,14 @@ pub fn decode_steps(bytes: &[u8]) -> Vec<PrivateExecutionStep> {
 /// kernel's VK. `check_vks` recomputes each circuit's VK and compares it with the pinned one
 /// (bb `--vk_policy check`); otherwise the pinned VKs are used as they are (bb's default).
 pub fn prove_steps(
-    steps: &[PrivateExecutionStep],
+    steps: Vec<PrivateExecutionStep>,
     ck: CommitmentKey,
     rng: &mut dyn Rng,
     check_vks: bool,
 ) -> (ChonkProof, Vk<Bn254>) {
     let mut ivc = Chonk::new(steps.iter().map(|s| s.kind).collect(), ck);
     for step in steps {
+        let step = &step;
         crate::base::timing::phase(&format!("== {} ({:?})", step.name, step.kind));
         let witness = step.decode_witness(rng);
         let mut circuit = build_circuit_mega(&step.circuit, Some(&witness), Some(&mut ivc), rng);

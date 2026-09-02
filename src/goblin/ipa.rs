@@ -265,11 +265,11 @@ impl<C: Curve> TripleIpaClaims<C> {
     }
 }
 
-pub struct TripleIpaInput {
+pub struct TripleIpaInput<'a> {
     pub claims: TripleIpaClaims,
-    pub unshifted_polys: Vec<P>,
+    pub unshifted_polys: Vec<&'a P>,
     /// The sources of the shift claim (the flavor's to-be-shifted polynomials).
-    pub shifted_polys: Vec<P>,
+    pub shifted_polys: Vec<&'a P>,
     pub univariate_poly: P,
 }
 
@@ -420,14 +420,14 @@ where
 }
 
 /// bb `TripleIPA::compute_opening_proof`.
-pub fn triple_ipa_prove(ck: &GrumpkinKey, input: &TripleIpaInput, t: &mut NativeTranscript) {
+pub fn triple_ipa_prove(ck: &GrumpkinKey, input: &TripleIpaInput<'_>, t: &mut NativeTranscript) {
     let n = input.univariate_poly.len();
     let log_n = n.trailing_zeros() as usize;
     let claims = &input.claims;
     let claim = claims.batch();
-    let batch = |polys: &[P], rhos: &[Fq]| {
+    let batch = |polys: &[&P], rhos: &[Fq]| {
         let mut acc = P::zero(n);
-        acc.add_scaled_batch(&polys.iter().zip(rhos).map(|(p, r)| (p, *r)).collect::<Vec<_>>());
+        acc.add_scaled_batch(&polys.iter().zip(rhos).map(|(p, r)| (*p, *r)).collect::<Vec<_>>());
         acc
     };
     let unshifted = batch(&input.unshifted_polys, &claims.unshifted_rho_powers);
@@ -448,7 +448,7 @@ pub fn triple_ipa_prove(ck: &GrumpkinKey, input: &TripleIpaInput, t: &mut Native
     t.send("TripleIPA:cross_shift_P", &cross[2]);
 
     let zeta = zeta_challenges::<Grumpkin>(t);
-    let witness = batch(&[unshifted, shifted, input.univariate_poly.clone()], &zeta);
+    let witness = batch(&[&unshifted, &shifted, &input.univariate_poly], &zeta);
     let (_, vector, _) = combine(&claim, zeta, &cross, t);
     crate::base::timing::phase("    ipa: cross terms + combine");
     inner_product_prove(ck, &witness, vector.tensor(&eq), t);

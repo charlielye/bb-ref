@@ -36,7 +36,9 @@ pub fn translator_relation_params(
 }
 
 impl TranslatorPolys {
-    /// bb `compute_grand_product` for the permutation relation, then the shifts.
+    /// bb `compute_grand_product` for the permutation relation. The prover reads shift entities as
+    /// views, so no shifted columns are materialized here; `check_circuit` callers need a
+    /// `set_shifted` afterwards because `row` reads the dense shift columns.
     pub fn compute_grand_product(&mut self, p: &RelationParams<Fr>) {
         let terms: Vec<(Fr, Fr)> = (0..CIRCUIT_SIZE - 1)
             .into_par_iter()
@@ -48,7 +50,6 @@ impl TranslatorPolys {
         let (num, den): (Vec<Fr>, Vec<Fr>) = terms.into_iter().unzip();
         let prefix = grand_product(&num, &den);
         self.cols[Ent::z_perm as usize].coeffs[1..CIRCUIT_SIZE].copy_from_slice(&prefix[1..]);
-        self.set_shifted();
     }
 }
 

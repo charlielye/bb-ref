@@ -235,8 +235,13 @@ pub struct EccvmPolys {
 
 impl EccvmPolys {
     pub fn zero(size: usize) -> Self {
+        // Shift entities are views of their sources in the prover (the sumcheck table reads them
+        // through `shifted_sources` and `row` reads the source one row ahead); `set_shifted`
+        // materializes them when a test wants dense columns.
         Self {
-            cols: (0..NUM_ALL_ENTITIES).map(|_| Polynomial::zero(size)).collect(),
+            cols: (0..NUM_ALL_ENTITIES)
+                .map(|e| Polynomial::zero(if e >= FIRST_SHIFTED { 0 } else { size }))
+                .collect(),
             num_rows: size,
         }
     }
@@ -249,9 +254,13 @@ impl EccvmPolys {
     pub fn col_mut(&mut self, e: Ent) -> &mut Polynomial<Fq> {
         &mut self.cols[e as usize]
     }
-    /// All entity values at row `i` (shifted entities read row `i + 1`).
+    /// All entity values at row `i` (shifted entities read their source at row `i + 1`).
     pub fn row(&self, i: usize) -> Vec<Fq> {
-        self.cols.iter().map(|c| c.coeffs[i]).collect()
+        let at = |e: usize, r: usize| self.cols[e].coeffs.get(r).copied().unwrap_or_else(|| Fq::from(0u64));
+        (0..FIRST_SHIFTED)
+            .map(|e| at(e, i))
+            .chain(TO_BE_SHIFTED.iter().map(|e| at(*e as usize, i + 1)))
+            .collect()
     }
     /// Materialize every shifted column from its source (bb `set_shifted`).
     pub fn set_shifted(&mut self) {

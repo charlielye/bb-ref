@@ -43,7 +43,7 @@ pub fn sumcheck_spec() -> SumcheckSpec {
         committed: true,
         batched_len: 24,
         num_entities: NUM_ALL_ENTITIES,
-        shifted_sources: vec![],
+        shifted_sources: TO_BE_SHIFTED.iter().map(|e| *e as usize).collect(),
     }
 }
 
@@ -128,9 +128,10 @@ pub fn eccvm_prove(q: &EccOpQueue, ck: &GrumpkinKey, t: &mut NativeTranscript, r
     let mut spec = sumcheck_spec();
     spec.active_prefix_end = Some(polys.num_rows);
     let sc = prove_sumcheck::<Grumpkin>(
+        n,
         &EccvmRelations,
         &spec,
-        &polys.cols,
+        &polys.cols[..FIRST_SHIFTED],
         t,
         &alpha,
         &gate_challenges,
@@ -301,8 +302,8 @@ pub fn eccvm_prove(q: &EccOpQueue, ck: &GrumpkinKey, t: &mut NativeTranscript, r
             univariate_challenge: shplonk.z,
             univariate_evaluation: Fq::from(0u64),
         },
-        unshifted_polys: polys.cols[..FIRST_SHIFTED].to_vec(),
-        shifted_polys: TO_BE_SHIFTED.iter().map(|e| polys.col(*e).clone()).collect(),
+        unshifted_polys: polys.cols[..FIRST_SHIFTED].iter().collect(),
+        shifted_polys: TO_BE_SHIFTED.iter().map(|e| polys.col(*e)).collect(),
         univariate_poly: shplonk.claim.poly,
     };
     let mut ipa_transcript = NativeTranscript::new();

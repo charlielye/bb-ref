@@ -72,6 +72,7 @@ fn translator_matches_bb() {
     let mut polys = TranslatorPolys::from_circuit(&circuit, &masking);
     let params = translator_relation_params(&v, &x, result_limbs, Fr::from(2u64), Fr::from(3u64));
     polys.compute_grand_product(&params);
+    polys.set_shifted();
 
     let columns = std::fs::read(dump.join("columns.bin")).unwrap();
     let entities: Vec<usize> = (1..=11).chain(93..=103).collect();
@@ -79,7 +80,7 @@ fn translator_matches_bb() {
         for r in 0..CIRCUIT_SIZE {
             let off = 32 * (k * CIRCUIT_SIZE + r);
             let expected = from_bytes_be::<Fr>(&columns[off..off + 32]);
-            assert_eq!(polys.cols[*e].coeffs[r], expected, "entity {e} row {r}");
+            assert_eq!(polys.cols[*e].at(r), expected, "entity {e} row {r}");
         }
     }
     assert_eq!(check_circuit(&polys, &params), None, "relations vanish");
@@ -88,5 +89,6 @@ fn translator_matches_bb() {
     bad.wires[ACCUMULATORS_BINARY_LIMBS_0][RESULT_ROW + 2] += Fr::from(1u64);
     let mut bad_polys = TranslatorPolys::from_circuit(&bad, &masking);
     bad_polys.compute_grand_product(&params);
+    bad_polys.set_shifted();
     assert!(check_circuit(&bad_polys, &params).is_some(), "corruption detected");
 }

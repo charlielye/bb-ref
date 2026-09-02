@@ -31,12 +31,8 @@ pub fn assert_polys_equal(
     let is_selector = |i: usize| inst.layout.unshifted[i].name().starts_with("q_");
     let mut first: Option<(usize, usize)> = None;
     let scan = |i: usize, first: &mut Option<(usize, usize)>| {
-        if let Some(r) = inst.polys[i]
-            .coeffs
-            .iter()
-            .zip(&expected.polys[i].coeffs)
-            .position(|(x, y)| x != y)
-        {
+        let (a, b) = (&inst.polys[i], &expected.polys[i]);
+        if let Some(r) = (0..a.len().max(b.len())).find(|r| a.at(*r) != b.at(*r)) {
             if first.map_or(true, |(fr, _)| r < fr) {
                 *first = Some((r, i));
             }

@@ -56,7 +56,7 @@ impl ProverInstance {
     }
     /// One row of all entity values (unshifted at `i`, shifted at `i + 1`).
     pub fn row(&self, i: usize) -> Vec<Fr> {
-        let mut r: Vec<Fr> = self.polys.iter().map(|p| p.coeffs[i]).collect();
+        let mut r: Vec<Fr> = self.polys.iter().map(|p| p.at(i)).collect();
         for e in &self.layout.shifted {
             let p = self.poly(*e);
             r.push(if i + 1 < p.len() {
@@ -103,7 +103,61 @@ impl ProverInstance {
             .expect("empty circuit");
         let active_size = final_active_wire_idx + 1;
 
-        let mut polys: Vec<Poly> = layout.unshifted.iter().map(|_| Poly::zero(dyadic_size)).collect();
+        // Each column is allocated to its content: consumers zero-default past a column's end
+        // (`Polynomial::at`, the sumcheck's trailing-zero trim, `add_scaled_batch` zero-extension),
+        // and the oink prover sizes the columns it derives (z_perm, the inverses, the Gemini mask)
+        // itself. Only entities a later phase writes past their builder content keep `dyadic_size`.
+        let masked_end = if flavor.has_zk {
+            NUM_ZERO_ROWS + NUM_MASKED_ROWS
+        } else {
+            0
+        };
+        let mut derived_end: std::collections::HashMap<Ent, usize> = std::collections::HashMap::new();
+        for (desc, block) in blocks.iter() {
+            for kind in desc.kinds {
+                let e = gate_selector_entity(*kind);
+                let end = derived_end.entry(e).or_insert(0);
+                *end = (*end).max(block.trace_offset + block.rows.len());
+            }
+        }
+        let mut max_bus_len = 0;
+        for b in (0..BUS_SPECS.len()).filter(|b| layout.has(BUS_SPECS[*b].value)) {
+            let spec = &BUS_SPECS[b];
+            let end = DATABUS_OFFSET + builder.bus(b).len();
+            max_bus_len = max_bus_len.max(end);
+            derived_end.insert(spec.value, end.max(masked_end));
+            derived_end.insert(spec.read_counts, end.max(masked_end));
+            derived_end.insert(spec.indicator, end);
+            derived_end.insert(spec.inverses, masked_end);
+        }
+        let ecc_op_end = if layout.has(Ent::ecc_op_wire_1) {
+            let b = blocks.get(BlockId::EccOp);
+            b.trace_offset - NUM_ZERO_ROWS + b.len()
+        } else {
+            0
+        };
+        let table_alloc = if tables_size == 0 { 0 } else { tables_end };
+        let len_of = |e: Ent| -> usize {
+            use Ent::*;
+            if let Some(end) = derived_end.get(&e) {
+                return *end;
+            }
+            match e {
+                w_l | w_r | w_o | w_4 => active_size,
+                q_m | q_c | q_l | q_r | q_o | q_4 | q_5 => active_size,
+                sigma_1 | sigma_2 | sigma_3 | sigma_4 | id_1 | id_2 | id_3 | id_4 => active_size,
+                table_1 | table_2 | table_3 | table_4 => table_alloc,
+                lookup_read_counts | lookup_read_tags => table_alloc.max(masked_end),
+                lookup_inverses | z_perm => masked_end,
+                gemini_masking_poly => 0,
+                lagrange_first => trace_offset + 1,
+                lagrange_last => final_active_wire_idx + 1,
+                lagrange_ecc_op | ecc_op_wire_1 | ecc_op_wire_2 | ecc_op_wire_3 | ecc_op_wire_4 => ecc_op_end,
+                databus_id => max_bus_len,
+                _ => dyadic_size,
+            }
+        };
+        let mut polys: Vec<Poly> = layout.unshifted.iter().map(|e| Poly::zero(len_of(*e))).collect();
         let idx = |e: Ent| layout.idx(e);
         let has = |e: Ent| layout.has(e);
         let wires = [Ent::w_l, Ent::w_r, Ent::w_o, Ent::w_4];
@@ -268,6 +322,36 @@ impl ProverInstance {
             }
         }
 
+        if std::env::var_os("BBREF_COL_STATS").is_some() {
+            let mut used = 0usize;
+            let mut alloc = 0usize;
+            eprintln!(
+                "[col stats] dyadic={dyadic_size} active={active_size} tables_end={tables_end} pubs={num_public_inputs}"
+            );
+            for (desc, block) in blocks.iter() {
+                eprintln!(
+                    "[col stats]   block {:?} offset={} rows={}",
+                    desc.id,
+                    block.trace_offset,
+                    block.rows.len()
+                );
+            }
+            for (k, p) in polys.iter().enumerate() {
+                let start = p.coeffs.iter().position(|c| !c.is_zero()).unwrap_or(0);
+                let end = p.coeffs.iter().rposition(|c| !c.is_zero()).map_or(0, |i| i + 1);
+                used += end.saturating_sub(start);
+                alloc += p.len();
+                eprintln!(
+                    "[col stats]   {:>28} start={start} end={end}",
+                    format!("{:?}", layout.unshifted[k])
+                );
+            }
+            eprintln!(
+                "[col stats] window-used {} MB of {} MB allocated",
+                used * 32 / (1 << 20),
+                alloc * 32 / (1 << 20)
+            );
+        }
         let public_inputs = (0..num_public_inputs)
             .map(|i| polys[idx(Ent::w_r)].coeffs[pub_inputs_offset + i])
             .collect();

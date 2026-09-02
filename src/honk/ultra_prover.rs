@@ -49,6 +49,7 @@ where
         layout: &inst.layout,
     };
     let sc = prove_sumcheck::<C>(
+        inst.dyadic_size,
         &rels,
         &SumcheckSpec::honk(flavor, &inst.layout).with_witness_end(inst.max_end_index),
         &inst.polys,
@@ -68,6 +69,7 @@ where
         .as_ref()
         .map(|z| small_subgroup_ipa_prove::<C>(z, &sc.challenge, &sc.libra_evaluation, &ck, &mut t, rng));
     let claim = shplemini_prove::<C>(
+        inst.dyadic_size,
         &unshifted,
         &to_be_shifted,
         &sc.challenge,

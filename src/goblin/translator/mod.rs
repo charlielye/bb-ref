@@ -291,13 +291,27 @@ impl TranslatorPolys {
         // Shift entities are views of their sources in the prover (the sumcheck table reads them
         // through `shifted_sources`), so nothing is allocated for them; the check harness's
         // `set_shifted` overwrites them with materialized copies when a test wants dense columns.
+        // Sparse Lagrange columns get their bb window's extent (bb allocates them with a start
+        // index too; the leading zeros are kept here — only the tails are trimmed). Columns that
+        // are dense in bb (ordered, concatenated, z_perm, lagrange_masking, the numerator, and the
+        // tail-indexed lagranges) stay at the full circuit size.
+        let mini_without_masking = MINI_CIRCUIT_SIZE - NUM_MASKED_ROWS_END;
         let len = |e: usize| {
             if e >= FIRST_SHIFTED {
-                0
-            } else if wires.contains(&e) {
-                MINI_CIRCUIT_SIZE
-            } else {
-                CIRCUIT_SIZE
+                return 0;
+            }
+            if wires.contains(&e) {
+                return MINI_CIRCUIT_SIZE;
+            }
+            match e {
+                _ if e == Ent::gemini_masking_poly as usize => 0,
+                _ if e == Ent::lagrange_first as usize => 1,
+                _ if e == Ent::lagrange_result_row as usize => RESULT_ROW + 1,
+                _ if e == Ent::lagrange_odd_in_minicircuit as usize => mini_without_masking,
+                _ if e == Ent::lagrange_even_in_minicircuit as usize => mini_without_masking,
+                _ if e == Ent::lagrange_last_in_minicircuit as usize => mini_without_masking,
+                _ if e == Ent::lagrange_mini_masking as usize => MINI_CIRCUIT_SIZE,
+                _ => CIRCUIT_SIZE,
             }
         };
         Self {

@@ -63,7 +63,6 @@ impl EccvmPolys {
         let (num, den): (Vec<Fq>, Vec<Fq>) = terms.into_iter().unzip();
         let prefix = grand_product(&num, &den);
         self.cols[Ent::z_perm as usize].coeffs[TRACE_OFFSET + 1..n].copy_from_slice(&prefix[1..]);
-        self.set_shifted();
     }
 }
 

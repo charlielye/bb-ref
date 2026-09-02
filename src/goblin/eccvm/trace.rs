@@ -856,7 +856,6 @@ impl EccvmPolys {
             }
         }
         polys.cols[lagrange_last as usize].coeffs[FIXED_SIZE - 1] = Fq::one();
-        polys.set_shifted();
         polys
     }
 }

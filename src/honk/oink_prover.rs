@@ -193,12 +193,11 @@ fn add_rom_logup_inverses_to_wire_4(inst: &mut ProverInstance, p: &RelationParam
 
 /// `lookup_inverses[i] = 1 / (lookup_term_i * table_term_i)` on rows with a lookup gate or a read table entry.
 fn compute_logderivative_inverses(inst: &mut ProverInstance, p: &RelationParams<Fr>) {
-    let mut inv = inst.poly(Ent::lookup_inverses).clone();
-    let denominators: Vec<Fr> = (inst.flavor.trace_offset..inst.dyadic_size)
+    let denominators: Vec<Fr> = (inst.flavor.trace_offset..inst.max_end_index)
         .into_par_iter()
         .map(|i| {
-            let active = inst.poly(Ent::q_lookup).coeffs[i] == Fr::from(1u64)
-                || inst.poly(Ent::lookup_read_tags).coeffs[i] == Fr::from(1u64);
+            let active = inst.poly(Ent::q_lookup).at(i) == Fr::from(1u64)
+                || inst.poly(Ent::lookup_read_tags).at(i) == Fr::from(1u64);
             if !active {
                 return Fr::zero();
             }
@@ -210,21 +209,27 @@ fn compute_logderivative_inverses(inst: &mut ProverInstance, p: &RelationParams<
             lookup_term(&row, p) * table_term(&row, p)
         })
         .collect();
-    write_inverses(&mut inv, inst.flavor.trace_offset, denominators);
+    let inv = write_inverses(inst.poly(Ent::lookup_inverses), inst.flavor.trace_offset, denominators);
     *inst.poly_mut(Ent::lookup_inverses) = inv;
 }
 
-/// Write `1 / denominators[i]` at row `trace_offset + i` where the denominator is non-zero. bb
-/// batch-inverts the whole inverse polynomial, so the ZK masking values on the disabled head rows
-/// end up inverted too.
-fn write_inverses(inv: &mut Poly, trace_offset: usize, mut denominators: Vec<Fr>) {
+/// Write `1 / denominators[i]` at row `trace_offset + i` where the denominator is non-zero, into a
+/// fresh column sized to the last inverse; `masked` supplies the ZK masking head, which bb
+/// batch-inverts along with the whole inverse polynomial.
+fn write_inverses(masked: &Poly, trace_offset: usize, mut denominators: Vec<Fr>) -> Poly {
     batch_invert(&mut denominators);
+    let extent = denominators.iter().rposition(|d| !d.is_zero()).map_or(0, |i| i + 1);
+    let mut inv = Poly::zero(trace_offset + extent);
+    for (i, c) in masked.coeffs.iter().take(trace_offset).enumerate() {
+        inv.coeffs[i] = *c;
+    }
     for (c, d) in inv.coeffs[trace_offset..].iter_mut().zip(denominators) {
         if !d.is_zero() {
             *c = d;
         }
     }
     batch_invert(&mut inv.coeffs[..trace_offset]);
+    inv
 }
 
 /// bb `SingleBusLookupRelation::compute_logderivative_inverse`: `1 / (L · T)` on read rows and
@@ -232,21 +237,20 @@ fn write_inverses(inv: &mut Poly, trace_offset: usize, mut denominators: Vec<Fr>
 fn compute_databus_inverses(inst: &mut ProverInstance, bus: usize, p: &RelationParams<Fr>) {
     let spec = &BUS_SPECS[bus];
     let one = Fr::from(1u64);
-    let mut inv = inst.poly(spec.inverses).clone();
-    let denominators: Vec<Fr> = (inst.flavor.trace_offset..inst.dyadic_size)
+    let denominators: Vec<Fr> = (inst.flavor.trace_offset..inst.max_end_index)
         .into_par_iter()
         .map(|i| {
-            let is_read = inst.poly(Ent::q_busread).coeffs[i] == one && inst.poly(spec.selector).coeffs[i] == one;
-            let nonzero_count = !inst.poly(spec.read_counts).coeffs[i].is_zero();
+            let is_read = inst.poly(Ent::q_busread).at(i) == one && inst.poly(spec.selector).at(i) == one;
+            let nonzero_count = !inst.poly(spec.read_counts).at(i).is_zero();
             if !(is_read || nonzero_count) {
                 return Fr::zero();
             }
-            let lookup = inst.poly(Ent::w_r).coeffs[i] * p.beta + inst.poly(Ent::w_l).coeffs[i] + p.gamma;
-            let table = inst.poly(Ent::databus_id).coeffs[i] * p.beta + inst.poly(spec.value).coeffs[i] + p.gamma;
+            let lookup = inst.poly(Ent::w_r).at(i) * p.beta + inst.poly(Ent::w_l).at(i) + p.gamma;
+            let table = inst.poly(Ent::databus_id).at(i) * p.beta + inst.poly(spec.value).at(i) + p.gamma;
             lookup * table
         })
         .collect();
-    write_inverses(&mut inv, inst.flavor.trace_offset, denominators);
+    let inv = write_inverses(inst.poly(spec.inverses), inst.flavor.trace_offset, denominators);
     *inst.poly_mut(spec.inverses) = inv;
 }
 
@@ -258,7 +262,11 @@ fn compute_grand_product(inst: &mut ProverInstance, p: &RelationParams<Fr>) {
     let wires = [Ent::w_l, Ent::w_r, Ent::w_o, Ent::w_4];
     let ids = [Ent::id_1, Ent::id_2, Ent::id_3, Ent::id_4];
     let sigmas = [Ent::sigma_1, Ent::sigma_2, Ent::sigma_3, Ent::sigma_4];
-    let mut z = inst.poly(Ent::z_perm).clone();
+    let masked = inst.poly(Ent::z_perm);
+    let mut z = Poly::zero(gp_start + active_size);
+    for (i, c) in masked.coeffs.iter().take(gp_start).enumerate() {
+        z.coeffs[i] = *c;
+    }
     let terms: Vec<(Fr, Fr)> = (0..active_size - 1)
         .into_par_iter()
         .map(|i| {
@@ -280,14 +288,17 @@ fn compute_grand_product(inst: &mut ProverInstance, p: &RelationParams<Fr>) {
 
 /// bb `build_gemini_masking_poly`: a random polynomial on the tail-halving support (dense for tiny circuits).
 pub fn build_gemini_masking_poly(d: usize, extent: usize, dyadic_size: usize, rng: &mut dyn Rng) -> Poly {
-    let mut poly = Poly::zero(dyadic_size);
+    let _ = dyadic_size;
     if d < 4 {
-        for c in poly.coeffs.iter_mut().take(extent) {
+        let mut poly = Poly::zero(extent);
+        for c in poly.coeffs.iter_mut() {
             *c = rng.fr();
         }
         return poly;
     }
-    for s in tail_halving_support(d, extent) {
+    let support = tail_halving_support(d, extent);
+    let mut poly = Poly::zero(support.iter().max().map_or(0, |m| m + 1));
+    for s in support {
         poly.coeffs[s] = rng.fr();
     }
     poly
