@@ -1,3 +1,8 @@
+# ark-ff's x86-64 Montgomery mul/sqr assembly (the "asm" feature) only compiles in when bmi2 and
+# adx are compile-time target features; without these flags the generic Rust CIOS loop runs instead.
+[target.'cfg(target_arch = "x86_64")']
+rustflags = ["-C", "target-feature=+bmi2,+adx"]
+
 # Test binaries otherwise run one rayon pool per process at the machine's core count while cargo
 # runs binaries and tests concurrently; on large machines that oversubscribes by orders of magnitude.
 [env]
