@@ -288,9 +288,13 @@ pub struct TranslatorPolys {
 impl TranslatorPolys {
     pub fn zero() -> Self {
         let wires = FIRST_WIRE..FIRST_WIRE + NUM_WIRES;
-        let wire_shifts: Vec<usize> = wires.clone().skip(1).map(shift_of).collect();
+        // Shift entities are views of their sources in the prover (the sumcheck table reads them
+        // through `shifted_sources`), so nothing is allocated for them; the check harness's
+        // `set_shifted` overwrites them with materialized copies when a test wants dense columns.
         let len = |e: usize| {
-            if wires.contains(&e) || wire_shifts.contains(&e) {
+            if e >= FIRST_SHIFTED {
+                0
+            } else if wires.contains(&e) {
                 MINI_CIRCUIT_SIZE
             } else {
                 CIRCUIT_SIZE

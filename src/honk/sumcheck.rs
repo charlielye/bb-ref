@@ -1097,22 +1097,38 @@ where
         let round = self.round;
         if round < self.log_n {
             // The folded table is half the size and owned (bb `PartiallyEvaluatedMultivariates`).
-            let table = &self.table;
-            let folded: Vec<Column<F>> = (0..table.len())
-                .into_par_iter()
-                .map(|j| {
-                    let half = column_len(table, j).div_ceil(2);
-                    Column::Own(
-                        (0..half)
-                            .map(|k| {
-                                let a = column_value(table, j, 2 * k);
-                                a + *u * (column_value(table, j, 2 * k + 1) - a)
-                            })
-                            .collect(),
-                    )
-                })
-                .collect();
-            self.table = folded;
+            // The first fold must allocate (borrowed and shifted columns read across the table);
+            // every later fold halves the owned columns in place, so the round-table footprint is
+            // one owned copy rather than a fresh allocation per round.
+            if self.table.iter().all(|c| matches!(c, Column::Own(_))) {
+                self.table.par_iter_mut().for_each(|col| {
+                    let Column::Own(v) = col else { unreachable!() };
+                    let half = v.len().div_ceil(2);
+                    for k in 0..half {
+                        let a = v[2 * k];
+                        let b = if 2 * k + 1 < v.len() { v[2 * k + 1] } else { F::zero() };
+                        v[k] = a + *u * (b - a);
+                    }
+                    v.truncate(half);
+                });
+            } else {
+                let table = &self.table;
+                let folded: Vec<Column<F>> = (0..table.len())
+                    .into_par_iter()
+                    .map(|j| {
+                        let half = column_len(table, j).div_ceil(2);
+                        Column::Own(
+                            (0..half)
+                                .map(|k| {
+                                    let a = column_value(table, j, 2 * k);
+                                    a + *u * (column_value(table, j, 2 * k + 1) - a)
+                                })
+                                .collect(),
+                        )
+                    })
+                    .collect();
+                self.table = folded;
+            }
         } else {
             for j in 0..self.table.len() {
                 let v = column_value(&self.table, j, 0) * (F::one() - *u);

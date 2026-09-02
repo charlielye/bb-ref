@@ -11,8 +11,13 @@
 // mimalloc keeps freed pages in per-thread pools instead of returning them to the OS; the prover's
 // constant large alloc/free cycle otherwise spends whole seconds re-faulting zeroed pages (the
 // rollup base circuit dropped 14.7s -> 10.3s). Costs peak RSS, which mimalloc purge options can cap.
+#[cfg(not(feature = "heap-profile"))]
 #[global_allocator]
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[cfg(feature = "heap-profile")]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
 
 use bb_ref::acir::{build_circuit_mega, decode_program, decode_steps, decode_witness, prove_steps};
 use bb_ref::base::field::U256;
@@ -180,6 +185,9 @@ fn msgpack_run(input_path: &str) {
 }
 
 fn main() {
+    #[cfg(feature = "heap-profile")]
+    let _profiler = dhat::Profiler::new_heap();
+
     // Beyond ~48 threads the MSM-heavy phases slow down (arkworks' parallel MSM splits into few
     // windows; oversubscription costs more than it gains); RAYON_NUM_THREADS still overrides.
     if std::env::var_os("RAYON_NUM_THREADS").is_none() {

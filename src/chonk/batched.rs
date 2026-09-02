@@ -133,7 +133,17 @@ pub fn joint_prove(
         mega.max_end_index,
         None,
     );
-    let mut trans_state = RoundProver::new(&trans.cols, &[], false, 0, usize::MAX, None);
+    // Shift entities (the 104.. tail, in source order) are read as views one row ahead of their
+    // sources instead of materialized copies.
+    let trans_shift_sources: Vec<usize> = (13..=98).collect();
+    let mut trans_state = RoundProver::new(
+        &trans.cols[..crate::goblin::translator::FIRST_SHIFTED],
+        &trans_shift_sources,
+        false,
+        0,
+        usize::MAX,
+        None,
+    );
     let mut committed = CommittedRounds::<Bn254>::new();
     let mut partial_eval = Fr::one();
     let mut challenge = Vec::with_capacity(JOINT_LOG_N);

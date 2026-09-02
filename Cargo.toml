@@ -25,9 +25,15 @@ num-bigint = "0.4"
 ark-secp256r1 = "0.6.0"
 ark-secp256k1 = "0.6.0"
 mimalloc = "0.1"
+dhat = { version = "0.3.3", optional = true }
 
 [profile.dev]
 opt-level = 1
 
 [profile.test]
 opt-level = 1
+
+[features]
+# Heap profiling: dhat replaces mimalloc as the global allocator and writes dhat-heap.json.
+heap-profile = ["dep:dhat"]
+dhat = ["dep:dhat"]
