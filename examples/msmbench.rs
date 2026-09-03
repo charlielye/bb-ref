@@ -31,6 +31,7 @@ fn main() {
         })
         .collect();
 
+    let skip_ark = std::env::var_os("BBREF_MSMBENCH_NO_ARK").is_some();
     for (name, f) in [
         (
             "ours",
@@ -38,6 +39,9 @@ fn main() {
         ),
         ("ark ", |p, s| ark_bn254::G1Projective::msm_unchecked(p, s)),
     ] {
+        if skip_ark && name == "ark " {
+            continue;
+        }
         let mut best = f64::MAX;
         let mut r = f(&points, &scalars);
         for _ in 0..iters {

@@ -26,6 +26,9 @@ ark-secp256r1 = "0.6.0"
 ark-secp256k1 = "0.6.0"
 dhat = { version = "0.3.3", optional = true }
 
+[target.'cfg(target_family = "wasm")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 mimalloc = { version = "0.1", optional = true }
 
