@@ -461,10 +461,10 @@ fn bucket_reduce<P: SWCurveConfig>(bs: &[u32], ps: &[Affine<P>], num_buckets: us
     }
     let mut running: Vec<Option<Affine<P>>> = vec![None; segments];
     let mut acc: Vec<Option<Affine<P>>> = vec![None; segments];
+    let (mut dens, mut kinds) = (Vec::with_capacity(segments), Vec::with_capacity(segments));
     for t in (0..seg_len).rev() {
-        let step: Vec<Option<Affine<P>>> = (0..segments).map(|j| bucket_of[j * seg_len + t]).collect();
-        batch_add_assign(&mut running, &step);
-        batch_add_assign(&mut acc, &running.clone());
+        super::fold::pass_add(&mut running, |j| bucket_of[j * seg_len + t], &mut dens, &mut kinds);
+        super::fold::pass_add(&mut acc, |j| running[j], &mut dens, &mut kinds);
     }
     // window = sum_j acc_j + seg_len * sum_j j * running_j, both cheap in projective.
     let mut total: Projective<P> = acc.iter().flatten().map(|p| p.into_group()).sum();

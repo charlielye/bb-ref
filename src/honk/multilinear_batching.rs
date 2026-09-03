@@ -68,25 +68,38 @@ pub fn mlb_prove(claims: Vec<ProverClaim>, t: &mut NativeTranscript) -> ProverCl
         let mut univariate = vec![Fr::zero(); UNIVARIATE_LENGTH];
         if round < log_n {
             let half = circuit_size >> (round + 1);
-            let zeros = || vec![Fr::zero(); UNIVARIATE_LENGTH];
+            // Per (claim, edge): γ-scale eq's endpoints once, then step all three linear factors
+            // by addition across the evaluation points — 8 multiplications instead of 18 — and
+            // batch the α-weighting once per round outside the loop.
+            let zeros = || vec![Fr::zero(); 2 * UNIVARIATE_LENGTH];
             let edges = (0..half)
                 .into_par_iter()
                 .with_min_len(64)
                 .fold(zeros, |mut acc, e| {
-                    for k in 0..UNIVARIATE_LENGTH {
-                        let (mut s0, mut s1) = (Fr::zero(), Fr::zero());
-                        for i in 0..n {
-                            let eq_k = linear(eq[i][2 * e], eq[i][2 * e + 1], k) * gamma_powers[i];
-                            s0 += linear(non_shifted[i][2 * e], non_shifted[i][2 * e + 1], k) * eq_k;
-                            s1 += linear(shifted[i][2 * e], shifted[i][2 * e + 1], k) * eq_k;
+                    for i in 0..n {
+                        let eq0 = eq[i][2 * e];
+                        let eqg = eq0 * gamma_powers[i];
+                        let eqdg = (eq[i][2 * e + 1] - eq0) * gamma_powers[i];
+                        let ns0 = non_shifted[i][2 * e];
+                        let nsd = non_shifted[i][2 * e + 1] - ns0;
+                        let sh0 = shifted[i][2 * e];
+                        let shd = shifted[i][2 * e + 1] - sh0;
+                        let (mut eqk, mut nsk, mut shk) = (eqg, ns0, sh0);
+                        for k in 0..UNIVARIATE_LENGTH {
+                            if k > 0 {
+                                eqk += eqdg;
+                                nsk += nsd;
+                                shk += shd;
+                            }
+                            acc[k] += nsk * eqk;
+                            acc[UNIVARIATE_LENGTH + k] += shk * eqk;
                         }
-                        acc[k] += s0 + alpha * s1;
                     }
                     acc
                 })
                 .reduce(zeros, |a, b| a.iter().zip(&b).map(|(x, y)| *x + *y).collect());
             for k in 0..UNIVARIATE_LENGTH {
-                univariate[k] += edges[k];
+                univariate[k] += edges[k] + alpha * edges[UNIVARIATE_LENGTH + k];
             }
         } else {
             // Virtual round: the polynomials are extended by zero; eq needs its true value at 1.

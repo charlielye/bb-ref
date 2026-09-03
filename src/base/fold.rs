@@ -114,7 +114,7 @@ fn booth_digits(v: [u64; 2], negate: bool) -> [i8; NUM_WINDOWS] {
 }
 
 /// One batched-affine pass: `acc[i] = 2·acc[i]`.
-fn pass_dbl<P: SWCurveConfig>(acc: &mut [Option<Affine<P>>], dens: &mut Vec<P::BaseField>) {
+pub(crate) fn pass_dbl<P: SWCurveConfig>(acc: &mut [Option<Affine<P>>], dens: &mut Vec<P::BaseField>) {
     dens.clear();
     for a in acc.iter().flatten() {
         dens.push(a.y.double());
@@ -133,7 +133,7 @@ fn pass_dbl<P: SWCurveConfig>(acc: &mut [Option<Affine<P>>], dens: &mut Vec<P::B
 }
 
 /// One batched-affine pass: `acc[i] += addend(i)`; equal, inverse, and infinity operands exact.
-fn pass_add<P: SWCurveConfig>(
+pub(crate) fn pass_add<P: SWCurveConfig>(
     acc: &mut [Option<Affine<P>>],
     addend: impl Fn(usize) -> Option<Affine<P>>,
     dens: &mut Vec<P::BaseField>,
