@@ -213,13 +213,13 @@ pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -
     // touched, so a job's live scratch is one block plus its (bucket-count-bounded) survivors —
     // gathering a whole 2^20-entry slice as 80-byte pairs costs GBs across concurrent MSMs.
     const GATHER_BLOCK: usize = 1 << 16;
-    let survivors: Vec<Vec<(u32, Affine<P>)>> = jobs
+    let survivors: Vec<(Vec<u32>, Vec<Affine<P>>)> = jobs
         .par_iter()
         .map_init(
             // Per-rayon-split scratch, reused across jobs and tree levels: the gather block and
             // the tree pair/denominator buffers dominate the prover's allocation churn otherwise.
-            || (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
-            |(block, pairs, dens, prod), &(w, k)| {
+            || (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()),
+            |(block_b, block_p, pairs, dens, prod), &(w, k)| {
                 let sched = &schedules[w];
                 let job_start = (k * chunk_len).min(sched.len());
                 let job_end = ((k + 1) * chunk_len).min(sched.len());
@@ -227,25 +227,27 @@ pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -
                 // incrementally since the schedule is sorted.
                 let starts = &bucket_starts[w];
                 let mut b = starts.partition_point(|&s| s as usize <= job_start) - 1;
-                let mut work: Vec<(u32, Affine<P>)> = Vec::new();
+                let (mut work_b, mut work_p): (Vec<u32>, Vec<Affine<P>>) = (Vec::new(), Vec::new());
                 for (block_start, chunk) in (job_start..job_end)
                     .step_by(GATHER_BLOCK)
                     .zip(sched[job_start..job_end].chunks(GATHER_BLOCK))
                 {
-                    block.clear();
+                    block_b.clear();
+                    block_p.clear();
                     for (j, &e) in chunk.iter().enumerate() {
                         while starts[b + 1] as usize <= block_start + j {
                             b += 1;
                         }
                         let i = (e & 0x7fff_ffff) as usize;
-                        let p = if e >> 31 == 1 { -points[i] } else { points[i] };
-                        block.push((b as u32, p));
+                        block_b.push(b as u32);
+                        block_p.push(if e >> 31 == 1 { -points[i] } else { points[i] });
                     }
-                    while tree_level(block, pairs, dens, prod) {}
-                    work.extend_from_slice(block);
+                    while tree_level(block_b, block_p, pairs, dens, prod) {}
+                    work_b.extend_from_slice(block_b);
+                    work_p.extend_from_slice(block_p);
                 }
-                while tree_level(&mut work, pairs, dens, prod) {}
-                work
+                while tree_level(&mut work_b, &mut work_p, pairs, dens, prod) {}
+                (work_b, work_p)
             },
         )
         .collect();
@@ -253,20 +255,25 @@ pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -
     mark("4 tree");
     // Stage 5: per window, concatenate chunk survivors (still bucket-sorted), merge boundary
     // buckets, and reduce buckets to the window sum.
-    let mut per_window: Vec<Vec<Vec<(u32, Affine<P>)>>> = (0..num_windows).map(|_| Vec::new()).collect();
+    let mut per_window: Vec<Vec<(Vec<u32>, Vec<Affine<P>>)>> = (0..num_windows).map(|_| Vec::new()).collect();
     for (&(w, _), s) in jobs.iter().zip(survivors) {
         per_window[w].push(s);
     }
     let window_sums: Vec<Projective<P>> = per_window
         .into_par_iter()
         .map(|parts| {
-            let mut work = parts.concat();
-            if work.is_empty() {
+            let mut work_b: Vec<u32> = Vec::with_capacity(parts.iter().map(|(b, _)| b.len()).sum());
+            let mut work_p: Vec<Affine<P>> = Vec::with_capacity(work_b.capacity());
+            for (b, p) in parts {
+                work_b.extend_from_slice(&b);
+                work_p.extend_from_slice(&p);
+            }
+            if work_b.is_empty() {
                 return Projective::<P>::zero();
             }
             let (mut pairs, mut dens, mut prod) = (Vec::new(), Vec::new(), Vec::new());
-            while tree_level(&mut work, &mut pairs, &mut dens, &mut prod) {}
-            bucket_reduce::<P>(&work, half)
+            while tree_level(&mut work_b, &mut work_p, &mut pairs, &mut dens, &mut prod) {}
+            bucket_reduce::<P>(&work_b, &work_p, half)
         })
         .collect();
 
@@ -309,24 +316,27 @@ pub(crate) fn extract_bits(limbs: &[u64], start: usize, len: usize) -> u64 {
 /// One tree level, in place: adjacent same-bucket pairs are batch-added through a single
 /// level-wide inversion, survivors compact to the front. Returns false when every bucket is down
 /// to one point (no pair found). Sequential: the caller's schedule chunks are the parallel unit.
+/// Buckets and points are parallel arrays so the pairing scan streams dense u32s, and the
+/// compaction moves single survivors with bulk copies.
 fn tree_level<P: SWCurveConfig>(
-    work: &mut Vec<(u32, Affine<P>)>,
+    bs: &mut Vec<u32>,
+    ps: &mut Vec<Affine<P>>,
     pairs: &mut Vec<(u32, u32)>,
     dens: &mut Vec<P::BaseField>,
     prod: &mut Vec<P::BaseField>,
 ) -> bool {
-    // Pass 1: pick pairs, collect the batched denominators. Field reads by reference — copying
-    // the 72-byte work tuples to the stack was most of this function's instruction count.
+    // Pass 1: pick pairs, collect the batched denominators.
     // Tags: 0 = chord add, 1 = double, u32::MAX = inverse points (the pair sums to infinity).
     pairs.clear();
     dens.clear();
+    let n = bs.len();
     let mut i = 0;
-    while i + 1 < work.len() {
-        if work[i].0 != work[i + 1].0 {
+    while i + 1 < n {
+        if bs[i] != bs[i + 1] {
             i += 1;
             continue;
         }
-        let (a, b) = (&work[i].1, &work[i + 1].1);
+        let (a, b) = (&ps[i], &ps[i + 1]);
         if a.x == b.x {
             if a.y == b.y {
                 dens.push(a.y.double());
@@ -343,50 +353,45 @@ fn tree_level<P: SWCurveConfig>(
     if pairs.is_empty() {
         return false;
     }
-    // Serial: this always runs inside a rayon job, and ark's parallel batch_inversion splits
-    // even tiny batches into one chunk per thread (one real inversion each).
     batch_invert_nonzero(dens, prod);
-    // Pass 2: apply sums and compact survivors to the front in one walk.
+    // Pass 2: walk the pair list directly; the single-survivor gaps between pairs move as bulk
+    // copies, and each pair's sum lands in place at the write cursor.
     let mut inv = dens.iter();
-    let mut pair_it = pairs.iter().copied().peekable();
-    let (mut out, mut i) = (0usize, 0usize);
-    while i < work.len() {
-        match pair_it.peek() {
-            Some(&(tag, at)) if at as usize == i => {
-                pair_it.next();
-                if tag == u32::MAX {
-                    i += 2;
-                    continue; // infinity: pair contributes nothing
-                }
-                let bucket = work[i].0;
-                let (ax, ay) = (work[i].1.x, work[i].1.y);
-                let (bx, by) = (work[i + 1].1.x, work[i + 1].1.y);
-                let lambda = if tag == 1 {
-                    let xx = ax.square();
-                    (xx.double() + xx) * inv.next().unwrap()
-                } else {
-                    (by - ay) * inv.next().unwrap()
-                };
-                let x3 = lambda.square() - ax - bx;
-                // Every work entry is a finite point (zero points never enter the schedule and
-                // inverse pairs are dropped), so writing x/y in place keeps the slot finite.
-                let slot = &mut work[out];
-                slot.0 = bucket;
-                slot.1.x = x3;
-                slot.1.y = lambda * (ax - x3) - ay;
-                out += 1;
-                i += 2;
-            }
-            _ => {
-                if out != i {
-                    work[out] = work[i];
-                }
-                out += 1;
-                i += 1;
-            }
+    let (mut out, mut prev_end) = (0usize, 0usize);
+    for &(tag, at) in pairs.iter() {
+        let at = at as usize;
+        if at > prev_end {
+            bs.copy_within(prev_end..at, out);
+            ps.copy_within(prev_end..at, out);
+            out += at - prev_end;
         }
+        prev_end = at + 2;
+        if tag == u32::MAX {
+            continue; // infinity: pair contributes nothing
+        }
+        let (ax, ay) = (ps[at].x, ps[at].y);
+        let (bx, by) = (ps[at + 1].x, ps[at + 1].y);
+        let lambda = if tag == 1 {
+            let xx = ax.square();
+            (xx.double() + xx) * inv.next().unwrap()
+        } else {
+            (by - ay) * inv.next().unwrap()
+        };
+        let x3 = lambda.square() - ax - bx;
+        // Every entry is a finite point (zero points never enter the schedule and inverse pairs
+        // are dropped), so writing x/y in place keeps the slot finite.
+        bs[out] = bs[at];
+        ps[out].x = x3;
+        ps[out].y = lambda * (ax - x3) - ay;
+        out += 1;
     }
-    work.truncate(out);
+    if n > prev_end {
+        bs.copy_within(prev_end..n, out);
+        ps.copy_within(prev_end..n, out);
+        out += n - prev_end;
+    }
+    bs.truncate(out);
+    ps.truncate(out);
     true
 }
 
@@ -445,14 +450,14 @@ fn batch_affine_add<P: SWCurveConfig>(pairs: Vec<(Affine<P>, Affine<P>)>) -> Vec
 
 /// `sum_b (b+1) * B_b` over singleton buckets: segmented double running sums, the affine chain
 /// steps batched across segments, segment totals recombined in projective.
-fn bucket_reduce<P: SWCurveConfig>(work: &[(u32, Affine<P>)], num_buckets: usize) -> Projective<P> {
+fn bucket_reduce<P: SWCurveConfig>(bs: &[u32], ps: &[Affine<P>], num_buckets: usize) -> Projective<P> {
     // Wider = bigger inversion batches and fewer chain steps; the projective recombine at the end
     // costs ~2 ops per segment, so segments stay well below the bucket count.
     let segments = (num_buckets / 16).clamp(1, 1024).next_power_of_two();
     let seg_len = num_buckets.div_ceil(segments);
     let mut bucket_of: Vec<Option<Affine<P>>> = vec![None; seg_len * segments];
-    for &(b, p) in work {
-        bucket_of[b as usize] = Some(p);
+    for (b, p) in bs.iter().zip(ps) {
+        bucket_of[*b as usize] = Some(*p);
     }
     let mut running: Vec<Option<Affine<P>>> = vec![None; segments];
     let mut acc: Vec<Option<Affine<P>>> = vec![None; segments];
