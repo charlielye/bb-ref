@@ -15,7 +15,7 @@ Numbers are from an idle 64-core c7a (both provers pinned to 32 threads, seeded,
 | rollup corpus (62 recorded server ops) | 254.7s | 300.9s | **1.18×** |
 | — root rollup | 29.2s | 29.6s | 1.02× |
 | — private tx base | 8.2s | 10.2s | 1.24× |
-| chonk client flows (11 pinned transactions) | 30.1s | 36.2s | **1.20×** |
+| chonk client flows (11 pinned transactions) | 30.1s | 35.0s | **1.16×** |
 | private tx base peak RSS | 3.4 GB | 5.1 GB (4.6 live) | 1.5× |
 | chonk client flow peak RSS, 8 threads | 312 MB | 358 MB purged / 314 MB live | **1.15×** |
 
@@ -139,12 +139,20 @@ byte-identical:
   relation, letting the ECCVM run six of its eight relation sets in coefficient basis
   (−22% single-thread). 3.84 → 3.72s.
 
-What owns the remaining ~0.9s: commitment MSMs (~0.3s — ours ~1.15× bb's kernel at 8
-threads plus batching overhead; bb's SIMD digit recoding and small-size engineering), the
-Translator sumcheck (~0.2s — measured a wash under coefficient basis; bb's short-monomial
-and accumulator forms are the remaining shape), circuit building + instance construction
-(~0.2s), and the IPA's remaining L/R MSMs (~0.1s — sizes below the Pippenger crossover fall
-back to arkworks). A plain batched-affine single-scalar SRS fold was tried before the
+The residue thesis was then proven on the MSM tree kernel: one 2^17 random-scalar MSM at 8
+threads costs bb 3.82G instructions, ours 5.15G (arkworks: 7.92G) — same algorithm, same
+inputs. Splitting the tree's work list into parallel bucket/point arrays (the pairing scan
+streams dense u32s) recovered 0.15s of wall from cache behavior alone; the instruction
+surplus itself sits in arkworks' outlined 45-instruction Montgomery multiplication versus
+bb's macro-expanded asm — measured at equal per-op wall (19.2ns vs 20.4ns), so it costs
+instructions, not time, and neither LTO, codegen-units=1, nor forced inlining moves it.
+
+What owns the remaining ~0.5s: a smear of ~0.02–0.05s items that resisted four successive
+micro-passes (a fused gather/tree level, forced inlining, graded-value traffic cuts — all
+measured flat). Crossing it needs the rebuild-scale items: compile-time-sized univariates
+for the relation kernels (bb's Univariate<N> templates), bb's indexed batched-affine adds
+through every tree level, fused multiply-accumulate formulas via `sum_of_products`, and the
+translator's short-monomial bodies. A plain batched-affine single-scalar SRS fold was tried before the
 two-round port and measured a wash — affine-with-shared-inversion and Jacobian doubling cost
 the same ~6.5 muls; the win is entirely the 4-way chain sharing.
 The next planned wins are algorithmic rather than micro-architectural — GLV over a
