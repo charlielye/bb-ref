@@ -54,7 +54,9 @@ pub fn reduce_to_pairing_check<C: Curve>(
     let log_n = flavor.virtual_log_n;
 
     let mut t = Transcript::<C::TF, C::Hash>::from_proof(proof);
+    crate::base::timing::phase("        hv: start");
     let oink = verify_oink::<C>(flavor, &layout, vk, vk_hash, &mut t, num_public_inputs, true);
+    crate::base::timing::phase("        hv: oink");
     let gate_challenges: Vec<C::Fr> = t.dyadic_powers("Sumcheck:gate_challenge", log_n);
 
     let mut libra_commitments: Vec<C::G> = Vec::new();
@@ -81,6 +83,7 @@ pub fn reduce_to_pairing_check<C: Curve>(
         libra_commitments.push(t.receive("Libra:grand_sum_commitment"));
         libra_commitments.push(t.receive("Libra:quotient_commitment"));
     }
+    crate::base::timing::phase("        hv: sumcheck");
 
     let n_unshifted = layout.num_unshifted();
     let batcher = ClaimBatcher::<C> {
@@ -113,6 +116,7 @@ pub fn reduce_to_pairing_check<C: Curve>(
         &[],
         &[],
     );
+    crate::base::timing::phase("        hv: shplemini");
     let pcs_pairing_points =
         kzg_reduce_verify_batch_opening_claim::<C>(shplemini.claim, &mut t, final_pcs_msm_size(flavor, &layout));
     Reduction {

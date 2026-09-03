@@ -27,7 +27,7 @@ pub fn msm_affine(points: &[GrumpkinAffine], scalars: &[Fq]) -> GrumpkinAffine {
 }
 
 fn msm(points: &[GrumpkinAffine], scalars: &[Fq]) -> ark_grumpkin::Projective {
-    ark_grumpkin::Projective::msm(points, scalars).unwrap()
+    crate::base::msm::msm(points, scalars)
 }
 
 /// `b[i] = challenge^i` (bb `powers_tensor`).
@@ -65,52 +65,13 @@ pub fn add_claim_to_hash_buffer_verifier(claim: &IpaClaim, t: &mut NativeTranscr
 /// bb `IPA::compute_opening_proof_internal` (single-round folds; bb's two-round variant is a
 /// wall-clock optimization with identical proof bytes).
 pub fn compute_opening_proof(ck: &GrumpkinKey, poly: &[Fq], challenge: &Fq, t: &mut NativeTranscript) {
-    let generator_challenge: Fq = t.challenge("IPA:generator_challenge");
-    assert!(
-        !Zero::is_zero(&generator_challenge),
-        "the generator challenge can't be zero"
-    );
-    let aux_generator = (GrumpkinAffine::generator() * generator_challenge).into_affine();
+    // Same protocol and transcript labels as the goblin IPA, which carries the two-round Booth
+    // fold (`base/fold.rs`) — the naive per-round SRS fold this prover used to do was ~2^16 full
+    // scalar muls, a fixed ~0.2s on every rollup circuit that appends or accumulates an IPA proof.
     let mut a_vec = poly.to_vec();
     a_vec.resize(POLY_LENGTH, Fq::zero());
-    let mut b_vec = powers(*challenge, POLY_LENGTH);
-    let mut g_vec: Vec<GrumpkinAffine> = ck.points[..POLY_LENGTH].to_vec();
-    let mut round_size = POLY_LENGTH;
-    let mut challenge_product = Fq::one();
-    for round_idx in 0..LOG_POLY_LENGTH {
-        let half = round_size / 2;
-        let inner_l: Fq = (0..half).map(|i| a_vec[i] * b_vec[half + i]).sum();
-        let inner_r: Fq = (0..half).map(|i| a_vec[half + i] * b_vec[i]).sum();
-        let l = (msm(&g_vec[half..2 * half], &a_vec[..half]) + aux_generator * inner_l).into_affine();
-        let r = (msm(&g_vec[..half], &a_vec[half..2 * half]) + aux_generator * inner_r).into_affine();
-        let index = LOG_POLY_LENGTH - round_idx - 1;
-        t.send(&format!("IPA:L_{index}"), &l);
-        t.send(&format!("IPA:R_{index}"), &r);
-        let u: Fq = t
-            .short_challenges(&[&format!("IPA:round_challenge_{index}")])
-            .pop()
-            .unwrap();
-        assert!(!Zero::is_zero(&u), "IPA round challenge is zero");
-        let u_inv = u.inverse().unwrap();
-        challenge_product *= u;
-        for i in 0..half {
-            a_vec[i] = u_inv * a_vec[i] + a_vec[half + i];
-            b_vec[i] = u * b_vec[i] + b_vec[half + i];
-        }
-        // The G fold is ~2^16 full scalar muls across the rounds — the dominant cost of this
-        // prover — and every element is independent.
-        use rayon::prelude::*;
-        let folded_g: Vec<ark_grumpkin::Projective> = (0..half)
-            .into_par_iter()
-            .map(|i| g_vec[i] * u + g_vec[half + i])
-            .collect();
-        let normalized = ark_grumpkin::Projective::normalize_batch(&folded_g);
-        g_vec[..half].copy_from_slice(&normalized);
-        round_size = half;
-    }
-    let challenge_product_inv = challenge_product.inverse().unwrap();
-    t.send("IPA:G_0", &(g_vec[0] * challenge_product_inv).into_affine());
-    t.send("IPA:a_0", &(a_vec[0] * challenge_product));
+    let witness = crate::base::poly::Polynomial::from_coeffs(a_vec);
+    crate::goblin::ipa::inner_product_prove(ck, &witness, powers(*challenge, POLY_LENGTH), t);
 }
 
 /// bb `construct_poly_from_u_challenges_inv`: `s[i] = ∏_{j : bit j of i} u_j⁻¹`.
@@ -165,6 +126,7 @@ pub fn reduce_verify(ck: &GrumpkinKey, claim: &IpaClaim, t: &mut NativeTranscrip
         msm_elements.push(r);
         round_challenges.push(u);
     }
+    crate::base::timing::phase("        ipa-v: transcript");
     let round_challenges_inv: Vec<Fq> = round_challenges.iter().map(|u| u.inverse().unwrap()).collect();
     let mut msm_scalars = Vec::with_capacity(2 * LOG_POLY_LENGTH);
     for i in 0..LOG_POLY_LENGTH {
@@ -173,10 +135,13 @@ pub fn reduce_verify(ck: &GrumpkinKey, claim: &IpaClaim, t: &mut NativeTranscrip
     }
     let c_zero = c_prime + msm(&msm_elements, &msm_scalars);
     let b_zero = evaluate_challenge_poly(&round_challenges_inv, claim.challenge);
+    crate::base::timing::phase("        ipa-v: c0+b0");
     let s_vec = construct_poly_from_u_challenges_inv(&round_challenges_inv);
+    crate::base::timing::phase("        ipa-v: s_vec");
     let g_zero_from_prover: GrumpkinAffine = t.receive("IPA:G_0");
     let a_zero: Fq = t.receive("IPA:a_0");
     let g_zero = msm(&ck.points[..POLY_LENGTH], &s_vec).into_affine();
+    crate::base::timing::phase("        ipa-v: g0 msm");
     if g_zero != g_zero_from_prover {
         return false;
     }
