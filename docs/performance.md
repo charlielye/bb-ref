@@ -13,21 +13,29 @@ loop; the working probes are `tools/remote_bench.sh`).
 
 | benchmark | bb | bb-ref | ratio |
 |---|---|---|---|
-| rollup corpus (62 recorded server ops) | 237.7s | 241.6s | **1.02×** |
-| — private tx base (9 proofs) | 8.13s | 7.81s | **0.96×** |
-| — root rollup (2 proofs) | 26.3s | 24.4s | **0.93×** |
-| — checkpoint root | 18.9s | 19.3s | 1.03× |
-| chonk client flows (11 pinned transactions) | 29.9s | 35.4s | **1.18×** |
-| — single flow at 8 threads | 2.82s | 3.29s | 1.17× |
-| rollup corpus peak RSS | 13.0 GB | 15.3 GB | 1.18× |
-| chonk client flow peak RSS, 8 threads | 312 MB | 358 MB purged / 314 MB live | **1.15×** |
+| rollup corpus (62 recorded server ops) | 237.7s | 236.5s | **0.99×** |
+| — private tx base (9 proofs) | 8.13s | 7.82s | **0.96×** |
+| — root rollup (2 proofs) | 26.3s | 23.8s | **0.91×** |
+| — checkpoint root | 18.9s | 18.7s | 0.99× |
+| chonk client flows (11 pinned transactions) | 28.9–30.3s | 34.1s | **1.13–1.18×** |
+| — single flow at 8 threads | 2.82s | 3.10s | 1.10× |
+| rollup corpus peak RSS | 13.0 GB | 17.0 GB | 1.31× |
+| chonk client flow peak RSS, 8 threads | 312 MB | 338 MB | **1.08×** |
 
 ## What closed the gap (largest first)
 
-1. **mimalloc as the global allocator.** The prover cycles large dense polynomial buffers;
-   glibc returns them to the OS and re-faults zeroed pages on the next allocation. mimalloc
-   recycles pages per thread: 28× fewer page faults and −30% wall on the rollup base circuit.
-   bb-ref now takes 10× *fewer* faults than bb.
+1. **Transparent huge pages** (`glibc.malloc.hugetlb=1`, self-applied by one re-exec at
+   startup since glibc only reads `GLIBC_TUNABLES` at process start). The prover streams
+   gigabytes of short-lived multi-megabyte buffers through malloc; on 4KB pages that cycle
+   costs millions of page refaults and 400M+ dTLB misses on the private-tx-base frame
+   (11.0s at 32 threads vs 7.9s with the tunable — the whole gap, instructions equal).
+   mimalloc was the allocator for most of this project's history and its entire advantage
+   turned out to be that it madvises its segments `MADV_HUGEPAGE`; with glibc given the same
+   hint it is equal-or-slower and holds ~1.6× the client RSS in arena retention, so it is now
+   an opt-in A/B feature rather than the default. A bb-style large-block caching allocator
+   was also built and measured on the way: recycling every ≥256KB block plus the same madvise
+   only reached 9.9s — the arena-heap coverage of the tunable is what closes the rest —
+   so it was deleted.
 2. **A batched-affine Pippenger MSM** (`base/msm.rs`) in the shape of bb's
    `scalar_multiplication_fast`: signed Booth digits, counting-sort schedules, pair-tree
    reduction through one shared Montgomery inversion per level. Affine adds cost ~6 muls
@@ -63,7 +71,9 @@ the sumcheck univariate/fold/setup split) plus `perf stat` instruction counts:
 - **rayon vs bb's parking pool** — ~40% extra *instructions* at 32 threads is work-stealing
   spin between short parallel sections. On an under-subscribed machine it fills idle cores
   and costs little wall; on a saturated one it competes with real work.
-- **Memory (server)** — of the 1.2GB live delta: the preloaded 2^23-point SRS pool (~0.6GB, a
+- **Memory (server)** — huge pages commit in 2MB units, so the corpus-wide peak reads
+  17.0 GB against mimalloc's 15.3 and bb's 13.0; that rounding is the price of the −2% wall
+  and the halved client RSS, on the path where physical memory is cheapest. Of the live delta: the preloaded 2^23-point SRS pool (~0.6GB, a
   server sizing choice), and dense sumcheck round tables plus ~20% dead dyadic tail in the
   trace polynomials. A bb-style windowed polynomial was evaluated and declined: it would
   recover only ~0.3–0.5GB against a change touching every `coeffs` access in the crate
@@ -87,31 +97,23 @@ shrinks, so *live allocated bytes at peak* — dhat via `--features heap-profile
 4. Lifetime fixes: each execution step is dropped after accumulation, the translator circuit
    after `from_circuit`.
 
-Native RSS reads ~600 MB against bb's 312 while live is 314 MB: the difference is mimalloc
-arena retention, not allocations. The full option sweep (8 threads, interleaved):
-`MIMALLOC_ARENA_EAGER_COMMIT=0` alone 465 MB at +2% wall, `MIMALLOC_PURGE_DELAY=0` alone
-450 MB at +12%, both together 358 MB at +19%. Phase-boundary `mi_collect` — from the main
-thread or broadcast to every rayon worker — releases nothing (the pages are arena-level),
-and cutting the allocation churn itself (12.7 → 8.3 GB total: reused MSM gather/tree scratch,
-reused row buffers in the grand-product and logup loops) moves neither RSS nor wall, since
-mimalloc was already recycling those size classes. Since the churn work, mimalloc has stopped mattering much for the *client* flow: a
-`--features sysalloc` build (glibc) measures 4.31s / 355 MB at 8 threads and 3.01s / 613 MB
-at 32, against mimalloc's 4.20s / 605 MB and 2.75s / 1.3 GB — a 2.5–9% wall cost for half
-the RSS. The *server* path still needs mimalloc (the private tx base frame runs 9.7s vs
-12.9s on glibc at 32 threads, and no glibc tunable closes it — bb's 8.5s on plain glibc
-comes from its lower-churn allocation pattern, which is the real fix). So mimalloc stays
-the default for one binary serving both, `sysalloc` is the memory-optics build, and wasm —
-the target where memory actually matters — has no mimalloc either way: its linear-memory
-peak tracks the 314 MB live curve. The remaining ~30–40 MB of live delta over bb at the peak (the joint
+With the huge-page tunable, plain glibc is now the best allocator on every axis measured:
+the 8-thread flow runs 3.10s / 338 MB against mimalloc's 3.15s / 534–605 MB (mimalloc's
+excess is arena retention over the 314 MB live curve, and no option sweep brought it down
+without double-digit wall cost). At 32 threads the gap widens: 552 MB vs 1.2 GB. Under
+mimalloc, cutting the allocation churn itself (12.7 → 8.3 GB total) had moved neither RSS
+nor wall — the correct hint was page size, not churn. wasm — the target where memory
+actually matters — never had an allocator swap either way: its linear-memory peak tracks
+the live curve. The remaining ~30–40 MB of live delta over bb at the peak (the joint
 MegaZK+Translator phase): three tail-indexed translator Lagrange columns bb allocates with a
 start window (12 MB), leading zeros in gate-selector columns bb's structured trace skips via
 start indices (~10 MB per live instance), and larger MSM scratch. All are start-window
 territory — the same crate-wide `coeffs`-offset change declined above, now worth ~10% rather
 than a structural multiple.
 
-The chonk client flow at 8 threads (3.51s vs bb 2.82s = 1.24×, from 4.26s at the start of
-this pass; the full 11-flow set at 32 threads sits at 1.20×, with the largest flow faster
-than bb)
+The chonk client flow at 8 threads (3.10s vs bb 2.82s = 1.10×, from 4.26s at the start of
+this pass; the full 11-flow set at 32 threads sits at 1.13–1.18× across same-day bb runs,
+with the largest flow faster than bb)
 decomposes the same way, measured by phase marks against bb's `BB_BENCH` tree and
 `perf stat` instruction counts (ours 174G vs bb 101G at equal parallel efficiency and better
 IPC — the whole gap is extra instructions, not stalls). What landed in this pass, each step

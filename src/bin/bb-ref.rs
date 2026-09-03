@@ -8,10 +8,9 @@
 //!   bb-ref prove    --scheme chonk --ivc_inputs_path <ivc-inputs.msgpack> -o <out_dir> [--vk_policy check]
 //!   bb-ref verify   --scheme chonk -k <vk> -p <proof>
 
-// mimalloc keeps freed pages in per-thread pools instead of returning them to the OS; the prover's
-// constant large alloc/free cycle otherwise spends whole seconds re-faulting zeroed pages (the
-// rollup base circuit dropped 14.7s -> 10.3s). Costs peak RSS, which mimalloc purge options can cap.
-#[cfg(all(not(feature = "heap-profile"), not(feature = "sysalloc"), not(target_family = "wasm")))]
+// mimalloc as an opt-in A/B reference: the default (system) allocator matches it once the
+// hugepage tunable below is applied, at roughly half the peak RSS on the client flow.
+#[cfg(all(feature = "mimalloc", not(feature = "heap-profile"), not(target_family = "wasm")))]
 #[global_allocator]
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
@@ -184,7 +183,36 @@ fn msgpack_run(input_path: &str) {
     }
 }
 
+/// The prover streams gigabytes of short-lived multi-megabyte buffers through malloc; on 4KB
+/// pages the page faults and TLB misses of that cycle cost ~40% wall on the rollup base circuit
+/// (mimalloc's entire advantage was that it madvises its segments MADV_HUGEPAGE). glibc has the
+/// same behavior behind `glibc.malloc.hugetlb=1`, but only reads GLIBC_TUNABLES at process start,
+/// so re-exec once to apply it. Setting any `glibc.malloc.hugetlb` value by hand wins.
+#[cfg(target_os = "linux")]
+fn apply_hugepage_tunable() {
+    let cur = std::env::var("GLIBC_TUNABLES").unwrap_or_default();
+    if cur.contains("glibc.malloc.hugetlb") {
+        return;
+    }
+    let val = if cur.is_empty() {
+        "glibc.malloc.hugetlb=1".to_string()
+    } else {
+        format!("{cur}:glibc.malloc.hugetlb=1")
+    };
+    if let Ok(exe) = std::fs::read_link("/proc/self/exe") {
+        use std::os::unix::process::CommandExt;
+        // exec replaces the process and only returns on failure; then run without the tunable.
+        let _ = std::process::Command::new(exe)
+            .args(std::env::args_os().skip(1))
+            .env("GLIBC_TUNABLES", val)
+            .exec();
+    }
+}
+
 fn main() {
+    #[cfg(all(target_os = "linux", not(feature = "heap-profile")))]
+    apply_hugepage_tunable();
+
     #[cfg(feature = "heap-profile")]
     let _profiler = dhat::Profiler::new_heap();
 

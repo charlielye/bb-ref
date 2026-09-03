@@ -216,9 +216,20 @@ pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -
     let survivors: Vec<(Vec<u32>, Vec<Affine<P>>)> = jobs
         .par_iter()
         .map_init(
-            // Per-rayon-split scratch, reused across jobs and tree levels: the gather block and
-            // the tree pair/denominator buffers dominate the prover's allocation churn otherwise.
-            || (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()),
+            // Per-rayon-split scratch, reused across jobs and tree levels, at full capacity up
+            // front: growth reallocation of these buffers (and the per-job survivor vectors
+            // below) was most of the prover's large-allocation churn, which is what glibc pays
+            // page refaults for.
+            || {
+                let g = GATHER_BLOCK.min(chunk_len);
+                (
+                    Vec::with_capacity(g),
+                    Vec::with_capacity(g),
+                    Vec::with_capacity(g / 2 + 1),
+                    Vec::with_capacity(g / 2 + 1),
+                    Vec::with_capacity(g / 2 + 1),
+                )
+            },
             |(block_b, block_p, pairs, dens, prod), &(w, k)| {
                 let sched = &schedules[w];
                 let job_start = (k * chunk_len).min(sched.len());
@@ -227,7 +238,11 @@ pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -
                 // incrementally since the schedule is sorted.
                 let starts = &bucket_starts[w];
                 let mut b = starts.partition_point(|&s| s as usize <= job_start) - 1;
-                let (mut work_b, mut work_p): (Vec<u32>, Vec<Affine<P>>) = (Vec::new(), Vec::new());
+                // Survivors per gather block are bounded by the bucket count; one exact
+                // allocation instead of doubling growth.
+                let cap = (job_end - job_start).min(2 * half * (job_end - job_start).div_ceil(GATHER_BLOCK).max(1));
+                let (mut work_b, mut work_p): (Vec<u32>, Vec<Affine<P>>) =
+                    (Vec::with_capacity(cap), Vec::with_capacity(cap));
                 for (block_start, chunk) in (job_start..job_end)
                     .step_by(GATHER_BLOCK)
                     .zip(sched[job_start..job_end].chunks(GATHER_BLOCK))

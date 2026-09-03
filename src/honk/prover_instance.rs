@@ -162,7 +162,21 @@ impl ProverInstance {
         let wires = [Ent::w_l, Ent::w_r, Ent::w_o, Ent::w_4];
 
         // Wires, non-gate selectors, gate selectors, and copy cycles in (block, row, wire) order.
-        let mut cycles: Vec<Vec<(usize, usize)>> = vec![vec![]; builder.num_variables()];
+        // The cycles are a CSR layout — counts, prefix sum, scatter — rather than one Vec per
+        // variable: a vector per variable is millions of small allocations on a rollup circuit.
+        let mut cycle_start: Vec<u32> = vec![0; builder.num_variables() + 1];
+        for (_, block) in blocks.iter() {
+            for row in block.rows.iter() {
+                for w in 0..NUM_WIRES {
+                    cycle_start[builder.real_variable_index[row.wires[w] as usize] as usize + 1] += 1;
+                }
+            }
+        }
+        for v in 1..cycle_start.len() {
+            cycle_start[v] += cycle_start[v - 1];
+        }
+        let mut cycle_flat: Vec<u32> = vec![0; *cycle_start.last().unwrap() as usize];
+        let mut cursor = cycle_start.clone();
         for (desc, block) in blocks.iter() {
             for (r, row) in block.rows.iter().enumerate() {
                 let i = block.trace_offset + r;
@@ -170,7 +184,9 @@ impl ProverInstance {
                     let var = row.wires[w];
                     let real = builder.real_variable_index[var as usize];
                     polys[idx(*ent)].coeffs[i] = builder.get_variable(var);
-                    cycles[real as usize].push((w, i));
+                    let c = &mut cursor[real as usize];
+                    cycle_flat[*c as usize] = (i as u32) << 2 | w as u32;
+                    *c += 1;
                 }
                 for (ent, v) in [
                     (Ent::q_m, row.q_m),
@@ -219,19 +235,21 @@ impl ProverInstance {
             }
         }
         let tag_base = sep * Fr::from(NUM_WIRES as u64);
-        for (var, cycle) in cycles.iter().enumerate() {
+        let ent_of = |e: u32| ((e >> 2) as usize, (e & 3) as usize);
+        for var in 0..builder.num_variables() {
+            let cycle = &cycle_flat[cycle_start[var] as usize..cycle_start[var + 1] as usize];
             if cycle.is_empty() {
                 continue;
             }
             for k in 0..cycle.len() - 1 {
-                let (w, i) = cycle[k];
-                let (nw, ni) = cycle[k + 1];
+                let (i, w) = ent_of(cycle[k]);
+                let (ni, nw) = ent_of(cycle[k + 1]);
                 polys[idx(sigmas[w])].coeffs[i] = row_val[ni] + sep_w[nw];
             }
             let tag = builder.real_variable_tags[var];
-            let (lw, li) = *cycle.last().unwrap();
+            let (li, lw) = ent_of(*cycle.last().unwrap());
             polys[idx(sigmas[lw])].coeffs[li] = tag_base + Fr::from(builder.tau[&tag] as u64);
-            let (fw, fi) = cycle[0];
+            let (fi, fw) = ent_of(cycle[0]);
             polys[idx(ids[fw])].coeffs[fi] = tag_base + Fr::from(tag as u64);
         }
         let pub_inputs_offset = blocks.get(BlockId::PubInputs).trace_offset;
