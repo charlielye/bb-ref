@@ -13,7 +13,7 @@
 use super::msm::extract_bits;
 use ark_ec::short_weierstrass::{Affine, Projective, SWCurveConfig};
 use ark_ec::{AffineRepr, CurveGroup};
-use ark_ff::{AdditiveGroup, BigInteger, Field, One, PrimeField};
+use ark_ff::{AdditiveGroup, Field, One, PrimeField};
 use rayon::prelude::*;
 
 /// The curve's GLV endomorphism data plus the scalar-field lattice constants of bb's

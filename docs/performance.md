@@ -106,7 +106,7 @@ start indices (~10 MB per live instance), and larger MSM scratch. All are start-
 territory — the same crate-wide `coeffs`-offset change declined above, now worth ~10% rather
 than a structural multiple.
 
-The chonk client flow at 8 threads (3.84s vs bb 2.82s, from 4.26s at the start of this pass)
+The chonk client flow at 8 threads (3.72s vs bb 2.82s, from 4.26s at the start of this pass)
 decomposes the same way, measured by phase marks against bb's `BB_BENCH` tree and
 `perf stat` instruction counts (ours 174G vs bb 101G at equal parallel efficiency and better
 IPC — the whole gap is extra instructions, not stalls). What landed in this pass, each step
@@ -128,15 +128,23 @@ byte-identical:
 - Sparse commitment inputs compact to their support in `msm` (a 34-nonzero masking poly had
   cost 7ms), and the sumcheck edge loop fills only the rows its skip predicates and active
   relations read.
+- **The IPA consumes reduction rounds in pairs** (`base/fold.rs`, bb `batch_two_round_fold`):
+  the second round's L/R expand the deferred SRS fold linearly over the un-folded quarters,
+  and both folds land in one four-term combination per output — the full-width `u1·u2`
+  GLV-split so four ≤128-bit Booth digit streams share a single doubling chain of
+  batched-affine passes (SRS fold 187 → 90ms; the passes handle exceptional operands exactly,
+  so bb's safe-flag schedule simulation isn't needed). The graded path also chooses per
+  relation, letting the ECCVM run six of its eight relation sets in coefficient basis
+  (−22% single-thread). 3.84 → 3.72s.
 
-What owns the remaining ~1.0s: the Translator and ECCVM sumchecks (~0.35s — bb's
-short-monomial and accumulator forms), commitment MSMs (~0.3s — ours ~1.15× bb's kernel at
-8 threads plus batching overhead; bb's SIMD digit recoding and small-size engineering),
-the TripleIPA (~0.17s — bb's `batch_two_round_fold` interleaves four GLV-split Booth digit
-streams on one shared doubling chain; a plain batched-affine single-scalar fold was tried
-and measured a wash, since affine-with-shared-inversion and Jacobian doubling cost the same
-~6.5 muls — the win is entirely the 4-way chain sharing), and circuit building + instance
-construction (~0.2s).
+What owns the remaining ~0.9s: commitment MSMs (~0.3s — ours ~1.15× bb's kernel at 8
+threads plus batching overhead; bb's SIMD digit recoding and small-size engineering), the
+Translator sumcheck (~0.2s — measured a wash under coefficient basis; bb's short-monomial
+and accumulator forms are the remaining shape), circuit building + instance construction
+(~0.2s), and the IPA's remaining L/R MSMs (~0.1s — sizes below the Pippenger crossover fall
+back to arkworks). A plain batched-affine single-scalar SRS fold was tried before the
+two-round port and measured a wash — affine-with-shared-inversion and Jacobian doubling cost
+the same ~6.5 muls; the win is entirely the 4-way chain sharing.
 The next planned wins are algorithmic rather than micro-architectural — GLV over a
 precomputed φ(SRS) (output-preserving), then protocol-level experiments (GKR for grand
 products, small-value sumcheck) behind feature flags as upstream candidates for bb itself.
