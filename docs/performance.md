@@ -13,12 +13,12 @@ loop; the working probes are `tools/remote_bench.sh`).
 
 | benchmark | bb | bb-ref | ratio |
 |---|---|---|---|
-| rollup corpus (62 recorded server ops) | 237.7s | 236.5s | **0.99×** |
-| — private tx base (9 proofs) | 8.13s | 7.82s | **0.96×** |
-| — root rollup (2 proofs) | 26.3s | 23.8s | **0.91×** |
-| — checkpoint root | 18.9s | 18.7s | 0.99× |
-| chonk client flows (11 pinned transactions, 8 threads) | 46.9s | 51.7s | **1.10×** |
-| — canonical flow (ecdsar1 transfer + sponsored fpc) | 2.83s | 3.17s | 1.12× |
+| rollup corpus (62 recorded server ops) | 237.7s | 221.1s | **0.93×** |
+| — private tx base (9 proofs) | 8.15s | 7.16s | **0.88×** |
+| — root rollup (2 proofs) | 26.4s | 22.4s | **0.85×** |
+| — checkpoint root | 18.8s | 17.9s | 0.95× |
+| chonk client flows (11 pinned transactions, 8 threads) | 47.0s | 48.4s | **1.03×** |
+| — canonical flow (ecdsar1 transfer + sponsored fpc) | 2.83s | 2.92s | 1.03× |
 | rollup corpus peak RSS | 13.0 GB | 17.0 GB | 1.31× |
 | chonk client flow peak RSS, 8 threads | 290–340 MB | 320–380 MB | **~1.10×** |
 
@@ -79,18 +79,30 @@ changes a single output bit.
   It matches bb's edge ranges — that's part of why proofs are byte-identical. Don't rediscover
   it as an optimization opportunity: traces are ~71% active and both provers already skip the
   tail.
-- **LTO and forced inlining measured flat twice** (wall at idle 8t, and now instructions at
-  saturated 32t: 443G before and after). Forcing `#[inline(always)]` on ark-ff's FpConfig
-  mul/square wrappers (a 3-line fork) recovered only 14G / ~2% wall — ark's ~41-instruction
-  Montgomery mul body is near-parity with bb's asm, so "outlined mul overhead" is not where
-  the instructions are. Not vendored; the owned-field project would subsume it.
+- **LTO measured flat twice** (wall at idle 8t, instructions at saturated 32t) — but forced
+  inlining was a different story once applied at the right layer: ark-ff outlines every field
+  op behind *two* wrapper layers (the `FpConfig` impl and the `core::ops` operator impls, both
+  plain `#[inline]`, both declined by LLVM). `#[inline(always)]` on the FpConfig layer alone:
+  −14G. On both layers (verified by counting `callq mul_assign` in the disassembly — zero
+  left): **−31G instructions, −3.5% merge wall, −5% chonk wall**. Now vendored as
+  `vendor/ark-ff`. Lesson: "inlining is flat" was true of LTO, false of the attribute — check
+  the disassembly, not the build flag.
+- **ark's `sum_of_products` is a loss** at small term counts: rewriting the graded-univariate
+  mul as a fused convolution (one reduction per output coefficient, bb's trick) measured +9G
+  instructions and +1% wall — ark's generic implementation is slower than plain mul+add.
+  Matching bb's fused kernels needs the owned field type, not ark's API. Reverted.
+- **The MSM tree's orchestration was not the instruction sink**: replacing per-element bucket
+  ids, tag lists and `copy_within` compaction with run-length bookkeeping (`tree_reduce`)
+  simplified the code and cut MSM wall ~5–10% (2^17: 24.5→21.9ms at 32t) but moved
+  instruction counts by only ~2G — the tree's cost is the field math itself, at ~1.35× bb's
+  per kernel-1, which is the same owned-field/fused-mul story.
 
 ## What owns the remaining gap
 
 Measured with `BBREF_TIMING=1` (phase walls, `BBREF_TIMING_RSS=1` for RSS at each mark, and
 the sumcheck univariate/fold/setup split) plus `perf stat` instruction counts. The rollup
-merge circuits (2^21, warm 5.0s vs bb 4.11s = 1.22×) decompose per-op as **429G instructions
-vs bb's 324G**, in three blocks of comparable size:
+merge circuits (2^21, warm 4.88s vs bb 4.11s = 1.19× after the inlining and tree work)
+decompose per-op as **410G instructions vs bb's 324G**:
 
 - **~30G: MSM tree orchestration** — `tree_level`'s pair-tag lists, `copy_within` gap moves
   and per-level rescans, against bb's `batch_affine_add` scratch-column scheme. Contained in

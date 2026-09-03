@@ -1,0 +1,20 @@
+bb vs bb-ref, serial replay of rollup-3b2c553 corpus, 32 threads pinned to cores 0-31, seed 12345
+
+operation                                                 n         bb     bb-ref   ref/bb
+------------------------------------------------------------------------------------------
+BbCircuitProve PrivateTxBaseRollupArtifact                9     73.35s     64.43s    0.88x
+BbCircuitProve RootRollupArtifact                         2     52.77s     44.84s    0.85x
+BbCircuitProve CheckpointRootRollupArtifact               2     37.55s     35.86s    0.95x
+BbCircuitProve CheckpointRootSingleBlockRollupArtifact    2     32.27s     31.65s    0.98x
+BbCircuitProve BlockRootRollupArtifact                    2     10.00s     10.20s    1.02x
+BbCircuitProve BlockRootSingleTxRollupArtifact            4      9.08s     10.81s    1.19x
+BbCircuitProve InboxParity64Artifact                      4      7.81s      7.21s    0.92x
+BbCircuitProve BlockMergeRollupArtifact                   1      4.86s      4.96s    1.02x
+BbCircuitProve TxMergeRollupArtifact                      1      4.85s      4.91s    1.01x
+BbCircuitProve CheckpointMergeRollupArtifact              1      4.22s      4.91s    1.16x
+BbCircuitVerify                                          32      0.40s      0.60s    1.50x
+BbCircuitProve BlockRootNoTxsRollupArtifact               1      0.39s      0.48s    1.23x
+BbCircuitProve CheckpointPaddingRollupArtifact            1      0.14s      0.27s    1.93x
+------------------------------------------------------------------------------------------
+TOTAL                                                    62    237.67s    221.14s    0.93x
+peak RSS                                                       13.09GB    16.74GB    1.28x
