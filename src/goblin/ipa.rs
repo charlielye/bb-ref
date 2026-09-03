@@ -52,8 +52,41 @@ pub fn evaluate_challenge_poly<F: FieldLike>(u_inv: &[F], r: &F) -> F {
     result
 }
 
-/// bb `IPA::compute_inner_product_proof_internal`, folding one round at a time (bb's two-round fold
-/// sends the same `L`/`R`). Proves `⟨a, G⟩ = C` and `⟨a, b⟩ = v` for the witness `a` and the tensor `b`.
+/// Send one reduction round's `L`/`R`, draw its challenge, and fold the `a`/`b` vectors in place.
+#[allow(clippy::too_many_arguments)]
+fn ipa_round(
+    a: &mut [Fq],
+    b: &mut [Fq],
+    half: usize,
+    l: Proj,
+    r: Proj,
+    index: usize,
+    challenge_product: &mut Fq,
+    t: &mut NativeTranscript,
+) -> Fq {
+    t.send(&format!("IPA:L_{index}"), &l.into_affine());
+    t.send(&format!("IPA:R_{index}"), &r.into_affine());
+    let u: Fq = t.short_challenge(&format!("IPA:round_challenge_{index}"));
+    assert!(!u.is_zero(), "IPA round challenge is zero");
+    let u_inv = u.invert();
+    *challenge_product *= u;
+    let (a_lo, a_hi) = a.split_at_mut(half);
+    a_lo.par_iter_mut()
+        .zip(&a_hi[..half])
+        .for_each(|(lo, hi)| *lo = u_inv * *lo + hi);
+    let (b_lo, b_hi) = b.split_at_mut(half);
+    b_lo.par_iter_mut()
+        .zip(&b_hi[..half])
+        .for_each(|(lo, hi)| *lo = u * *lo + hi);
+    u
+}
+
+/// bb `IPA::compute_inner_product_proof_internal`, consuming reduction rounds in pairs: the first
+/// round's SRS fold is deferred, the second round's `L`/`R` are computed against the un-folded SRS
+/// (expanding the deferred fold linearly over its quarters), and both folds land in one
+/// `fold_points_two_rounds` call on a shared doubling chain. The transcript is identical to
+/// one-round-at-a-time folding. Proves `⟨a, G⟩ = C` and `⟨a, b⟩ = v` for the witness `a` and the
+/// tensor `b`.
 pub fn inner_product_prove(ck: &GrumpkinKey, witness: &P, mut b: Vec<Fq>, t: &mut NativeTranscript) {
     let gen_challenge: Fq = t.challenge("IPA:generator_challenge");
     assert!(!gen_challenge.is_zero(), "the generator challenge can't be zero");
@@ -65,56 +98,67 @@ pub fn inner_product_prove(ck: &GrumpkinKey, witness: &P, mut b: Vec<Fq>, t: &mu
     let mut g = ck.points[..n].to_vec();
     let mut challenge_product = Fq::one();
     let stage_timing = std::env::var_os("BBREF_IPA_TIMING").is_some();
-    let (mut t_inner, mut t_msm, mut t_fold_ab, mut t_fold_g) = (
-        std::time::Duration::ZERO,
+    let (mut t_inner, mut t_msm, mut t_fold_g) = (
         std::time::Duration::ZERO,
         std::time::Duration::ZERO,
         std::time::Duration::ZERO,
     );
-    for round in 0..log_n {
+    let inner = |a: &[Fq], b: &[Fq], half: usize| -> (Fq, Fq) {
+        (
+            (0..half).into_par_iter().map(|i| a[i] * b[half + i]).sum(),
+            (0..half).into_par_iter().map(|i| a[half + i] * b[i]).sum(),
+        )
+    };
+    let mut round = 0;
+    while round < log_n {
         let half = n >> (round + 1);
+        let index = log_n - round - 1;
         let t0 = std::time::Instant::now();
-        let inner_l: Fq = (0..half).into_par_iter().map(|i| a[i] * b[half + i]).sum();
-        let inner_r: Fq = (0..half).into_par_iter().map(|i| a[half + i] * b[i]).sum();
+        let (inner_l, inner_r) = inner(&a, &b, half);
         let t1 = std::time::Instant::now();
         let l = msm(&g[half..2 * half], &a[..half]) + aux_generator * inner_l;
         let r = msm(&g[..half], &a[half..2 * half]) + aux_generator * inner_r;
         let t2 = std::time::Instant::now();
-        let index = log_n - round - 1;
-        t.send(&format!("IPA:L_{index}"), &l.into_affine());
-        t.send(&format!("IPA:R_{index}"), &r.into_affine());
-        let u: Fq = t.short_challenge(&format!("IPA:round_challenge_{index}"));
-        assert!(!u.is_zero(), "IPA round challenge is zero");
-        let u_inv = u.invert();
-        challenge_product *= u;
-        let t3 = std::time::Instant::now();
-        let (a_lo, a_hi) = a.split_at_mut(half);
-        a_lo.par_iter_mut()
-            .zip(&a_hi[..half])
-            .for_each(|(lo, hi)| *lo = u_inv * *lo + hi);
-        let (b_lo, b_hi) = b.split_at_mut(half);
-        b_lo.par_iter_mut()
-            .zip(&b_hi[..half])
-            .for_each(|(lo, hi)| *lo = u * *lo + hi);
-        let t4 = std::time::Instant::now();
-        g = Proj::normalize_batch(
-            &(0..half)
-                .into_par_iter()
-                .map(|i| g[i] * u + g[half + i])
-                .collect::<Vec<_>>(),
-        );
         if stage_timing {
             t_inner += t1 - t0;
             t_msm += t2 - t1;
-            t_fold_ab += t4 - t3;
+        }
+        let u1 = ipa_round(&mut a, &mut b, half, l, r, index, &mut challenge_product, t);
+        if round + 1 == log_n {
+            // Lone final round of an odd count: one point remains, fold it directly.
+            g = vec![(g[0] * u1 + g[1]).into_affine()];
+            round += 1;
+            continue;
+        }
+        // Second round of the pair against the pre-fold SRS: with H = u1·G_lo + G_hi deferred,
+        // H_lo[i] = u1·G[i] + G[i+2q] and H_hi[i] = u1·G[i+q] + G[i+3q], q = quarter.
+        let q = half / 2;
+        let t0 = std::time::Instant::now();
+        let a_scaled: Vec<Fq> = a[..half].par_iter().map(|x| u1 * *x).collect();
+        let (inner_l, inner_r) = inner(&a, &b, q);
+        let t1 = std::time::Instant::now();
+        // One MSM per side: the two quarter-slices concatenate so the size stays at `half`.
+        let cat_pts = |x: &[GrumpkinAffine], y: &[GrumpkinAffine]| [x, y].concat();
+        let cat_sc = |x: &[Fq], y: &[Fq]| [x, y].concat();
+        let l = msm(&cat_pts(&g[q..2 * q], &g[3 * q..4 * q]), &cat_sc(&a_scaled[..q], &a[..q]))
+            + aux_generator * inner_l;
+        let r = msm(&cat_pts(&g[..q], &g[2 * q..3 * q]), &cat_sc(&a_scaled[q..2 * q], &a[q..2 * q]))
+            + aux_generator * inner_r;
+        let t2 = std::time::Instant::now();
+        if stage_timing {
+            t_inner += t1 - t0;
+            t_msm += t2 - t1;
+        }
+        let u2 = ipa_round(&mut a, &mut b, q, l, r, index - 1, &mut challenge_product, t);
+        let t4 = std::time::Instant::now();
+        g = crate::base::fold::fold_points_two_rounds(&g[..4 * q], &u1, &u2, crate::base::grumpkin_endo());
+        if stage_timing {
             t_fold_g += t4.elapsed();
         }
+        round += 2;
     }
     if stage_timing {
-        eprintln!(
-            "[ipa] inner {:?} lr-msm {:?} fold-ab {:?} fold-g {:?}",
-            t_inner, t_msm, t_fold_ab, t_fold_g
-        );
+        eprintln!("[ipa] inner {:?} lr-msm {:?} fold-g {:?}", t_inner, t_msm, t_fold_g);
     }
     t.send("IPA:G_0", &(g[0] * challenge_product.invert()).into_affine());
     t.send("IPA:a_0", &(a[0] * challenge_product));

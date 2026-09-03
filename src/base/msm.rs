@@ -280,7 +280,7 @@ fn window_bits(n: usize) -> usize {
         .unwrap()
 }
 
-fn extract_bits(limbs: &[u64], start: usize, len: usize) -> u64 {
+pub(crate) fn extract_bits(limbs: &[u64], start: usize, len: usize) -> u64 {
     let limb = start / 64;
     if limb >= limbs.len() {
         return 0;
