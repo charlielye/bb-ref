@@ -92,10 +92,15 @@ changes a single output bit.
   1.35× kernel-1 surplus is gone. Inversion is 0.8% of a merge op (batch-inversion discipline;
   bb spends more), and native witgen point arithmetic is 0.7% — both dead ends for further
   native work. What remains of the merge delta is diffuse.
-- **ark's `sum_of_products` is a loss** at small term counts: rewriting the graded-univariate
-  mul as a fused convolution (one reduction per output coefficient, bb's trick) measured +9G
-  instructions and +1% wall — ark's generic implementation is slower than plain mul+add.
-  Matching bb's fused kernels needs the owned field type, not ark's API. Reverted.
+- **Fused `sum_of_products` is a dead end here, measured three ways.** ark's generic version
+  is slower than plain mul+add (48.7 vs 40.0ns per fused pair). A hand-written mulx/adcx/adox
+  implementation in the vendored ark-ff (equivalence-tested, 4-limb interleaved Montgomery)
+  got to 41.9ns — still not ahead: the fused chain has less instruction-level parallelism than
+  two independent muls. And in situ, rewiring the graded mul into a convolution over fused
+  pairs measured **+9G instructions** with either implementation, because the convolution
+  forfeits the existing zero-coefficient skip, which is worth more than the fusion. bb, it
+  turns out, has no fused sum-of-products at this pin either — its graded edge is exact-sized
+  univariate types, not fusion. All reverted.
 - **The MSM tree's orchestration was not the instruction sink**: replacing per-element bucket
   ids, tag lists and `copy_within` compaction with run-length bookkeeping (`tree_reduce`)
   simplified the code and cut MSM wall ~5–10% (2^17: 24.5→21.9ms at 32t) but moved
