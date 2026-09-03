@@ -87,11 +87,18 @@ changes a single output bit.
   left): **−31G instructions, −3.5% merge wall, −5% chonk wall**. Now vendored as
   `vendor/ark-ff`. Lesson: "inlining is flat" was true of LTO, false of the attribute — check
   the disassembly, not the build flag.
-- **The MSM is now at instruction parity with bb**: 29.8G per dense 2^20 MSM
-  (`BBREF_MSMBENCH_NO_ARK=1` + marginal perf stat) vs bb's ~30G scaled from kernel-1 — the
-  1.35× kernel-1 surplus is gone. Inversion is 0.8% of a merge op (batch-inversion discipline;
-  bb spends more), and native witgen point arithmetic is 0.7% — both dead ends for further
-  native work. What remains of the merge delta is diffuse.
+- **The MSM is close to but not at bb's instruction count**: 29.8G per dense 2^20 MSM vs
+  bb's 24.9G, both measured directly (`BBREF_MSMBENCH_NO_ARK=1` and bb's own
+  `pippenger_bench`, marginal perf stat) — a 16% per-entry gap, down from kernel-1's 35%.
+  Wall is at parity (158 vs 152ms at 32t); the instruction gap costs only under saturation.
+  An earlier "parity" claim here scaled kernel-1's stale number — measure, don't scale.
+  Inversion is 0.8% of a merge op and native witgen point arithmetic 0.7% — both dead ends.
+- **The merge-op instruction ledger now closes** (410G vs bb 324G): the op runs 45 large MSMs
+  totaling 135M Booth digit entries (`BBREF_MSM_STATS=1`), and 135M × our measured per-entry
+  rate predicts 240G — matching the profiled MSM share. So: ~40G is the 16% MSM per-entry
+  gap, ~19G the graded kernel shape, ~27G diffuse. Commit inputs are protocol-identical, so
+  bb saves nothing on volume — only rate. Real commit scalars average 6.9 of 16 nonzero
+  windows (small wire values); our per-entry rate holds within 6% at that sparsity.
 - **Fused `sum_of_products` is a dead end here, measured three ways.** ark's generic version
   is slower than plain mul+add (48.7 vs 40.0ns per fused pair). A hand-written mulx/adcx/adox
   implementation in the vendored ark-ff (equivalence-tested, 4-limb interleaved Montgomery)

@@ -80,6 +80,9 @@ pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -
         }
     }
     if n < min_pts_per_thread() * rayon::current_num_threads() {
+        if std::env::var_os("BBREF_MSM_STATS").is_some() {
+            eprintln!("[msm-stats] small n={n}");
+        }
         return small_msm(&points[..n], &scalars[..n]);
     }
     let c = window_bits(n);
@@ -198,6 +201,10 @@ pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -
     }
 
     mark("3 scatter");
+    if std::env::var_os("BBREF_MSM_STATS").is_some() {
+        let entries: usize = schedules.iter().map(|s| s.len()).sum();
+        eprintln!("[msm-stats] n={n} c={c} windows={num_windows} entries={entries}");
+    }
     // Stage 4: tree-reduce, parallel over (window, schedule chunk): a chunk of a bucket-sorted
     // schedule is itself bucket-sorted, so chunks reduce independently; the survivors concatenate
     // in order and a few more levels merge the buckets that straddled chunk boundaries.
