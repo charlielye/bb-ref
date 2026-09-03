@@ -103,6 +103,34 @@ impl<T: FieldLike<Native = Fr>> RelationSet<T> for TranslatorRelations {
                 && at(r, lagrange_last).is_zero()
         })
     }
+    fn skip_columns(&self) -> Option<Vec<usize>> {
+        // Must cover everything `skip` / `skip_row` read.
+        let mut cols: Vec<usize> = [
+            z_perm,
+            z_perm_shift,
+            lagrange_last,
+            lagrange_first,
+            lagrange_even_in_minicircuit,
+            lagrange_odd_in_minicircuit,
+            lagrange_last_in_minicircuit,
+            lagrange_result_row,
+            lagrange_mini_masking,
+            ordered_range_constraints_0,
+            ordered_range_constraints_1,
+            ordered_range_constraints_2,
+            ordered_range_constraints_3,
+            ordered_range_constraints_4,
+            ordered_range_constraints_0_shift,
+            ordered_range_constraints_1_shift,
+            ordered_range_constraints_2_shift,
+            ordered_range_constraints_3_shift,
+            ordered_range_constraints_4_shift,
+        ]
+        .map(|e| e as usize)
+        .to_vec();
+        cols.sort_unstable();
+        Some(cols)
+    }
     fn skip(&self, r: usize, row0: &[T], row1: &[T]) -> bool {
         let both = |f: &dyn Fn(&[T]) -> bool| f(row0) && f(row1);
         let at = |r: &[T], e: Ent| r[e as usize].clone();

@@ -196,8 +196,14 @@ impl<F: NativeField> FieldLike for F {
 // ---- integer / byte helpers on the canonical representation ----
 
 /// Invert every non-zero element with one field inversion (zeros stay zero), as bb's `batch_invert`.
+/// Small batches invert serially: ark's parallel `batch_inversion` splits even tiny inputs into
+/// one chunk per thread, paying a real inversion and a rayon dispatch per chunk.
 pub fn batch_invert<F: PrimeField>(v: &mut [F]) {
-    ark_ff::batch_inversion(v);
+    if v.len() < 4096 {
+        ark_ff::serial_batch_inversion_and_mul(v, &F::one());
+    } else {
+        ark_ff::batch_inversion(v);
+    }
 }
 
 /// `z[0] = 1, z[i+1] = z[i] * num[i] / den[i]` with a single batched inversion (bb `compute_grand_product`).

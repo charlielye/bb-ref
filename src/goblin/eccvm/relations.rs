@@ -31,6 +31,13 @@ impl<T: FieldLike<Native = Fq>> RelationSet<T> for EccvmRelations {
     fn partial_length(&self, r: usize) -> usize {
         ECCVM_RELATIONS[r].partial_lengths().into_iter().max().unwrap()
     }
+    fn skip_columns(&self) -> Option<Vec<usize>> {
+        // Must cover everything `skip` reads.
+        let mut cols: Vec<usize> =
+            [z_perm, z_perm_shift, transcript_mul, lagrange_last, lagrange_first].map(|e| e as usize).to_vec();
+        cols.sort_unstable();
+        Some(cols)
+    }
     fn skip(&self, r: usize, row0: &[T], row1: &[T]) -> bool {
         let both = |f: &dyn Fn(&[T]) -> bool| f(row0) && f(row1);
         match ECCVM_RELATIONS[r] {

@@ -39,6 +39,12 @@ pub trait RelationSet<F: FieldLike> {
     fn skip_row(&self, _row0: &[F], _row1: &[F]) -> bool {
         false
     }
+    /// Every column `skip` / `skip_row` may read (`None`: unknown, the edge loop fills every
+    /// column). Must stay in sync with the `skip` implementations: the edge loop only fills these
+    /// columns before evaluating the skips.
+    fn skip_columns(&self) -> Option<Vec<usize>> {
+        None
+    }
     /// The relation's univariate length (bb's max subrelation partial length): the prover only
     /// evaluates it at that many points and extends the accumulator afterwards.
     fn partial_length(&self, _r: usize) -> usize {
@@ -87,6 +93,34 @@ impl<F: FieldLike> RelationSet<F> for HonkRelations<'_> {
             .copied()
             .max()
             .unwrap_or(0)
+    }
+    fn skip_columns(&self) -> Option<Vec<usize>> {
+        let l = self.layout;
+        let mut cols = Vec::new();
+        for rel in self.flavor.relations {
+            match rel {
+                Rel::Permutation => cols.extend([l.idx(Ent::z_perm), l.shift_idx(Ent::z_perm)]),
+                Rel::LogDerivLookup => cols.extend([l.idx(Ent::q_lookup), l.idx(Ent::lookup_read_counts)]),
+                Rel::Arithmetic => cols.push(l.idx(Ent::q_arith)),
+                Rel::DeltaRange => cols.push(l.idx(Ent::q_delta_range)),
+                Rel::Elliptic => cols.push(l.idx(Ent::q_elliptic)),
+                Rel::Memory => cols.push(l.idx(Ent::q_memory)),
+                Rel::NonNativeField => cols.push(l.idx(Ent::q_nnf)),
+                Rel::Poseidon2External => cols.push(l.idx(Ent::q_poseidon2_external)),
+                Rel::Poseidon2Internal => cols.push(l.idx(Ent::q_poseidon2_internal)),
+                Rel::Masking | Rel::MegaEccOpBoundary => {}
+                Rel::BilinearBatchedEq => cols.push(l.idx(Ent::q_bilinear_batched_eq)),
+                Rel::EccOpQueue => cols.push(l.idx(Ent::lagrange_ecc_op)),
+                Rel::Bus(b) => cols.extend([l.idx(Ent::q_busread), l.idx(BUS_SPECS[*b].read_counts)]),
+                Rel::Poseidon2InitialExternal => cols.push(l.idx(Ent::q_poseidon2_external_initial)),
+                Rel::Poseidon2QuadInternal => cols.push(l.idx(Ent::q_poseidon2_quad_internal)),
+                Rel::Poseidon2QuadInternalTerminal => cols.push(l.idx(Ent::q_poseidon2_quad_internal_terminal)),
+                Rel::Poseidon2TransitionEntry => cols.push(l.idx(Ent::q_poseidon2_transition_entry)),
+            }
+        }
+        cols.sort_unstable();
+        cols.dedup();
+        Some(cols)
     }
     fn skip(&self, r: usize, row0: &[F], row1: &[F]) -> bool {
         let l = self.layout;
@@ -622,6 +656,10 @@ struct Scratch<F> {
     /// Columns read by the edge's active relations: the only ones stepped.
     cols: Vec<usize>,
     mark: Vec<bool>,
+    /// Columns the skip predicates read: filled for every edge before the skips run.
+    skip_cols: Vec<usize>,
+    /// Membership mask of `skip_cols`, so the active-column fill skips what is already filled.
+    in_skip: Vec<bool>,
 }
 
 impl<F: FieldLike + Copy> Scratch<F> {
@@ -637,7 +675,23 @@ impl<F: FieldLike + Copy> Scratch<F> {
                 .collect(),
             cols: Vec::with_capacity(num_columns),
             mark: vec![false; num_columns],
+            skip_cols: {
+                let sc = rels
+                    .skip_columns()
+                    .unwrap_or_else(|| (0..num_columns).collect());
+                debug_assert!(sc.iter().all(|&j| j < num_columns));
+                sc
+            },
+            in_skip: Vec::new(),
         }
+        .init_in_skip(num_columns)
+    }
+    fn init_in_skip(mut self, num_columns: usize) -> Self {
+        self.in_skip = vec![false; num_columns];
+        for &j in &self.skip_cols {
+            self.in_skip[j] = true;
+        }
+        self
     }
 }
 
@@ -783,7 +837,7 @@ fn accumulate_edge<F: FieldLike + Copy>(
     acc: &mut Accumulators<F>,
     s: &mut Scratch<F>,
 ) {
-    for j in 0..table.len() {
+    for &j in &s.skip_cols {
         s.row0[j] = column_value(table, j, 2 * e);
         s.row1[j] = column_value(table, j, 2 * e + 1);
     }
@@ -806,6 +860,10 @@ fn accumulate_edge<F: FieldLike + Copy>(
     }
     for &j in &s.cols {
         s.mark[j] = false;
+        if !s.in_skip[j] {
+            s.row0[j] = column_value(table, j, 2 * e);
+            s.row1[j] = column_value(table, j, 2 * e + 1);
+        }
         s.delta[j] = s.row1[j] - s.row0[j];
     }
     let stats = relation_stats_enabled();

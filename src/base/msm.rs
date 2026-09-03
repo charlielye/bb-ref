@@ -20,6 +20,29 @@ const MIN_CHUNK: usize = 384;
 /// costs. Measured crossover: 2^15 at 32 threads, at or below 2^14 at 16 (msmbench sweeps).
 const MIN_PTS_PER_THREAD: usize = 1024;
 
+/// In-place batched inversion of nonzero elements (Montgomery's trick), with the prefix-product
+/// scratch reused across calls. ark's `serial_batch_inversion_and_mul` allocates its scratch and
+/// filters zeros on every call; the tree denominators are nonzero by construction and this runs
+/// tens of millions of elements per prove.
+fn batch_invert_nonzero<F: ark_ff::Field>(v: &mut [F], prod: &mut Vec<F>) {
+    if v.is_empty() {
+        return;
+    }
+    prod.clear();
+    let mut acc = F::one();
+    for x in v.iter() {
+        acc *= x;
+        prod.push(acc);
+    }
+    let mut inv = acc.inverse().expect("zero denominator in batched inversion");
+    for i in (1..v.len()).rev() {
+        let prev = v[i];
+        v[i] = inv * prod[i - 1];
+        inv *= prev;
+    }
+    v[0] = inv;
+}
+
 /// Raw pointer wrapper for the column-major digit scatter: each rayon task writes a disjoint cell.
 pub struct SendPtr<T>(pub *mut T);
 unsafe impl<T> Send for SendPtr<T> {}
@@ -182,8 +205,8 @@ pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -
         .map_init(
             // Per-rayon-split scratch, reused across jobs and tree levels: the gather block and
             // the tree pair/denominator buffers dominate the prover's allocation churn otherwise.
-            || (Vec::new(), Vec::new(), Vec::new()),
-            |(block, pairs, dens), &(w, k)| {
+            || (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
+            |(block, pairs, dens, prod), &(w, k)| {
                 let sched = &schedules[w];
                 let job_start = (k * chunk_len).min(sched.len());
                 let job_end = ((k + 1) * chunk_len).min(sched.len());
@@ -205,10 +228,10 @@ pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -
                         let p = if e >> 31 == 1 { -points[i] } else { points[i] };
                         block.push((b as u32, p));
                     }
-                    while tree_level(block, pairs, dens) {}
+                    while tree_level(block, pairs, dens, prod) {}
                     work.extend_from_slice(block);
                 }
-                while tree_level(&mut work, pairs, dens) {}
+                while tree_level(&mut work, pairs, dens, prod) {}
                 work
             },
         )
@@ -228,8 +251,8 @@ pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -
             if work.is_empty() {
                 return Projective::<P>::zero();
             }
-            let (mut pairs, mut dens) = (Vec::new(), Vec::new());
-            while tree_level(&mut work, &mut pairs, &mut dens) {}
+            let (mut pairs, mut dens, mut prod) = (Vec::new(), Vec::new(), Vec::new());
+            while tree_level(&mut work, &mut pairs, &mut dens, &mut prod) {}
             bucket_reduce::<P>(&work, half)
         })
         .collect();
@@ -277,6 +300,7 @@ fn tree_level<P: SWCurveConfig>(
     work: &mut Vec<(u32, Affine<P>)>,
     pairs: &mut Vec<(u32, u32)>,
     dens: &mut Vec<P::BaseField>,
+    prod: &mut Vec<P::BaseField>,
 ) -> bool {
     // Pass 1: pick pairs, collect the batched denominators (None = pair sums to infinity).
     pairs.clear();
@@ -300,7 +324,9 @@ fn tree_level<P: SWCurveConfig>(
     if pairs.is_empty() {
         return false;
     }
-    ark_ff::batch_inversion(dens);
+    // Serial: this always runs inside a rayon job, and ark's parallel batch_inversion splits
+    // even tiny batches into one chunk per thread (one real inversion each).
+    batch_invert_nonzero(dens, prod);
     // Pass 2: apply sums and compact survivors to the front in one walk.
     let mut inv = dens.iter();
     let mut pair_it = pairs.iter().copied().peekable();
@@ -365,7 +391,7 @@ fn batch_affine_add<P: SWCurveConfig>(pairs: Vec<(Affine<P>, Affine<P>)>) -> Vec
         };
         kinds.push(kind);
     }
-    ark_ff::batch_inversion(&mut dens);
+    ark_ff::serial_batch_inversion_and_mul(&mut dens, &<P::BaseField as ark_ff::One>::one());
     let mut inv = dens.into_iter();
     pairs
         .iter()
