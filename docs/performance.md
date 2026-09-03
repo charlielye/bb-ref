@@ -87,6 +87,11 @@ changes a single output bit.
   left): **−31G instructions, −3.5% merge wall, −5% chonk wall**. Now vendored as
   `vendor/ark-ff`. Lesson: "inlining is flat" was true of LTO, false of the attribute — check
   the disassembly, not the build flag.
+- **The MSM is now at instruction parity with bb**: 29.8G per dense 2^20 MSM
+  (`BBREF_MSMBENCH_NO_ARK=1` + marginal perf stat) vs bb's ~30G scaled from kernel-1 — the
+  1.35× kernel-1 surplus is gone. Inversion is 0.8% of a merge op (batch-inversion discipline;
+  bb spends more), and native witgen point arithmetic is 0.7% — both dead ends for further
+  native work. What remains of the merge delta is diffuse.
 - **ark's `sum_of_products` is a loss** at small term counts: rewriting the graded-univariate
   mul as a fused convolution (one reduction per output coefficient, bb's trick) measured +9G
   instructions and +1% wall — ark's generic implementation is slower than plain mul+add.
@@ -214,6 +219,17 @@ through every tree level, fused multiply-accumulate formulas via `sum_of_product
 translator's short-monomial bodies. A plain batched-affine single-scalar SRS fold was tried before the
 two-round port and measured a wash — affine-with-shared-inversion and Jacobian doubling cost
 the same ~6.5 muls; the win is entirely the 4-way chain sharing.
+## wasm
+
+The client prover now runs end to end on wasm (`wasm32-wasip1-threads` under wasmtime; the
+browser build shares the target's shape): the canonical chonk flow proves in **16.9s / 355MB
+at 8 threads, byte-identical to the native proof**, against 2.9s native on the same class of
+machine — a ~5× tax. The per-op baseline explains it: ark's generic Montgomery mul is 121ns
+on wasm vs 20ns native (adds 6.7 vs 1.2ns), and the prover is mul-bound. This is the owned
+wasm field's target: bb's wasm field (9×29-bit limbs, SIMD, Yuval reduction) exists precisely
+because 64-bit Montgomery compiles badly to wasm; matching its shape should recover a large
+fraction of the 6×, putting browser proving in the ~7–9s range.
+
 The next planned wins are algorithmic rather than micro-architectural — GLV over a
 precomputed φ(SRS) (output-preserving), then protocol-level experiments (GKR for grand
 products, small-value sumcheck) behind feature flags as upstream candidates for bb itself.
