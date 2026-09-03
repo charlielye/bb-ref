@@ -11,7 +11,7 @@
 // mimalloc keeps freed pages in per-thread pools instead of returning them to the OS; the prover's
 // constant large alloc/free cycle otherwise spends whole seconds re-faulting zeroed pages (the
 // rollup base circuit dropped 14.7s -> 10.3s). Costs peak RSS, which mimalloc purge options can cap.
-#[cfg(not(feature = "heap-profile"))]
+#[cfg(all(not(feature = "heap-profile"), not(feature = "sysalloc")))]
 #[global_allocator]
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 

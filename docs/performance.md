@@ -91,10 +91,15 @@ arena retention, not allocations. The full option sweep (8 threads, interleaved)
 thread or broadcast to every rayon worker — releases nothing (the pages are arena-level),
 and cutting the allocation churn itself (12.7 → 8.3 GB total: reused MSM gather/tree scratch,
 reused row buffers in the grand-product and logup loops) moves neither RSS nor wall, since
-mimalloc was already recycling those size classes. Conclusion: run fast by default and treat
-native RSS as an allocator-policy knob for whoever needs it capped; wasm — the target where
-memory actually matters — has no mimalloc, and its linear-memory peak tracks the 314 MB live
-curve. The remaining ~30–40 MB of live delta over bb at the peak (the joint
+mimalloc was already recycling those size classes. Since the churn work, mimalloc has stopped mattering much for the *client* flow: a
+`--features sysalloc` build (glibc) measures 4.31s / 355 MB at 8 threads and 3.01s / 613 MB
+at 32, against mimalloc's 4.20s / 605 MB and 2.75s / 1.3 GB — a 2.5–9% wall cost for half
+the RSS. The *server* path still needs mimalloc (the private tx base frame runs 9.7s vs
+12.9s on glibc at 32 threads, and no glibc tunable closes it — bb's 8.5s on plain glibc
+comes from its lower-churn allocation pattern, which is the real fix). So mimalloc stays
+the default for one binary serving both, `sysalloc` is the memory-optics build, and wasm —
+the target where memory actually matters — has no mimalloc either way: its linear-memory
+peak tracks the 314 MB live curve. The remaining ~30–40 MB of live delta over bb at the peak (the joint
 MegaZK+Translator phase): three tail-indexed translator Lagrange columns bb allocates with a
 start window (12 MB), leading zeros in gate-selector columns bb's structured trace skips via
 start indices (~10 MB per live instance), and larger MSM scratch. All are start-window

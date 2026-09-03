@@ -36,4 +36,6 @@ opt-level = 1
 [features]
 # Heap profiling: dhat replaces mimalloc as the global allocator and writes dhat-heap.json.
 heap-profile = ["dep:dhat"]
+# A/B experiment: system allocator instead of mimalloc.
+sysalloc = []
 dhat = ["dep:dhat"]
