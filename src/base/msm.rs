@@ -225,12 +225,12 @@ pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -
                 (
                     Vec::with_capacity(g),
                     Vec::with_capacity(g),
-                    Vec::with_capacity(g / 2 + 1),
+                    Vec::with_capacity(g),
                     Vec::with_capacity(g / 2 + 1),
                     Vec::with_capacity(g / 2 + 1),
                 )
             },
-            |(block_b, block_p, pairs, dens, prod), &(w, k)| {
+            |(block_p, run_id, run_len, dens, prod), &(w, k)| {
                 let sched = &schedules[w];
                 let job_start = (k * chunk_len).min(sched.len());
                 let job_end = ((k + 1) * chunk_len).min(sched.len());
@@ -247,21 +247,41 @@ pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -
                     .step_by(GATHER_BLOCK)
                     .zip(sched[job_start..job_end].chunks(GATHER_BLOCK))
                 {
-                    block_b.clear();
                     block_p.clear();
+                    run_id.clear();
+                    run_len.clear();
+                    let (mut cur, mut cnt) = (u32::MAX, 0u32);
                     for (j, &e) in chunk.iter().enumerate() {
                         while starts[b + 1] as usize <= block_start + j {
                             b += 1;
                         }
                         let i = (e & 0x7fff_ffff) as usize;
-                        block_b.push(b as u32);
+                        if b as u32 != cur {
+                            if cnt > 0 {
+                                run_id.push(cur);
+                                run_len.push(cnt);
+                            }
+                            cur = b as u32;
+                            cnt = 1;
+                        } else {
+                            cnt += 1;
+                        }
                         block_p.push(if e >> 31 == 1 { -points[i] } else { points[i] });
                     }
-                    while tree_level(block_b, block_p, pairs, dens, prod) {}
-                    work_b.extend_from_slice(block_b);
+                    if cnt > 0 {
+                        run_id.push(cur);
+                        run_len.push(cnt);
+                    }
+                    tree_reduce(run_id, run_len, block_p, dens, prod);
+                    work_b.extend_from_slice(run_id);
                     work_p.extend_from_slice(block_p);
                 }
-                while tree_level(&mut work_b, &mut work_p, pairs, dens, prod) {}
+                // Block-boundary buckets appear in two blocks' survivors; one more reduction over
+                // the (still bucket-sorted) concatenation settles them.
+                runs_from_ids(&work_b, run_id, run_len);
+                tree_reduce(run_id, run_len, &mut work_p, dens, prod);
+                work_b.clear();
+                work_b.extend_from_slice(run_id);
                 (work_b, work_p)
             },
         )
@@ -286,9 +306,10 @@ pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -
             if work_b.is_empty() {
                 return Projective::<P>::zero();
             }
-            let (mut pairs, mut dens, mut prod) = (Vec::new(), Vec::new(), Vec::new());
-            while tree_level(&mut work_b, &mut work_p, &mut pairs, &mut dens, &mut prod) {}
-            bucket_reduce::<P>(&work_b, &work_p, half)
+            let (mut run_id, mut run_len, mut dens, mut prod) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+            runs_from_ids(&work_b, &mut run_id, &mut run_len);
+            tree_reduce(&mut run_id, &mut run_len, &mut work_p, &mut dens, &mut prod);
+            bucket_reduce::<P>(&run_id, &work_p, half)
         })
         .collect();
 
@@ -328,86 +349,88 @@ pub(crate) fn extract_bits(limbs: &[u64], start: usize, len: usize) -> u64 {
     v & ((1u64 << len) - 1)
 }
 
-/// One tree level, in place: adjacent same-bucket pairs are batch-added through a single
-/// level-wide inversion, survivors compact to the front. Returns false when every bucket is down
-/// to one point (no pair found). Sequential: the caller's schedule chunks are the parallel unit.
-/// Buckets and points are parallel arrays so the pairing scan streams dense u32s, and the
-/// compaction moves single survivors with bulk copies.
-fn tree_level<P: SWCurveConfig>(
-    bs: &mut Vec<u32>,
+/// Reduce a bucket-sorted point array to at most one point per bucket: repeated levels of
+/// adjacent-pair batched-affine additions through one inversion per level. The same-bucket runs
+/// are described by the parallel `run_id`/`run_len` arrays and updated arithmetically, so the
+/// inner loops never touch per-element bucket ids — no id compares, no id compaction, no tag
+/// lists (a pair's chord/double/infinity case is re-derived from the coordinates in the apply
+/// pass). Sequential: the caller's schedule chunks are the parallel unit. On return every
+/// surviving run has length 1, so `run_id`/`ps` are the (bucket, point) survivors.
+fn tree_reduce<P: SWCurveConfig>(
+    run_id: &mut Vec<u32>,
+    run_len: &mut Vec<u32>,
     ps: &mut Vec<Affine<P>>,
-    pairs: &mut Vec<(u32, u32)>,
     dens: &mut Vec<P::BaseField>,
     prod: &mut Vec<P::BaseField>,
-) -> bool {
-    // Pass 1: pick pairs, collect the batched denominators.
-    // Tags: 0 = chord add, 1 = double, u32::MAX = inverse points (the pair sums to infinity).
-    pairs.clear();
-    dens.clear();
-    let n = bs.len();
-    let mut i = 0;
-    while i + 1 < n {
-        if bs[i] != bs[i + 1] {
-            i += 1;
-            continue;
-        }
-        let (a, b) = (&ps[i], &ps[i + 1]);
-        if a.x == b.x {
-            if a.y == b.y {
-                dens.push(a.y.double());
-                pairs.push((1, i as u32));
-            } else {
-                pairs.push((u32::MAX, i as u32));
+) {
+    loop {
+        // Pass 1: denominators for every adjacent same-bucket pair, positions implicit.
+        dens.clear();
+        let mut i = 0usize;
+        let mut any = false;
+        for &k in run_len.iter() {
+            let k = k as usize;
+            for j in 0..k / 2 {
+                let (a, b) = (&ps[i + 2 * j], &ps[i + 2 * j + 1]);
+                if a.x == b.x {
+                    if a.y == b.y {
+                        dens.push(a.y.double());
+                    } // else: inverse pair, sums to infinity — no denominator, dropped in pass 2
+                } else {
+                    dens.push(b.x - a.x);
+                }
             }
-        } else {
-            dens.push(b.x - a.x);
-            pairs.push((0, i as u32));
+            any |= k >= 2;
+            i += k;
         }
-        i += 2;
-    }
-    if pairs.is_empty() {
-        return false;
-    }
-    batch_invert_nonzero(dens, prod);
-    // Pass 2: walk the pair list directly; the single-survivor gaps between pairs move as bulk
-    // copies, and each pair's sum lands in place at the write cursor.
-    let mut inv = dens.iter();
-    let (mut out, mut prev_end) = (0usize, 0usize);
-    for &(tag, at) in pairs.iter() {
-        let at = at as usize;
-        if at > prev_end {
-            bs.copy_within(prev_end..at, out);
-            ps.copy_within(prev_end..at, out);
-            out += at - prev_end;
+        if !any {
+            return;
         }
-        prev_end = at + 2;
-        if tag == u32::MAX {
-            continue; // infinity: pair contributes nothing
+        batch_invert_nonzero(dens, prod);
+        // Pass 2: apply the additions, compacting points and runs in place (the write cursor
+        // never passes the read cursor). Every slot holds a finite point: zero points never enter
+        // the schedule and inverse pairs are dropped, so in-place x/y writes keep slots finite.
+        let mut inv = dens.iter();
+        let (mut out, mut i, mut out_run) = (0usize, 0usize, 0usize);
+        for r in 0..run_len.len() {
+            let k = run_len[r] as usize;
+            let mut new_k = 0u32;
+            for j in 0..k / 2 {
+                let at = i + 2 * j;
+                let (ax, ay) = (ps[at].x, ps[at].y);
+                let (bx, by) = (ps[at + 1].x, ps[at + 1].y);
+                if ax == bx && ay != by {
+                    continue;
+                }
+                let d = *inv.next().unwrap();
+                let lambda = if ax == bx {
+                    let xx = ax.square();
+                    (xx.double() + xx) * d
+                } else {
+                    (by - ay) * d
+                };
+                let x3 = lambda.square() - ax - bx;
+                ps[out].x = x3;
+                ps[out].y = lambda * (ax - x3) - ay;
+                out += 1;
+                new_k += 1;
+            }
+            if k % 2 == 1 {
+                ps[out] = ps[i + k - 1];
+                out += 1;
+                new_k += 1;
+            }
+            i += k;
+            if new_k > 0 {
+                run_id[out_run] = run_id[r];
+                run_len[out_run] = new_k;
+                out_run += 1;
+            }
         }
-        let (ax, ay) = (ps[at].x, ps[at].y);
-        let (bx, by) = (ps[at + 1].x, ps[at + 1].y);
-        let lambda = if tag == 1 {
-            let xx = ax.square();
-            (xx.double() + xx) * inv.next().unwrap()
-        } else {
-            (by - ay) * inv.next().unwrap()
-        };
-        let x3 = lambda.square() - ax - bx;
-        // Every entry is a finite point (zero points never enter the schedule and inverse pairs
-        // are dropped), so writing x/y in place keeps the slot finite.
-        bs[out] = bs[at];
-        ps[out].x = x3;
-        ps[out].y = lambda * (ax - x3) - ay;
-        out += 1;
+        run_id.truncate(out_run);
+        run_len.truncate(out_run);
+        ps.truncate(out);
     }
-    if n > prev_end {
-        bs.copy_within(prev_end..n, out);
-        ps.copy_within(prev_end..n, out);
-        out += n - prev_end;
-    }
-    bs.truncate(out);
-    ps.truncate(out);
-    true
 }
 
 /// Adds each pair sharing one field inversion across the batch. `None` = point at infinity.
@@ -465,6 +488,31 @@ fn batch_affine_add<P: SWCurveConfig>(pairs: Vec<(Affine<P>, Affine<P>)>) -> Vec
 
 /// `sum_b (b+1) * B_b` over singleton buckets: segmented double running sums, the affine chain
 /// steps batched across segments, segment totals recombined in projective.
+
+/// Rebuild `run_id`/`run_len` from a bucket-sorted id array (used where per-block survivors are
+/// concatenated: block-boundary buckets become one run again).
+fn runs_from_ids(ids: &[u32], run_id: &mut Vec<u32>, run_len: &mut Vec<u32>) {
+    run_id.clear();
+    run_len.clear();
+    let (mut cur, mut cnt) = (u32::MAX, 0u32);
+    for &b in ids {
+        if b != cur {
+            if cnt > 0 {
+                run_id.push(cur);
+                run_len.push(cnt);
+            }
+            cur = b;
+            cnt = 1;
+        } else {
+            cnt += 1;
+        }
+    }
+    if cnt > 0 {
+        run_id.push(cur);
+        run_len.push(cnt);
+    }
+}
+
 fn bucket_reduce<P: SWCurveConfig>(bs: &[u32], ps: &[Affine<P>], num_buckets: usize) -> Projective<P> {
     // Wider = bigger inversion batches and fewer chain steps; the projective recombine at the end
     // costs ~2 ops per segment, so segments stay well below the bucket count.

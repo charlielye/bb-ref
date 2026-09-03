@@ -46,3 +46,9 @@ heap-profile = ["dep:dhat"]
 # A/B reference: mimalloc instead of the system allocator.
 mimalloc = ["dep:mimalloc"]
 dhat = ["dep:dhat"]
+
+# Vendored ark-ff 0.6.0 with one class of change: `#[inline(always)]` on the Fp operator and
+# FpConfig wrappers (mul/add/sub/square), which stock ark-ff leaves as outlined calls at every
+# hot site — measured -31G instructions and -3.5% wall on a rollup merge, -5% on the chonk flow.
+[patch.crates-io]
+ark-ff = { path = "vendor/ark-ff" }
