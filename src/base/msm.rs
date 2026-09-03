@@ -315,22 +315,28 @@ fn tree_level<P: SWCurveConfig>(
     dens: &mut Vec<P::BaseField>,
     prod: &mut Vec<P::BaseField>,
 ) -> bool {
-    // Pass 1: pick pairs, collect the batched denominators (None = pair sums to infinity).
+    // Pass 1: pick pairs, collect the batched denominators. Field reads by reference — copying
+    // the 72-byte work tuples to the stack was most of this function's instruction count.
+    // Tags: 0 = chord add, 1 = double, u32::MAX = inverse points (the pair sums to infinity).
     pairs.clear();
     dens.clear();
     let mut i = 0;
     while i + 1 < work.len() {
-        let ((ba, a), (bb, b)) = (work[i], work[i + 1]);
-        if ba != bb {
+        if work[i].0 != work[i + 1].0 {
             i += 1;
             continue;
         }
-        if a.x == b.x && a.y != b.y {
-            // Inverse points: mark by an impossible index; nothing enters the batch.
-            pairs.push((u32::MAX, i as u32));
+        let (a, b) = (&work[i].1, &work[i + 1].1);
+        if a.x == b.x {
+            if a.y == b.y {
+                dens.push(a.y.double());
+                pairs.push((1, i as u32));
+            } else {
+                pairs.push((u32::MAX, i as u32));
+            }
         } else {
-            dens.push(if a.x == b.x { a.y.double() } else { b.x - a.x });
-            pairs.push((i as u32, i as u32));
+            dens.push(b.x - a.x);
+            pairs.push((0, i as u32));
         }
         i += 2;
     }
@@ -348,23 +354,33 @@ fn tree_level<P: SWCurveConfig>(
         match pair_it.peek() {
             Some(&(tag, at)) if at as usize == i => {
                 pair_it.next();
-                let ((_, a), (_, b)) = (work[i], work[i + 1]);
-                i += 2;
                 if tag == u32::MAX {
+                    i += 2;
                     continue; // infinity: pair contributes nothing
                 }
-                let lambda = if a.x == b.x {
-                    let xx = a.x.square();
+                let bucket = work[i].0;
+                let (ax, ay) = (work[i].1.x, work[i].1.y);
+                let (bx, by) = (work[i + 1].1.x, work[i + 1].1.y);
+                let lambda = if tag == 1 {
+                    let xx = ax.square();
                     (xx.double() + xx) * inv.next().unwrap()
                 } else {
-                    (b.y - a.y) * inv.next().unwrap()
+                    (by - ay) * inv.next().unwrap()
                 };
-                let x3 = lambda.square() - a.x - b.x;
-                work[out] = (work[i - 2].0, Affine::<P>::new_unchecked(x3, lambda * (a.x - x3) - a.y));
+                let x3 = lambda.square() - ax - bx;
+                // Every work entry is a finite point (zero points never enter the schedule and
+                // inverse pairs are dropped), so writing x/y in place keeps the slot finite.
+                let slot = &mut work[out];
+                slot.0 = bucket;
+                slot.1.x = x3;
+                slot.1.y = lambda * (ax - x3) - ay;
                 out += 1;
+                i += 2;
             }
             _ => {
-                work[out] = work[i];
+                if out != i {
+                    work[out] = work[i];
+                }
                 out += 1;
                 i += 1;
             }

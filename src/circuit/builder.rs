@@ -241,9 +241,13 @@ impl Builder {
         is_write_vk_mode: bool,
     ) -> Self {
         let mut b = Self::empty(is_write_vk_mode, true);
-        for v in witness {
-            b.add_variable(*v);
-        }
+        // Bulk equivalent of add_variable per witness: a kernel ingests ~10^6 of them.
+        b.variables.extend_from_slice(witness);
+        let n = b.variables.len() as u32;
+        b.real_variable_index = (0..n).collect();
+        b.next_var_index = vec![REAL_VARIABLE; n as usize];
+        b.prev_var_index = vec![FIRST_VARIABLE_IN_CLASS; n as usize];
+        b.real_variable_tags = vec![DEFAULT_TAG; n as usize];
         b.public_inputs = public_inputs;
         b.zero_idx = b.put_constant_variable(Fr::zero());
         b.set_tau_at_index(DEFAULT_TAG, DEFAULT_TAG);

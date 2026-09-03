@@ -155,7 +155,7 @@ pub fn joint_prove(
         univariate = mega_state.univariate(&mega_rels, mega_params, &betas, &partial_eval, &mega_alphas, d);
         let t1 = std::time::Instant::now();
         let u_t = trans_state.univariate(&trans_rels, &trans_params, &betas, &partial_eval, &trans_alphas, d);
-        if crate::honk::sumcheck::relation_stats_enabled() {
+        if std::env::var_os("BBREF_TIMING").is_some() {
             eprintln!(
                 "[joint round {round}] mega {:.1} ms, translator {:.1} ms",
                 (t1 - t0).as_secs_f64() * 1e3,
@@ -172,7 +172,7 @@ pub fn joint_prove(
         mega_state.partially_evaluate(&u);
         let t3 = std::time::Instant::now();
         trans_state.partially_evaluate(&u);
-        if crate::honk::sumcheck::relation_stats_enabled() {
+        if std::env::var_os("BBREF_TIMING").is_some() {
             eprintln!(
                 "[joint round {round}] fold mega {:.1} ms, translator {:.1} ms",
                 (t3 - t2).as_secs_f64() * 1e3,

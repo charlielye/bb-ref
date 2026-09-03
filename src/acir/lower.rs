@@ -1154,12 +1154,15 @@ pub fn build_circuit_mega(
         public_inputs,
         witness.is_none(),
     );
+    crate::base::timing::phase("      build: witness vars");
     let ctx = lower(builder, c);
+    crate::base::timing::phase("      build: acir lowering");
     if hn_recursion.is_empty() {
         add_default_pairing_points(&mut ctx.borrow_mut());
     } else {
         process_hn_recursion_constraints(&ctx, &hn_recursion, ivc.unwrap(), rng);
     }
+    crate::base::timing::phase("      build: recursion/kernel logic");
     into_builder(ctx)
 }
 

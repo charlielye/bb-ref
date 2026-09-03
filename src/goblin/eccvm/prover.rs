@@ -115,7 +115,9 @@ pub fn eccvm_prove(q: &EccOpQueue, ck: &GrumpkinKey, t: &mut NativeTranscript, r
 
     let [beta, gamma]: [Fq; 2] = t.challenges(&["beta", "gamma"]).try_into().unwrap();
     let params = eccvm_relation_params(beta, gamma);
+    crate::base::timing::phase("    eccvm: wire commits");
     polys.compute_derived(&params);
+    crate::base::timing::phase("    eccvm: derived");
     for e in [Ent::lookup_inverses, Ent::z_perm] {
         commitments[e as usize] = ck.commit(polys.col(e));
         t.send(&label(e), &commitments[e as usize]);

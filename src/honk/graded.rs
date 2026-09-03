@@ -38,6 +38,14 @@ impl<F: NativeField> Graded<F> {
             len: if delta.is_zero() { 1 } else { 2 },
         }
     }
+    /// `row0 + X·delta` written into a reused buffer entry: only the two low coefficients move —
+    /// the entry's high slots are zero from allocation and row entries are never written by ring
+    /// ops, so the zero-padding invariant holds without touching them.
+    pub fn set_linear(&mut self, row0: F, delta: F) {
+        self.c[0] = row0;
+        self.c[1] = delta;
+        self.len = if delta.is_zero() { 1 } else { 2 };
+    }
     /// Evaluation at the point `k` (Horner).
     pub fn eval_at(&self, k: F) -> F {
         let l = self.len as usize;

@@ -968,7 +968,7 @@ fn accumulate_edge<F: NativeField>(
     }
     if s.graded {
         for &j in &s.cols {
-            s.row_uni[j] = Graded::linear(s.row0[j], s.delta[j]);
+            s.row_uni[j].set_linear(s.row0[j], s.delta[j]);
         }
         let scaling_uni = Graded::constant(*scaling);
         for ri in 0..rels.num_relations() {
