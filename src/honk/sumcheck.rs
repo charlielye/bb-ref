@@ -704,6 +704,9 @@ struct Scratch<F: NativeField> {
     /// degree-tracked univariates and one accumulator per subrelation, converted to point
     /// evaluations once per chunk.
     graded: bool,
+    /// Per relation: evaluated in coefficient basis (its univariate fits `GRADED_MAX_LEN`) or by
+    /// the pointwise loop (e.g. the ECCVM's degree-21 set relation).
+    graded_rel: Vec<bool>,
     row_uni: Vec<Graded<F>>,
     acc_uni: Vec<Vec<Graded<F>>>,
 }
@@ -730,6 +733,7 @@ impl<F: NativeField> Scratch<F> {
             },
             in_skip: Vec::new(),
             graded: false,
+            graded_rel: Vec::new(),
             row_uni: Vec::new(),
             acc_uni: Vec::new(),
         }
@@ -738,10 +742,14 @@ impl<F: NativeField> Scratch<F> {
     }
     fn init_graded(mut self, rels: &impl RelationSet<F>, num_columns: usize, d: usize) -> Self {
         let zero = Graded::<F>::constant(<F as ark_ff::AdditiveGroup>::ZERO);
-        self.graded = rels.supports_graded()
-            && d <= GRADED_MAX_LEN
-            && (0..rels.num_relations()).all(|r| rels.partial_length(r).min(d) <= GRADED_MAX_LEN)
-            && !relation_stats_enabled();
+        self.graded_rel = (0..rels.num_relations())
+            .map(|r| {
+                rels.supports_graded()
+                    && rels.partial_length(r).min(d) <= GRADED_MAX_LEN
+                    && !relation_stats_enabled()
+            })
+            .collect();
+        self.graded = self.graded_rel.iter().any(|&g| g);
         if self.graded {
             self.row_uni = vec![zero; num_columns];
             self.acc_uni = (0..rels.num_relations())
@@ -863,6 +871,9 @@ impl<F: FieldLike + Copy> ExtensionWeights<F> {
 /// extension machinery consumes (exact: a polynomial identity over the field).
 fn flush_graded<F: NativeField>(s: &Scratch<F>, acc: &mut Accumulators<F>) {
     for ri in 0..s.acc_uni.len() {
+        if !s.graded_rel[ri] {
+            continue;
+        }
         for k in 0..s.len[ri] {
             let kf = F::small(k as u64);
             let point = acc.point(ri, k);
@@ -889,8 +900,10 @@ where
 {
     let params_uni = lift_params(params);
     let params_uni = &params_uni;
-    // A few chunks per thread, each with its own accumulators and scratch.
-    let chunk = (edges.len() / (4 * rayon::current_num_threads())).max(16);
+    // Several chunks per thread, each with its own accumulators and scratch: active-edge cost is
+    // skewed (a poseidon2 block's edges cost multiples of an arithmetic block's), so coarse chunks
+    // leave threads idle behind stragglers at the round barrier.
+    let chunk = (edges.len() / (16 * rayon::current_num_threads())).max(16);
     let starts: Vec<usize> = edges.clone().step_by(chunk).collect();
     starts
         .into_par_iter()
@@ -934,7 +947,9 @@ fn accumulate_edge<F: NativeField>(
     for ri in 0..rels.num_relations() {
         s.active[ri] = !rels.skip(ri, &s.row0, &s.row1);
         if s.active[ri] {
-            num_points = num_points.max(s.len[ri]);
+            if !(s.graded && s.graded_rel[ri]) {
+                num_points = num_points.max(s.len[ri]);
+            }
             for &j in &used[ri] {
                 if !s.mark[j] {
                     s.mark[j] = true;
@@ -957,11 +972,13 @@ fn accumulate_edge<F: NativeField>(
         }
         let scaling_uni = Graded::constant(*scaling);
         for ri in 0..rels.num_relations() {
-            if s.active[ri] {
+            if s.active[ri] && s.graded_rel[ri] {
                 rels.accumulate_graded(ri, &mut s.acc_uni[ri], &s.row_uni, params_uni, &scaling_uni);
             }
         }
-        return;
+        if s.graded_rel.iter().zip(&s.active).all(|(&g, &a)| g || !a) {
+            return;
+        }
     }
     let stats = relation_stats_enabled();
     let mut ext_ns = 0u128;
@@ -979,7 +996,7 @@ fn accumulate_edge<F: NativeField>(
             ext_ns += t0.elapsed().as_nanos();
         }
         for ri in 0..rels.num_relations() {
-            if !s.active[ri] || k >= s.len[ri] {
+            if !s.active[ri] || k >= s.len[ri] || (s.graded && s.graded_rel[ri]) {
                 continue;
             }
             let t0 = stats.then(std::time::Instant::now);

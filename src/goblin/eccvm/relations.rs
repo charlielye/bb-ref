@@ -31,6 +31,19 @@ impl<T: FieldLike<Native = Fq>> RelationSet<T> for EccvmRelations {
     fn partial_length(&self, r: usize) -> usize {
         ECCVM_RELATIONS[r].partial_lengths().into_iter().max().unwrap()
     }
+    fn supports_graded(&self) -> bool {
+        true
+    }
+    fn accumulate_graded(
+        &self,
+        r: usize,
+        acc: &mut [crate::honk::graded::Graded<Fq>],
+        row: &[crate::honk::graded::Graded<Fq>],
+        p: &RelationParams<crate::honk::graded::Graded<Fq>>,
+        scaling: &crate::honk::graded::Graded<Fq>,
+    ) {
+        ECCVM_RELATIONS[r].accumulate(acc, row, p, scaling)
+    }
     fn skip_columns(&self) -> Option<Vec<usize>> {
         // Must cover everything `skip` reads.
         let mut cols: Vec<usize> =
