@@ -15,7 +15,7 @@ Numbers are from an idle 64-core c7a (both provers pinned to 32 threads, seeded,
 | rollup corpus (62 recorded server ops) | 254.7s | 300.9s | **1.18×** |
 | — root rollup | 29.2s | 29.6s | 1.02× |
 | — private tx base | 8.2s | 10.2s | 1.24× |
-| chonk client flows (11 pinned transactions) | 30.3s | 45.8s | **1.51×** |
+| chonk client flows (11 pinned transactions) | 30.1s | 36.2s | **1.20×** |
 | private tx base peak RSS | 3.4 GB | 5.1 GB (4.6 live) | 1.5× |
 | chonk client flow peak RSS, 8 threads | 312 MB | 358 MB purged / 314 MB live | **1.15×** |
 
@@ -106,7 +106,9 @@ start indices (~10 MB per live instance), and larger MSM scratch. All are start-
 territory — the same crate-wide `coeffs`-offset change declined above, now worth ~10% rather
 than a structural multiple.
 
-The chonk client flow at 8 threads (3.72s vs bb 2.82s, from 4.26s at the start of this pass)
+The chonk client flow at 8 threads (3.51s vs bb 2.82s = 1.24×, from 4.26s at the start of
+this pass; the full 11-flow set at 32 threads sits at 1.20×, with the largest flow faster
+than bb)
 decomposes the same way, measured by phase marks against bb's `BB_BENCH` tree and
 `perf stat` instruction counts (ours 174G vs bb 101G at equal parallel efficiency and better
 IPC — the whole gap is extra instructions, not stalls). What landed in this pass, each step

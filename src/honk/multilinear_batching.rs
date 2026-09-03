@@ -5,6 +5,7 @@
 
 use super::hypernova::{ProverClaim, VerifierClaim};
 use crate::base::codec::FromChallenge;
+use crate::base::field::NativeField;
 use crate::base::field::FieldLike;
 use crate::base::group::{Curve, GroupLike};
 use crate::base::poly::eq_table;
@@ -60,7 +61,9 @@ pub fn mlb_prove(claims: Vec<ProverClaim>, t: &mut NativeTranscript) -> ProverCl
     let mut eq: Vec<Vec<Fr>> = claims.iter().map(|c| eq_table(&c.challenge, log_n)).collect();
 
     let mut challenge = Vec::with_capacity(VIRTUAL_LOG_N);
-    let linear = |v0: Fr, v1: Fr, k: usize| v0 + Fr::from(k as u64) * (v1 - v0);
+    // `Fr::small` is a table lookup; `Fr::from(u64)` is a Montgomery multiplication, and this
+    // runs three times per point of every edge.
+    let linear = |v0: Fr, v1: Fr, k: usize| v0 + Fr::small(k as u64) * (v1 - v0);
     for round in 0..VIRTUAL_LOG_N {
         let mut univariate = vec![Fr::zero(); UNIVARIATE_LENGTH];
         if round < log_n {
