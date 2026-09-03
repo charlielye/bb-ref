@@ -17,10 +17,13 @@ loop; the working probes are `tools/remote_bench.sh`).
 | — private tx base (9 proofs) | 8.13s | 7.82s | **0.96×** |
 | — root rollup (2 proofs) | 26.3s | 23.8s | **0.91×** |
 | — checkpoint root | 18.9s | 18.7s | 0.99× |
-| chonk client flows (11 pinned transactions) | 28.9–30.3s | 34.1s | **1.13–1.18×** |
-| — single flow at 8 threads | 2.82s | 3.10s | 1.10× |
+| chonk client flows (11 pinned transactions, 8 threads) | 46.9s | 51.7s | **1.10×** |
+| — canonical flow (ecdsar1 transfer + sponsored fpc) | 2.83s | 3.17s | 1.12× |
 | rollup corpus peak RSS | 13.0 GB | 17.0 GB | 1.31× |
-| chonk client flow peak RSS, 8 threads | 312 MB | 338 MB | **1.08×** |
+| chonk client flow peak RSS, 8 threads | 290–340 MB | 320–380 MB | **~1.10×** |
+
+Chonk is the client-side prover, so its numbers are always at 8 threads (`bench_chonk.sh`'s
+default); the rollup corpus runs at the 32-thread server profile.
 
 ## What closed the gap (largest first)
 
@@ -111,9 +114,9 @@ start indices (~10 MB per live instance), and larger MSM scratch. All are start-
 territory — the same crate-wide `coeffs`-offset change declined above, now worth ~10% rather
 than a structural multiple.
 
-The chonk client flow at 8 threads (3.10s vs bb 2.82s = 1.10×, from 4.26s at the start of
-this pass; the full 11-flow set at 32 threads sits at 1.13–1.18× across same-day bb runs,
-with the largest flow faster than bb)
+The chonk client flow at 8 threads (3.17s vs bb 2.83s = 1.12×, from 4.26s at the start of
+this pass; the full 11-flow set at 8 threads sits at 1.10×, with the largest flow faster
+than bb)
 decomposes the same way, measured by phase marks against bb's `BB_BENCH` tree and
 `perf stat` instruction counts (ours 174G vs bb 101G at equal parallel efficiency and better
 IPC — the whole gap is extra instructions, not stalls). What landed in this pass, each step

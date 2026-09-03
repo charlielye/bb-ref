@@ -42,7 +42,7 @@ else
 fi
 
 : "${BB_RNG_SEED:=12345}"
-: "${THREADS:=${THREADS_FLAG:-$(( $(nproc) < 32 ? $(nproc) : 32 ))}}"
+: "${THREADS:=${THREADS_FLAG:-8}}"  # chonk is the client-side prover: 8 threads is the profile that matters
 export BB_RNG_SEED HARDWARE_CONCURRENCY=$THREADS RAYON_NUM_THREADS=$THREADS
 echo "threads: $THREADS (both binaries), seed: $BB_RNG_SEED, flows: ${#FLOWS[@]}"
 
