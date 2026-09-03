@@ -249,7 +249,30 @@ where
             "polynomial needs {k} SRS points, key has {}",
             self.points.len()
         );
-        G::batch_msm(&self.points[..k], &p.coeffs[..k]).into_affine()
+        let t0 = std::env::var_os("BBREF_COMMIT_TIMING").map(|_| std::time::Instant::now());
+        let c = G::batch_msm(&self.points[..k], &p.coeffs[..k]).into_affine();
+        if let Some(t0) = t0 {
+            use ark_ff::{BigInteger, PrimeField};
+            let ms = t0.elapsed().as_secs_f64() * 1e3;
+            let mut nnz = 0usize;
+            let mut hist = [0usize; 5]; // <=32, <=64, <=128, <=192, <=254 bits
+            for s in &p.coeffs[..k] {
+                if s.is_zero() {
+                    continue;
+                }
+                nnz += 1;
+                let b = s.into_bigint().num_bits();
+                hist[match b {
+                    0..=32 => 0,
+                    33..=64 => 1,
+                    65..=128 => 2,
+                    129..=192 => 3,
+                    _ => 4,
+                }] += 1;
+            }
+            eprintln!("[commit] {k} pts nnz={nnz} bits<=32/64/128/192/254: {hist:?}  {ms:.1} ms");
+        }
+        c
     }
 }
 

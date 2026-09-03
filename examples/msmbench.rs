@@ -1,4 +1,4 @@
-//! Isolated MSM comparison: base::msm::msm vs ark msm_unchecked. Usage: msmbench <log_n> [iters]
+//! Isolated MSM comparison: base::msm::msm vs ark msm_unchecked. Usage: msmbench <log_n> [iters] [scalar_bits]
 
 use ark_ec::{CurveGroup, VariableBaseMSM};
 use ark_ff::{UniformRand, Zero};
@@ -14,7 +14,22 @@ fn main() {
             .map(|_| ark_bn254::G1Projective::rand(&mut rng))
             .collect::<Vec<_>>(),
     );
-    let scalars: Vec<ark_bn254::Fr> = (0..n).map(|_| ark_bn254::Fr::rand(&mut rng)).collect();
+    let bits: u32 = std::env::args().nth(3).and_then(|s| s.parse().ok()).unwrap_or(254);
+    let scalars: Vec<ark_bn254::Fr> = (0..n)
+        .map(|_| {
+            use ark_ff::PrimeField;
+            let mut b = ark_bn254::Fr::rand(&mut rng).into_bigint();
+            for (k, limb) in b.0.iter_mut().enumerate() {
+                let lo = (k * 64) as u32;
+                if lo >= bits {
+                    *limb = 0;
+                } else if bits - lo < 64 {
+                    *limb &= (1u64 << (bits - lo)) - 1;
+                }
+            }
+            ark_bn254::Fr::from_bigint(b).unwrap()
+        })
+        .collect();
 
     for (name, f) in [
         (

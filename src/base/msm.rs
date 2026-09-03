@@ -27,6 +27,22 @@ unsafe impl<T> Sync for SendPtr<T> {}
 
 pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -> Projective<P> {
     let n = points.len().min(scalars.len());
+    // Mostly-zero inputs (masking polys, sorted range columns, sparse selectors) compact to their
+    // support first, so the cost is per-nonzero, not per-length, and the window size fits the real
+    // problem (bb routes these through `commit_sparse` for the same reason).
+    if n >= 1024 {
+        let nnz = (0..n)
+            .into_par_iter()
+            .filter(|&i| !scalars[i].is_zero() && !points[i].is_zero())
+            .count();
+        if nnz * 2 < n {
+            let (cp, cs): (Vec<Affine<P>>, Vec<P::ScalarField>) = (0..n)
+                .filter(|&i| !scalars[i].is_zero() && !points[i].is_zero())
+                .map(|i| (points[i], scalars[i]))
+                .unzip();
+            return msm(&cp, &cs);
+        }
+    }
     if n < MIN_PTS_PER_THREAD * rayon::current_num_threads() {
         return small_msm(&points[..n], &scalars[..n]);
     }
@@ -168,32 +184,32 @@ pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -
             // the tree pair/denominator buffers dominate the prover's allocation churn otherwise.
             || (Vec::new(), Vec::new(), Vec::new()),
             |(block, pairs, dens), &(w, k)| {
-            let sched = &schedules[w];
-            let job_start = (k * chunk_len).min(sched.len());
-            let job_end = ((k + 1) * chunk_len).min(sched.len());
-            // The entry's bucket is its rank's position in the per-window bucket offsets, tracked
-            // incrementally since the schedule is sorted.
-            let starts = &bucket_starts[w];
-            let mut b = starts.partition_point(|&s| s as usize <= job_start) - 1;
-            let mut work: Vec<(u32, Affine<P>)> = Vec::new();
-            for (block_start, chunk) in (job_start..job_end)
-                .step_by(GATHER_BLOCK)
-                .zip(sched[job_start..job_end].chunks(GATHER_BLOCK))
-            {
-                block.clear();
-                for (j, &e) in chunk.iter().enumerate() {
-                    while starts[b + 1] as usize <= block_start + j {
-                        b += 1;
+                let sched = &schedules[w];
+                let job_start = (k * chunk_len).min(sched.len());
+                let job_end = ((k + 1) * chunk_len).min(sched.len());
+                // The entry's bucket is its rank's position in the per-window bucket offsets, tracked
+                // incrementally since the schedule is sorted.
+                let starts = &bucket_starts[w];
+                let mut b = starts.partition_point(|&s| s as usize <= job_start) - 1;
+                let mut work: Vec<(u32, Affine<P>)> = Vec::new();
+                for (block_start, chunk) in (job_start..job_end)
+                    .step_by(GATHER_BLOCK)
+                    .zip(sched[job_start..job_end].chunks(GATHER_BLOCK))
+                {
+                    block.clear();
+                    for (j, &e) in chunk.iter().enumerate() {
+                        while starts[b + 1] as usize <= block_start + j {
+                            b += 1;
+                        }
+                        let i = (e & 0x7fff_ffff) as usize;
+                        let p = if e >> 31 == 1 { -points[i] } else { points[i] };
+                        block.push((b as u32, p));
                     }
-                    let i = (e & 0x7fff_ffff) as usize;
-                    let p = if e >> 31 == 1 { -points[i] } else { points[i] };
-                    block.push((b as u32, p));
+                    while tree_level(block, pairs, dens) {}
+                    work.extend_from_slice(block);
                 }
-                while tree_level(block, pairs, dens) {}
-                work.extend_from_slice(block);
-            }
-            while tree_level(&mut work, pairs, dens) {}
-            work
+                while tree_level(&mut work, pairs, dens) {}
+                work
             },
         )
         .collect();
