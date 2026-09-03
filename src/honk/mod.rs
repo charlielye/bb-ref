@@ -2,6 +2,7 @@
 pub mod circuit_checker;
 pub mod decider;
 pub mod flavor;
+pub mod graded;
 pub mod hypernova;
 pub mod multilinear_batching;
 pub mod oink;

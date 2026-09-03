@@ -106,16 +106,37 @@ start indices (~10 MB per live instance), and larger MSM scratch. All are start-
 territory — the same crate-wide `coeffs`-offset change declined above, now worth ~10% rather
 than a structural multiple.
 
-The chonk client flow at 8 threads (4.25s vs bb 2.82s) decomposes the same way, measured by
-phase marks against bb's `BB_BENCH` tree: sumchecks own ~0.5s of the gap (folding 0.5s vs
-0.26, joint 0.36 vs 0.17, ECCVM 0.15 vs ~0.06 — the relation-body residual), commitment MSMs
-~0.4s (ours ~1.3× bb's per batch-commit at 2^15–2^17), and the ECCVM TripleIPA ~0.2s
-(0.37s vs ~0.15: the per-round SRS fold is one projective scalar-mul per point where bb's
-`batch_two_round_fold` interleaves four GLV-split Booth digit streams on one shared doubling
-chain — ~4× fewer field muls per point; a plain batched-affine single-scalar fold was tried
+The chonk client flow at 8 threads (3.84s vs bb 2.82s, from 4.26s at the start of this pass)
+decomposes the same way, measured by phase marks against bb's `BB_BENCH` tree and
+`perf stat` instruction counts (ours 174G vs bb 101G at equal parallel efficiency and better
+IPC — the whole gap is extra instructions, not stalls). What landed in this pass, each step
+byte-identical:
+
+- **ark's parallel `batch_inversion` splits even 32-element batches into one chunk per
+  thread** (a real modular inversion plus a rayon dispatch each), and the MSM tree ran it
+  nested inside its own rayon jobs — 14% of all instructions. Serial in-place inversion with
+  reused scratch: 4.20 → 3.98s.
+- **Coefficient-basis relation evaluation** (`honk/graded.rs`, bb
+  `UnivariateCoefficientBasis`): the edge rows become degree-tracked univariates
+  `row0 + X·Δ` and the unchanged FieldLike-generic relation bodies run on them, so each ring
+  operation costs its true degree instead of the full batched length — and a locally-constant
+  selector (Δ = 0) stays degree 0. Mega folding sumchecks −26% single-thread; 3.98 → 3.84s.
+  The Translator relation set measured *slower* under coefficient basis (add-heavy,
+  high-degree DAGs where schoolbook products exceed the pointwise cost) and keeps the
+  pointwise path; the ECCVM's degree-24 univariates don't fit the fixed capacity and fall
+  back automatically.
+- Sparse commitment inputs compact to their support in `msm` (a 34-nonzero masking poly had
+  cost 7ms), and the sumcheck edge loop fills only the rows its skip predicates and active
+  relations read.
+
+What owns the remaining ~1.0s: the Translator and ECCVM sumchecks (~0.35s — bb's
+short-monomial and accumulator forms), commitment MSMs (~0.3s — ours ~1.15× bb's kernel at
+8 threads plus batching overhead; bb's SIMD digit recoding and small-size engineering),
+the TripleIPA (~0.17s — bb's `batch_two_round_fold` interleaves four GLV-split Booth digit
+streams on one shared doubling chain; a plain batched-affine single-scalar fold was tried
 and measured a wash, since affine-with-shared-inversion and Jacobian doubling cost the same
-~6.5 muls, and the win is entirely the 4-way chain sharing). Closing to ≤1.2× on the client
-flow means porting those three, in that order of size.
+~6.5 muls — the win is entirely the 4-way chain sharing), and circuit building + instance
+construction (~0.2s).
 The next planned wins are algorithmic rather than micro-architectural — GLV over a
 precomputed φ(SRS) (output-preserving), then protocol-level experiments (GKR for grand
 products, small-value sumcheck) behind feature flags as upstream candidates for bb itself.

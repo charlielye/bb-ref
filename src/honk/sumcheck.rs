@@ -8,6 +8,8 @@
 
 use super::flavor::{FlavorDesc, Layout};
 use super::relations::{RelationParams, Row};
+use super::graded::{lift_params, Graded, MAX_LEN as GRADED_MAX_LEN};
+use crate::base::field::NativeField;
 use crate::base::field::{FieldLike, U256};
 use crate::base::group::Curve;
 use crate::base::poly::Polynomial;
@@ -49,6 +51,23 @@ pub trait RelationSet<F: FieldLike> {
     /// evaluates it at that many points and extends the accumulator afterwards.
     fn partial_length(&self, _r: usize) -> usize {
         usize::MAX
+    }
+    /// Whether `accumulate_graded` is implemented (the coefficient-basis edge path, `graded.rs`).
+    fn supports_graded(&self) -> bool {
+        false
+    }
+    /// `accumulate` over degree-tracked coefficient-basis univariates: the same relation bodies,
+    /// with each ring operation costing its true degree. Only called when `supports_graded` is
+    /// true and every partial length fits `GRADED_MAX_LEN`.
+    fn accumulate_graded(
+        &self,
+        _r: usize,
+        _acc: &mut [Graded<F::Native>],
+        _row: &[Graded<F::Native>],
+        _p: &RelationParams<Graded<F::Native>>,
+        _scaling: &Graded<F::Native>,
+    ) {
+        unreachable!("no graded evaluation for this relation set")
     }
     fn total_subrelations(&self) -> usize {
         (0..self.num_relations()).map(|r| self.num_subrelations(r)).sum()
@@ -93,6 +112,27 @@ impl<F: FieldLike> RelationSet<F> for HonkRelations<'_> {
             .copied()
             .max()
             .unwrap_or(0)
+    }
+    fn supports_graded(&self) -> bool {
+        true
+    }
+    fn accumulate_graded(
+        &self,
+        r: usize,
+        acc: &mut [Graded<F::Native>],
+        row: &[Graded<F::Native>],
+        p: &RelationParams<Graded<F::Native>>,
+        scaling: &Graded<F::Native>,
+    ) {
+        self.flavor.relations[r].accumulate(
+            acc,
+            &Row {
+                vals: row,
+                layout: self.layout,
+            },
+            p,
+            scaling,
+        )
     }
     fn skip_columns(&self) -> Option<Vec<usize>> {
         let l = self.layout;
@@ -644,7 +684,7 @@ fn print_relation_stats<F: FieldLike>(rels: &impl RelationSet<F>, num_edges: usi
 }
 
 /// Per-thread scratch for `accumulate_edge`.
-struct Scratch<F> {
+struct Scratch<F: NativeField> {
     row0: Vec<F>,
     row1: Vec<F>,
     /// `row1 - row0`: the edge univariate is stepped by repeated addition (bb `extend_edges`).
@@ -660,9 +700,15 @@ struct Scratch<F> {
     skip_cols: Vec<usize>,
     /// Membership mask of `skip_cols`, so the active-column fill skips what is already filled.
     in_skip: Vec<bool>,
+    /// Coefficient-basis path (every relation's univariate fits `GRADED_MAX_LEN`): the edge rows as
+    /// degree-tracked univariates and one accumulator per subrelation, converted to point
+    /// evaluations once per chunk.
+    graded: bool,
+    row_uni: Vec<Graded<F>>,
+    acc_uni: Vec<Vec<Graded<F>>>,
 }
 
-impl<F: FieldLike + Copy> Scratch<F> {
+impl<F: NativeField> Scratch<F> {
     fn new(rels: &impl RelationSet<F>, num_columns: usize, d: usize) -> Self {
         Self {
             row0: vec![F::zero(); num_columns],
@@ -683,8 +729,26 @@ impl<F: FieldLike + Copy> Scratch<F> {
                 sc
             },
             in_skip: Vec::new(),
+            graded: false,
+            row_uni: Vec::new(),
+            acc_uni: Vec::new(),
         }
         .init_in_skip(num_columns)
+        .init_graded(rels, num_columns, d)
+    }
+    fn init_graded(mut self, rels: &impl RelationSet<F>, num_columns: usize, d: usize) -> Self {
+        let zero = Graded::<F>::constant(<F as ark_ff::AdditiveGroup>::ZERO);
+        self.graded = rels.supports_graded()
+            && d <= GRADED_MAX_LEN
+            && (0..rels.num_relations()).all(|r| rels.partial_length(r).min(d) <= GRADED_MAX_LEN)
+            && !relation_stats_enabled();
+        if self.graded {
+            self.row_uni = vec![zero; num_columns];
+            self.acc_uni = (0..rels.num_relations())
+                .map(|r| vec![zero; rels.num_subrelations(r)])
+                .collect();
+        }
+        self
     }
     fn init_in_skip(mut self, num_columns: usize) -> Self {
         self.in_skip = vec![false; num_columns];
@@ -795,9 +859,23 @@ impl<F: FieldLike + Copy> ExtensionWeights<F> {
     }
 }
 
+/// Convert a chunk's coefficient-basis subrelation accumulators into the point evaluations the
+/// extension machinery consumes (exact: a polynomial identity over the field).
+fn flush_graded<F: NativeField>(s: &Scratch<F>, acc: &mut Accumulators<F>) {
+    for ri in 0..s.acc_uni.len() {
+        for k in 0..s.len[ri] {
+            let kf = F::small(k as u64);
+            let point = acc.point(ri, k);
+            for (j, g) in s.acc_uni[ri].iter().enumerate() {
+                point[j] += g.eval_at(kf);
+            }
+        }
+    }
+}
+
 /// The accumulators over a range of edges, split across threads (exact arithmetic: any split
 /// gives the same sums).
-fn accumulate_edges<F: FieldLike + Copy + Send + Sync>(
+fn accumulate_edges<F: NativeField>(
     rels: &(impl RelationSet<F> + Sync),
     used: &[Vec<usize>],
     table: &[Column<F>],
@@ -809,6 +887,8 @@ fn accumulate_edges<F: FieldLike + Copy + Send + Sync>(
 where
     RelationParams<F>: Sync,
 {
+    let params_uni = lift_params(params);
+    let params_uni = &params_uni;
     // A few chunks per thread, each with its own accumulators and scratch.
     let chunk = (edges.len() / (4 * rayon::current_num_threads())).max(16);
     let starts: Vec<usize> = edges.clone().step_by(chunk).collect();
@@ -818,7 +898,10 @@ where
             let mut acc = Accumulators::new(rels, d);
             let mut scratch = Scratch::new(rels, table.len(), d);
             for e in start..(start + chunk).min(edges.end) {
-                accumulate_edge(rels, used, table, e, params, &pows[e], &mut acc, &mut scratch);
+                accumulate_edge(rels, used, table, e, params, params_uni, &pows[e], &mut acc, &mut scratch);
+            }
+            if scratch.graded {
+                flush_graded(&scratch, &mut acc);
             }
             acc
         })
@@ -827,12 +910,14 @@ where
 
 /// Add the contributions of the edge `(table[·][2e], table[·][2e+1])` at every `k`, skipping the
 /// relations that vanish on it.
-fn accumulate_edge<F: FieldLike + Copy>(
+#[allow(clippy::too_many_arguments)]
+fn accumulate_edge<F: NativeField>(
     rels: &impl RelationSet<F>,
     used: &[Vec<usize>],
     table: &[Column<F>],
     e: usize,
     params: &RelationParams<F>,
+    params_uni: &RelationParams<Graded<F>>,
     scaling: &F,
     acc: &mut Accumulators<F>,
     s: &mut Scratch<F>,
@@ -865,6 +950,18 @@ fn accumulate_edge<F: FieldLike + Copy>(
             s.row1[j] = column_value(table, j, 2 * e + 1);
         }
         s.delta[j] = s.row1[j] - s.row0[j];
+    }
+    if s.graded {
+        for &j in &s.cols {
+            s.row_uni[j] = Graded::linear(s.row0[j], s.delta[j]);
+        }
+        let scaling_uni = Graded::constant(*scaling);
+        for ri in 0..rels.num_relations() {
+            if s.active[ri] {
+                rels.accumulate_graded(ri, &mut s.acc_uni[ri], &s.row_uni, params_uni, &scaling_uni);
+            }
+        }
+        return;
     }
     let stats = relation_stats_enabled();
     let mut ext_ns = 0u128;
@@ -991,7 +1088,7 @@ pub struct RoundProver<'a, F> {
     used: Vec<Vec<usize>>,
 }
 
-impl<'a, F: FieldLike + Copy + Send + Sync> RoundProver<'a, F>
+impl<'a, F: NativeField> RoundProver<'a, F>
 where
     RelationParams<F>: Sync,
 {
@@ -1132,16 +1229,22 @@ where
             let edge_table: Vec<Column<F>> = (0..self.table.len())
                 .map(|i| Column::Own(vec![self.current(i), F::zero()]))
                 .collect();
+            let params_uni = lift_params(params);
+            let mut scratch = Scratch::new(rels, edge_table.len(), d);
             accumulate_edge(
                 rels,
                 &self.used,
                 &edge_table,
                 0,
                 params,
+                &params_uni,
                 &F::one(),
                 &mut acc,
-                &mut Scratch::new(rels, edge_table.len(), d),
+                &mut scratch,
             );
+            if scratch.graded {
+                flush_graded(&scratch, &mut acc);
+            }
             let rd = if self.row_disabling {
                 Some((self.rd0, self.rd1))
             } else {
@@ -1291,9 +1394,8 @@ pub fn prove_sumcheck<C: Curve>(
     ck: Option<&Ck<C::G>>,
 ) -> SumcheckProverOutput<C>
 where
-    C::Fr: Copy,
+    C::Fr: NativeField,
     C::G: crate::base::msm::BatchMsm<ScalarField = C::Fr>,
-    C::Fr: Copy + Send + Sync,
     RelationParams<C::Fr>: Sync,
 {
     type F<C> = <C as Curve>::Fr;
