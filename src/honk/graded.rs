@@ -16,7 +16,8 @@ pub const MAX_LEN: usize = 8;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Graded<F> {
-    /// Coefficients in the round variable; entries at `len..` are zero.
+    /// Coefficients in the round variable; entries at `len..` are unspecified (every operation
+    /// reads and writes only within the operands' lengths).
     c: [F; MAX_LEN],
     len: u8,
 }
@@ -27,6 +28,7 @@ impl<F: NativeField> Graded<F> {
         c[0] = v;
         Self { c, len: 1 }
     }
+
     /// The edge entry `row0 + X·delta`; a constant edge (Δ = 0) stays degree 0, which is what
     /// makes products against locally-constant selectors cheap.
     pub fn linear(row0: F, delta: F) -> Self {
@@ -59,7 +61,8 @@ impl<F: NativeField> Graded<F> {
 
 impl<F: NativeField> PartialEq for Graded<F> {
     fn eq(&self, other: &Self) -> bool {
-        self.c == other.c
+        let at = |g: &Self, i: usize| if i < g.len as usize { g.c[i] } else { F::ZERO };
+        (0..MAX_LEN.max(1)).all(|i| at(self, i) == at(other, i))
     }
 }
 
@@ -97,7 +100,10 @@ impl<F: NativeField> Mul<&Graded<F>> for Graded<F> {
         let (l1, l2) = (self.len as usize, rhs.len as usize);
         let out_len = l1 + l2 - 1;
         assert!(out_len <= MAX_LEN, "graded univariate degree overflow");
-        let mut c = [F::ZERO; MAX_LEN];
+        let mut c = self.c;
+        for k in 0..out_len {
+            c[k] = F::ZERO;
+        }
         for i in 0..l1 {
             let a = self.c[i];
             if a.is_zero() {
@@ -127,8 +133,12 @@ impl<F: NativeField> Neg for Graded<F> {
 }
 impl<F: NativeField> AddAssign<&Graded<F>> for Graded<F> {
     fn add_assign(&mut self, rhs: &Graded<F>) {
-        for i in 0..rhs.len as usize {
+        let common = (self.len as usize).min(rhs.len as usize);
+        for i in 0..common {
             self.c[i] += rhs.c[i];
+        }
+        for i in common..rhs.len as usize {
+            self.c[i] = rhs.c[i];
         }
         self.len = self.len.max(rhs.len);
     }
@@ -140,8 +150,12 @@ impl<F: NativeField> AddAssign for Graded<F> {
 }
 impl<F: NativeField> SubAssign<&Graded<F>> for Graded<F> {
     fn sub_assign(&mut self, rhs: &Graded<F>) {
-        for i in 0..rhs.len as usize {
+        let common = (self.len as usize).min(rhs.len as usize);
+        for i in 0..common {
             self.c[i] -= rhs.c[i];
+        }
+        for i in common..rhs.len as usize {
+            self.c[i] = -rhs.c[i];
         }
         self.len = self.len.max(rhs.len);
     }

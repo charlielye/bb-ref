@@ -66,7 +66,7 @@ pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -
     // Mostly-zero inputs (masking polys, sorted range columns, sparse selectors) compact to their
     // support first, so the cost is per-nonzero, not per-length, and the window size fits the real
     // problem (bb routes these through `commit_sparse` for the same reason).
-    if n >= 1024 {
+    if n >= 1024 && scalars.iter().take(64).filter(|s| s.is_zero()).count() >= 8 {
         let nnz = (0..n)
             .into_par_iter()
             .filter(|&i| !scalars[i].is_zero() && !points[i].is_zero())
