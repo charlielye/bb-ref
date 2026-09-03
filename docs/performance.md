@@ -5,18 +5,21 @@
 Where the rest of the docs describe *what* bb-ref computes (bit-identically to bb), this
 records *how fast*, what was done to get there, and — since the goal is ≤1.2× with simple
 code, not parity at any cost — exactly which structural differences own the remaining gap.
-Numbers are from an idle 64-core c7a (both provers pinned to 32 threads, seeded, measured by
-`tools/bench.sh` / `tools/bench_chonk.sh`; the working probes are `tools/remote_bench.sh`).
+Numbers are from an idle 64-core c7a (no SMT, single NUMA node; both provers seeded and
+pinned to the same 32 cores with `taskset -c 0-31`, measured by `tools/bench.sh` and the flow
+loop; the working probes are `tools/remote_bench.sh`).
 
 ## Where it stands
 
 | benchmark | bb | bb-ref | ratio |
 |---|---|---|---|
-| rollup corpus (62 recorded server ops) | 254.7s | 300.9s | **1.18×** |
-| — root rollup | 29.2s | 29.6s | 1.02× |
-| — private tx base | 8.2s | 10.2s | 1.24× |
-| chonk client flows (11 pinned transactions) | 30.1s | 35.0s | **1.16×** |
-| private tx base peak RSS | 3.4 GB | 5.1 GB (4.6 live) | 1.5× |
+| rollup corpus (62 recorded server ops) | 237.7s | 241.6s | **1.02×** |
+| — private tx base (9 proofs) | 8.13s | 7.81s | **0.96×** |
+| — root rollup (2 proofs) | 26.3s | 24.4s | **0.93×** |
+| — checkpoint root | 18.9s | 19.3s | 1.03× |
+| chonk client flows (11 pinned transactions) | 29.9s | 35.4s | **1.18×** |
+| — single flow at 8 threads | 2.82s | 3.29s | 1.17× |
+| rollup corpus peak RSS | 13.0 GB | 15.3 GB | 1.18× |
 | chonk client flow peak RSS, 8 threads | 312 MB | 358 MB purged / 314 MB live | **1.15×** |
 
 ## What closed the gap (largest first)
