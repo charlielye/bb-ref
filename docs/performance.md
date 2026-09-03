@@ -55,14 +55,53 @@ default); the rollup corpus runs at the 32-thread server profile.
    batches in place, cache the Montgomery-converted SRS in `bn254_g1.ark.mont`) trim the rest.
 5. arkworks' x86-64 asm (`ark-ff/asm` + `+bmi2,+adx`), putting field multiplication at parity
    with bb's hand-rolled assembly.
+6. **The rollup IPA prover delegates to the goblin two-round Booth fold** — the naive
+   per-round SRS fold was ~2^16 full scalar muls, paid 1–3× per rollup circuit (mock-proof
+   draws per recursion constraint plus the final claim/accumulate): padding 0.40→0.32s,
+   single-tx 3.09→2.88s, merges −0.2s each. The rollup verifier's 2^15 G_zero MSM also moved
+   off arkworks' MSM onto ours: per-verify 33→25ms at 32 threads, **1.10–1.16× bb at 1–8
+   threads** — the per-core number is what the p2p layer sees; the 32-thread ratio is rayon
+   dispatch overhead on a 25ms op, not compute.
 
 Every step was gated on byte-identical seeded proofs and the full tape suite: none of this
 changes a single output bit.
 
+## Benchmarking traps (learned the hard way)
+
+- **bb's per-op corpus numbers swing ±20% with allocator warmth.** bb proves a merge in
+  4.11s when the preceding frame was a big circuit (heap already hot) and 5.0–5.1s standalone
+  or after small frames; ours is state-independent (THP). Single-`n` corpus rows can catch
+  either state — TxMerge once read a flattering 1.04×. The clean methods: warm marginal wall
+  (`frame×3` stream, (T₃−T₁)/2) and marginal `perf stat` instruction counts, which are
+  state-independent. True warm merge ratio: **1.22×**.
+- **Sumcheck dead-tail skipping is already implemented** (`witness_end` in `RoundProver` =
+  bb's `end_index`, halved per round; the ECCVM's `active_prefix_end` keeps the last edge).
+  It matches bb's edge ranges — that's part of why proofs are byte-identical. Don't rediscover
+  it as an optimization opportunity: traces are ~71% active and both provers already skip the
+  tail.
+- **LTO and forced inlining measured flat twice** (wall at idle 8t, and now instructions at
+  saturated 32t: 443G before and after). Forcing `#[inline(always)]` on ark-ff's FpConfig
+  mul/square wrappers (a 3-line fork) recovered only 14G / ~2% wall — ark's ~41-instruction
+  Montgomery mul body is near-parity with bb's asm, so "outlined mul overhead" is not where
+  the instructions are. Not vendored; the owned-field project would subsume it.
+
 ## What owns the remaining gap
 
 Measured with `BBREF_TIMING=1` (phase walls, `BBREF_TIMING_RSS=1` for RSS at each mark, and
-the sumcheck univariate/fold/setup split) plus `perf stat` instruction counts:
+the sumcheck univariate/fold/setup split) plus `perf stat` instruction counts. The rollup
+merge circuits (2^21, warm 5.0s vs bb 4.11s = 1.22×) decompose per-op as **429G instructions
+vs bb's 324G**, in three blocks of comparable size:
+
+- **~30G: MSM tree orchestration** — `tree_level`'s pair-tag lists, `copy_within` gap moves
+  and per-level rescans, against bb's `batch_affine_add` scratch-column scheme. Contained in
+  `base/msm.rs`.
+- **~30G: sumcheck kernel shape** — `Graded<F>` is a `Copy` `[F; 8]`+len, so every temporary
+  moves 264 bytes even at degree 1, where bb's `UnivariateCoefficientBasis<F, 2>` moves 64.
+  Fix: degree-typed (const-generic) coefficient univariates.
+- **~40G: smeared** — operator-site field ops in recursive-verifier witgen, plus bb's
+  Bernstein–Yang variable-time inversion vs arkworks' ~250-mul Fermat inverse.
+
+The older phase-level accounting still holds:
 
 - **Relation-body codegen** — the dominant residual on both provers. Sumcheck univariate
   extension+accumulation runs ~1.3–1.6× bb per edge (private tx base: 1.10s vs 0.68s; the
