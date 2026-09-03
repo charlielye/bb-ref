@@ -194,13 +194,26 @@ impl ProverInstance {
             }
         }
 
+        crate::base::timing::phase("      inst: wires+selectors+cycles");
         // Permutation polynomials: identity, then cycle links with tags, then the public-input override.
         let sep = Fr::from(PERMUTATION_ARGUMENT_VALUE_SEPARATOR);
         let sigmas = [Ent::sigma_1, Ent::sigma_2, Ent::sigma_3, Ent::sigma_4];
         let ids = [Ent::id_1, Ent::id_2, Ent::id_3, Ent::id_4];
+        // `Fr::from(u64)` is a Montgomery multiplication; the identity values are consecutive, so
+        // one incremental row table serves the fills and the cycle links below with an add each.
+        let row_val: Vec<Fr> = {
+            let mut v = Vec::with_capacity(active_size);
+            let mut cur = Fr::from(0u64);
+            for _ in 0..active_size {
+                v.push(cur);
+                cur += Fr::from(1u64);
+            }
+            v
+        };
+        let sep_w: [Fr; NUM_WIRES] = std::array::from_fn(|w| sep * Fr::from(w as u64));
         for w in 0..NUM_WIRES {
             for i in NUM_ZERO_ROWS..active_size {
-                let v = Fr::from(i as u64) + sep * Fr::from(w as u64);
+                let v = row_val[i] + sep_w[w];
                 polys[idx(sigmas[w])].coeffs[i] = v;
                 polys[idx(ids[w])].coeffs[i] = v;
             }
@@ -213,7 +226,7 @@ impl ProverInstance {
             for k in 0..cycle.len() - 1 {
                 let (w, i) = cycle[k];
                 let (nw, ni) = cycle[k + 1];
-                polys[idx(sigmas[w])].coeffs[i] = Fr::from(ni as u64) + sep * Fr::from(nw as u64);
+                polys[idx(sigmas[w])].coeffs[i] = row_val[ni] + sep_w[nw];
             }
             let tag = builder.real_variable_tags[var];
             let (lw, li) = *cycle.last().unwrap();
@@ -228,6 +241,7 @@ impl ProverInstance {
             polys[idx(Ent::sigma_1)].coeffs[r] = -Fr::from(r as u64 + 1);
         }
 
+        crate::base::timing::phase("      inst: sigma/id");
         // bb `construct_lookup_table_polynomials` + `construct_lookup_read_counts`.
         if has(Ent::table_1) {
             let mut offset = blocks.get(BlockId::Lookup).trace_offset;
@@ -351,6 +365,7 @@ impl ProverInstance {
                 alloc * 32 / (1 << 20)
             );
         }
+        crate::base::timing::phase("      inst: tables+bus+masking");
         let public_inputs = (0..num_public_inputs)
             .map(|i| polys[idx(Ent::w_r)].coeffs[pub_inputs_offset + i])
             .collect();

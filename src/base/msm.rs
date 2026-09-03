@@ -15,10 +15,11 @@ use rayon::prelude::*;
 /// Minimum chunk size for the stage-4 tree jobs.
 const MIN_CHUNK: usize = 384;
 
-/// Points per thread below which arkworks' MSM wins (bb gates its pippenger the same way): the
-/// batched-affine advantage needs enough points per bucket, and the schedule machinery has fixed
-/// costs. Measured crossover: 2^15 at 32 threads, at or below 2^14 at 16 (msmbench sweeps).
-const MIN_PTS_PER_THREAD: usize = 1024;
+/// Points per thread below which arkworks' MSM wins: the batched-affine advantage needs enough
+/// points per bucket, and the schedule machinery has fixed costs. Once the nested parallel batch
+/// inversions were removed the crossover collapsed — msmbench sweeps at 8 threads now favor this
+/// pippenger down to 2^10 total points at every scalar width.
+const MIN_PTS_PER_THREAD: usize = 128;
 
 /// In-place batched inversion of nonzero elements (Montgomery's trick), with the prefix-product
 /// scratch reused across calls. ark's `serial_batch_inversion_and_mul` allocates its scratch and
@@ -48,6 +49,18 @@ pub struct SendPtr<T>(pub *mut T);
 unsafe impl<T> Send for SendPtr<T> {}
 unsafe impl<T> Sync for SendPtr<T> {}
 
+/// Points-per-thread gate below which the arkworks MSM takes over; overridable for crossover
+/// sweeps via BBREF_MSM_MIN_PTS.
+fn min_pts_per_thread() -> usize {
+    static V: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
+        std::env::var("BBREF_MSM_MIN_PTS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(MIN_PTS_PER_THREAD)
+    });
+    *V
+}
+
 pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -> Projective<P> {
     let n = points.len().min(scalars.len());
     // Mostly-zero inputs (masking polys, sorted range columns, sparse selectors) compact to their
@@ -66,7 +79,7 @@ pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -
             return msm(&cp, &cs);
         }
     }
-    if n < MIN_PTS_PER_THREAD * rayon::current_num_threads() {
+    if n < min_pts_per_thread() * rayon::current_num_threads() {
         return small_msm(&points[..n], &scalars[..n]);
     }
     let c = window_bits(n);

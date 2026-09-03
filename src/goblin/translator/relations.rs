@@ -103,6 +103,19 @@ impl<T: FieldLike<Native = Fr>> RelationSet<T> for TranslatorRelations {
                 && at(r, lagrange_last).is_zero()
         })
     }
+    fn supports_graded(&self) -> bool {
+        true
+    }
+    fn accumulate_graded(
+        &self,
+        r: usize,
+        acc: &mut [crate::honk::graded::Graded<Fr>],
+        row: &[crate::honk::graded::Graded<Fr>],
+        p: &RelationParams<crate::honk::graded::Graded<Fr>>,
+        scaling: &crate::honk::graded::Graded<Fr>,
+    ) {
+        TRANSLATOR_RELATIONS[r].accumulate(acc, row, p, scaling)
+    }
     fn skip_columns(&self) -> Option<Vec<usize>> {
         // Must cover everything `skip` / `skip_row` read.
         let mut cols: Vec<usize> = [
