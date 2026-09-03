@@ -306,10 +306,13 @@ pub fn create_random_valid_ipa_claim_and_proof(ctx: &Ctx) -> (IpaClaimCt, Vec<Fr
     let poly: Vec<Fq> = (0..POLY_LENGTH).map(|_| crate::base::rng::global_field()).collect();
     let x: Fq = crate::base::rng::global_field();
     let eval: Fq = poly.iter().rev().fold(Fq::from(0u64), |acc, c| acc * x + c);
+    crate::base::timing::phase("        fake-ipa: poly+eval");
     let commitment = super::ipa::msm_affine(&ck.points[..poly.len()], &poly);
+    crate::base::timing::phase("        fake-ipa: commit msm");
     let mut t = ipa::NativeTranscript::new();
     ipa::add_claim_to_hash_buffer_prover(&ck, &poly, &x, &eval, &mut t);
     ipa::compute_opening_proof(&ck, &poly, &x, &mut t);
+    crate::base::timing::phase("        fake-ipa: opening proof");
     // bb creates the stdlib witnesses in order: commitment, challenge, evaluation.
     let commitment_ct = CycleGroup::from_witness(ctx, commitment);
     let claim = IpaClaimCt {

@@ -217,7 +217,9 @@ pub fn verify_ultra_rollup(
     assert!(proof.len() > ipa::IPA_PROOF_LENGTH);
     let (honk_proof, ipa_fields) = proof.split_at(proof.len() - ipa::IPA_PROOF_LENGTH);
     let full: Vec<_> = [public_inputs, honk_proof].concat();
+    crate::base::timing::phase("      vfy: start");
     let r = reduce_to_pairing_check::<Bn254>(flavor, vk, &vk.hash(), &full, &());
+    crate::base::timing::phase("      vfy: honk reduce");
     if !r.succeeded {
         return false;
     }
@@ -230,9 +232,13 @@ pub fn verify_ultra_rollup(
         evaluation: <crate::base::Fq as Transcriptable<crate::base::Fr>>::from_fields(&f[10..12]),
         commitment: <crate::base::GrumpkinAffine as Transcriptable<crate::base::Fr>>::from_fields(&f[12..14]),
     };
-    if !crate::honk::ultra_verifier::aggregate_and_check(&pairing, &r.pcs_pairing_points, g2) {
+    let ok = crate::honk::ultra_verifier::aggregate_and_check(&pairing, &r.pcs_pairing_points, g2);
+    crate::base::timing::phase("      vfy: pairing");
+    if !ok {
         return false;
     }
     let mut t = ipa::NativeTranscript::from_proof(ipa_fields);
-    ipa::reduce_verify(grumpkin_key, &claim, &mut t)
+    let out = ipa::reduce_verify(grumpkin_key, &claim, &mut t);
+    crate::base::timing::phase("      vfy: ipa reduce_verify");
+    out
 }

@@ -181,6 +181,7 @@ pub fn process_honk_recursion_constraints(
             .map(|&i| FieldT::from_witness_index(ctx, i))
             .collect();
         let vk = vk_from_fields(&vk_fields);
+        crate::base::timing::phase("      rec: setup");
         let constraint_points = match c.proof_type {
             HONK => verify_recursive_ultra(&ULTRA, ctx, &vk, &vk_hash, &proof).points_accumulator,
             _ => {
@@ -189,10 +190,12 @@ pub fn process_honk_recursion_constraints(
                 out.points_accumulator
             }
         };
+        crate::base::timing::phase("      rec: verify_recursive");
         points = Some(match points {
             None => constraint_points,
             Some(acc) => aggregate_pair(acc, constraint_points),
         });
+        crate::base::timing::phase("      rec: aggregate");
     }
 
     for c in chonk_constraints {
@@ -229,7 +232,9 @@ pub fn process_honk_recursion_constraints(
     }
 
     if has_ipa_claim {
+        crate::base::timing::phase("      rec: pre-ipa");
         let ck = GrumpkinKey::new(POLY_LENGTH);
+        crate::base::timing::phase("      rec: grumpkin key");
         let mut accumulators: Vec<_> = nested
             .into_iter()
             .map(|(claim, proof)| {
@@ -259,6 +264,7 @@ pub fn process_honk_recursion_constraints(
             0 => create_random_valid_ipa_claim_and_proof(ctx),
             n => panic!("too many nested IPA accumulators: {n}"),
         };
+        crate::base::timing::phase("      rec: ipa claim+proof");
         ctx.borrow_mut().ipa_proof = ipa_proof;
         match points {
             Some(pp) => {
