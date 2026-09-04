@@ -7,9 +7,9 @@
 //! values at 0 and 1 instead of the univariate itself.
 
 use super::flavor::{FlavorDesc, Layout};
-use super::relations::{RelationParams, Row};
 use super::graded::{lift_params, Graded, MAX_LEN as GRADED_MAX_LEN};
 use super::quadf::{lift_params_quad, QuadConsts, QuadF};
+use super::relations::{RelationParams, Row};
 use crate::base::field::NativeField;
 use crate::base::field::{FieldLike, U256};
 use crate::base::group::Curve;
@@ -726,9 +726,7 @@ impl<F: NativeField> Scratch<F> {
             cols: Vec::with_capacity(num_columns),
             mark: vec![false; num_columns],
             skip_cols: {
-                let sc = rels
-                    .skip_columns()
-                    .unwrap_or_else(|| (0..num_columns).collect());
+                let sc = rels.skip_columns().unwrap_or_else(|| (0..num_columns).collect());
                 debug_assert!(sc.iter().all(|&j| j < num_columns));
                 sc
             },
@@ -745,9 +743,7 @@ impl<F: NativeField> Scratch<F> {
         let zero = Graded::<F>::constant(<F as ark_ff::AdditiveGroup>::ZERO);
         self.graded_rel = (0..rels.num_relations())
             .map(|r| {
-                rels.supports_graded()
-                    && rels.partial_length(r).min(d) <= GRADED_MAX_LEN
-                    && !relation_stats_enabled()
+                rels.supports_graded() && rels.partial_length(r).min(d) <= GRADED_MAX_LEN && !relation_stats_enabled()
             })
             .collect();
         self.graded = self.graded_rel.iter().any(|&g| g);
@@ -887,15 +883,16 @@ fn flush_graded<F: NativeField>(s: &Scratch<F>, acc: &mut Accumulators<F>) {
 
 /// The accumulators over a range of edges, split across threads (exact arithmetic: any split
 /// gives the same sums).
-/// Whether the quad (4-edges-per-evaluation) sumcheck path is enabled: default on for wasm
-/// builds (where the packed SIMD field kernels want lane parallelism), opt-in/out anywhere via
-/// BBREF_QUAD_SUMCHECK=1/0. Bit-identical to the scalar path (field addition is exact).
+/// Whether the quad (4-edges-per-evaluation) sumcheck path is enabled: default off — on idle
+/// hardware the packed path loses ~8% under both V8 and wasmtime because the fully-normalizing
+/// packed add/sub costs ~0.73 of a packed mul and the relations are add-heavy (it only measured
+/// as a win on a contended box, where bb-shaped scalar code dilates more). Opt in/out via
+/// BBREF_QUAD_SUMCHECK=1/0; revisit the default once relaxed-limb add/sub lands.
+/// Bit-identical to the scalar path (field addition is exact).
 fn quad_sumcheck_enabled() -> bool {
-    static V: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
-        match std::env::var("BBREF_QUAD_SUMCHECK") {
-            Ok(v) => v != "0",
-            Err(_) => cfg!(target_family = "wasm"),
-        }
+    static V: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| match std::env::var("BBREF_QUAD_SUMCHECK") {
+        Ok(v) => v != "0",
+        Err(_) => false,
     });
     *V
 }
@@ -1018,14 +1015,7 @@ where
                         if !active[ri] || k >= s.len[ri] {
                             continue;
                         }
-                        RelationSet::<QuadF<F>>::accumulate(
-                            rels,
-                            ri,
-                            acc_q.point(ri, k),
-                            &rowq,
-                            params_q,
-                            &scaling_q,
-                        );
+                        RelationSet::<QuadF<F>>::accumulate(rels, ri, acc_q.point(ri, k), &rowq, params_q, &scaling_q);
                     }
                 }
                 e += 4;
@@ -1066,7 +1056,17 @@ where
             let mut acc = Accumulators::new(rels, d);
             let mut scratch = Scratch::new(rels, table.len(), d);
             for e in start..(start + chunk).min(edges.end) {
-                accumulate_edge(rels, used, table, e, params, params_uni, &pows[e], &mut acc, &mut scratch);
+                accumulate_edge(
+                    rels,
+                    used,
+                    table,
+                    e,
+                    params,
+                    params_uni,
+                    &pows[e],
+                    &mut acc,
+                    &mut scratch,
+                );
             }
             if scratch.graded {
                 flush_graded(&scratch, &mut acc);

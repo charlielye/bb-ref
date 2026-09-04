@@ -80,16 +80,6 @@ fn run() {
         }
         println!("quad261 cross-check OK");
         // add/sub on naturally-coarse values (mont_mul outputs), vs ark
-        let twop29: [u32; 9] = {
-            let mut t = [0u32; 9];
-            let mut c = 0u64;
-            for i in 0..9 {
-                let v = 2 * (p29[i]) + c;
-                t[i] = (v & ((1u64 << 29) - 1)) as u32;
-                c = v >> 29;
-            }
-            t
-        };
         for i in 0..3000 {
             let xs: [Fr; 4] = core::array::from_fn(|_| Fr::rand(&mut rng));
             let ys: [Fr; 4] = core::array::from_fn(|_| Fr::rand(&mut rng));
@@ -99,8 +89,8 @@ fn run() {
             // coarse operands: products (coarse range outputs)
             let qa = quad261::mont_mul(&quad261::QuadFp::pack(&[stored(xs[0]), stored(xs[1]), stored(xs[2]), stored(xs[3])]), &qz, &qc);
             let qb2 = quad261::mont_mul(&quad261::QuadFp::pack(&[stored(ys[0]), stored(ys[1]), stored(ys[2]), stored(ys[3])]), &qz, &qc);
-            let sum = quad261::add(&qa, &qb2, &twop29, &qc).unpack(&modulus);
-            let dif = quad261::sub(&qa, &qb2, &twop29, &qc).unpack(&modulus);
+            let sum = quad261::add(&qa, &qb2, &qc).unpack(&modulus);
+            let dif = quad261::sub(&qa, &qb2, &qc).unpack(&modulus);
             for l in 0..4 {
                 assert_eq!(sum[l], stored(xs[l] * z + ys[l] * z), "add lane {l} iter {i}");
                 assert_eq!(dif[l], stored(xs[l] * z - ys[l] * z), "sub lane {l} iter {i}");
@@ -138,13 +128,6 @@ fn run() {
         let q29 = to29(&fq_mod);
         let qinv = inv29(q29[0]);
         let qc = quad261::Consts::new(&FQ_RINV29, &q29, qinv);
-        let mut twop29 = [0u32; 9];
-        let mut c2 = 0u64;
-        for i in 0..9 {
-            let v = 2 * q29[i] + c2;
-            twop29[i] = (v & ((1u64 << 29) - 1)) as u32;
-            c2 = v >> 29;
-        }
         let storedq = |x: Fq| -> [u64; 4] { unsafe { core::mem::transmute::<Fq, [u64; 4]>(x) } };
         const NP: usize = 4096; // pairs
         let coords: Vec<[Fq; 5]> = (0..NP)
@@ -176,10 +159,10 @@ fn run() {
                 let (ax, ay, bx, by) = (pk(0), pk(1), pk(2), pk(3));
                 // d pre-scaled by 32 so each mul lands back in the 2^256 domain
                 let d32 = quad261::QuadFp::pack(&[mult32(g[0][4]), mult32(g[1][4]), mult32(g[2][4]), mult32(g[3][4])]);
-                let lambda = quad261::mont_mul(&quad261::sub(&by, &ay, &twop29, &qc), &d32, &qc);
+                let lambda = quad261::mont_mul(&quad261::sub(&by, &ay, &qc), &d32, &qc);
                 // cost model: op counts match the real formula (2 more muls, 4 subs)
-                let x3 = quad261::sub(&quad261::sub(&quad261::mont_mul(&lambda, &lambda, &qc), &ax, &twop29, &qc), &bx, &twop29, &qc);
-                let y3 = quad261::sub(&quad261::mont_mul(&lambda, &quad261::sub(&ax, &x3, &twop29, &qc), &qc), &ay, &twop29, &qc);
+                let x3 = quad261::sub(&quad261::sub(&quad261::mont_mul(&lambda, &lambda, &qc), &ax, &qc), &bx, &qc);
+                let y3 = quad261::sub(&quad261::mont_mul(&lambda, &quad261::sub(&ax, &x3, &qc), &qc), &ay, &qc);
                 black_box((x3.unpack(&fq_mod), y3.unpack(&fq_mod)));
             }
         }

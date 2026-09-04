@@ -1,7 +1,5 @@
 use super::{Fp, FpConfig};
-use crate::{
-    biginteger::arithmetic as fa, BigInt, BigInteger, PrimeField, SqrtPrecomputation, Zero,
-};
+use crate::{biginteger::arithmetic as fa, BigInt, BigInteger, PrimeField, SqrtPrecomputation, Zero};
 use ark_ff_macros::unroll_for_loops;
 use ark_std::marker::PhantomData;
 
@@ -74,8 +72,7 @@ pub trait MontConfig<const N: usize>: 'static + Sync + Send + Sized {
 
     /// Precomputed material for use when computing square roots.
     /// The default is to use the standard Tonelli-Shanks algorithm.
-    const SQRT_PRECOMP: Option<SqrtPrecomputation<Fp<MontBackend<Self, N>, N>>> =
-        sqrt_precomputation();
+    const SQRT_PRECOMP: Option<SqrtPrecomputation<Fp<MontBackend<Self, N>, N>>> = sqrt_precomputation();
 
     /// (MODULUS + 1) / 4 when MODULUS % 4 == 3. Used for square root precomputations.
     #[doc(hidden)]
@@ -88,7 +85,7 @@ pub trait MontConfig<const N: usize>: 'static + Sync + Send + Sized {
                 // Thus we can set MSB to `carry` to get the correct result of (MODULUS + 1) // 2:
                 result.0[N - 1] |= (carry as u64) << 63;
                 Some(result.divide_by_2_round_down())
-            },
+            }
             false => None,
         }
     };
@@ -106,7 +103,7 @@ pub trait MontConfig<const N: usize>: 'static + Sync + Send + Sized {
                 result = result.divide_by_2_round_down();
 
                 Some(result.divide_by_2_round_down())
-            },
+            }
             false => None,
         }
     };
@@ -119,7 +116,7 @@ pub trait MontConfig<const N: usize>: 'static + Sync + Send + Sized {
                 let (modulus_plus_three, _) = Self::MODULUS.const_sub_with_borrow(&BigInt::one());
                 let result = modulus_plus_three.divide_by_2_round_down();
                 Some(result.divide_by_2_round_down())
-            },
+            }
             false => None,
         }
     };
@@ -402,8 +399,7 @@ pub trait MontConfig<const N: usize>: 'static + Sync + Send + Sized {
 
             fa::mac_with_carry(r[i], k, Self::MODULUS.0[0], &mut carry);
             for j in 1..N {
-                r[(j + i) % N] =
-                    fa::mac_with_carry(r[(j + i) % N], k, Self::MODULUS.0[j], &mut carry);
+                r[(j + i) % N] = fa::mac_with_carry(r[(j + i) % N], k, Self::MODULUS.0[j], &mut carry);
             }
             r[i] = carry;
         }
@@ -457,18 +453,14 @@ pub trait MontConfig<const N: usize>: 'static + Sync + Send + Sized {
                 let mut carry2 = 0;
                 fa::mac_discard(result.0[0], k, Self::MODULUS.0[0], &mut carry2);
                 for i in 1..N {
-                    result.0[i - 1] =
-                        fa::mac_with_carry(result.0[i], k, Self::MODULUS.0[i], &mut carry2);
+                    result.0[i - 1] = fa::mac_with_carry(result.0[i], k, Self::MODULUS.0[i], &mut carry2);
                 }
                 result.0[N - 1] = fa::adc_no_carry(carry_a, carry_b, &carry2);
                 result
             });
             let mut result = Fp::new_unchecked(result);
             result.subtract_modulus();
-            debug_assert_eq!(
-                a.iter().zip(b).map(|(a, b)| *a * b).sum::<Fp<_, N>>(),
-                result
-            );
+            debug_assert_eq!(a.iter().zip(b).map(|(a, b)| *a * b).sum::<Fp<_, N>>(), result);
             result
         } else {
             let chunk_size = 2 * (N * 64 - modulus_size) - 1;
@@ -479,36 +471,31 @@ pub trait MontConfig<const N: usize>: 'static + Sync + Send + Sized {
                     // Algorithm 2, line 2
                     let result = (0..N).fold(BigInt::zero(), |mut result, j| {
                         // Algorithm 2, line 3
-                        let (temp, carry) = a.iter().zip(b).fold(
-                            (result, 0),
-                            |(mut temp, mut carry), (Fp(a, _), Fp(b, _))| {
-                                let mut carry2 = 0;
-                                temp.0[0] = fa::mac(temp.0[0], a.0[j], b.0[0], &mut carry2);
-                                for k in 1..N {
-                                    temp.0[k] =
-                                        fa::mac_with_carry(temp.0[k], a.0[j], b.0[k], &mut carry2);
-                                }
-                                carry = fa::adc_no_carry(carry, 0, &carry2);
-                                (temp, carry)
-                            },
-                        );
+                        let (temp, carry) =
+                            a.iter()
+                                .zip(b)
+                                .fold((result, 0), |(mut temp, mut carry), (Fp(a, _), Fp(b, _))| {
+                                    let mut carry2 = 0;
+                                    temp.0[0] = fa::mac(temp.0[0], a.0[j], b.0[0], &mut carry2);
+                                    for k in 1..N {
+                                        temp.0[k] = fa::mac_with_carry(temp.0[k], a.0[j], b.0[k], &mut carry2);
+                                    }
+                                    carry = fa::adc_no_carry(carry, 0, &carry2);
+                                    (temp, carry)
+                                });
 
                         let k = temp.0[0].wrapping_mul(Self::INV);
                         let mut carry2 = 0;
                         fa::mac_discard(temp.0[0], k, Self::MODULUS.0[0], &mut carry2);
                         for i in 1..N {
-                            result.0[i - 1] =
-                                fa::mac_with_carry(temp.0[i], k, Self::MODULUS.0[i], &mut carry2);
+                            result.0[i - 1] = fa::mac_with_carry(temp.0[i], k, Self::MODULUS.0[i], &mut carry2);
                         }
                         result.0[N - 1] = fa::adc_no_carry(carry, 0, &carry2);
                         result
                     });
                     let mut result = Fp::new_unchecked(result);
                     result.subtract_modulus();
-                    debug_assert_eq!(
-                        a.iter().zip(b).map(|(a, b)| *a * b).sum::<Fp<_, N>>(),
-                        result
-                    );
+                    debug_assert_eq!(a.iter().zip(b).map(|(a, b)| *a * b).sum::<Fp<_, N>>(), result);
                     result
                 })
                 .sum()
@@ -577,20 +564,18 @@ pub const fn sqrt_precomputation<const N: usize, T: MontConfig<N>>(
                 T::MODULUS_PLUS_THREE_DIV_EIGHT.as_ref(),
                 T::MODULUS_MINUS_ONE_DIV_FOUR.as_ref(),
             ) {
-                (
-                    Some(BigInt(modulus_plus_three_div_eight)),
-                    Some(BigInt(modulus_minus_one_div_four)),
-                ) => Some(SqrtPrecomputation::Case5Mod8 {
-                    modulus_plus_three_div_eight,
-                    modulus_minus_one_div_four,
-                }),
+                (Some(BigInt(modulus_plus_three_div_eight)), Some(BigInt(modulus_minus_one_div_four))) => {
+                    Some(SqrtPrecomputation::Case5Mod8 {
+                        modulus_plus_three_div_eight,
+                        modulus_minus_one_div_four,
+                    })
+                }
                 _ => None,
             },
             _ => Some(SqrtPrecomputation::TonelliShanks {
                 two_adicity: <MontBackend<T, N>>::TWO_ADICITY,
                 quadratic_nonresidue_to_trace: T::TWO_ADIC_ROOT_OF_UNITY,
-                trace_of_modulus_minus_one_div_two:
-                    &<Fp<MontBackend<T, N>, N>>::TRACE_MINUS_ONE_DIV_TWO.0,
+                trace_of_modulus_minus_one_div_two: &<Fp<MontBackend<T, N>, N>>::TRACE_MINUS_ONE_DIV_TWO.0,
             }),
         },
     }
@@ -637,7 +622,6 @@ pub use ark_ff_macros::MontConfig;
 
 pub use MontFp;
 
-
 /// wasm Montgomery multiply in the standard 2^256 domain, bb's per-call 29-bit scheme
 /// (`field_impl_generic.hpp`'s `__wasm__` branch): wasm has no widening 64x64 multiply, so the
 /// 4x64 operands are split into nine 29-bit limbs whose products fit a single `i64.mul`;
@@ -653,8 +637,12 @@ const fn first4<T: MontConfig<N>, const N: usize>() -> [u64; 4] {
 #[cfg(target_family = "wasm")]
 pub mod wasm_mont {
     /// 2^-29 mod p, 29-bit limbs (the Yuval-reduction constant), for bn254 Fr and Fq.
-    pub const FR_RINV29: [u32; 9] = [0x18f05361, 0x12bb1fe, 0xf5d8135, 0x1e6275f6, 0x7e7a880, 0x10c6bf1f, 0x11f74a6c, 0x6fdaecb, 0x183227];
-    pub const FQ_RINV29: [u32; 9] = [0x17789a9f, 0x5ffc3dc, 0xd6bde42, 0x1cf152e3, 0x18eb055f, 0xed815e2, 0x16626d2, 0xb8bab0f, 0x6d7c4];
+    pub const FR_RINV29: [u32; 9] = [
+        0x18f05361, 0x12bb1fe, 0xf5d8135, 0x1e6275f6, 0x7e7a880, 0x10c6bf1f, 0x11f74a6c, 0x6fdaecb, 0x183227,
+    ];
+    pub const FQ_RINV29: [u32; 9] = [
+        0x17789a9f, 0x5ffc3dc, 0xd6bde42, 0x1cf152e3, 0x18eb055f, 0xed815e2, 0x16626d2, 0xb8bab0f, 0x6d7c4,
+    ];
 
     pub const MASK29: u64 = (1 << 29) - 1;
     pub const MASK24: u64 = (1 << 24) - 1;
@@ -920,9 +908,8 @@ pub mod wasm_mont {
             d
         }
     }
-
 }
-    /// Four-lane SIMD Montgomery multiply in the standard 2^256 domain, for batched loops:
+/// Four-lane SIMD Montgomery multiply in the standard 2^256 domain, for batched loops:
 /// operands and result stay in the transposed 29-bit-limb layout (`QuadFp`), so packing is
 /// paid once per loop, not per multiply — bb's VectorField pattern, whose in-loop throughput
 /// on V8 measures ~4x the scalar path (dependency-chain microbenches wildly understate it).
@@ -944,9 +931,7 @@ pub mod quad256 {
         pub fn pack(e: &[[u64; 4]; 4]) -> QuadFp {
             let l: [[u64; 9]; 4] = [to29(&e[0]), to29(&e[1]), to29(&e[2]), to29(&e[3])];
             QuadFp {
-                limbs: core::array::from_fn(|k| {
-                    u32x4(l[0][k] as u32, l[1][k] as u32, l[2][k] as u32, l[3][k] as u32)
-                }),
+                limbs: core::array::from_fn(|k| u32x4(l[0][k] as u32, l[1][k] as u32, l[2][k] as u32, l[3][k] as u32)),
             }
         }
         /// Unpack to canonical 4x64: reduce each lane from [0, 2p), repack bits.
@@ -1031,16 +1016,70 @@ pub mod quad256 {
         let pl0_h = u64x2_extmul_high_u32x4(a0, b0);
         let pl1_l = u64x2_add(u64x2_extmul_low_u32x4(a0, b1), u64x2_extmul_low_u32x4(a1, b0));
         let pl1_h = u64x2_add(u64x2_extmul_high_u32x4(a0, b1), u64x2_extmul_high_u32x4(a1, b0));
-        let pl2_l = u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a0, b2), u64x2_extmul_low_u32x4(a1, b1)), u64x2_extmul_low_u32x4(a2, b0));
-        let pl2_h = u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a0, b2), u64x2_extmul_high_u32x4(a1, b1)), u64x2_extmul_high_u32x4(a2, b0));
-        let pl3_l = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a0, b3), u64x2_extmul_low_u32x4(a1, b2)), u64x2_extmul_low_u32x4(a2, b1)), u64x2_extmul_low_u32x4(a3, b0));
-        let pl3_h = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a0, b3), u64x2_extmul_high_u32x4(a1, b2)), u64x2_extmul_high_u32x4(a2, b1)), u64x2_extmul_high_u32x4(a3, b0));
-        let pl4_l = u64x2_add(u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a0, b4), u64x2_extmul_low_u32x4(a1, b3)), u64x2_extmul_low_u32x4(a2, b2)), u64x2_extmul_low_u32x4(a3, b1)), u64x2_extmul_low_u32x4(a4, b0));
-        let pl4_h = u64x2_add(u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a0, b4), u64x2_extmul_high_u32x4(a1, b3)), u64x2_extmul_high_u32x4(a2, b2)), u64x2_extmul_high_u32x4(a3, b1)), u64x2_extmul_high_u32x4(a4, b0));
-        let pl5_l = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a1, b4), u64x2_extmul_low_u32x4(a2, b3)), u64x2_extmul_low_u32x4(a3, b2)), u64x2_extmul_low_u32x4(a4, b1));
-        let pl5_h = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a1, b4), u64x2_extmul_high_u32x4(a2, b3)), u64x2_extmul_high_u32x4(a3, b2)), u64x2_extmul_high_u32x4(a4, b1));
-        let pl6_l = u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a2, b4), u64x2_extmul_low_u32x4(a3, b3)), u64x2_extmul_low_u32x4(a4, b2));
-        let pl6_h = u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a2, b4), u64x2_extmul_high_u32x4(a3, b3)), u64x2_extmul_high_u32x4(a4, b2));
+        let pl2_l = u64x2_add(
+            u64x2_add(u64x2_extmul_low_u32x4(a0, b2), u64x2_extmul_low_u32x4(a1, b1)),
+            u64x2_extmul_low_u32x4(a2, b0),
+        );
+        let pl2_h = u64x2_add(
+            u64x2_add(u64x2_extmul_high_u32x4(a0, b2), u64x2_extmul_high_u32x4(a1, b1)),
+            u64x2_extmul_high_u32x4(a2, b0),
+        );
+        let pl3_l = u64x2_add(
+            u64x2_add(
+                u64x2_add(u64x2_extmul_low_u32x4(a0, b3), u64x2_extmul_low_u32x4(a1, b2)),
+                u64x2_extmul_low_u32x4(a2, b1),
+            ),
+            u64x2_extmul_low_u32x4(a3, b0),
+        );
+        let pl3_h = u64x2_add(
+            u64x2_add(
+                u64x2_add(u64x2_extmul_high_u32x4(a0, b3), u64x2_extmul_high_u32x4(a1, b2)),
+                u64x2_extmul_high_u32x4(a2, b1),
+            ),
+            u64x2_extmul_high_u32x4(a3, b0),
+        );
+        let pl4_l = u64x2_add(
+            u64x2_add(
+                u64x2_add(
+                    u64x2_add(u64x2_extmul_low_u32x4(a0, b4), u64x2_extmul_low_u32x4(a1, b3)),
+                    u64x2_extmul_low_u32x4(a2, b2),
+                ),
+                u64x2_extmul_low_u32x4(a3, b1),
+            ),
+            u64x2_extmul_low_u32x4(a4, b0),
+        );
+        let pl4_h = u64x2_add(
+            u64x2_add(
+                u64x2_add(
+                    u64x2_add(u64x2_extmul_high_u32x4(a0, b4), u64x2_extmul_high_u32x4(a1, b3)),
+                    u64x2_extmul_high_u32x4(a2, b2),
+                ),
+                u64x2_extmul_high_u32x4(a3, b1),
+            ),
+            u64x2_extmul_high_u32x4(a4, b0),
+        );
+        let pl5_l = u64x2_add(
+            u64x2_add(
+                u64x2_add(u64x2_extmul_low_u32x4(a1, b4), u64x2_extmul_low_u32x4(a2, b3)),
+                u64x2_extmul_low_u32x4(a3, b2),
+            ),
+            u64x2_extmul_low_u32x4(a4, b1),
+        );
+        let pl5_h = u64x2_add(
+            u64x2_add(
+                u64x2_add(u64x2_extmul_high_u32x4(a1, b4), u64x2_extmul_high_u32x4(a2, b3)),
+                u64x2_extmul_high_u32x4(a3, b2),
+            ),
+            u64x2_extmul_high_u32x4(a4, b1),
+        );
+        let pl6_l = u64x2_add(
+            u64x2_add(u64x2_extmul_low_u32x4(a2, b4), u64x2_extmul_low_u32x4(a3, b3)),
+            u64x2_extmul_low_u32x4(a4, b2),
+        );
+        let pl6_h = u64x2_add(
+            u64x2_add(u64x2_extmul_high_u32x4(a2, b4), u64x2_extmul_high_u32x4(a3, b3)),
+            u64x2_extmul_high_u32x4(a4, b2),
+        );
         let pl7_l = u64x2_add(u64x2_extmul_low_u32x4(a3, b4), u64x2_extmul_low_u32x4(a4, b3));
         let pl7_h = u64x2_add(u64x2_extmul_high_u32x4(a3, b4), u64x2_extmul_high_u32x4(a4, b3));
         let pl8_l = u64x2_extmul_low_u32x4(a4, b4);
@@ -1049,12 +1088,36 @@ pub mod quad256 {
         let ph0_h = u64x2_extmul_high_u32x4(a5, b5);
         let ph1_l = u64x2_add(u64x2_extmul_low_u32x4(a5, b6), u64x2_extmul_low_u32x4(a6, b5));
         let ph1_h = u64x2_add(u64x2_extmul_high_u32x4(a5, b6), u64x2_extmul_high_u32x4(a6, b5));
-        let ph2_l = u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a5, b7), u64x2_extmul_low_u32x4(a6, b6)), u64x2_extmul_low_u32x4(a7, b5));
-        let ph2_h = u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a5, b7), u64x2_extmul_high_u32x4(a6, b6)), u64x2_extmul_high_u32x4(a7, b5));
-        let ph3_l = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a5, b8), u64x2_extmul_low_u32x4(a6, b7)), u64x2_extmul_low_u32x4(a7, b6)), u64x2_extmul_low_u32x4(a8, b5));
-        let ph3_h = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a5, b8), u64x2_extmul_high_u32x4(a6, b7)), u64x2_extmul_high_u32x4(a7, b6)), u64x2_extmul_high_u32x4(a8, b5));
-        let ph4_l = u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a6, b8), u64x2_extmul_low_u32x4(a7, b7)), u64x2_extmul_low_u32x4(a8, b6));
-        let ph4_h = u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a6, b8), u64x2_extmul_high_u32x4(a7, b7)), u64x2_extmul_high_u32x4(a8, b6));
+        let ph2_l = u64x2_add(
+            u64x2_add(u64x2_extmul_low_u32x4(a5, b7), u64x2_extmul_low_u32x4(a6, b6)),
+            u64x2_extmul_low_u32x4(a7, b5),
+        );
+        let ph2_h = u64x2_add(
+            u64x2_add(u64x2_extmul_high_u32x4(a5, b7), u64x2_extmul_high_u32x4(a6, b6)),
+            u64x2_extmul_high_u32x4(a7, b5),
+        );
+        let ph3_l = u64x2_add(
+            u64x2_add(
+                u64x2_add(u64x2_extmul_low_u32x4(a5, b8), u64x2_extmul_low_u32x4(a6, b7)),
+                u64x2_extmul_low_u32x4(a7, b6),
+            ),
+            u64x2_extmul_low_u32x4(a8, b5),
+        );
+        let ph3_h = u64x2_add(
+            u64x2_add(
+                u64x2_add(u64x2_extmul_high_u32x4(a5, b8), u64x2_extmul_high_u32x4(a6, b7)),
+                u64x2_extmul_high_u32x4(a7, b6),
+            ),
+            u64x2_extmul_high_u32x4(a8, b5),
+        );
+        let ph4_l = u64x2_add(
+            u64x2_add(u64x2_extmul_low_u32x4(a6, b8), u64x2_extmul_low_u32x4(a7, b7)),
+            u64x2_extmul_low_u32x4(a8, b6),
+        );
+        let ph4_h = u64x2_add(
+            u64x2_add(u64x2_extmul_high_u32x4(a6, b8), u64x2_extmul_high_u32x4(a7, b7)),
+            u64x2_extmul_high_u32x4(a8, b6),
+        );
         let ph5_l = u64x2_add(u64x2_extmul_low_u32x4(a7, b8), u64x2_extmul_low_u32x4(a8, b7));
         let ph5_h = u64x2_add(u64x2_extmul_high_u32x4(a7, b8), u64x2_extmul_high_u32x4(a8, b7));
         let ph6_l = u64x2_extmul_low_u32x4(a8, b8);
@@ -1063,16 +1126,70 @@ pub mod quad256 {
         let pc0_h = u64x2_extmul_high_u32x4(sl0, sr0);
         let pc1_l = u64x2_add(u64x2_extmul_low_u32x4(sl0, sr1), u64x2_extmul_low_u32x4(sl1, sr0));
         let pc1_h = u64x2_add(u64x2_extmul_high_u32x4(sl0, sr1), u64x2_extmul_high_u32x4(sl1, sr0));
-        let pc2_l = u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(sl0, sr2), u64x2_extmul_low_u32x4(sl1, sr1)), u64x2_extmul_low_u32x4(sl2, sr0));
-        let pc2_h = u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(sl0, sr2), u64x2_extmul_high_u32x4(sl1, sr1)), u64x2_extmul_high_u32x4(sl2, sr0));
-        let pc3_l = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(sl0, sr3), u64x2_extmul_low_u32x4(sl1, sr2)), u64x2_extmul_low_u32x4(sl2, sr1)), u64x2_extmul_low_u32x4(sl3, sr0));
-        let pc3_h = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(sl0, sr3), u64x2_extmul_high_u32x4(sl1, sr2)), u64x2_extmul_high_u32x4(sl2, sr1)), u64x2_extmul_high_u32x4(sl3, sr0));
-        let pc4_l = u64x2_add(u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(sl0, sr4), u64x2_extmul_low_u32x4(sl1, sr3)), u64x2_extmul_low_u32x4(sl2, sr2)), u64x2_extmul_low_u32x4(sl3, sr1)), u64x2_extmul_low_u32x4(sl4, sr0));
-        let pc4_h = u64x2_add(u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(sl0, sr4), u64x2_extmul_high_u32x4(sl1, sr3)), u64x2_extmul_high_u32x4(sl2, sr2)), u64x2_extmul_high_u32x4(sl3, sr1)), u64x2_extmul_high_u32x4(sl4, sr0));
-        let pc5_l = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(sl1, sr4), u64x2_extmul_low_u32x4(sl2, sr3)), u64x2_extmul_low_u32x4(sl3, sr2)), u64x2_extmul_low_u32x4(sl4, sr1));
-        let pc5_h = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(sl1, sr4), u64x2_extmul_high_u32x4(sl2, sr3)), u64x2_extmul_high_u32x4(sl3, sr2)), u64x2_extmul_high_u32x4(sl4, sr1));
-        let pc6_l = u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(sl2, sr4), u64x2_extmul_low_u32x4(sl3, sr3)), u64x2_extmul_low_u32x4(sl4, sr2));
-        let pc6_h = u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(sl2, sr4), u64x2_extmul_high_u32x4(sl3, sr3)), u64x2_extmul_high_u32x4(sl4, sr2));
+        let pc2_l = u64x2_add(
+            u64x2_add(u64x2_extmul_low_u32x4(sl0, sr2), u64x2_extmul_low_u32x4(sl1, sr1)),
+            u64x2_extmul_low_u32x4(sl2, sr0),
+        );
+        let pc2_h = u64x2_add(
+            u64x2_add(u64x2_extmul_high_u32x4(sl0, sr2), u64x2_extmul_high_u32x4(sl1, sr1)),
+            u64x2_extmul_high_u32x4(sl2, sr0),
+        );
+        let pc3_l = u64x2_add(
+            u64x2_add(
+                u64x2_add(u64x2_extmul_low_u32x4(sl0, sr3), u64x2_extmul_low_u32x4(sl1, sr2)),
+                u64x2_extmul_low_u32x4(sl2, sr1),
+            ),
+            u64x2_extmul_low_u32x4(sl3, sr0),
+        );
+        let pc3_h = u64x2_add(
+            u64x2_add(
+                u64x2_add(u64x2_extmul_high_u32x4(sl0, sr3), u64x2_extmul_high_u32x4(sl1, sr2)),
+                u64x2_extmul_high_u32x4(sl2, sr1),
+            ),
+            u64x2_extmul_high_u32x4(sl3, sr0),
+        );
+        let pc4_l = u64x2_add(
+            u64x2_add(
+                u64x2_add(
+                    u64x2_add(u64x2_extmul_low_u32x4(sl0, sr4), u64x2_extmul_low_u32x4(sl1, sr3)),
+                    u64x2_extmul_low_u32x4(sl2, sr2),
+                ),
+                u64x2_extmul_low_u32x4(sl3, sr1),
+            ),
+            u64x2_extmul_low_u32x4(sl4, sr0),
+        );
+        let pc4_h = u64x2_add(
+            u64x2_add(
+                u64x2_add(
+                    u64x2_add(u64x2_extmul_high_u32x4(sl0, sr4), u64x2_extmul_high_u32x4(sl1, sr3)),
+                    u64x2_extmul_high_u32x4(sl2, sr2),
+                ),
+                u64x2_extmul_high_u32x4(sl3, sr1),
+            ),
+            u64x2_extmul_high_u32x4(sl4, sr0),
+        );
+        let pc5_l = u64x2_add(
+            u64x2_add(
+                u64x2_add(u64x2_extmul_low_u32x4(sl1, sr4), u64x2_extmul_low_u32x4(sl2, sr3)),
+                u64x2_extmul_low_u32x4(sl3, sr2),
+            ),
+            u64x2_extmul_low_u32x4(sl4, sr1),
+        );
+        let pc5_h = u64x2_add(
+            u64x2_add(
+                u64x2_add(u64x2_extmul_high_u32x4(sl1, sr4), u64x2_extmul_high_u32x4(sl2, sr3)),
+                u64x2_extmul_high_u32x4(sl3, sr2),
+            ),
+            u64x2_extmul_high_u32x4(sl4, sr1),
+        );
+        let pc6_l = u64x2_add(
+            u64x2_add(u64x2_extmul_low_u32x4(sl2, sr4), u64x2_extmul_low_u32x4(sl3, sr3)),
+            u64x2_extmul_low_u32x4(sl4, sr2),
+        );
+        let pc6_h = u64x2_add(
+            u64x2_add(u64x2_extmul_high_u32x4(sl2, sr4), u64x2_extmul_high_u32x4(sl3, sr3)),
+            u64x2_extmul_high_u32x4(sl4, sr2),
+        );
         let pc7_l = u64x2_add(u64x2_extmul_low_u32x4(sl3, sr4), u64x2_extmul_low_u32x4(sl4, sr3));
         let pc7_h = u64x2_add(u64x2_extmul_high_u32x4(sl3, sr4), u64x2_extmul_high_u32x4(sl4, sr3));
         let pc8_l = u64x2_extmul_low_u32x4(sl4, sr4);
@@ -1404,115 +1521,67 @@ pub mod quad261 {
     use super::wasm_mont::MASK29;
     use core::arch::wasm32::*;
 
-
-    /// Lanewise `a + b` on coarse [0, 2p) values: add limbs, normalize, subtract 2p per lane if
-    /// the lane reached it (compute both, blend on the borrow mask). Output back in [0, 2p).
-    pub fn add(a: &QuadFp, b: &QuadFp, twop29: &[u32; 9], c: &Consts) -> QuadFp {
-        let mask64 = c.mask64;
-        let mut sl = [u64x2(0, 0); 9];
-        let mut sh = [u64x2(0, 0); 9];
-        let (mut cl, mut ch) = (u64x2(0, 0), u64x2(0, 0));
-        for k in 0..9 {
-            let al = u64x2_extend_low_u32x4(a.limbs[k]);
-            let ah = u64x2_extend_high_u32x4(a.limbs[k]);
-            let bl = u64x2_extend_low_u32x4(b.limbs[k]);
-            let bh = u64x2_extend_high_u32x4(b.limbs[k]);
-            let vl = u64x2_add(u64x2_add(al, bl), cl);
-            let vh = u64x2_add(u64x2_add(ah, bh), ch);
-            sl[k] = v128_and(vl, mask64);
-            sh[k] = v128_and(vh, mask64);
-            cl = u64x2_shr(vl, 29);
-            ch = u64x2_shr(vh, 29);
+    /// Lanewise `a + b` on coarse [0, 2p) values, entirely in u32x4 (bb VectorField's TNM
+    /// trick, no 64-bit widening): raw carry-propagated add `r = a + b`, an independent chain
+    /// `t = r + (2^261 - 2p)` whose top-limb carry fires exactly when `a + b >= 2p`, and a
+    /// per-lane blend. Output back in [0, 2p).
+    pub fn add(a: &QuadFp, b: &QuadFp, c: &Consts) -> QuadFp {
+        let mask = c.mask32;
+        let mut r = [u32x4_splat(0); 9];
+        let mut v = u32x4_add(a.limbs[0], b.limbs[0]);
+        let mut carry = u32x4_shr(v, 29);
+        r[0] = v128_and(v, mask);
+        for k in 1..9 {
+            // 29-bit limb + 29-bit limb + carry <= 2^30: fits u32, carry is bit 29.
+            v = u32x4_add(u32x4_add(a.limbs[k], b.limbs[k]), carry);
+            carry = u32x4_shr(v, 29);
+            r[k] = v128_and(v, mask);
         }
-        // subtract 2p with borrow; select per lane on final borrow
-        let mut dl = [u64x2(0, 0); 9];
-        let mut dh = [u64x2(0, 0); 9];
-        let (mut bwl, mut bwh) = (u64x2(0, 0), u64x2(0, 0));
-        for k in 0..9 {
-            let t = u64x2_splat(twop29[k] as u64);
-            let vl = u64x2_sub(u64x2_sub(sl[k], t), bwl);
-            let vh = u64x2_sub(u64x2_sub(sh[k], t), bwh);
-            dl[k] = v128_and(vl, mask64);
-            dh[k] = v128_and(vh, mask64);
-            bwl = u64x2_shr(vl, 63);
-            bwh = u64x2_shr(vh, 63);
+        let mut t = [u32x4_splat(0); 9];
+        v = u32x4_add(r[0], c.tnm[0]);
+        carry = u32x4_shr(v, 29);
+        t[0] = v128_and(v, mask);
+        for k in 1..9 {
+            v = u32x4_add(u32x4_add(r[k], c.tnm[k]), carry);
+            carry = u32x4_shr(v, 29);
+            t[k] = v128_and(v, mask);
         }
-        // borrow==1 -> keep sum; else keep difference
-        let keepl = i64x2_ne(bwl, u64x2(0, 0));
-        let keeph = i64x2_ne(bwh, u64x2(0, 0));
+        // Top-limb carry set (per lane) => a + b >= 2p => t (= r - 2p mod 2^261) is the value.
+        let pick_t = i32x4_eq(carry, u32x4_splat(1));
         let mut out = [u32x4_splat(0); 9];
         for k in 0..9 {
-            let l = v128_bitselect(sl[k], dl[k], keepl);
-            let h = v128_bitselect(sh[k], dh[k], keeph);
-            out[k] = u32x4_shuffle::<0, 2, 4, 6>(l, h);
+            out[k] = v128_bitselect(t[k], r[k], pick_t);
         }
         QuadFp { limbs: out }
     }
 
-    /// Lanewise `a - b` on coarse values: computed as `(a + 2p) - b` (non-negative for a, b in
-    /// [0, 2p)), then one conditional 2p subtraction back into the coarse range.
-    pub fn sub(a: &QuadFp, b: &QuadFp, twop29: &[u32; 9], c: &Consts) -> QuadFp {
-        let mask64 = c.mask64;
-        let mut out = [u32x4_splat(0); 9];
-        let (mut cl, mut ch) = (u64x2(0, 0), u64x2(0, 0));
-        let (mut bwl, mut bwh) = (u64x2(0, 0), u64x2(0, 0));
-        for k in 0..9 {
-            let t = u64x2_splat(twop29[k] as u64);
-            let al = u64x2_extend_low_u32x4(a.limbs[k]);
-            let ah = u64x2_extend_high_u32x4(a.limbs[k]);
-            let bl = u64x2_extend_low_u32x4(b.limbs[k]);
-            let bh = u64x2_extend_high_u32x4(b.limbs[k]);
-            // (a + 2p + carry) is at most ~2^31 per limb; borrow from the previous limb's
-            // subtraction is 0/1; the whole lane value is non-negative, so limbwise
-            // wrap + mask + sign-bit borrow is exact.
-            let vl = u64x2_sub(u64x2_add(u64x2_add(al, t), cl), u64x2_add(bl, bwl));
-            let vh = u64x2_sub(u64x2_add(u64x2_add(ah, t), ch), u64x2_add(bh, bwh));
-            out[k] = u32x4_shuffle::<0, 2, 4, 6>(v128_and(vl, mask64), v128_and(vh, mask64));
-            // carry of the addition part and borrow of the subtraction part, recovered from the
-            // signed value: v in (-2^30, 2^31); v >> 29 (arithmetic) is the signed carry.
-            cl = u64x2_shr(u64x2_add(vl, u64x2_splat(1 << 35)), 29);
-            cl = u64x2_sub(cl, u64x2_splat(1 << 6));
-            ch = u64x2_shr(u64x2_add(vh, u64x2_splat(1 << 35)), 29);
-            ch = u64x2_sub(ch, u64x2_splat(1 << 6));
-            // fold the signed carry: positive part continues as carry, negative as borrow
-            let zero = u64x2(0, 0);
-            let negl = i64x2_lt(cl, zero);
-            let negh = i64x2_lt(ch, zero);
-            bwl = v128_bitselect(u64x2_sub(zero, cl), zero, negl);
-            bwh = v128_bitselect(u64x2_sub(zero, ch), zero, negh);
-            cl = v128_bitselect(zero, cl, negl);
-            ch = v128_bitselect(zero, ch, negh);
+    /// Lanewise `a - b` on coarse values, entirely in u32x4: borrow-propagated raw subtract
+    /// (29-bit limbs keep bits 29..31 clear, so underflow shows in bit 31), a `+2p` chain, and
+    /// a per-lane blend on the final borrow. Output in [0, 2p).
+    pub fn sub(a: &QuadFp, b: &QuadFp, c: &Consts) -> QuadFp {
+        let mask = c.mask32;
+        let mut r = [u32x4_splat(0); 9];
+        let mut v = i32x4_sub(a.limbs[0], b.limbs[0]);
+        let mut borrow = u32x4_shr(v, 31);
+        r[0] = v128_and(v, mask);
+        for k in 1..9 {
+            v = i32x4_sub(i32x4_sub(a.limbs[k], b.limbs[k]), borrow);
+            borrow = u32x4_shr(v, 31);
+            r[k] = v128_and(v, mask);
         }
-        let q = QuadFp { limbs: out };
-        cond_sub_twop(&q, twop29, c)
-    }
-
-    /// Subtract 2p per lane where the value is >= 2p.
-    pub fn cond_sub_twop(a: &QuadFp, twop29: &[u32; 9], c: &Consts) -> QuadFp {
-        let mask64 = c.mask64;
-        let mut dl = [u64x2(0, 0); 9];
-        let mut dh = [u64x2(0, 0); 9];
-        let mut al = [u64x2(0, 0); 9];
-        let mut ah = [u64x2(0, 0); 9];
-        let (mut bwl, mut bwh) = (u64x2(0, 0), u64x2(0, 0));
-        for k in 0..9 {
-            let t = u64x2_splat(twop29[k] as u64);
-            al[k] = u64x2_extend_low_u32x4(a.limbs[k]);
-            ah[k] = u64x2_extend_high_u32x4(a.limbs[k]);
-            let vl = u64x2_sub(u64x2_sub(al[k], t), bwl);
-            let vh = u64x2_sub(u64x2_sub(ah[k], t), bwh);
-            dl[k] = v128_and(vl, mask64);
-            dh[k] = v128_and(vh, mask64);
-            bwl = u64x2_shr(vl, 63);
-            bwh = u64x2_shr(vh, 63);
+        let pick_s = i32x4_eq(borrow, u32x4_splat(1));
+        let mut s = [u32x4_splat(0); 9];
+        v = u32x4_add(r[0], c.twop[0]);
+        let mut carry = u32x4_shr(v, 29);
+        s[0] = v128_and(v, mask);
+        for k in 1..9 {
+            v = u32x4_add(u32x4_add(r[k], c.twop[k]), carry);
+            carry = u32x4_shr(v, 29);
+            s[k] = v128_and(v, mask);
         }
-        let keepl = i64x2_ne(bwl, u64x2(0, 0));
-        let keeph = i64x2_ne(bwh, u64x2(0, 0));
         let mut out = [u32x4_splat(0); 9];
         for k in 0..9 {
-            let l = v128_bitselect(al[k], dl[k], keepl);
-            let h = v128_bitselect(ah[k], dh[k], keeph);
-            out[k] = u32x4_shuffle::<0, 2, 4, 6>(l, h);
+            out[k] = v128_bitselect(s[k], r[k], pick_s);
         }
         QuadFp { limbs: out }
     }
@@ -1522,17 +1591,39 @@ pub mod quad261 {
     pub struct Consts {
         pub ri: [v128; 9],
         pub p: [v128; 9],
+        /// 2p as splatted 29-bit limbs (sub's blend chain).
+        pub twop: [v128; 9],
+        /// 2^261 - 2p as splatted 29-bit limbs (add's TNM chain).
+        pub tnm: [v128; 9],
         pub invv: v128,
         pub mask64: v128,
+        pub mask32: v128,
     }
 
     impl Consts {
         pub fn new(rinv29: &[u32; 9], p29: &[u64; 9], inv: u64) -> Self {
+            let mut twop = [0u32; 9];
+            let mut carry = 0u64;
+            for k in 0..9 {
+                let v = 2 * p29[k] + carry;
+                twop[k] = (v & MASK29) as u32;
+                carry = v >> 29;
+            }
+            let mut tnm = [0u32; 9];
+            carry = 1;
+            for k in 0..9 {
+                let v = ((!(twop[k] as u64)) & MASK29) + carry;
+                tnm[k] = (v & MASK29) as u32;
+                carry = v >> 29;
+            }
             Consts {
                 ri: core::array::from_fn(|k| u32x4_splat(rinv29[k])),
                 p: core::array::from_fn(|k| u32x4_splat(p29[k] as u32)),
+                twop: core::array::from_fn(|k| u32x4_splat(twop[k])),
+                tnm: core::array::from_fn(|k| u32x4_splat(tnm[k])),
                 invv: u32x4_splat(inv as u32),
                 mask64: u64x2_splat(MASK29),
+                mask32: u32x4_splat(MASK29 as u32),
             }
         }
     }
@@ -1592,16 +1683,70 @@ pub mod quad261 {
         let pl0_h = u64x2_extmul_high_u32x4(a0, b0);
         let pl1_l = u64x2_add(u64x2_extmul_low_u32x4(a0, b1), u64x2_extmul_low_u32x4(a1, b0));
         let pl1_h = u64x2_add(u64x2_extmul_high_u32x4(a0, b1), u64x2_extmul_high_u32x4(a1, b0));
-        let pl2_l = u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a0, b2), u64x2_extmul_low_u32x4(a1, b1)), u64x2_extmul_low_u32x4(a2, b0));
-        let pl2_h = u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a0, b2), u64x2_extmul_high_u32x4(a1, b1)), u64x2_extmul_high_u32x4(a2, b0));
-        let pl3_l = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a0, b3), u64x2_extmul_low_u32x4(a1, b2)), u64x2_extmul_low_u32x4(a2, b1)), u64x2_extmul_low_u32x4(a3, b0));
-        let pl3_h = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a0, b3), u64x2_extmul_high_u32x4(a1, b2)), u64x2_extmul_high_u32x4(a2, b1)), u64x2_extmul_high_u32x4(a3, b0));
-        let pl4_l = u64x2_add(u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a0, b4), u64x2_extmul_low_u32x4(a1, b3)), u64x2_extmul_low_u32x4(a2, b2)), u64x2_extmul_low_u32x4(a3, b1)), u64x2_extmul_low_u32x4(a4, b0));
-        let pl4_h = u64x2_add(u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a0, b4), u64x2_extmul_high_u32x4(a1, b3)), u64x2_extmul_high_u32x4(a2, b2)), u64x2_extmul_high_u32x4(a3, b1)), u64x2_extmul_high_u32x4(a4, b0));
-        let pl5_l = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a1, b4), u64x2_extmul_low_u32x4(a2, b3)), u64x2_extmul_low_u32x4(a3, b2)), u64x2_extmul_low_u32x4(a4, b1));
-        let pl5_h = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a1, b4), u64x2_extmul_high_u32x4(a2, b3)), u64x2_extmul_high_u32x4(a3, b2)), u64x2_extmul_high_u32x4(a4, b1));
-        let pl6_l = u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a2, b4), u64x2_extmul_low_u32x4(a3, b3)), u64x2_extmul_low_u32x4(a4, b2));
-        let pl6_h = u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a2, b4), u64x2_extmul_high_u32x4(a3, b3)), u64x2_extmul_high_u32x4(a4, b2));
+        let pl2_l = u64x2_add(
+            u64x2_add(u64x2_extmul_low_u32x4(a0, b2), u64x2_extmul_low_u32x4(a1, b1)),
+            u64x2_extmul_low_u32x4(a2, b0),
+        );
+        let pl2_h = u64x2_add(
+            u64x2_add(u64x2_extmul_high_u32x4(a0, b2), u64x2_extmul_high_u32x4(a1, b1)),
+            u64x2_extmul_high_u32x4(a2, b0),
+        );
+        let pl3_l = u64x2_add(
+            u64x2_add(
+                u64x2_add(u64x2_extmul_low_u32x4(a0, b3), u64x2_extmul_low_u32x4(a1, b2)),
+                u64x2_extmul_low_u32x4(a2, b1),
+            ),
+            u64x2_extmul_low_u32x4(a3, b0),
+        );
+        let pl3_h = u64x2_add(
+            u64x2_add(
+                u64x2_add(u64x2_extmul_high_u32x4(a0, b3), u64x2_extmul_high_u32x4(a1, b2)),
+                u64x2_extmul_high_u32x4(a2, b1),
+            ),
+            u64x2_extmul_high_u32x4(a3, b0),
+        );
+        let pl4_l = u64x2_add(
+            u64x2_add(
+                u64x2_add(
+                    u64x2_add(u64x2_extmul_low_u32x4(a0, b4), u64x2_extmul_low_u32x4(a1, b3)),
+                    u64x2_extmul_low_u32x4(a2, b2),
+                ),
+                u64x2_extmul_low_u32x4(a3, b1),
+            ),
+            u64x2_extmul_low_u32x4(a4, b0),
+        );
+        let pl4_h = u64x2_add(
+            u64x2_add(
+                u64x2_add(
+                    u64x2_add(u64x2_extmul_high_u32x4(a0, b4), u64x2_extmul_high_u32x4(a1, b3)),
+                    u64x2_extmul_high_u32x4(a2, b2),
+                ),
+                u64x2_extmul_high_u32x4(a3, b1),
+            ),
+            u64x2_extmul_high_u32x4(a4, b0),
+        );
+        let pl5_l = u64x2_add(
+            u64x2_add(
+                u64x2_add(u64x2_extmul_low_u32x4(a1, b4), u64x2_extmul_low_u32x4(a2, b3)),
+                u64x2_extmul_low_u32x4(a3, b2),
+            ),
+            u64x2_extmul_low_u32x4(a4, b1),
+        );
+        let pl5_h = u64x2_add(
+            u64x2_add(
+                u64x2_add(u64x2_extmul_high_u32x4(a1, b4), u64x2_extmul_high_u32x4(a2, b3)),
+                u64x2_extmul_high_u32x4(a3, b2),
+            ),
+            u64x2_extmul_high_u32x4(a4, b1),
+        );
+        let pl6_l = u64x2_add(
+            u64x2_add(u64x2_extmul_low_u32x4(a2, b4), u64x2_extmul_low_u32x4(a3, b3)),
+            u64x2_extmul_low_u32x4(a4, b2),
+        );
+        let pl6_h = u64x2_add(
+            u64x2_add(u64x2_extmul_high_u32x4(a2, b4), u64x2_extmul_high_u32x4(a3, b3)),
+            u64x2_extmul_high_u32x4(a4, b2),
+        );
         let pl7_l = u64x2_add(u64x2_extmul_low_u32x4(a3, b4), u64x2_extmul_low_u32x4(a4, b3));
         let pl7_h = u64x2_add(u64x2_extmul_high_u32x4(a3, b4), u64x2_extmul_high_u32x4(a4, b3));
         let pl8_l = u64x2_extmul_low_u32x4(a4, b4);
@@ -1610,12 +1755,36 @@ pub mod quad261 {
         let ph0_h = u64x2_extmul_high_u32x4(a5, b5);
         let ph1_l = u64x2_add(u64x2_extmul_low_u32x4(a5, b6), u64x2_extmul_low_u32x4(a6, b5));
         let ph1_h = u64x2_add(u64x2_extmul_high_u32x4(a5, b6), u64x2_extmul_high_u32x4(a6, b5));
-        let ph2_l = u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a5, b7), u64x2_extmul_low_u32x4(a6, b6)), u64x2_extmul_low_u32x4(a7, b5));
-        let ph2_h = u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a5, b7), u64x2_extmul_high_u32x4(a6, b6)), u64x2_extmul_high_u32x4(a7, b5));
-        let ph3_l = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a5, b8), u64x2_extmul_low_u32x4(a6, b7)), u64x2_extmul_low_u32x4(a7, b6)), u64x2_extmul_low_u32x4(a8, b5));
-        let ph3_h = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a5, b8), u64x2_extmul_high_u32x4(a6, b7)), u64x2_extmul_high_u32x4(a7, b6)), u64x2_extmul_high_u32x4(a8, b5));
-        let ph4_l = u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a6, b8), u64x2_extmul_low_u32x4(a7, b7)), u64x2_extmul_low_u32x4(a8, b6));
-        let ph4_h = u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a6, b8), u64x2_extmul_high_u32x4(a7, b7)), u64x2_extmul_high_u32x4(a8, b6));
+        let ph2_l = u64x2_add(
+            u64x2_add(u64x2_extmul_low_u32x4(a5, b7), u64x2_extmul_low_u32x4(a6, b6)),
+            u64x2_extmul_low_u32x4(a7, b5),
+        );
+        let ph2_h = u64x2_add(
+            u64x2_add(u64x2_extmul_high_u32x4(a5, b7), u64x2_extmul_high_u32x4(a6, b6)),
+            u64x2_extmul_high_u32x4(a7, b5),
+        );
+        let ph3_l = u64x2_add(
+            u64x2_add(
+                u64x2_add(u64x2_extmul_low_u32x4(a5, b8), u64x2_extmul_low_u32x4(a6, b7)),
+                u64x2_extmul_low_u32x4(a7, b6),
+            ),
+            u64x2_extmul_low_u32x4(a8, b5),
+        );
+        let ph3_h = u64x2_add(
+            u64x2_add(
+                u64x2_add(u64x2_extmul_high_u32x4(a5, b8), u64x2_extmul_high_u32x4(a6, b7)),
+                u64x2_extmul_high_u32x4(a7, b6),
+            ),
+            u64x2_extmul_high_u32x4(a8, b5),
+        );
+        let ph4_l = u64x2_add(
+            u64x2_add(u64x2_extmul_low_u32x4(a6, b8), u64x2_extmul_low_u32x4(a7, b7)),
+            u64x2_extmul_low_u32x4(a8, b6),
+        );
+        let ph4_h = u64x2_add(
+            u64x2_add(u64x2_extmul_high_u32x4(a6, b8), u64x2_extmul_high_u32x4(a7, b7)),
+            u64x2_extmul_high_u32x4(a8, b6),
+        );
         let ph5_l = u64x2_add(u64x2_extmul_low_u32x4(a7, b8), u64x2_extmul_low_u32x4(a8, b7));
         let ph5_h = u64x2_add(u64x2_extmul_high_u32x4(a7, b8), u64x2_extmul_high_u32x4(a8, b7));
         let ph6_l = u64x2_extmul_low_u32x4(a8, b8);
@@ -1624,16 +1793,70 @@ pub mod quad261 {
         let pc0_h = u64x2_extmul_high_u32x4(sl0, sr0);
         let pc1_l = u64x2_add(u64x2_extmul_low_u32x4(sl0, sr1), u64x2_extmul_low_u32x4(sl1, sr0));
         let pc1_h = u64x2_add(u64x2_extmul_high_u32x4(sl0, sr1), u64x2_extmul_high_u32x4(sl1, sr0));
-        let pc2_l = u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(sl0, sr2), u64x2_extmul_low_u32x4(sl1, sr1)), u64x2_extmul_low_u32x4(sl2, sr0));
-        let pc2_h = u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(sl0, sr2), u64x2_extmul_high_u32x4(sl1, sr1)), u64x2_extmul_high_u32x4(sl2, sr0));
-        let pc3_l = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(sl0, sr3), u64x2_extmul_low_u32x4(sl1, sr2)), u64x2_extmul_low_u32x4(sl2, sr1)), u64x2_extmul_low_u32x4(sl3, sr0));
-        let pc3_h = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(sl0, sr3), u64x2_extmul_high_u32x4(sl1, sr2)), u64x2_extmul_high_u32x4(sl2, sr1)), u64x2_extmul_high_u32x4(sl3, sr0));
-        let pc4_l = u64x2_add(u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(sl0, sr4), u64x2_extmul_low_u32x4(sl1, sr3)), u64x2_extmul_low_u32x4(sl2, sr2)), u64x2_extmul_low_u32x4(sl3, sr1)), u64x2_extmul_low_u32x4(sl4, sr0));
-        let pc4_h = u64x2_add(u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(sl0, sr4), u64x2_extmul_high_u32x4(sl1, sr3)), u64x2_extmul_high_u32x4(sl2, sr2)), u64x2_extmul_high_u32x4(sl3, sr1)), u64x2_extmul_high_u32x4(sl4, sr0));
-        let pc5_l = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(sl1, sr4), u64x2_extmul_low_u32x4(sl2, sr3)), u64x2_extmul_low_u32x4(sl3, sr2)), u64x2_extmul_low_u32x4(sl4, sr1));
-        let pc5_h = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(sl1, sr4), u64x2_extmul_high_u32x4(sl2, sr3)), u64x2_extmul_high_u32x4(sl3, sr2)), u64x2_extmul_high_u32x4(sl4, sr1));
-        let pc6_l = u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(sl2, sr4), u64x2_extmul_low_u32x4(sl3, sr3)), u64x2_extmul_low_u32x4(sl4, sr2));
-        let pc6_h = u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(sl2, sr4), u64x2_extmul_high_u32x4(sl3, sr3)), u64x2_extmul_high_u32x4(sl4, sr2));
+        let pc2_l = u64x2_add(
+            u64x2_add(u64x2_extmul_low_u32x4(sl0, sr2), u64x2_extmul_low_u32x4(sl1, sr1)),
+            u64x2_extmul_low_u32x4(sl2, sr0),
+        );
+        let pc2_h = u64x2_add(
+            u64x2_add(u64x2_extmul_high_u32x4(sl0, sr2), u64x2_extmul_high_u32x4(sl1, sr1)),
+            u64x2_extmul_high_u32x4(sl2, sr0),
+        );
+        let pc3_l = u64x2_add(
+            u64x2_add(
+                u64x2_add(u64x2_extmul_low_u32x4(sl0, sr3), u64x2_extmul_low_u32x4(sl1, sr2)),
+                u64x2_extmul_low_u32x4(sl2, sr1),
+            ),
+            u64x2_extmul_low_u32x4(sl3, sr0),
+        );
+        let pc3_h = u64x2_add(
+            u64x2_add(
+                u64x2_add(u64x2_extmul_high_u32x4(sl0, sr3), u64x2_extmul_high_u32x4(sl1, sr2)),
+                u64x2_extmul_high_u32x4(sl2, sr1),
+            ),
+            u64x2_extmul_high_u32x4(sl3, sr0),
+        );
+        let pc4_l = u64x2_add(
+            u64x2_add(
+                u64x2_add(
+                    u64x2_add(u64x2_extmul_low_u32x4(sl0, sr4), u64x2_extmul_low_u32x4(sl1, sr3)),
+                    u64x2_extmul_low_u32x4(sl2, sr2),
+                ),
+                u64x2_extmul_low_u32x4(sl3, sr1),
+            ),
+            u64x2_extmul_low_u32x4(sl4, sr0),
+        );
+        let pc4_h = u64x2_add(
+            u64x2_add(
+                u64x2_add(
+                    u64x2_add(u64x2_extmul_high_u32x4(sl0, sr4), u64x2_extmul_high_u32x4(sl1, sr3)),
+                    u64x2_extmul_high_u32x4(sl2, sr2),
+                ),
+                u64x2_extmul_high_u32x4(sl3, sr1),
+            ),
+            u64x2_extmul_high_u32x4(sl4, sr0),
+        );
+        let pc5_l = u64x2_add(
+            u64x2_add(
+                u64x2_add(u64x2_extmul_low_u32x4(sl1, sr4), u64x2_extmul_low_u32x4(sl2, sr3)),
+                u64x2_extmul_low_u32x4(sl3, sr2),
+            ),
+            u64x2_extmul_low_u32x4(sl4, sr1),
+        );
+        let pc5_h = u64x2_add(
+            u64x2_add(
+                u64x2_add(u64x2_extmul_high_u32x4(sl1, sr4), u64x2_extmul_high_u32x4(sl2, sr3)),
+                u64x2_extmul_high_u32x4(sl3, sr2),
+            ),
+            u64x2_extmul_high_u32x4(sl4, sr1),
+        );
+        let pc6_l = u64x2_add(
+            u64x2_add(u64x2_extmul_low_u32x4(sl2, sr4), u64x2_extmul_low_u32x4(sl3, sr3)),
+            u64x2_extmul_low_u32x4(sl4, sr2),
+        );
+        let pc6_h = u64x2_add(
+            u64x2_add(u64x2_extmul_high_u32x4(sl2, sr4), u64x2_extmul_high_u32x4(sl3, sr3)),
+            u64x2_extmul_high_u32x4(sl4, sr2),
+        );
         let pc7_l = u64x2_add(u64x2_extmul_low_u32x4(sl3, sr4), u64x2_extmul_low_u32x4(sl4, sr3));
         let pc7_h = u64x2_add(u64x2_extmul_high_u32x4(sl3, sr4), u64x2_extmul_high_u32x4(sl4, sr3));
         let pc8_l = u64x2_extmul_low_u32x4(sl4, sr4);
@@ -2202,16 +2425,14 @@ mod test {
 
     #[test]
     fn test_mont_macro_correctness() {
-        let (is_positive, limbs) = str_to_limbs_u64(
-            "111192936301596926984056301862066282284536849596023571352007112326586892541694",
-        );
+        let (is_positive, limbs) =
+            str_to_limbs_u64("111192936301596926984056301862066282284536849596023571352007112326586892541694");
         let t = Fr::from_sign_and_limbs(is_positive, &limbs);
 
         let result: BigUint = t.into();
-        let expected = BigUint::from_str(
-            "111192936301596926984056301862066282284536849596023571352007112326586892541694",
-        )
-        .unwrap();
+        let expected =
+            BigUint::from_str("111192936301596926984056301862066282284536849596023571352007112326586892541694")
+                .unwrap();
 
         assert_eq!(result, expected);
     }

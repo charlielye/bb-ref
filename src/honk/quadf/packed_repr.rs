@@ -14,7 +14,6 @@ use std::sync::LazyLock;
 /// Prepared per-field kernel constants.
 pub struct Kc {
     pub c: quad261::Consts,
-    pub twop29: [u32; 9],
     pub p29: [u64; 9],
     /// 2^266 mod p and 2^256 mod p, packed as plain integers (the domain-shift multipliers).
     pub c266: quad261::QuadFp,
@@ -28,16 +27,8 @@ unsafe impl Sync for Kc {}
 fn make_kc(modulus: [u64; 4], rinv29: [u32; 9], c266: [u64; 4], c256: [u64; 4]) -> Kc {
     let p29 = wasm_mont::to29(&modulus);
     let inv = wasm_mont::inv29(p29[0]);
-    let mut twop29 = [0u32; 9];
-    let mut carry = 0u64;
-    for i in 0..9 {
-        let v = 2 * p29[i] + carry;
-        twop29[i] = (v & ((1u64 << 29) - 1)) as u32;
-        carry = v >> 29;
-    }
     Kc {
         c: quad261::Consts::new(&rinv29, &p29, inv),
-        twop29,
         p29,
         c266: quad261::QuadFp::pack(&[c266; 4]),
         c256: quad261::QuadFp::pack(&[c256; 4]),
@@ -165,7 +156,7 @@ impl<F: QuadConsts> Add<&QuadF<F>> for QuadF<F> {
     #[inline(always)]
     fn add(self, rhs: &QuadF<F>) -> QuadF<F> {
         let kc = F::kc();
-        QuadF(quad261::add(&self.0, &rhs.0, &kc.twop29, &kc.c), PhantomData)
+        QuadF(quad261::add(&self.0, &rhs.0, &kc.c), PhantomData)
     }
 }
 impl<F: QuadConsts> Sub<&QuadF<F>> for QuadF<F> {
@@ -173,7 +164,7 @@ impl<F: QuadConsts> Sub<&QuadF<F>> for QuadF<F> {
     #[inline(always)]
     fn sub(self, rhs: &QuadF<F>) -> QuadF<F> {
         let kc = F::kc();
-        QuadF(quad261::sub(&self.0, &rhs.0, &kc.twop29, &kc.c), PhantomData)
+        QuadF(quad261::sub(&self.0, &rhs.0, &kc.c), PhantomData)
     }
 }
 impl<F: QuadConsts> Mul<&QuadF<F>> for QuadF<F> {
@@ -204,7 +195,7 @@ impl<F: QuadConsts> Neg for QuadF<F> {
     fn neg(self) -> QuadF<F> {
         let kc = F::kc();
         let zero = quad261::QuadFp::pack(&[[0u64; 4]; 4]);
-        QuadF(quad261::sub(&zero, &self.0, &kc.twop29, &kc.c), PhantomData)
+        QuadF(quad261::sub(&zero, &self.0, &kc.c), PhantomData)
     }
 }
 macro_rules! opassign {
