@@ -127,6 +127,64 @@ fn run() {
             t.elapsed().as_nanos() as f64 / (reps * NQ * 4) as f64
         );
     }
+    {
+        // MSM tree pass-2 model: per pair lambda=(by-ay)*d, x3=l^2-ax-bx, y3=l*(ax-x3)-ay,
+        // quad (with pack from AoS coords + canonical unpack) vs scalar ark Fq ops.
+        use ark_bn254::Fq;
+        use ark_ff::Field;
+        use ark_ff::fields::models::fp::montgomery_backend::quad261;
+        use ark_ff::fields::models::fp::montgomery_backend::wasm_mont::{inv29, to29, FQ_RINV29};
+        let fq_mod: [u64; 4] = Fq::MODULUS.as_ref().try_into().unwrap();
+        let q29 = to29(&fq_mod);
+        let qinv = inv29(q29[0]);
+        let qc = quad261::Consts::new(&FQ_RINV29, &q29, qinv);
+        let mut twop29 = [0u32; 9];
+        let mut c2 = 0u64;
+        for i in 0..9 {
+            let v = 2 * q29[i] + c2;
+            twop29[i] = (v & ((1u64 << 29) - 1)) as u32;
+            c2 = v >> 29;
+        }
+        let storedq = |x: Fq| -> [u64; 4] { unsafe { core::mem::transmute::<Fq, [u64; 4]>(x) } };
+        const NP: usize = 4096; // pairs
+        let coords: Vec<[Fq; 5]> = (0..NP)
+            .map(|_| core::array::from_fn(|_| Fq::rand(&mut rng)))
+            .collect(); // ax, ay, bx, by, d per pair
+        // scalar
+        let mut outs = vec![(Fq::rand(&mut rng), Fq::rand(&mut rng)); NP];
+        let reps2 = (n / (NP * 6)).max(1);
+        let t = Instant::now();
+        for _ in 0..reps2 {
+            for (i, c) in coords.iter().enumerate() {
+                let (ax, ay, bx, by, d) = (c[0], c[1], c[2], c[3], c[4]);
+                let lambda = (by - ay) * d;
+                let x3 = lambda.square() - ax - bx;
+                let y3 = lambda * (ax - x3) - ay;
+                outs[i] = (x3, y3);
+            }
+        }
+        black_box(&outs);
+        println!("tree pass2 scalar: {:.1} ns/pair", t.elapsed().as_nanos() as f64 / (reps2 * NP) as f64);
+        // quad with pack/unpack per group of 4 pairs
+        let mult32 = |x: Fq| storedq(x * Fq::from(32u64));
+        let t = Instant::now();
+        for _ in 0..reps2 {
+            for g in coords.chunks_exact(4) {
+                let pk = |idx: usize| {
+                    quad261::QuadFp::pack(&[storedq(g[0][idx]), storedq(g[1][idx]), storedq(g[2][idx]), storedq(g[3][idx])])
+                };
+                let (ax, ay, bx, by) = (pk(0), pk(1), pk(2), pk(3));
+                // d pre-scaled by 32 so each mul lands back in the 2^256 domain
+                let d32 = quad261::QuadFp::pack(&[mult32(g[0][4]), mult32(g[1][4]), mult32(g[2][4]), mult32(g[3][4])]);
+                let lambda = quad261::mont_mul(&quad261::sub(&by, &ay, &twop29, &qc), &d32, &qc);
+                // cost model: op counts match the real formula (2 more muls, 4 subs)
+                let x3 = quad261::sub(&quad261::sub(&quad261::mont_mul(&lambda, &lambda, &qc), &ax, &twop29, &qc), &bx, &twop29, &qc);
+                let y3 = quad261::sub(&quad261::mont_mul(&lambda, &quad261::sub(&ax, &x3, &twop29, &qc), &qc), &ay, &twop29, &qc);
+                black_box((x3.unpack(&fq_mod), y3.unpack(&fq_mod)));
+            }
+        }
+        println!("tree pass2 quad261 (incl pack/unpack): {:.1} ns/pair", t.elapsed().as_nanos() as f64 / (reps2 * NP) as f64);
+    }
     let mut sarr: Vec<Fr> = (0..NQ * 4).map(|_| Fr::rand(&mut rng)).collect();
     let y = Fr::rand(&mut rng);
     let t = Instant::now();
