@@ -86,7 +86,12 @@ if (isMainThread) {
     const w = new Worker(SELF, { workerData: { role, module, memory, ctl, args: argv.slice(2), ...extra } });
     w.on('message', (m) => {
       if (m.spawn) spawn('thread', m.spawn);
-      if (m.exit !== undefined) exit(m.exit);
+      if (m.exit !== undefined) {
+        // Linear memory only grows, so its size at exit is the run's peak — the number that
+        // matters for browsers, free of the host's per-worker isolate overhead.
+        console.error(`[wasm-mem] ${memory.buffer.byteLength}`);
+        exit(m.exit);
+      }
     });
     w.on('error', (e) => { console.error(e); exit(1); });
     if (role === 'thread') w.unref();

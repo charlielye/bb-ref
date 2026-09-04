@@ -6,8 +6,9 @@
 # Both provers run the identical CLI on 8 threads. "wasmtime" runs the wasip1-threads binaries
 # under wasmtime; "v8" runs them under node via tools/runwasi_threads.mjs (worker_threads +
 # shared memory — the browser shape). Whole-process wall including module compile and SRS load,
-# identical treatment for both provers. RSS is the host-process peak (%M) — noisy for wasm
-# runtimes; compare walls, treat memory columns as indicative only.
+# identical treatment for both provers. Memory columns: under v8 the wasm linear-memory peak
+# (final memory.buffer size — linear memory only grows), the browser-relevant number; under
+# wasmtime the host-process peak RSS (wasmtime has no linear-memory report) — noisy, indicative.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -42,7 +43,10 @@ run_one() { # binary inputs outdir -> "seconds maxrss_kb"
         /usr/bin/time -f '%e %M' -o "$3.time" \
             node tools/runwasi_threads.mjs "$1" prove --scheme chonk --ivc_inputs_path "$2" -o "$3" \
             >/dev/null 2>"$3.log" \
-            || { cat "$3.log" >&2; exit 1; } ;;
+            || { cat "$3.log" >&2; exit 1; }
+        # Replace host RSS with the wasm linear-memory peak reported by the harness.
+        mem_kb=$(( $(grep -oE '\[wasm-mem\] [0-9]+' "$3.log" | tail -1 | grep -oE '[0-9]+') / 1024 ))
+        sed -i "s/ [0-9]*\$/ $mem_kb/" "$3.time" ;;
     esac
     cat "$3.time"
 }
