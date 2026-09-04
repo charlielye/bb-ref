@@ -245,13 +245,17 @@ fraction of the 6×, putting browser proving in the ~7–9s range.
 What landed from this: the vendored ark-ff now dispatches wasm builds' 4-limb field mul/square
 to bb's per-call 29-bit scheme (nine 29-bit limbs — every product fits one `i64.mul` — with
 Karatsuba 5+4 and 8×2^29 + 1×2^24 Montgomery rounds dividing by exactly 2^256, so the stored
-representation and every proof byte match the native build). Measured: V8 mul 87.5→63.7ns
-(bb's own wasm field: 57.5ns); **the canonical chonk flow under wasmtime dropped 19.0→10.5s**
+representation and every proof byte match the native build). Measured: V8 mul 87.5→61.9ns
+after straight-lining (bb's own wasm field: 57.5ns); **the canonical chonk flow under wasmtime
+dropped 19.0→10.5–12.2s** (run variance ±15% — same-session A/Bs only)
 (same-session A/B; the earlier 16.9s figure and wasmtime RSS numbers vary run to run — treat
 wasmtime `%M` as noise and compare wall only within a session). wasm/native is now ~2.8×
-against bb's 2.2×; the rest is bb's batched VectorField kernels in hot loops (its 5-wide
-scalar+SIMD `q1s1` design — a single-element mix5 port measured *worse*, 66ns/elt, so that
-work only pays as genuinely batched call sites). The standalone `base/mont29.rs` core (scalar
+against bb's 2.2×; the rest is bb's batched VectorField kernels in hot loops — parked
+after measurement: with the fast scalar in place, quad-SIMD throughput is only ~13% better
+per covered mul (55 vs 62ns), i.e. ~5–10% of wasm wall for call-site surgery across every hot
+loop. Also measured on the way: wasm allocator contention is a null (wasm scales 3.95× on 8
+threads vs native's 3.67×), and the wasm/native wall ratio (~3.2×) now equals the per-mul
+ratio exactly — the wasm build is purely mul-bound. The standalone `base/mont29.rs` core (scalar
 54ns, SIMD quad 52ns/elt on V8) is the reference implementation and cross-check for all of
 this.
 
