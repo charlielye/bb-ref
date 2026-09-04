@@ -637,6 +637,177 @@ pub use ark_ff_macros::MontConfig;
 
 pub use MontFp;
 
+
+/// wasm Montgomery multiply in the standard 2^256 domain, bb's per-call 29-bit scheme
+/// (`field_impl_generic.hpp`'s `__wasm__` branch): wasm has no widening 64x64 multiply, so the
+/// 4x64 operands are split into nine 29-bit limbs whose products fit a single `i64.mul`;
+/// 8 radix-2^29 Montgomery rounds plus one radix-2^24 round divide by exactly 2^256, so the
+/// stored representation (and thus every proof byte) is unchanged from the native build.
+/// First four modulus limbs as a fixed array (N == 4 is checked at the call sites).
+#[cfg(target_family = "wasm")]
+const fn first4<T: MontConfig<N>, const N: usize>() -> [u64; 4] {
+    let m = T::MODULUS.0;
+    [m[0], m[1], m[2], m[3]]
+}
+
+#[cfg(target_family = "wasm")]
+mod wasm_mont {
+    const MASK29: u64 = (1 << 29) - 1;
+    const MASK24: u64 = (1 << 24) - 1;
+
+    pub const fn to29(a: &[u64; 4]) -> [u64; 9] {
+        let mut out = [0u64; 9];
+        let mut i = 0;
+        while i < 9 {
+            let bit = 29 * i;
+            let (limb, sh) = (bit / 64, bit % 64);
+            let mut v = a[limb] >> sh;
+            if sh > 35 && limb + 1 < 4 {
+                v |= a[limb + 1] << (64 - sh);
+            }
+            out[i] = v & MASK29;
+            i += 1;
+        }
+        out
+    }
+
+    /// -p^-1 mod 2^29 (Newton lift from the 64-bit INV would also work; direct is clearer).
+    pub const fn inv29(p0: u64) -> u64 {
+        // Newton iteration for the inverse of p mod 2^29, then negate.
+        let mut x: u64 = 1;
+        let mut i = 0;
+        while i < 5 {
+            x = x.wrapping_mul(2u64.wrapping_sub(p0.wrapping_mul(x)));
+            i += 1;
+        }
+        x.wrapping_neg() & MASK29
+    }
+
+    /// `a * b / 2^256 mod p` for canonical 4x64 Montgomery-form inputs; canonical output.
+    #[inline]
+    pub fn mont_mul_256(a: &[u64; 4], b: &[u64; 4], modulus: &[u64; 4], p: &[u64; 9], inv: u64) -> [u64; 4] {
+        let l = to29(a);
+        let r = to29(b);
+
+        // Karatsuba 5+4: P_lo (5x5), P_hi (4x4), P_cross (5x5 over limb sums).
+        let mut t = [0u64; 18];
+        {
+            let mut pl = [0u64; 9];
+            let mut ph = [0u64; 7];
+            let mut pc = [0u64; 9];
+            let mut i = 0;
+            while i < 5 {
+                let mut j = 0;
+                while j < 5 {
+                    pl[i + j] += l[i] * r[j];
+                    j += 1;
+                }
+                i += 1;
+            }
+            let mut i = 0;
+            while i < 4 {
+                let mut j = 0;
+                while j < 4 {
+                    ph[i + j] += l[5 + i] * r[5 + j];
+                    j += 1;
+                }
+                i += 1;
+            }
+            let sl = [l[0] + l[5], l[1] + l[6], l[2] + l[7], l[3] + l[8], l[4]];
+            let sr = [r[0] + r[5], r[1] + r[6], r[2] + r[7], r[3] + r[8], r[4]];
+            let mut i = 0;
+            while i < 5 {
+                let mut j = 0;
+                while j < 5 {
+                    pc[i + j] += sl[i] * sr[j];
+                    j += 1;
+                }
+                i += 1;
+            }
+            // temp[k] = pl[k] + (pc-pl-ph)[k-5] + ph[k-10], wrapping arithmetic like bb's.
+            let mut k = 0;
+            while k < 9 {
+                t[k] = pl[k];
+                k += 1;
+            }
+            let mut k = 0;
+            while k < 9 {
+                let mid = pc[k].wrapping_sub(pl[k]).wrapping_sub(if k < 7 { ph[k] } else { 0 });
+                t[5 + k] = t[5 + k].wrapping_add(mid);
+                k += 1;
+            }
+            let mut k = 0;
+            while k < 7 {
+                t[10 + k] = t[10 + k].wrapping_add(ph[k]);
+                k += 1;
+            }
+        }
+        // 8 radix-2^29 Montgomery rounds.
+        let mut rounds = 0;
+        while rounds < 8 {
+            let k = t[rounds].wrapping_mul(inv) & MASK29;
+            let mut j = 0;
+            while j < 9 {
+                t[rounds + j] += k * p[j];
+                j += 1;
+            }
+            t[rounds + 1] += t[rounds] >> 29;
+            rounds += 1;
+        }
+        // One radix-2^24 round: -p^-1 mod 2^24 is inv29 reduced.
+        let k24 = t[8].wrapping_mul(inv) & MASK24;
+        let mut j = 0;
+        while j < 9 {
+            t[8 + j] += k24 * p[j];
+            j += 1;
+        }
+        // Value is now Sum t[8..17] * 2^(29(i-8)) with the low 24 bits of t[8] zero; divide by
+        // 2^24 and repack. Normalize limbs to 29 bits first.
+        let mut i = 8;
+        while i < 17 {
+            t[i + 1] += t[i] >> 29;
+            t[i] &= MASK29;
+            i += 1;
+        }
+        // out = (Sum_{i=8}^{17} t[i]*2^(29(i-8))) >> 24, packed to 4x64.
+        let g = |i: usize| -> u64 { if i < 18 { t[i] } else { 0 } };
+        let mut wide = [0u64; 4];
+        let mut w = 0;
+        while w < 4 {
+            let lowbit = 64 * w + 24; // bit offset within the 29-limb value
+            let mut acc = 0u64;
+            let first = lowbit / 29;
+            let sh = lowbit % 29;
+            acc |= g(8 + first) >> sh;
+            let mut filled = 29 - sh;
+            let mut idx = first + 1;
+            while filled < 64 {
+                acc |= g(8 + idx) << filled;
+                filled += 29;
+                idx += 1;
+            }
+            wide[w] = acc;
+            w += 1;
+        }
+        // Result < 2p: one conditional subtract keeps ark's canonical storage invariant.
+        let mut borrow = 0u64;
+        let mut d = [0u64; 4];
+        let mut i = 0;
+        while i < 4 {
+            let (v1, b1) = wide[i].overflowing_sub(modulus[i]);
+            let (v2, b2) = v1.overflowing_sub(borrow);
+            d[i] = v2;
+            borrow = (b1 as u64) | (b2 as u64);
+            i += 1;
+        }
+        if borrow == 1 {
+            wide
+        } else {
+            d
+        }
+    }
+}
+
 pub struct MontBackend<T: MontConfig<N>, const N: usize>(PhantomData<T>);
 
 impl<T: MontConfig<N>, const N: usize> FpConfig<N> for MontBackend<T, N> {
@@ -692,6 +863,19 @@ impl<T: MontConfig<N>, const N: usize> FpConfig<N> for MontBackend<T, N> {
     /// zero bit in the rest of the modulus.
     #[inline(always)]
     fn mul_assign(a: &mut Fp<Self, N>, b: &Fp<Self, N>) {
+        // wasm: bb-style per-call 29-bit-limb Montgomery in the unchanged 2^256 domain — the
+        // derive-generated T::mul_assign compiles to carry-heavy 32-bit pieces on wasm.
+        #[cfg(target_family = "wasm")]
+        if N == 4 && T::MODULUS_HAS_SPARE_BIT {
+            let av: [u64; 4] = a.0 .0[..4].try_into().unwrap();
+            let bv: [u64; 4] = b.0 .0[..4].try_into().unwrap();
+            let m: [u64; 4] = const { first4::<T, N>() };
+            let p29: [u64; 9] = const { wasm_mont::to29(&first4::<T, N>()) };
+            let inv: u64 = const { wasm_mont::inv29(wasm_mont::to29(&first4::<T, N>())[0]) };
+            let r = wasm_mont::mont_mul_256(&av, &bv, &m, &p29, inv);
+            a.0 .0[..4].copy_from_slice(&r);
+            return;
+        }
         T::mul_assign(a, b)
     }
 
@@ -701,6 +885,16 @@ impl<T: MontConfig<N>, const N: usize> FpConfig<N> for MontBackend<T, N> {
 
     #[inline(always)]
     fn square_in_place(a: &mut Fp<Self, N>) {
+        #[cfg(target_family = "wasm")]
+        if N == 4 && T::MODULUS_HAS_SPARE_BIT {
+            let av: [u64; 4] = a.0 .0[..4].try_into().unwrap();
+            let m: [u64; 4] = const { first4::<T, N>() };
+            let p29: [u64; 9] = const { wasm_mont::to29(&first4::<T, N>()) };
+            let inv: u64 = const { wasm_mont::inv29(wasm_mont::to29(&first4::<T, N>())[0]) };
+            let r = wasm_mont::mont_mul_256(&av, &av, &m, &p29, inv);
+            a.0 .0[..4].copy_from_slice(&r);
+            return;
+        }
         T::square_in_place(a)
     }
 

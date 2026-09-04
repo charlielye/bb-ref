@@ -15,6 +15,24 @@ fn main() {
     let b = Fr::rand(&mut rng);
 
     {
+        // Cross-validate ark's (possibly wasm-specialized) mul against the independent m29 core.
+        use ark_ff::{BigInteger, PrimeField};
+        use bb_ref::base::mont29 as m29;
+        let mut rng2 = ark_std::test_rng();
+        for _ in 0..20_000 {
+            let x = Fr::rand(&mut rng2);
+            let y = Fr::rand(&mut rng2);
+            let conv = |v: Fr| {
+                let l: [u64; 4] = v.into_bigint().as_ref().try_into().unwrap();
+                m29::reduce(&m29::mont_mul(&m29::from_u64x4(&l), &m29::FR_R2, &m29::FR_P, m29::FR_INV), &m29::FR_P)
+            };
+            let want = m29::reduce(&m29::mont_mul(&conv(x), &conv(y), &m29::FR_P, m29::FR_INV), &m29::FR_P);
+            assert_eq!(conv(x * y), want, "ark mul cross-check failed");
+            assert_eq!(conv(x.square()), m29::reduce(&m29::mont_mul(&conv(x), &conv(x), &m29::FR_P, m29::FR_INV), &m29::FR_P));
+        }
+        println!("ark-vs-m29 cross-check OK");
+    }
+    {
         use bb_ref::base::mont29::{add as m29_add, mont_mul, mont_mul_u, FR_INV, FR_P, FR_R2};
         let mut ma = mont_mul(&[1, 0, 0, 0, 0, 0, 0, 0, 0], &FR_R2, &FR_P, FR_INV);
         let mb = mont_mul(&[7, 0, 0, 0, 0, 0, 0, 0, 0], &FR_R2, &FR_P, FR_INV);
