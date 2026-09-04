@@ -110,9 +110,34 @@ where
     // endomorphism half, bit 31 the Booth digit sign.
     const PHI: u32 = 1 << 30;
     let subs: Vec<([u64; 2], [u64; 2])> = scalars[..n].par_iter().map(crate::base::endo::glv_split).collect();
-    let c = window_bits(2 * n);
+    // bb Phase 1 scalar profile: the window count tracks the largest *actual* working scalar
+    // (not the 128-bit GLV bound) and the window size is chosen for the *nonzero* working
+    // scalar count. Commit polynomials are full of short scalars (selectors, small witness
+    // values), for which this cuts the rounds — and every per-round pass — several-fold.
+    let bit_len = |l: &[u64; 2]| -> usize {
+        if l[1] != 0 {
+            128 - l[1].leading_zeros() as usize
+        } else if l[0] != 0 {
+            64 - l[0].leading_zeros() as usize
+        } else {
+            0
+        }
+    };
+    let (effective_bits, n_active) = subs
+        .par_iter()
+        .map(|(k1, k2)| {
+            let (b1, b2) = (bit_len(k1), bit_len(k2));
+            (b1.max(b2), (b1 != 0) as usize + (b2 != 0) as usize)
+        })
+        .reduce(|| (0usize, 0usize), |a, b| (a.0.max(b.0), a.1 + b.1));
+    if n_active == 0 {
+        return Projective::<P>::zero();
+    }
+    let c = choose_window_bits(n_active, effective_bits);
     let half = 1usize << (c - 1);
-    let num_windows = 129usize.div_ceil(c);
+    // Carry-Booth recoding over uniform c-bit windows needs `windows * c >= bits + 1` so the
+    // final carry out is zero (bb's Constantine recoder budgets bits + 2 for the same reason).
+    let num_windows = (effective_bits + 1).div_ceil(c);
 
     // bb's stage layout: every O(n) pass is parallel across scalar-range tasks, windows together.
     // Digits are decoded twice (count pass, scatter pass) instead of materialized — cheaper than
@@ -236,15 +261,23 @@ where
     mark("3 scatter");
     if std::env::var_os("BBREF_MSM_STATS").is_some() {
         let entries: usize = schedules.iter().map(|s| s.len()).sum();
-        eprintln!("[msm-stats] n={n} c={c} windows={num_windows} entries={entries}");
+        eprintln!("[msm-stats] n={n} active={n_active} bits={effective_bits} c={c} windows={num_windows} entries={entries}");
     }
     // Stage 4: tree-reduce, parallel over (window, schedule chunk): a chunk of a bucket-sorted
     // schedule is itself bucket-sorted, so chunks reduce independently; the survivors concatenate
     // in order and a few more levels merge the buckets that straddled chunk boundaries.
     // A chunk must span several points per bucket or the local trees find no pairs and all the
     // reduction work lands on the sequential per-window merge.
-    let chunk_len = (8 * half)
-        .max(n / (2 * rayon::current_num_threads()).max(1))
+    // bb Stage 5: each window is cut into `num_threads` chunks by schedule index (a bucket run
+    // that straddles a cut yields two partials that the survivor merge absorbs), so every window
+    // fans out to the whole pool regardless of window size. A bucket-count-based chunk size
+    // starved the pool once wide windows (large c, few windows) made chunks 2^16 entries.
+    let chunk_len = schedules
+        .iter()
+        .map(|sch| sch.len())
+        .max()
+        .unwrap_or(0)
+        .div_ceil(rayon::current_num_threads().max(1))
         .max(MIN_CHUNK);
     let jobs: Vec<(usize, usize)> = (0..num_windows)
         .flat_map(|w| (0..(schedules[w].len().div_ceil(chunk_len)).max(1)).map(move |k| (w, k)))
@@ -384,11 +417,16 @@ where
     acc
 }
 
-/// bb `choose_window_bits` over the GLV-doubled 129-bit problem: minimize
-/// rounds * (4n + 12 * buckets), n already doubled by the caller.
-fn window_bits(n: usize) -> usize {
-    (4..=16)
-        .min_by_key(|&c| 129usize.div_ceil(c) * (4 * n + 12 * (1usize << (c - 1))))
+/// bb `choose_window_bits`: minimize `rounds * (4 * n_active + 12 * buckets)` with
+/// `rounds = ceil((num_bits + 2) / c)` and `buckets = 2^(c-1) + 1` (signed digits halve the
+/// bucket count), c in [2, 20). The 12/4 weight prices a bucket at ~3 point visits.
+fn choose_window_bits(n_active: usize, num_bits: usize) -> usize {
+    (2..20)
+        .min_by_key(|&c| {
+            let rounds = (num_bits + 2).div_ceil(c) as u64;
+            let buckets = (1u64 << (c - 1)) + 1;
+            rounds * (4 * n_active as u64 + 12 * buckets)
+        })
         .unwrap()
 }
 

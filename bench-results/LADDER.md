@@ -180,3 +180,20 @@ DIRECTION CHANGE (user): stop tuning our MSM; REPLICATE bb's scalar_multiplicati
  3. Dedup of duplicate scalars (pippenger_dedup.hpp, 586 lines).
  4. Per-worker arena with a fixed layout (pippenger_arena_layout.hpp) vs Vec growth.
  5. Seam-overflow merge across thread chunks (merge_overflow) vs our run-structure bookkeeping.
+
+Update 10 — bb MSM replication, stages ported so far (commit below):
+ Phase 1 (scalar profile): per working GLV scalar bit length -> effective_num_bits = max actual
+   bit length; n_active = nonzero working scalars; choose_window_bits(n_active, bits) with bb's
+   exact model (rounds=ceil((bits+2)/c), buckets=2^(c-1)+1, cost=rounds*(4n+12*buckets), c in
+   [2,20)); windows = ceil((bits+1)/c) (carry-Booth needs one spare bit; bb budgets +2).
+ Stage 5 (chunk partition): each window cut into num_threads chunks by schedule index (seams
+   absorbed by the survivor merge) — replaces the 8*half bucket-based chunk size, which starved
+   the pool once Phase 1 chose wide windows (64-bit 2^17: +31% -> -3%).
+ msmbench 8t base -> now:  32-bit 2^14 7.3->5.0, 2^17 26.3->20.1;  64-bit 2^14 7.8->5.8, 2^17
+   36.0->34.9;  128-bit 2^14 14.9->13.0, 2^17 =;  254-bit 2^14 21.3->20.5, 2^17 115.8->112.3,
+   2^18 234->215 (1.10x vs bb 195), 2^19 445->449 (1.23x vs 365). Flow neutral (its commits
+   carry ~10 full-width masking scalars each, so effective bits stay 128 — same for bb, whose
+   schedule is uniform). Byte-exact; suites green.
+ Remaining bb stages not yet replicated: 6b recursive_affine_bucket_reduce_strided (ours =
+   scalar running sums, ~14% of MSM @2^16 8t), BATCH_CAPACITY 256 (ours 4095), Constantine
+   SIMD x4 digit recoder (ours scalar carry-Booth), dedup Phase A, arena.
