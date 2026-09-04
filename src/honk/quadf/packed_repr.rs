@@ -143,6 +143,12 @@ impl<F: QuadConsts> QuadF<F> {
         let s = self.to_stored();
         unstored::<F>(s[0]) + unstored::<F>(s[1]) + unstored::<F>(s[2]) + unstored::<F>(s[3])
     }
+    /// The four lane values, canonical.
+    #[inline]
+    pub fn to_lanes(&self) -> [F; 4] {
+        let s = self.to_stored();
+        [unstored(s[0]), unstored(s[1]), unstored(s[2]), unstored(s[3])]
+    }
 }
 
 impl<F: QuadConsts> PartialEq for QuadF<F> {

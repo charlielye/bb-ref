@@ -926,44 +926,95 @@ pub mod quad256 {
         pub limbs: [v128; 9],
     }
 
+    /// 4x4 i32 lane transpose in 8 shuffles (bb `transpose_4x4_i32x4`).
+    #[inline(always)]
+    fn transpose4(r0: v128, r1: v128, r2: v128, r3: v128) -> (v128, v128, v128, v128) {
+        let t0 = i32x4_shuffle::<0, 4, 1, 5>(r0, r1);
+        let t1 = i32x4_shuffle::<2, 6, 3, 7>(r0, r1);
+        let t2 = i32x4_shuffle::<0, 4, 1, 5>(r2, r3);
+        let t3 = i32x4_shuffle::<2, 6, 3, 7>(r2, r3);
+        (
+            i32x4_shuffle::<0, 1, 4, 5>(t0, t2),
+            i32x4_shuffle::<2, 3, 6, 7>(t0, t2),
+            i32x4_shuffle::<0, 1, 4, 5>(t1, t3),
+            i32x4_shuffle::<2, 3, 6, 7>(t1, t3),
+        )
+    }
+
     impl QuadFp {
-        /// Pack four canonical 4x64 values (the stored ark form).
+        /// Pack four 4x64 values (the stored ark form, < 2^255) via bb VectorField's SIMD
+        /// transpose: 8 loads, two 4x4 transposes, then each 29-bit limb assembled from the
+        /// two straddling u32 chunks — no per-lane scalar radix conversion.
+        #[allow(unsafe_code)]
         pub fn pack(e: &[[u64; 4]; 4]) -> QuadFp {
-            let l: [[u64; 9]; 4] = [to29(&e[0]), to29(&e[1]), to29(&e[2]), to29(&e[3])];
-            QuadFp {
-                limbs: core::array::from_fn(|k| u32x4(l[0][k] as u32, l[1][k] as u32, l[2][k] as u32, l[3][k] as u32)),
+            let m = u32x4_splat(MASK29 as u32);
+            unsafe {
+                let p = e.as_ptr() as *const v128;
+                let (i0, i1, i2, i3) = transpose4(
+                    v128_load(p),
+                    v128_load(p.add(2)),
+                    v128_load(p.add(4)),
+                    v128_load(p.add(6)),
+                );
+                let (i4, i5, i6, i7) = transpose4(
+                    v128_load(p.add(1)),
+                    v128_load(p.add(3)),
+                    v128_load(p.add(5)),
+                    v128_load(p.add(7)),
+                );
+                QuadFp {
+                    limbs: [
+                        v128_and(i0, m),
+                        v128_and(v128_or(u32x4_shr(i0, 29), i32x4_shl(i1, 3)), m),
+                        v128_and(v128_or(u32x4_shr(i1, 26), i32x4_shl(i2, 6)), m),
+                        v128_and(v128_or(u32x4_shr(i2, 23), i32x4_shl(i3, 9)), m),
+                        v128_and(v128_or(u32x4_shr(i3, 20), i32x4_shl(i4, 12)), m),
+                        v128_and(v128_or(u32x4_shr(i4, 17), i32x4_shl(i5, 15)), m),
+                        v128_and(v128_or(u32x4_shr(i5, 14), i32x4_shl(i6, 18)), m),
+                        v128_and(v128_or(u32x4_shr(i6, 11), i32x4_shl(i7, 21)), m),
+                        u32x4_shr(i7, 8),
+                    ],
+                }
             }
         }
-        /// Unpack to canonical 4x64: reduce each lane from [0, 2p), repack bits.
+        /// Unpack to canonical 4x64: one packed conditional `- p` (borrow chain + blend)
+        /// canonicalizes all four coarse lanes, then u32 chunks reassemble and transpose back.
+        #[allow(unsafe_code)]
         pub fn unpack(&self, modulus: &[u64; 4]) -> [[u64; 4]; 4] {
-            let p = to29(modulus);
+            let p29 = to29(modulus);
+            let mask = u32x4_splat(MASK29 as u32);
+            let mut d = [u32x4_splat(0); 9];
+            let mut v = i32x4_sub(self.limbs[0], u32x4_splat(p29[0] as u32));
+            let mut borrow = u32x4_shr(v, 31);
+            d[0] = v128_and(v, mask);
+            for k in 1..9 {
+                v = i32x4_sub(i32x4_sub(self.limbs[k], u32x4_splat(p29[k] as u32)), borrow);
+                borrow = u32x4_shr(v, 31);
+                d[k] = v128_and(v, mask);
+            }
+            let keep_a = i32x4_eq(borrow, u32x4_splat(1));
+            let l: [v128; 9] = core::array::from_fn(|k| v128_bitselect(self.limbs[k], d[k], keep_a));
+            let o0 = v128_or(l[0], i32x4_shl(l[1], 29));
+            let o1 = v128_or(u32x4_shr(l[1], 3), i32x4_shl(l[2], 26));
+            let o2 = v128_or(u32x4_shr(l[2], 6), i32x4_shl(l[3], 23));
+            let o3 = v128_or(u32x4_shr(l[3], 9), i32x4_shl(l[4], 20));
+            let o4 = v128_or(u32x4_shr(l[4], 12), i32x4_shl(l[5], 17));
+            let o5 = v128_or(u32x4_shr(l[5], 15), i32x4_shl(l[6], 14));
+            let o6 = v128_or(u32x4_shr(l[6], 18), i32x4_shl(l[7], 11));
+            let o7 = v128_or(u32x4_shr(l[7], 21), i32x4_shl(l[8], 8));
+            let (f1l, f2l, f3l, f4l) = transpose4(o0, o1, o2, o3);
+            let (f1h, f2h, f3h, f4h) = transpose4(o4, o5, o6, o7);
             let mut out = [[0u64; 4]; 4];
-            for lane in 0..4 {
-                let mut a = [0u64; 9];
-                for k in 0..9 {
-                    a[k] = match lane {
-                        0 => u32x4_extract_lane::<0>(self.limbs[k]) as u64,
-                        1 => u32x4_extract_lane::<1>(self.limbs[k]) as u64,
-                        2 => u32x4_extract_lane::<2>(self.limbs[k]) as u64,
-                        _ => u32x4_extract_lane::<3>(self.limbs[k]) as u64,
-                    };
-                }
-                let mut borrow = 0i64;
-                let mut d = [0u64; 9];
-                for i in 0..9 {
-                    let v = a[i] as i64 - p[i] as i64 - borrow;
-                    d[i] = (v & MASK29 as i64) as u64;
-                    borrow = (v >> 63) & 1;
-                }
-                let r = if borrow == 1 { a } else { d };
-                for (i, &l) in r.iter().enumerate() {
-                    let bit = 29 * i;
-                    let (limb, sh) = (bit / 64, bit % 64);
-                    out[lane][limb] |= l << sh;
-                    if sh > 35 && limb + 1 < 4 {
-                        out[lane][limb + 1] |= l >> (64 - sh);
-                    }
-                }
+            unsafe {
+                let p = out.as_mut_ptr() as *mut v128;
+                v128_store(p, f1l);
+                v128_store(p.add(1), f1h);
+                v128_store(p.add(2), f2l);
+                v128_store(p.add(3), f2h);
+                v128_store(p.add(4), f3l);
+                v128_store(p.add(5), f3h);
+                v128_store(p.add(6), f4l);
+                v128_store(p.add(7), f4h);
             }
             out
         }

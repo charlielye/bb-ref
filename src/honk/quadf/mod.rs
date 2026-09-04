@@ -20,26 +20,31 @@ use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 #[cfg(not(all(target_family = "wasm", target_feature = "simd128")))]
 mod native_repr {
-use super::*;
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct QuadF<F>(pub [F; 4]);
+    use super::*;
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub struct QuadF<F>(pub [F; 4]);
 
-impl<F: NativeField> QuadF<F> {
-    #[inline(always)]
-    pub fn splat(v: F) -> Self {
-        QuadF([v; 4])
+    impl<F: NativeField> QuadF<F> {
+        #[inline(always)]
+        pub fn splat(v: F) -> Self {
+            QuadF([v; 4])
+        }
+        #[inline(always)]
+        pub fn lanes(a: F, b: F, c: F, d: F) -> Self {
+            QuadF([a, b, c, d])
+        }
+        #[inline(always)]
+        pub fn hsum(&self) -> F {
+            self.0[0] + self.0[1] + self.0[2] + self.0[3]
+        }
+        /// The four lane values.
+        #[inline(always)]
+        pub fn to_lanes(&self) -> [F; 4] {
+            self.0
+        }
     }
-    #[inline(always)]
-    pub fn lanes(a: F, b: F, c: F, d: F) -> Self {
-        QuadF([a, b, c, d])
-    }
-    #[inline(always)]
-    pub fn hsum(&self) -> F {
-        self.0[0] + self.0[1] + self.0[2] + self.0[3]
-    }
-}
 
-macro_rules! lanewise {
+    macro_rules! lanewise {
     ($trait:ident, $fn:ident, $op:tt) => {
         impl<F: NativeField> $trait<&QuadF<F>> for QuadF<F> {
             type Output = QuadF<F>;
@@ -62,19 +67,19 @@ macro_rules! lanewise {
         }
     };
 }
-lanewise!(Add, add, +);
-lanewise!(Sub, sub, -);
-lanewise!(Mul, mul, *);
+    lanewise!(Add, add, +);
+    lanewise!(Sub, sub, -);
+    lanewise!(Mul, mul, *);
 
-impl<F: NativeField> Neg for QuadF<F> {
-    type Output = QuadF<F>;
-    #[inline(always)]
-    fn neg(self) -> QuadF<F> {
-        QuadF([-self.0[0], -self.0[1], -self.0[2], -self.0[3]])
+    impl<F: NativeField> Neg for QuadF<F> {
+        type Output = QuadF<F>;
+        #[inline(always)]
+        fn neg(self) -> QuadF<F> {
+            QuadF([-self.0[0], -self.0[1], -self.0[2], -self.0[3]])
+        }
     }
-}
 
-macro_rules! lanewise_assign {
+    macro_rules! lanewise_assign {
     ($trait:ident, $fn:ident, $op:tt) => {
         impl<F: NativeField> $trait<&QuadF<F>> for QuadF<F> {
             #[inline(always)]
@@ -93,35 +98,34 @@ macro_rules! lanewise_assign {
         }
     };
 }
-lanewise_assign!(AddAssign, add_assign, +=);
-lanewise_assign!(SubAssign, sub_assign, -=);
-lanewise_assign!(MulAssign, mul_assign, *=);
+    lanewise_assign!(AddAssign, add_assign, +=);
+    lanewise_assign!(SubAssign, sub_assign, -=);
+    lanewise_assign!(MulAssign, mul_assign, *=);
 
-impl<F: NativeField> FieldLike for QuadF<F> {
-    type Native = F;
-    type Ctx = ();
+    impl<F: NativeField> FieldLike for QuadF<F> {
+        type Native = F;
+        type Ctx = ();
 
-    fn ctx(&self) -> Option<()> {
-        None
+        fn ctx(&self) -> Option<()> {
+            None
+        }
+        fn constant(v: F) -> Self {
+            QuadF::splat(v)
+        }
+        fn from_witness(_ctx: &(), _v: F) -> Self {
+            unreachable!("quad lanes are a native prover representation")
+        }
+        fn value(&self) -> F {
+            debug_assert!(self.0[1] == self.0[0] && self.0[2] == self.0[0] && self.0[3] == self.0[0]);
+            self.0[0]
+        }
+        fn invert(&self) -> Self {
+            QuadF(core::array::from_fn(|i| {
+                ark_ff::Field::inverse(&self.0[i]).unwrap_or(F::ZERO)
+            }))
+        }
+        fn assert_equal(&self, _other: &Self) {}
     }
-    fn constant(v: F) -> Self {
-        QuadF::splat(v)
-    }
-    fn from_witness(_ctx: &(), _v: F) -> Self {
-        unreachable!("quad lanes are a native prover representation")
-    }
-    fn value(&self) -> F {
-        debug_assert!(self.0[1] == self.0[0] && self.0[2] == self.0[0] && self.0[3] == self.0[0]);
-        self.0[0]
-    }
-    fn invert(&self) -> Self {
-        QuadF(core::array::from_fn(|i| {
-            ark_ff::Field::inverse(&self.0[i]).unwrap_or(F::ZERO)
-        }))
-    }
-    fn assert_equal(&self, _other: &Self) {}
-}
-
 }
 #[cfg(not(all(target_family = "wasm", target_feature = "simd128")))]
 pub use native_repr::QuadF;

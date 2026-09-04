@@ -61,7 +61,10 @@ fn min_pts_per_thread() -> usize {
     *V
 }
 
-pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -> Projective<P> {
+pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -> Projective<P>
+where
+    P::BaseField: crate::honk::quadf::QuadConsts,
+{
     let n = points.len().min(scalars.len());
     // Mostly-zero inputs (masking polys, sorted range columns, sparse selectors) compact to their
     // support first, so the cost is per-nonzero, not per-length, and the window size fits the real
@@ -233,11 +236,10 @@ pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -
                     Vec::with_capacity(g),
                     Vec::with_capacity(g),
                     Vec::with_capacity(g),
-                    Vec::with_capacity(g / 2 + 1),
-                    Vec::with_capacity(g / 2 + 1),
+                    TreeScratch::<P>::with_capacity(g),
                 )
             },
-            |(block_p, run_id, run_len, dens, prod), &(w, k)| {
+            |(block_p, run_id, run_len, scratch), &(w, k)| {
                 let sched = &schedules[w];
                 let job_start = (k * chunk_len).min(sched.len());
                 let job_end = ((k + 1) * chunk_len).min(sched.len());
@@ -279,14 +281,14 @@ pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -
                         run_id.push(cur);
                         run_len.push(cnt);
                     }
-                    tree_reduce(run_id, run_len, block_p, dens, prod);
+                    tree_reduce(run_id, run_len, block_p, scratch);
                     work_b.extend_from_slice(run_id);
                     work_p.extend_from_slice(block_p);
                 }
                 // Block-boundary buckets appear in two blocks' survivors; one more reduction over
                 // the (still bucket-sorted) concatenation settles them.
                 runs_from_ids(&work_b, run_id, run_len);
-                tree_reduce(run_id, run_len, &mut work_p, dens, prod);
+                tree_reduce(run_id, run_len, &mut work_p, scratch);
                 work_b.clear();
                 work_b.extend_from_slice(run_id);
                 (work_b, work_p)
@@ -313,9 +315,10 @@ pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -
             if work_b.is_empty() {
                 return Projective::<P>::zero();
             }
-            let (mut run_id, mut run_len, mut dens, mut prod) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+            let (mut run_id, mut run_len) = (Vec::new(), Vec::new());
+            let mut scratch = TreeScratch::<P>::with_capacity(work_b.len().min(4096));
             runs_from_ids(&work_b, &mut run_id, &mut run_len);
-            tree_reduce(&mut run_id, &mut run_len, &mut work_p, &mut dens, &mut prod);
+            tree_reduce(&mut run_id, &mut run_len, &mut work_p, &mut scratch);
             bucket_reduce::<P>(&run_id, &work_p, half)
         })
         .collect();
@@ -356,14 +359,60 @@ pub(crate) fn extract_bits(limbs: &[u64], start: usize, len: usize) -> u64 {
     v & ((1u64 << len) - 1)
 }
 
+/// Per-job scratch for `tree_reduce`, reused across jobs and levels. The scalar vectors serve
+/// the native tree and the packed tree's scalar tail; the packed staging exists on wasm+simd128
+/// builds only.
+pub(crate) struct TreeScratch<P: SWCurveConfig> {
+    dens: Vec<P::BaseField>,
+    prod: Vec<P::BaseField>,
+    #[cfg(all(target_family = "wasm", target_feature = "simd128"))]
+    packed: packed_tree::PackedScratch<P>,
+}
+
+impl<P: SWCurveConfig> TreeScratch<P>
+where
+    P::BaseField: crate::honk::quadf::QuadConsts,
+{
+    fn with_capacity(cap: usize) -> Self {
+        TreeScratch {
+            dens: Vec::with_capacity(cap),
+            prod: Vec::with_capacity(cap),
+            #[cfg(all(target_family = "wasm", target_feature = "simd128"))]
+            packed: packed_tree::PackedScratch::with_capacity(cap),
+        }
+    }
+}
+
 /// Reduce a bucket-sorted point array to at most one point per bucket: repeated levels of
-/// adjacent-pair batched-affine additions through one inversion per level. The same-bucket runs
-/// are described by the parallel `run_id`/`run_len` arrays and updated arithmetically, so the
-/// inner loops never touch per-element bucket ids — no id compares, no id compaction, no tag
-/// lists (a pair's chord/double/infinity case is re-derived from the coordinates in the apply
-/// pass). Sequential: the caller's schedule chunks are the parallel unit. On return every
+/// adjacent-pair batched-affine additions through one inversion per level. On wasm+simd128 the
+/// chord additions run four pairs per lane group through the packed 29-bit kernels; elsewhere
+/// (and for the packed path's stragglers) the scalar two-pass level runs. On return every
 /// surviving run has length 1, so `run_id`/`ps` are the (bucket, point) survivors.
 fn tree_reduce<P: SWCurveConfig>(
+    run_id: &mut Vec<u32>,
+    run_len: &mut Vec<u32>,
+    ps: &mut Vec<Affine<P>>,
+    s: &mut TreeScratch<P>,
+) where
+    P::BaseField: crate::honk::quadf::QuadConsts,
+{
+    #[cfg(all(target_family = "wasm", target_feature = "simd128"))]
+    {
+        packed_tree::tree_reduce(run_id, run_len, ps, s);
+    }
+    #[cfg(not(all(target_family = "wasm", target_feature = "simd128")))]
+    {
+        tree_reduce_scalar(run_id, run_len, ps, &mut s.dens, &mut s.prod);
+    }
+}
+
+/// The scalar tree level loop (see `tree_reduce`): the same-bucket runs are described by the
+/// parallel `run_id`/`run_len` arrays and updated arithmetically, so the inner loops never touch
+/// per-element bucket ids — no id compares, no id compaction, no tag lists (a pair's
+/// chord/double/infinity case is re-derived from the coordinates in the apply pass). Sequential:
+/// the caller's schedule chunks are the parallel unit.
+#[cfg_attr(all(target_family = "wasm", target_feature = "simd128"), allow(dead_code))]
+fn tree_reduce_scalar<P: SWCurveConfig>(
     run_id: &mut Vec<u32>,
     run_len: &mut Vec<u32>,
     ps: &mut Vec<Affine<P>>,
@@ -437,6 +486,246 @@ fn tree_reduce<P: SWCurveConfig>(
         run_id.truncate(out_run);
         run_len.truncate(out_run);
         ps.truncate(out);
+    }
+}
+
+/// The wasm+simd128 tree level: pair classification and run bookkeeping stay scalar (bb keeps
+/// its schedule AoS for the same reason — packed layouts can't index conditional pairing
+/// cheaply), while the chord additions drain through the packed 29-bit SIMD kernels, four
+/// pairs per lane group with one batched inversion per level per lane. Doublings (duplicate
+/// points inside one bucket) and the <4-pair tail take the scalar path; inverse pairs
+/// annihilate. This is bb's Stage-6a `tree_reduce_in_place` + `drain_batch` shape.
+#[cfg(all(target_family = "wasm", target_feature = "simd128"))]
+mod packed_tree {
+    use super::*;
+    use crate::honk::quadf::QuadConsts;
+    use ark_ff::fields::models::fp::montgomery_backend::quad261::{self, QuadFp};
+
+    pub(crate) struct PackedScratch<P: SWCurveConfig> {
+        // Chord staging, coordinate-separated so groups of four pack straight from memory.
+        ax: Vec<P::BaseField>,
+        ay: Vec<P::BaseField>,
+        bx: Vec<P::BaseField>,
+        by: Vec<P::BaseField>,
+        dest: Vec<u32>,
+        dbl_dest: Vec<u32>,
+        // Packed operands and batched-inversion chain, one entry per lane group.
+        qax: Vec<QuadFp>,
+        qbx: Vec<QuadFp>,
+        qden: Vec<QuadFp>,
+        qprod: Vec<QuadFp>,
+    }
+
+    impl<P: SWCurveConfig> PackedScratch<P>
+    where
+        P::BaseField: QuadConsts,
+    {
+        pub(crate) fn with_capacity(cap: usize) -> Self {
+            let half = cap / 2 + 1;
+            PackedScratch {
+                ax: Vec::with_capacity(half),
+                ay: Vec::with_capacity(half),
+                bx: Vec::with_capacity(half),
+                by: Vec::with_capacity(half),
+                dest: Vec::with_capacity(half),
+                dbl_dest: Vec::new(),
+                qax: Vec::with_capacity(half / 4 + 1),
+                qbx: Vec::with_capacity(half / 4 + 1),
+                qden: Vec::with_capacity(half / 4 + 1),
+                qprod: Vec::with_capacity(half / 4 + 1),
+            }
+        }
+    }
+
+    pub(crate) fn tree_reduce<P: SWCurveConfig>(
+        run_id: &mut Vec<u32>,
+        run_len: &mut Vec<u32>,
+        ps: &mut Vec<Affine<P>>,
+        s: &mut TreeScratch<P>,
+    ) where
+        P::BaseField: QuadConsts,
+    {
+        loop {
+            let p = &mut s.packed;
+            p.ax.clear();
+            p.ay.clear();
+            p.bx.clear();
+            p.by.clear();
+            p.dest.clear();
+            p.dbl_dest.clear();
+            let mut any = false;
+            // Classify and compact in one pass. The write cursor never passes the read cursor
+            // (each read pair yields at most one output slot), so chord results scattered after
+            // the walk land on slots already read this level.
+            let (mut out, mut i, mut out_run) = (0usize, 0usize, 0usize);
+            for r in 0..run_len.len() {
+                let k = run_len[r] as usize;
+                let mut new_k = 0u32;
+                for j in 0..k / 2 {
+                    let at = i + 2 * j;
+                    let (a, b) = (ps[at], ps[at + 1]);
+                    if a.x == b.x {
+                        if a.y != b.y {
+                            continue; // inverse pair, sums to infinity — dropped
+                        }
+                        ps[out] = a;
+                        p.dbl_dest.push(out as u32);
+                    } else {
+                        p.ax.push(a.x);
+                        p.ay.push(a.y);
+                        p.bx.push(b.x);
+                        p.by.push(b.y);
+                        p.dest.push(out as u32);
+                    }
+                    out += 1;
+                    new_k += 1;
+                }
+                if k % 2 == 1 {
+                    ps[out] = ps[i + k - 1];
+                    out += 1;
+                    new_k += 1;
+                }
+                any |= k >= 2;
+                i += k;
+                if new_k > 0 {
+                    run_id[out_run] = run_id[r];
+                    run_len[out_run] = new_k;
+                    out_run += 1;
+                }
+            }
+            if !any {
+                return;
+            }
+            drain::<P>(s, ps);
+            run_id.truncate(out_run);
+            run_len.truncate(out_run);
+            ps.truncate(out);
+        }
+    }
+
+    /// Apply the level's queued additions: packed lane groups of four chords, then the scalar
+    /// tail (chord stragglers + doublings) through one shared scalar batched inversion.
+    fn drain<P: SWCurveConfig>(s: &mut TreeScratch<P>, ps: &mut [Affine<P>])
+    where
+        P::BaseField: QuadConsts,
+    {
+        let p = &mut s.packed;
+        let groups = p.ax.len() / 4;
+        if groups > 0 {
+            // Everything runs on plain 2^256-stored values (no domain-entry multiplies): each
+            // quad261 multiply drifts the power-of-two exponent by -5, tracked so it cancels.
+            // With m = groups, prod_i sits at exponent -5(i-1); seeding the backward unwind at
+            // +5(m-1)+10 makes every emitted inverse land at a constant +10 (d10 below), and
+            // the seed's exponent is folded into the one scalar inversion (x 2^10).
+            let kc = <P::BaseField as QuadConsts>::kc();
+            #[inline(always)]
+            fn pack4<F>(v: &[F], g: usize) -> QuadFp {
+                // Fp<_, 4> is repr-equivalent to its 4x64 stored limbs.
+                QuadFp::pack(unsafe { &*(v.as_ptr().add(4 * g) as *const [[u64; 4]; 4]) })
+            }
+            p.qax.clear();
+            p.qbx.clear();
+            p.qden.clear();
+            p.qprod.clear();
+            for g in 0..groups {
+                let (qax, qbx) = (pack4(&p.ax, g), pack4(&p.bx, g));
+                let den = quad261::sub(&qbx, &qax, &kc.c);
+                let acc = match p.qprod.last() {
+                    Some(prev) => quad261::mont_mul(prev, &den, &kc.c),
+                    None => den,
+                };
+                p.qprod.push(acc);
+                p.qden.push(den);
+                p.qax.push(qax);
+                p.qbx.push(qbx);
+            }
+            // One scalar batched inversion for the level: the four lanes of the total product,
+            // inverted together, each scaled by 2^10 to seed the constant-exponent unwind.
+            let seed = {
+                let total = p.qprod[groups - 1].unpack(&kc.modulus);
+                let mut lanes: [P::BaseField; 4] =
+                    core::array::from_fn(|l| unsafe { core::mem::transmute_copy(&total[l]) });
+                let mut acc = lanes[0];
+                let mut pref = [acc; 4];
+                for l in 1..4 {
+                    acc *= lanes[l];
+                    pref[l] = acc;
+                }
+                let mut inv = acc.inverse().expect("zero denominator in packed tree inversion")
+                    * P::BaseField::from(1024u64);
+                for l in (1..4).rev() {
+                    let prev = lanes[l];
+                    lanes[l] = inv * pref[l - 1];
+                    inv *= prev;
+                }
+                lanes[0] = inv;
+                let stored: [[u64; 4]; 4] = core::array::from_fn(|l| unsafe { core::mem::transmute_copy(&lanes[l]) });
+                QuadFp::pack(&stored)
+            };
+            let mut inv = seed;
+            for g in (1..groups).rev() {
+                let d = quad261::mont_mul(&inv, &p.qprod[g - 1], &kc.c);
+                inv = quad261::mont_mul(&inv, &p.qden[g], &kc.c);
+                p.qden[g] = d;
+            }
+            p.qden[0] = inv;
+            for g in 0..groups {
+                let (qay, qby) = (pack4(&p.ay, g), pack4(&p.by, g));
+                let (qax, qbx) = (p.qax[g], p.qbx[g]);
+                let dy = quad261::sub(&qby, &qay, &kc.c);
+                // d10 -> d5 (x 2^-5 via the plain 2^256 constant), lambda at exponent 0, its
+                // 2^5 twin via the plain 2^266 constant; each product then lands at exponent 0.
+                let d5 = quad261::mont_mul(&p.qden[g], &kc.c256, &kc.c);
+                let l0 = quad261::mont_mul(&dy, &d5, &kc.c);
+                let l5 = quad261::mont_mul(&l0, &kc.c266, &kc.c);
+                let x3 = quad261::sub(
+                    &quad261::sub(&quad261::mont_mul(&l0, &l5, &kc.c), &qax, &kc.c),
+                    &qbx,
+                    &kc.c,
+                );
+                let y3 = quad261::sub(
+                    &quad261::mont_mul(&l5, &quad261::sub(&qax, &x3, &kc.c), &kc.c),
+                    &qay,
+                    &kc.c,
+                );
+                let (xs, ys) = (x3.unpack(&kc.modulus), y3.unpack(&kc.modulus));
+                for l in 0..4 {
+                    let d = p.dest[4 * g + l] as usize;
+                    let (x, y): (P::BaseField, P::BaseField) =
+                        unsafe { (core::mem::transmute_copy(&xs[l]), core::mem::transmute_copy(&ys[l])) };
+                    ps[d] = Affine::<P>::new_unchecked(x, y);
+                }
+            }
+        }
+        // Scalar tail: leftover chords and all doublings, one shared batched inversion.
+        s.dens.clear();
+        for t in groups * 4..p.ax.len() {
+            s.dens.push(p.bx[t] - p.ax[t]);
+        }
+        for &d in &p.dbl_dest {
+            s.dens.push(ps[d as usize].y.double());
+        }
+        if s.dens.is_empty() {
+            return;
+        }
+        batch_invert_nonzero(&mut s.dens, &mut s.prod);
+        let mut inv = s.dens.iter();
+        for t in groups * 4..p.ax.len() {
+            let d = *inv.next().unwrap();
+            let lambda = (p.by[t] - p.ay[t]) * d;
+            let x3 = lambda.square() - p.ax[t] - p.bx[t];
+            let y3 = lambda * (p.ax[t] - x3) - p.ay[t];
+            ps[p.dest[t] as usize] = Affine::<P>::new_unchecked(x3, y3);
+        }
+        for &dst in &p.dbl_dest {
+            let d = *inv.next().unwrap();
+            let (x, y) = (ps[dst as usize].x, ps[dst as usize].y);
+            let xx = x.square();
+            let lambda = (xx.double() + xx) * d;
+            let x3 = lambda.square() - x.double();
+            let y3 = lambda * (x - x3) - y;
+            ps[dst as usize] = Affine::<P>::new_unchecked(x3, y3);
+        }
     }
 }
 
@@ -633,7 +922,10 @@ mod tests {
     use ark_ec::VariableBaseMSM;
     use ark_ff::UniformRand;
 
-    fn check<P: SWCurveConfig>(n: usize, tweak: impl Fn(&mut Vec<Affine<P>>, &mut Vec<P::ScalarField>)) {
+    fn check<P: SWCurveConfig>(n: usize, tweak: impl Fn(&mut Vec<Affine<P>>, &mut Vec<P::ScalarField>))
+    where
+        P::BaseField: crate::honk::quadf::QuadConsts,
+    {
         let mut rng = ark_std::test_rng();
         let mut points =
             Projective::<P>::normalize_batch(&(0..n).map(|_| Projective::<P>::rand(&mut rng)).collect::<Vec<_>>());
@@ -685,7 +977,10 @@ pub trait BatchMsm: AffineRepr {
     fn batch_msm(points: &[Self], scalars: &[Self::ScalarField]) -> Self::Group;
 }
 
-impl<P: SWCurveConfig> BatchMsm for Affine<P> {
+impl<P: SWCurveConfig> BatchMsm for Affine<P>
+where
+    P::BaseField: crate::honk::quadf::QuadConsts,
+{
     fn batch_msm(points: &[Self], scalars: &[Self::ScalarField]) -> Projective<P> {
         msm(points, scalars)
     }
