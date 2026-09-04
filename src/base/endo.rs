@@ -3,8 +3,8 @@
 //! becomes a 2n-point 129-bit one — half the Pippenger windows, half the schedule entries.
 //! λ·(x, y) = (β·x, y) with λ, β the matched cube roots of unity in the scalar and base field.
 //!
-//! The g1/g2/b1/b2 lattice constants and both cube roots are bb's (bn254 Fr/Fq); the Montgomery
-//! limb layouts of bb and ark are byte-interchangeable, so the cube roots transmute directly.
+//! The g1/g2/b1/b2 lattice constants and both cube roots are bb's (bn254 Fr/Fq); the cube roots
+//! are stored canonically so they are valid under any stored Montgomery domain.
 
 use super::field::NativeField;
 use crate::base::{Fq, Fr};
@@ -31,13 +31,16 @@ impl EndoField for Fr {
     const ENDO_MINUS_B1: [u64; 4] = [0x8211bbeb7d4f1128, 0x6f4d8248eeb859fc, 0, 0];
     const ENDO_B2: [u64; 4] = [0x89d3256894d213e3, 0, 0, 0];
     fn cube_root() -> Self {
-        const L: [u64; 4] = [
-            0x93e7cede4a0329b3,
-            0x7d4fdca77a96c167,
-            0x8be4ba08b19a750a,
-            0x1cbd5653a5661c25,
-        ];
-        unsafe { core::mem::transmute_copy::<[u64; 4], Fr>(&L) }
+        static L: std::sync::LazyLock<Fr> = std::sync::LazyLock::new(|| {
+            Fr::from_bigint(BigInt([
+                0x8b17ea66b99c90dd,
+                0x5bfc41088d8daaa7,
+                0xb3c4d79d41a91758,
+                0x0,
+            ]))
+            .unwrap()
+        });
+        *L
     }
 }
 
@@ -47,13 +50,16 @@ impl EndoField for Fq {
     const ENDO_MINUS_B1: [u64; 4] = [0x8211bbeb7d4f1129, 0x6f4d8248eeb859fc, 0, 0];
     const ENDO_B2: [u64; 4] = [0x89d3256894d213e2, 0, 0, 0];
     fn cube_root() -> Self {
-        const L: [u64; 4] = [
-            0x71930c11d782e155,
-            0xa6bb947cffbe3323,
-            0xaa303344d4741444,
-            0x2c3b3f0d26594943,
-        ];
-        unsafe { core::mem::transmute_copy::<[u64; 4], Fq>(&L) }
+        static L: std::sync::LazyLock<Fq> = std::sync::LazyLock::new(|| {
+            Fq::from_bigint(BigInt([
+                0x5763473177fffffe,
+                0xd4f263f1acdb5c4f,
+                0x59e26bcea0d48bac,
+                0x0,
+            ]))
+            .unwrap()
+        });
+        *L
     }
 }
 

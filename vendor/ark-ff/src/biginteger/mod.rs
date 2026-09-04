@@ -326,6 +326,36 @@ impl<const N: usize> BigInt<N> {
         let two_pow_n_times_64_square = crate::const_helpers::R2Buffer([0u64; N], [0u64; N], 1);
         const_modulo!(two_pow_n_times_64_square, self)
     }
+
+    /// 2^261 mod `self` — the wasm Montgomery R for 4-limb spare-bit fields (bb's wasm domain).
+    #[doc(hidden)]
+    #[inline]
+    pub const fn montgomery_r_wasm261(&self) -> Self {
+        let two_pow_261 = crate::const_helpers::RBuffer([0u64; N], 32);
+        const_modulo!(two_pow_261, self)
+    }
+
+    /// 2^522 mod `self` — R'^2 for the wasm 2^261 domain.
+    #[doc(hidden)]
+    #[inline]
+    pub const fn montgomery_r2_wasm261(&self) -> Self {
+        let two_pow_522 = crate::const_helpers::R2Buffer([0u64; N], [0u64; N], 1024);
+        const_modulo!(two_pow_522, self)
+    }
+
+    /// `(self << 5) mod modulus` — the 2^256 -> 2^261 domain shift for const-context Montgomery
+    /// constants on wasm.
+    #[doc(hidden)]
+    pub const fn shl5_mod(&self, modulus: &Self) -> Self {
+        let mut lo = [0u64; N];
+        let mut carry = 0u64;
+        crate::const_for!((i in 0..N) {
+            lo[i] = (self.0[i] << 5) | carry;
+            carry = self.0[i] >> 59;
+        });
+        let buf = crate::const_helpers::RBuffer::<N>(lo, carry);
+        const_modulo!(buf, modulus)
+    }
 }
 
 impl<const N: usize> BigInteger for BigInt<N> {

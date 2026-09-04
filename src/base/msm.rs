@@ -66,6 +66,21 @@ where
     P::BaseField: crate::honk::quadf::QuadConsts + crate::base::endo::EndoField,
     P::ScalarField: crate::base::endo::EndoField,
 {
+    msm_with_phi(points, scalars, None)
+}
+
+/// `msm` with an optional precomputed endomorphism table `phi[i] = (beta * x_i, -y_i)` covering
+/// `points` (an SRS-backed caller amortizes it across many MSMs); without it the phi point is
+/// formed at gather, one base-field multiply per schedule entry.
+pub fn msm_with_phi<P: SWCurveConfig>(
+    points: &[Affine<P>],
+    scalars: &[P::ScalarField],
+    phi_table: Option<&[Affine<P>]>,
+) -> Projective<P>
+where
+    P::BaseField: crate::honk::quadf::QuadConsts + crate::base::endo::EndoField,
+    P::ScalarField: crate::base::endo::EndoField,
+{
     let n = points.len().min(scalars.len());
     // Mostly-zero inputs (masking polys, sorted range columns, sparse selectors) compact to their
     // support first, so the cost is per-nonzero, not per-length, and the window size fits the real
@@ -80,7 +95,7 @@ where
                 .filter(|&i| !scalars[i].is_zero() && !points[i].is_zero())
                 .map(|i| (points[i], scalars[i]))
                 .unzip();
-            return msm(&cp, &cs);
+            return msm_with_phi(&cp, &cs, None);
         }
     }
     if n < min_pts_per_thread() * rayon::current_num_threads() {
@@ -293,7 +308,10 @@ where
                         }
                         let mut pt = points[i];
                         if e & PHI != 0 {
-                            pt = Affine::<P>::new_unchecked(beta * pt.x, -pt.y);
+                            pt = match phi_table {
+                                Some(t) => t[i],
+                                None => Affine::<P>::new_unchecked(beta * pt.x, -pt.y),
+                            };
                         }
                         block_p.push(if e >> 31 == 1 { -pt } else { pt });
                     }
@@ -633,12 +651,9 @@ mod packed_tree {
         let p = &mut s.packed;
         let groups = p.ax.len() / 4;
         if groups > 0 {
-            // Everything runs on plain 2^256-stored values (no domain-entry multiplies): each
-            // quad261 multiply drifts the power-of-two exponent by -5, tracked so it cancels.
-            // With m = groups, prod_i sits at exponent -5(i-1); seeding the backward unwind at
-            // +5(m-1)+5 makes every emitted inverse land at a constant +5, so lambda comes out
-            // at exponent 0 in one multiply; the seed's exponent is folded into the one scalar
-            // inversion (x 2^5).
+            // The wasm stored form is the 2^261 Montgomery domain, which the quad261 multiply
+            // is closed over — the whole level is plain Montgomery arithmetic on packed stored
+            // bytes, one scalar batched inversion per level.
             let kc = <P::BaseField as QuadConsts>::kc();
             #[inline(always)]
             fn pack4<F>(v: &[F], g: usize) -> QuadFp {
@@ -673,8 +688,7 @@ mod packed_tree {
                     acc *= lanes[l];
                     pref[l] = acc;
                 }
-                let mut inv =
-                    acc.inverse().expect("zero denominator in packed tree inversion") * P::BaseField::from(32u64);
+                let mut inv = acc.inverse().expect("zero denominator in packed tree inversion");
                 for l in (1..4).rev() {
                     let prev = lanes[l];
                     lanes[l] = inv * pref[l - 1];
@@ -695,17 +709,14 @@ mod packed_tree {
                 let (qay, qby) = (pack4(&p.ay, g), pack4(&p.by, g));
                 let (qax, qbx) = (p.qax[g], p.qbx[g]);
                 let dy = quad261::sub(&qby, &qay, &kc.c);
-                // lambda at exponent 0 straight from the +5 inverse; its 2^5 twin via the plain
-                // 2^266 constant; each product then lands at exponent 0.
-                let l0 = quad261::mont_mul(&dy, &p.qden[g], &kc.c);
-                let l5 = quad261::mont_mul(&l0, &kc.c266, &kc.c);
+                let l = quad261::mont_mul(&dy, &p.qden[g], &kc.c);
                 let x3 = quad261::sub(
-                    &quad261::sub(&quad261::mont_mul(&l0, &l5, &kc.c), &qax, &kc.c),
+                    &quad261::sub(&quad261::mont_mul(&l, &l, &kc.c), &qax, &kc.c),
                     &qbx,
                     &kc.c,
                 );
                 let y3 = quad261::sub(
-                    &quad261::mont_mul(&l5, &quad261::sub(&qax, &x3, &kc.c), &kc.c),
+                    &quad261::mont_mul(&l, &quad261::sub(&qax, &x3, &kc.c), &kc.c),
                     &qay,
                     &kc.c,
                 );
@@ -997,6 +1008,10 @@ mod tests {
 /// The MSM entry point for code generic over `AffineRepr` (the commitment key).
 pub trait BatchMsm: AffineRepr {
     fn batch_msm(points: &[Self], scalars: &[Self::ScalarField]) -> Self::Group;
+    /// `batch_msm` with a precomputed endomorphism table covering `points`.
+    fn batch_msm_with_phi(points: &[Self], scalars: &[Self::ScalarField], phi: Option<&[Self]>) -> Self::Group;
+    /// The GLV companion table `phi[i] = (beta * x_i, -y_i)`.
+    fn phi_table(points: &[Self]) -> Vec<Self>;
 }
 
 impl<P: SWCurveConfig> BatchMsm for Affine<P>
@@ -1006,5 +1021,21 @@ where
 {
     fn batch_msm(points: &[Self], scalars: &[Self::ScalarField]) -> Projective<P> {
         msm(points, scalars)
+    }
+    fn batch_msm_with_phi(points: &[Self], scalars: &[Self::ScalarField], phi: Option<&[Self]>) -> Projective<P> {
+        msm_with_phi(points, scalars, phi)
+    }
+    fn phi_table(points: &[Self]) -> Vec<Self> {
+        let beta = <P::BaseField as crate::base::endo::EndoField>::cube_root();
+        points
+            .par_iter()
+            .map(|p| {
+                if p.is_zero() {
+                    *p
+                } else {
+                    Affine::<P>::new_unchecked(beta * p.x, -p.y)
+                }
+            })
+            .collect()
     }
 }

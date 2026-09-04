@@ -37,22 +37,9 @@ pub fn grumpkin_endo() -> &'static fold::Endo<ark_grumpkin::GrumpkinConfig> {
     use ark_ec::{AffineRepr, CurveGroup};
     static ENDO: std::sync::LazyLock<fold::Endo<ark_grumpkin::GrumpkinConfig>> = std::sync::LazyLock::new(|| {
         // λ in Grumpkin's scalar field (bn254 Fq), β in its base field (bn254 Fr).
-        let lambda = unsafe {
-            std::mem::transmute::<[u64; 4], Fq>([
-                0x71930c11d782e155,
-                0xa6bb947cffbe3323,
-                0xaa303344d4741444,
-                0x2c3b3f0d26594943,
-            ])
-        };
-        let beta = unsafe {
-            std::mem::transmute::<[u64; 4], Fr>([
-                0x93e7cede4a0329b3,
-                0x7d4fdca77a96c167,
-                0x8be4ba08b19a750a,
-                0x1cbd5653a5661c25,
-            ])
-        };
+        use crate::base::endo::EndoField;
+        let lambda = <Fq as EndoField>::cube_root();
+        let beta = <Fr as EndoField>::cube_root();
         use crate::base::field::FieldLike;
         assert!(lambda.sqr() * lambda == Fq::one() && lambda != Fq::one(), "bad λ");
         assert!(beta.sqr() * beta == Fr::one() && beta != Fr::one(), "bad β");

@@ -1,8 +1,8 @@
-//! wasm+simd128 representation of [`QuadF`]: four lanes packed in the 29-bit-limb layout,
-//! values kept in the 2^261 Montgomery domain, which is closed under the `quad261` kernel's
-//! multiply (X·Y/2^261 stays ·2^261). Boundary crossings shift domains with one kernel multiply
-//! by the plain integers 2^266 (in: ·2^256 → ·2^261 while packing stored ark values) and
-//! 2^256 (out: back to stored form). Lanes are coarse [0, 2p); unpack canonicalizes.
+//! wasm+simd128 representation of [`QuadF`]: four lanes packed in the 29-bit-limb layout.
+//! The wasm stored form is already the 2^261 Montgomery domain (see the vendored backend), which
+//! is closed under the `quad261` kernel's multiply, so pack/unpack are pure SIMD transposes with
+//! no domain shift. Lanes are canonical [0, p) on entry; kernel outputs are coarse [0, 2p) and
+//! unpack canonicalizes.
 
 use super::{FieldLike, NativeField};
 use ark_ff::fields::models::fp::montgomery_backend::quad261;
@@ -15,23 +15,18 @@ use std::sync::LazyLock;
 pub struct Kc {
     pub c: quad261::Consts,
     pub p29: [u64; 9],
-    /// 2^266 mod p and 2^256 mod p, packed as plain integers (the domain-shift multipliers).
-    pub c266: quad261::QuadFp,
-    pub c256: quad261::QuadFp,
     pub modulus: [u64; 4],
 }
 
 unsafe impl Send for Kc {}
 unsafe impl Sync for Kc {}
 
-fn make_kc(modulus: [u64; 4], rinv29: [u32; 9], c266: [u64; 4], c256: [u64; 4]) -> Kc {
+fn make_kc(modulus: [u64; 4], rinv29: [u32; 9]) -> Kc {
     let p29 = wasm_mont::to29(&modulus);
     let inv = wasm_mont::inv29(p29[0]);
     Kc {
         c: quad261::Consts::new(&rinv29, &p29, inv),
         p29,
-        c266: quad261::QuadFp::pack(&[c266; 4]),
-        c256: quad261::QuadFp::pack(&[c256; 4]),
         modulus,
     }
 }
@@ -51,18 +46,6 @@ impl QuadConsts for crate::base::Fr {
                     0x30644e72e131a029,
                 ],
                 wasm_mont::FR_RINV29,
-                [
-                    0x97aa889e8fffead7,
-                    0x4da1da684b110e2a,
-                    0xe56cdd25a60934c8,
-                    0x5800320dce9ed32,
-                ],
-                [
-                    0xac96341c4ffffffb,
-                    0x36fc76959f60cd29,
-                    0x666ea36f7879462e,
-                    0xe0a77c19a07df2f,
-                ],
             )
         });
         &K
@@ -80,18 +63,6 @@ impl QuadConsts for ark_bn254::Fq {
                     0x30644e72e131a029,
                 ],
                 wasm_mont::FQ_RINV29,
-                [
-                    0xb34bb09513349ca1,
-                    0x1e880124f028f972,
-                    0xe56cdd25a6092b95,
-                    0x5800320dce9ed32,
-                ],
-                [
-                    0xd35d438dc58f0d9d,
-                    0xa78eb28f5c70b3d,
-                    0x666ea36f7879462c,
-                    0xe0a77c19a07df2f,
-                ],
             )
         });
         &K
@@ -129,14 +100,11 @@ impl<F: QuadConsts> QuadF<F> {
     }
     #[inline]
     pub fn lanes(a: F, b: F, c: F, d: F) -> Self {
-        let kc = F::kc();
-        let raw = quad261::QuadFp::pack(&[stored(a), stored(b), stored(c), stored(d)]);
-        QuadF(quad261::mont_mul(&raw, &kc.c266, &kc.c), PhantomData)
+        QuadF(quad261::QuadFp::pack(&[stored(a), stored(b), stored(c), stored(d)]), PhantomData)
     }
     #[inline]
     fn to_stored(&self) -> [[u64; 4]; 4] {
-        let kc = F::kc();
-        quad261::mont_mul(&self.0, &kc.c256, &kc.c).unpack(&kc.modulus)
+        self.0.unpack(&F::kc().modulus)
     }
     #[inline]
     pub fn hsum(&self) -> F {

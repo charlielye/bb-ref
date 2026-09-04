@@ -32,12 +32,20 @@ pub fn load_bn254_g1(n: usize) -> Vec<G1Affine> {
             let mut buf = vec![0u8; n * 64];
             let mut f = f;
             f.read_exact(&mut buf).expect("short read on Montgomery SRS cache");
+            // The cache holds 2^256-domain Montgomery limbs (the shared cross-target format);
+            // on wasm's 2^261 stored domain each coordinate converts with one multiply by 32
+            // (bytes-as-element value is x/2^5 there).
+            #[cfg(target_family = "wasm")]
+            let fix = Fq::from(32u64);
             let limbs = |c: &[u8]| {
                 let mut l = [0u64; 4];
                 for (k, w) in c.chunks(8).enumerate() {
                     l[k] = u64::from_le_bytes(w.try_into().unwrap());
                 }
-                unsafe { std::mem::transmute::<[u64; 4], Fq>(l) }
+                let v = unsafe { std::mem::transmute::<[u64; 4], Fq>(l) };
+                #[cfg(target_family = "wasm")]
+                let v = v * fix;
+                v
             };
             let points: Vec<G1Affine> = buf
                 .par_chunks(64)
@@ -61,8 +69,13 @@ pub fn load_bn254_g1(n: usize) -> Vec<G1Affine> {
     // Only grow the cache: a smaller load must not truncate a bigger one.
     if std::fs::metadata(&mont_path).map_or(0, |m| m.len()) < (n * 64) as u64 {
         let mut out: Vec<u8> = Vec::with_capacity(n * 64);
+        // Written in the shared 2^256-domain format (see the reader above).
+        #[cfg(target_family = "wasm")]
+        let unfix = ark_ff::Field::inverse(&Fq::from(32u64)).unwrap();
         for p in &points {
             for f in [&p.x, &p.y] {
+                #[cfg(target_family = "wasm")]
+                let f = &(*f * unfix);
                 let l = unsafe { &*(f as *const Fq as *const [u64; 4]) };
                 for w in l {
                     out.extend_from_slice(&w.to_le_bytes());
@@ -148,6 +161,9 @@ impl<G> std::ops::Deref for PointsView<G> {
 /// Monomial commitment key `[tau^i]` over either curve (bb `CommitmentKey<Curve>`).
 pub struct Ck<G: AffineRepr> {
     pub points: PointsView<G>,
+    /// GLV companion points `(beta * x, -y)`, built once per key on wasm (where the per-entry
+    /// multiply at gather is the visible cost) and shared by every commit through this key.
+    phi: std::sync::OnceLock<Vec<G>>,
 }
 
 /// The SRS pools a long-lived server loads once at startup and hands to its handler (bb memoizes
@@ -188,6 +204,7 @@ impl Srs {
                     pool: self.bn254.clone(),
                     len: n,
                 },
+                phi: std::sync::OnceLock::new(),
             }
         } else {
             CommitmentKey::new(num_points)
@@ -201,6 +218,7 @@ impl Srs {
                     pool: self.grumpkin.clone(),
                     len: num_points,
                 },
+                phi: std::sync::OnceLock::new(),
             }
         } else {
             GrumpkinKey::new(num_points)
@@ -250,7 +268,11 @@ where
             self.points.len()
         );
         let t0 = std::env::var_os("BBREF_COMMIT_TIMING").map(|_| std::time::Instant::now());
-        let c = G::batch_msm(&self.points[..k], &p.coeffs[..k]).into_affine();
+        #[cfg(target_family = "wasm")]
+        let phi = Some(&self.phi.get_or_init(|| G::phi_table(&self.points))[..k]);
+        #[cfg(not(target_family = "wasm"))]
+        let phi = None;
+        let c = G::batch_msm_with_phi(&self.points[..k], &p.coeffs[..k], phi).into_affine();
         if let Some(t0) = t0 {
             use ark_ff::{BigInteger, PrimeField};
             let ms = t0.elapsed().as_secs_f64() * 1e3;
@@ -285,6 +307,7 @@ impl CommitmentKey {
                 pool: std::sync::Arc::new(load_bn254_g1(n)),
                 len: n,
             },
+            phi: std::sync::OnceLock::new(),
         }
     }
     /// A key that cannot commit (for IVC state that is only ever verified against, never proven).
@@ -294,6 +317,7 @@ impl CommitmentKey {
                 pool: std::sync::Arc::new(vec![]),
                 len: 0,
             },
+            phi: std::sync::OnceLock::new(),
         }
     }
 }
@@ -307,6 +331,7 @@ impl GrumpkinKey {
                 pool: std::sync::Arc::new(load_grumpkin_g1(num_points)),
                 len: num_points,
             },
+            phi: std::sync::OnceLock::new(),
         }
     }
 }
