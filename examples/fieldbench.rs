@@ -79,7 +79,7 @@ fn main() {
         black_box(c);
         println!("ark mul x4-ilp: {:.2} ns/op", t.elapsed().as_nanos() as f64 / n as f64);
     }
-    #[cfg(all(target_family = "wasm", target_feature = "simd128"))]
+        #[cfg(all(target_family = "wasm", target_feature = "simd128"))]
     {
         use bb_ref::base::mont29::{mont_mul, quad, FR_INV, FR_P, FR_R2};
         let to_m = |v: u64| {

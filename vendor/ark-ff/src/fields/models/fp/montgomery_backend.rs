@@ -651,10 +651,11 @@ const fn first4<T: MontConfig<N>, const N: usize>() -> [u64; 4] {
 }
 
 #[cfg(target_family = "wasm")]
-mod wasm_mont {
-    const MASK29: u64 = (1 << 29) - 1;
-    const MASK24: u64 = (1 << 24) - 1;
+pub mod wasm_mont {
+    pub const MASK29: u64 = (1 << 29) - 1;
+    pub const MASK24: u64 = (1 << 24) - 1;
 
+    #[allow(clippy::missing_const_for_fn)]
     pub const fn to29(a: &[u64; 4]) -> [u64; 9] {
         let mut out = [0u64; 9];
         let mut i = 0;
@@ -917,8 +918,7 @@ mod wasm_mont {
     }
 
 }
-
-pub struct MontBackend<T: MontConfig<N>, const N: usize>(PhantomData<T>);
+    pub struct MontBackend<T: MontConfig<N>, const N: usize>(PhantomData<T>);
 
 impl<T: MontConfig<N>, const N: usize> FpConfig<N> for MontBackend<T, N> {
     /// The modulus of the field.

@@ -17,7 +17,7 @@ use ark_std::{
 use core::iter;
 
 #[macro_use]
-mod montgomery_backend;
+pub mod montgomery_backend;
 pub use montgomery_backend::*;
 
 /// A trait that specifies the configuration of a prime field.

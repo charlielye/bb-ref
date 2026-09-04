@@ -250,10 +250,15 @@ after straight-lining (bb's own wasm field: 57.5ns); **the canonical chonk flow 
 dropped 19.0→10.5–12.2s** (run variance ±15% — same-session A/Bs only)
 (same-session A/B; the earlier 16.9s figure and wasmtime RSS numbers vary run to run — treat
 wasmtime `%M` as noise and compare wall only within a session). wasm/native is now ~2.8×
-against bb's 2.2×; the rest is bb's batched VectorField kernels in hot loops — parked
-after measurement: with the fast scalar in place, quad-SIMD throughput is only ~13% better
-per covered mul (55 vs 62ns), i.e. ~5–10% of wasm wall for call-site surgery across every hot
-loop. Also measured on the way: wasm allocator contention is a null (wasm scales 3.95× on 8
+against bb's 2.2×; the batched-SIMD theory for the rest is
+**dead by bb's own benchmark**: `vector_field_bench` on this machine measures bb's 5-wide
+VectorField mul at 52.2ns/element against its scalar's 52.7 — identical. wasm SIMD (2×64-bit
+lanes, `extmul` needing lane shuffles under the JIT) does not beat scalar 29-bit code here,
+for bb or for us; three of our own SIMD variants (two quad layouts and a stay-packed
+2^256-domain kernel with Karatsuba) confirmed the same, all correct, none faster. bb's
+remaining edge is scalar kernel quality per runtime: under V8 our mul is within 8% of bb's
+(61.9 vs 57.5ns); under wasmtime/cranelift the gap is wider (~75 vs 52.7) — but browsers
+don't run cranelift, so that gap is a bench-harness artifact, not a user-facing one. Also measured on the way: wasm allocator contention is a null (wasm scales 3.95× on 8
 threads vs native's 3.67×), and the wasm/native wall ratio (~3.2×) now equals the per-mul
 ratio exactly — the wasm build is purely mul-bound. The standalone `base/mont29.rs` core (scalar
 54ns, SIMD quad 52ns/elt on V8) is the reference implementation and cross-check for all of
