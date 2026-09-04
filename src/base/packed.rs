@@ -87,6 +87,30 @@ pub mod bbk {
             ox: *mut u64,
             oy: *mut u64,
         );
+        pub fn bbref_chord2s_fr(
+            ax: *const u64,
+            ay: *const u64,
+            bx: *const u64,
+            by: *const u64,
+            n: usize,
+            dx: *mut u64,
+            prod: *const u64,
+            lane_inv: *const u64,
+            dst: *const u32,
+            points: *mut u64,
+        );
+        pub fn bbref_chord2s_fq(
+            ax: *const u64,
+            ay: *const u64,
+            bx: *const u64,
+            by: *const u64,
+            n: usize,
+            dx: *mut u64,
+            prod: *const u64,
+            lane_inv: *const u64,
+            dst: *const u32,
+            points: *mut u64,
+        );
         pub fn bbref_dbl1_fr(y: *const u64, n: usize, den: *mut u64, prod: *mut u64);
         pub fn bbref_dbl1_fq(y: *const u64, n: usize, den: *mut u64, prod: *mut u64);
         pub fn bbref_dbl2_fr(

@@ -209,6 +209,63 @@ void dbl_phase2(const uint64_t* x_,
     }
 }
 
+// chord_phase2 variant that scatters results straight into a 64-byte {x,y} point array by index
+// (ark Affine<bn254> is exactly {Fq x; Fq y}), avoiding the ox/oy roundtrip. Inputs come from the
+// caller's already-staged ax/ay/bx/by, so scatter order can't alias the gather.
+template <typename Params, typename Field>
+void chord_phase2_scatter(const uint64_t* ax_,
+                          const uint64_t* ay_,
+                          const uint64_t* bx_,
+                          const uint64_t* by_,
+                          size_t n,
+                          uint64_t* dx_,
+                          const uint64_t* prod_,
+                          const uint64_t* lane_inv_,
+                          const uint32_t* dst,
+                          uint64_t* points)
+{
+    using VF = bb::VectorField<Params>;
+    constexpr size_t W = VF::SIZE;
+    const auto* ax = reinterpret_cast<const Field*>(ax_);
+    const auto* ay = reinterpret_cast<const Field*>(ay_);
+    const auto* bx = reinterpret_cast<const Field*>(bx_);
+    const auto* by = reinterpret_cast<const Field*>(by_);
+    auto* dx = reinterpret_cast<Field*>(dx_);
+    const auto* prod = reinterpret_cast<const Field*>(prod_);
+    const auto* lane_inv = reinterpret_cast<const Field*>(lane_inv_);
+    auto* pts = reinterpret_cast<Field*>(points); // {x,y} pairs, 2 Field per point
+    const size_t blocks = n / W;
+    {
+        VF vinv(&lane_inv[0]);
+        for (size_t g = blocks; g-- > 1;) {
+            const VF p(&prod[(g - 1) * W]);
+            const VF d(&dx[g * W]);
+            (vinv * p).store_to(&dx[g * W]);
+            vinv = vinv * d;
+        }
+        vinv.store_to(&dx[0]);
+    }
+    Field ox[W];
+    Field oy[W];
+    for (size_t g = 0; g < blocks; ++g) {
+        const VF vax(&ax[g * W]);
+        const VF vay(&ay[g * W]);
+        const VF vbx(&bx[g * W]);
+        const VF vby(&by[g * W]);
+        const VF vinv(&dx[g * W]);
+        const VF lambda = (vby - vay) * vinv;
+        const VF x3 = lambda * lambda - (vax + vbx);
+        const VF y3 = lambda * (vax - x3) - vay;
+        x3.store_to(&ox[0]);
+        y3.store_to(&oy[0]);
+        for (size_t k = 0; k < W; ++k) {
+            const uint32_t d = dst[g * W + k];
+            pts[2 * d] = ox[k].reduce_once();
+            pts[2 * d + 1] = oy[k].reduce_once();
+        }
+    }
+}
+
 } // namespace
 
 extern "C" {
@@ -244,6 +301,32 @@ void bbref_chord2_fr(const uint64_t* ax,
                      uint64_t* oy)
 {
     chord_phase2<bb::Bn254FrParams, bb::fr>(ax, ay, bx, by, n, dx, prod, lane_inv, ox, oy);
+}
+void bbref_chord2s_fr(const uint64_t* ax,
+                      const uint64_t* ay,
+                      const uint64_t* bx,
+                      const uint64_t* by,
+                      size_t n,
+                      uint64_t* dx,
+                      const uint64_t* prod,
+                      const uint64_t* lane_inv,
+                      const uint32_t* dst,
+                      uint64_t* points)
+{
+    chord_phase2_scatter<bb::Bn254FrParams, bb::fr>(ax, ay, bx, by, n, dx, prod, lane_inv, dst, points);
+}
+void bbref_chord2s_fq(const uint64_t* ax,
+                      const uint64_t* ay,
+                      const uint64_t* bx,
+                      const uint64_t* by,
+                      size_t n,
+                      uint64_t* dx,
+                      const uint64_t* prod,
+                      const uint64_t* lane_inv,
+                      const uint32_t* dst,
+                      uint64_t* points)
+{
+    chord_phase2_scatter<bb::Bn254FqParams, bb::fq>(ax, ay, bx, by, n, dx, prod, lane_inv, dst, points);
 }
 void bbref_dbl1_fr(const uint64_t* y, size_t n, uint64_t* den, uint64_t* prod)
 {

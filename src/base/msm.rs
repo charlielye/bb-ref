@@ -801,13 +801,13 @@ mod packed_tree {
             *mut u64,
             *const u64,
             *const u64,
-            *mut u64,
+            *const u32,
             *mut u64,
         );
         let (c1, c2): (C1, C2) = if TypeId::of::<P::BaseField>() == TypeId::of::<crate::base::Fr>() {
-            (bbk::bbref_chord1_fr, bbk::bbref_chord2_fr)
+            (bbk::bbref_chord1_fr, bbk::bbref_chord2s_fr)
         } else if TypeId::of::<P::BaseField>() == TypeId::of::<ark_bn254::Fq>() {
-            (bbk::bbref_chord1_fq, bbk::bbref_chord2_fq)
+            (bbk::bbref_chord1_fq, bbk::bbref_chord2s_fq)
         } else {
             return false;
         };
@@ -820,9 +820,10 @@ mod packed_tree {
                 p.bx.push(p.bx[0]);
                 p.by.push(p.by[0]);
             }
+            while p.dest.len() < p.ax.len() {
+                p.dest.push(p.dest[0]);
+            }
             let n = p.ax.len();
-            p.ox.resize(n, p.ax[0]);
-            p.oy.resize(n, p.ax[0]);
             p.cscratch.resize(2 * n, p.ax[0]);
             let (dx, prod) = p.cscratch.split_at_mut(n);
             unsafe {
@@ -837,6 +838,7 @@ mod packed_tree {
             // One inversion for the whole level: the last w chain products, batched.
             let mut lane_inv: Vec<P::BaseField> = prod[n - w..].to_vec();
             batch_invert_nonzero(&mut lane_inv, &mut s.prod);
+            // Phase 2 scatters {x3, y3} straight into ps by dest index (Affine is 64-byte {x,y}).
             unsafe {
                 c2(
                     p.ax.as_ptr() as *const u64,
@@ -847,13 +849,10 @@ mod packed_tree {
                     dx.as_mut_ptr() as *mut u64,
                     prod.as_ptr() as *const u64,
                     lane_inv.as_ptr() as *const u64,
-                    p.ox.as_mut_ptr() as *mut u64,
-                    p.oy.as_mut_ptr() as *mut u64,
+                    p.dest.as_ptr(),
+                    ps.as_mut_ptr() as *mut u64,
                 )
             };
-            for (k, &d) in p.dest.iter().enumerate() {
-                ps[d as usize] = Affine::<P>::new_unchecked(p.ox[k], p.oy[k]);
-            }
         }
         // Doublings through the scalar batched path.
         s.dens.clear();
