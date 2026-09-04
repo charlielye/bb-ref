@@ -32,7 +32,7 @@ run() { # threads wasm args...
     shift 2
     ssh "$HOST" "export PATH=/usr/local/bin:\$PATH; cd ~/bb-ref; \
         RAYON_NUM_THREADS=$threads HARDWARE_CONCURRENCY=$threads BB_RNG_SEED=12345 CRS_PATH=\$HOME/.bb-crs \
-        BBREF_MSMBENCH_NO_ARK=1 node tools/runwasi_threads.mjs ~/ab-$wasm $* 2>/dev/null"
+        BBREF_MSMBENCH_NO_ARK=1 node --no-liftoff tools/runwasi_threads.mjs ~/ab-$wasm $* 2>/dev/null"
 }
 
 case "${1:?rung}" in

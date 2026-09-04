@@ -23,10 +23,34 @@ Snapshot 2026-09-04 (bb-ref eb4c163 + q1s1 probe):
 | L3 sumcheck round0 MegaZK 2^17, 8t | rung TBD | 341 ms | ? | bb `sumcheck_iteration_bench`, no-skip random table |
 | L4 canonical flow, 8t | 6.26 s | 5.04 s | 1.24x | |
 
-Worklist by ROI (all verifiable on a rung in <30 s):
-1. q1s1 fused multiply (packed mul ~29 → ~24; propagates into axpy, MSM drain, everything packed).
-2. MSM at 2^20: find the scale-dependent gap (stage timings vs size; window choice, gather block,
-   survivor merge).
-3. Permutation relation body (2.17x — single function).
-4. Lookup 1.36x, poseidon-internal family ~1.3x, Memory 1.18x.
-5. Write the round0 L3 rung on our side and iterate the sumcheck harness against bb's 341 ms.
+Update (same day, all rungs under --no-liftoff — REQUIRED: Liftoff tier-up polluted earlier
+numbers by up to 30%):
+
+- **L3 round0 (roundbench, matched to bb): OURS 275 ms vs bb 341 ms at 2^17/8t — 1.24x FASTER**
+  (12 relations / 46 subrelations both sides, no-skip constant table). The dense sumcheck harness
+  is not our problem. Open discrepancy: in real flows our sumcheck family still reads slower than
+  bb's — suspects: skip-heavy real tables (bb iterates precomputed active blocks; we pay ~185
+  ns/dead-edge in per-edge checks, though tight witness_end covers the tail), later-round shapes,
+  or bucket misattribution in the flow profiles.
+- q1s1 fused multiply: DEAD, twice — round-interleaved fusion 46 ns/elt (register spills), naive
+  two-call interleave perfectly additive (no cross-call ILP). bb gets its 5-wide overlap from
+  clang-level scheduling+barriers we can't express from Rust/LLVM-wasm. Also x2 (two fused quad
+  muls): flat — the kernel is V8-codegen-bound, not latency-bound.
+- Corrected bb add_scaled baselines (TurboFan, 1t): vectorized_inline 31.0 ns/elt, full 28.5 (its
+  28.3 earlier was fine; the 48s were Liftoff noise). Ours axpy 37.8 → 1.25x, tracking the mul.
+- MSM decomposition (1t): tree 305 ns/pair matches the kernel model exactly; scaling parity
+  (7.35x vs bb 7.18x at 8t); the 1.34x @2^16 is mul-kernel-bound; the extra gap at 2^20 is cache
+  (per-entry 352→406 ns while bb improves 259→245) — flow MSMs are <=2^19, deprioritized.
+- bucket_reduce packing: won its rung (38->30 ms @2^16 1t) but was flow-NEGATIVE via pass_add
+  (small batches, closure re-eval); reverted. bucket_reduce is ~0.1% of the flow.
+- Index-pair staging in the tree drain: unsafe (in-place compaction clobbers source slots before
+  a deferred gather); bb copies into spans for the same reason.
+
+Standing worklist:
+1. Packed mul 1.25x = THE systematic blocker (MSM + bulk ops). Only remaining route identified:
+   hand-scheduled .wat for the q1s1 body linked into the module — bb-level control, specialized
+   effort, unproven.
+2. Resolve the flow-vs-rung sumcheck discrepancy (measure real-table skip overhead per circuit;
+   if bb's active-block iteration is the difference, port block structure into RoundProver).
+3. Relation-body outliers (Permutation 2.17x, Lookup 1.36x, poseidon-internals ~1.3x) — real but
+   secondary; flow sumcheck is already rung-faster dense.
