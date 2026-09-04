@@ -1,6 +1,8 @@
 //! Foundations: field/curve traits over arkworks, serialization, Poseidon2, transcript, SRS.
 pub mod codec;
 pub mod endo;
+#[cfg(all(target_family = "wasm", target_feature = "simd128"))]
+pub mod packed;
 pub mod field;
 pub mod fold;
 pub mod generators;

@@ -883,18 +883,21 @@ fn flush_graded<F: NativeField>(s: &Scratch<F>, acc: &mut Accumulators<F>) {
 
 /// The accumulators over a range of edges, split across threads (exact arithmetic: any split
 /// gives the same sums).
-/// Whether the quad (4-edges-per-evaluation) sumcheck path is enabled: default off — on idle
-/// hardware the packed path loses ~8% under both V8 and wasmtime because the fully-normalizing
-/// packed add/sub costs ~0.73 of a packed mul and the relations are add-heavy (it only measured
-/// as a win on a contended box, where bb-shaped scalar code dilates more). Opt in/out via
-/// BBREF_QUAD_SUMCHECK=1/0; revisit the default once relaxed-limb add/sub lands.
-/// Bit-identical to the scalar path (field addition is exact).
-fn quad_sumcheck_enabled() -> bool {
-    static V: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| match std::env::var("BBREF_QUAD_SUMCHECK") {
-        Ok(v) => v != "0",
-        Err(_) => false,
+/// Whether the quad (4-edges-per-evaluation) sumcheck path is enabled for a relation set of
+/// `nrel` relations. BBREF_QUAD_SUMCHECK=1/0 forces it globally; BBREF_QUAD_NREL=<n> enables it
+/// on wasm for sets with at most n relations (sweeping which sumchecks benefit). Bit-identical
+/// to the scalar path (field addition is exact).
+fn quad_sumcheck_enabled(nrel: usize) -> bool {
+    static V: std::sync::LazyLock<Option<bool>> = std::sync::LazyLock::new(|| {
+        std::env::var("BBREF_QUAD_SUMCHECK").ok().map(|v| v != "0")
     });
-    *V
+    static NREL_MAX: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
+        std::env::var("BBREF_QUAD_NREL")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0)
+    });
+    V.unwrap_or(cfg!(target_family = "wasm") && nrel <= *NREL_MAX)
 }
 
 /// `accumulate_edges`, four edges per relation evaluation where the edges' skip patterns agree
@@ -1363,7 +1366,7 @@ where
                 .edge_ranges(round_size)
                 .into_iter()
                 .map(|edges| {
-                    if quad_sumcheck_enabled() {
+                    if quad_sumcheck_enabled(RelationSet::<F>::num_relations(rels)) {
                         accumulate_edges_quad(rels, &self.used, &self.table, edges, params, &pows, d)
                     } else {
                         accumulate_edges(rels, &self.used, &self.table, edges, params, &pows, d)
@@ -1443,6 +1446,10 @@ where
             if self.table.iter().all(|c| matches!(c, Column::Own(_))) {
                 self.table.par_iter_mut().for_each(|col| {
                     let Column::Own(v) = col else { unreachable!() };
+                    #[cfg(all(target_family = "wasm", target_feature = "simd128"))]
+                    if crate::base::packed::try_fold_halve(v, u) {
+                        return;
+                    }
                     let half = v.len().div_ceil(2);
                     for k in 0..half {
                         let a = v[2 * k];
@@ -1456,6 +1463,21 @@ where
                 let folded: Vec<Column<F>> = (0..table.len())
                     .into_par_iter()
                     .map(|j| {
+                        #[cfg(all(target_family = "wasm", target_feature = "simd128"))]
+                        {
+                            let src: &[F] = match &table[j] {
+                                Column::Borrowed(s) => s,
+                                Column::Own(v) => v,
+                                Column::ShiftOf(k) => match &table[*k] {
+                                    Column::Borrowed(s) => &s[1.min(s.len())..],
+                                    Column::Own(v) => &v[1.min(v.len())..],
+                                    Column::ShiftOf(_) => unreachable!("nested shift"),
+                                },
+                            };
+                            if let Some(v) = crate::base::packed::try_fold_from(src, src.len(), u) {
+                                return Column::Own(v);
+                            }
+                        }
                         let half = column_len(table, j).div_ceil(2);
                         Column::Own(
                             (0..half)

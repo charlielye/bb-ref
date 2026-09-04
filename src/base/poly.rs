@@ -75,7 +75,7 @@ impl<F: FieldLike> Polynomial<F> {
     /// `self += scalar * other` (other may be shorter).
     pub fn add_scaled(&mut self, other: &Self, scalar: &F)
     where
-        F: Send + Sync,
+        F: Send + Sync + 'static,
     {
         self.add_scaled_batch(&[(other, scalar.clone())]);
     }
@@ -83,7 +83,7 @@ impl<F: FieldLike> Polynomial<F> {
     /// `add_scaled_batch`); shorter polynomials are zero-extended.
     pub fn add_scaled_batch(&mut self, terms: &[(&Self, F)])
     where
-        F: Send + Sync,
+        F: Send + Sync + 'static,
     {
         for (p, _) in terms {
             assert!(p.len() <= self.len(), "add_scaled_batch: term is longer");
@@ -92,7 +92,13 @@ impl<F: FieldLike> Polynomial<F> {
         self.coeffs.par_chunks_mut(CHUNK).enumerate().for_each(|(c, chunk)| {
             let start = c * CHUNK;
             for (p, s) in terms {
-                for (a, b) in chunk.iter_mut().zip(p.coeffs.iter().skip(start)) {
+                let src = &p.coeffs[start.min(p.coeffs.len())..];
+                let overlap = chunk.len().min(src.len());
+                #[cfg(all(target_family = "wasm", target_feature = "simd128"))]
+                if crate::base::packed::try_axpy(&mut chunk[..overlap], &src[..overlap], s) {
+                    continue;
+                }
+                for (a, b) in chunk[..overlap].iter_mut().zip(src) {
                     *a += &(s.clone() * b);
                 }
             }
