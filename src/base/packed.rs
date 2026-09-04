@@ -73,6 +73,12 @@ pub mod bbk {
         pub fn bbref_axpy_fr(dst: *mut u64, src: *const u64, scalar: *const u64, n: usize);
         pub fn bbref_axpy_fq(dst: *mut u64, src: *const u64, scalar: *const u64, n: usize);
         pub fn bbref_chord_width() -> usize;
+        pub fn bbref_batch_capacity() -> usize;
+        pub fn bbref_pack_cap() -> usize;
+        pub fn bbref_reduce_chunk_fq(points: *const u64, phi: *const u64, beta: *const u64, sched: *const u32, lo: usize, hi: usize, bstarts: *const u32, b_cursor: *mut usize, pts: *mut u64, buckets: *mut u32, packed: *mut u64, pair_dest: *mut u32) -> usize;
+        pub fn bbref_reduce_chunk_fr(points: *const u64, phi: *const u64, beta: *const u64, sched: *const u32, lo: usize, hi: usize, bstarts: *const u32, b_cursor: *mut usize, pts: *mut u64, buckets: *mut u32, packed: *mut u64, pair_dest: *mut u32) -> usize;
+        pub fn bbref_tree_reduce_fq(pts: *mut u64, buckets: *mut u32, len: usize, packed: *mut u64, pair_dest: *mut u32) -> usize;
+        pub fn bbref_tree_reduce_fr(pts: *mut u64, buckets: *mut u32, len: usize, packed: *mut u64, pair_dest: *mut u32) -> usize;
         pub fn bbref_vf_size() -> usize;
         pub fn bbref_chord1_fr(ax: *const u64, bx: *const u64, n: usize, dx: *mut u64, prod: *mut u64);
         pub fn bbref_chord1_fq(ax: *const u64, bx: *const u64, n: usize, dx: *mut u64, prod: *mut u64);

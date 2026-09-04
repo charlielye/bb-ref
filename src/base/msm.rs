@@ -304,9 +304,133 @@ where
         present: Vec<u8>,
     }
     let beta = <P::BaseField as crate::base::endo::EndoField>::cube_root();
+    #[cfg(all(feature = "bbkernel", target_family = "wasm", target_feature = "simd128"))]
+    let bbk6a = {
+        use crate::base::packed::bbk;
+        use core::any::TypeId;
+        type RC = unsafe extern "C" fn(*const u64, *const u64, *const u64, *const u32, usize, usize, *const u32, *mut usize, *mut u64, *mut u32, *mut u64, *mut u32) -> usize;
+        type TR = unsafe extern "C" fn(*mut u64, *mut u32, usize, *mut u64, *mut u32) -> usize;
+        if TypeId::of::<P::BaseField>() == TypeId::of::<crate::base::Fr>() {
+            Some((bbk::bbref_reduce_chunk_fr as RC, bbk::bbref_tree_reduce_fr as TR))
+        } else if TypeId::of::<P::BaseField>() == TypeId::of::<ark_bn254::Fq>() {
+            Some((bbk::bbref_reduce_chunk_fq as RC, bbk::bbref_tree_reduce_fq as TR))
+        } else {
+            None
+        }
+    };
+    let max_chunk_len = chunks
+        .iter()
+        .flat_map(|c| (0..threads).map(move |t| c.start[t + 1] - c.start[t]))
+        .max()
+        .unwrap_or(0);
     let partials: Vec<Vec<Partial<P>>> = (0..threads)
         .into_par_iter()
         .map(|t| {
+            // bb's 6a inner loop, compiled from bb source and linked in: gather + tree_reduce +
+            // batched-affine drain over bb's ThreadScratch shape, one call per sub-chunk. Only the
+            // densify + overflow bookkeeping stays in Rust (bb keeps that in the same function; the
+            // split is the linkage boundary, not an algorithmic change).
+            #[cfg(all(feature = "bbkernel", target_family = "wasm", target_feature = "simd128"))]
+            if let Some((rc, tr)) = if std::env::var_os("BBREF_C6A").is_some() { bbk6a } else { None } {
+                use crate::base::packed::bbk;
+                let cap = SUBCHUNK.max(2 * (max_chunk_len / SUBCHUNK + 2));
+                let mut cpts: Vec<Affine<P>> = vec![Affine::<P>::zero(); cap];
+                let mut cbk: Vec<u32> = vec![0u32; cap];
+                let (vf, pack_cap, bcap) =
+                    unsafe { (bbk::bbref_vf_size(), bbk::bbref_pack_cap(), bbk::bbref_batch_capacity()) };
+                let mut packed: Vec<core::mem::MaybeUninit<u64>> =
+                    Vec::with_capacity((8 * pack_cap * vf).div_ceil(8) + 32);
+                packed.resize((8 * pack_cap * vf).div_ceil(8) + 32, core::mem::MaybeUninit::uninit());
+                let mut pair_dest: Vec<u32> = vec![0u32; bcap];
+                let phi_ptr: *const u64 = match phi_table {
+                    Some(tbl) => tbl.as_ptr() as *const u64,
+                    None => core::ptr::null(),
+                };
+                let beta_v = <P::BaseField as crate::base::endo::EndoField>::cube_root();
+                let beta_ptr = &beta_v as *const P::BaseField as *const u64;
+                return (0..num_windows)
+                    .map(|w| {
+                        let ch = &chunks[w];
+                        let (cs_lo, cs_hi) = (ch.start[t], ch.start[t + 1]);
+                        if cs_lo == cs_hi {
+                            return Partial { lo: 0, dense: Vec::new(), present: Vec::new() };
+                        }
+                        let (my_lo, my_hi) = (ch.lo[t], ch.hi[t]);
+                        let width = my_hi - my_lo + 1;
+                        let mut dense = vec![Affine::<P>::zero(); width];
+                        let mut present = vec![0u8; width];
+                        let mut overflow: Vec<(u32, Affine<P>)> = Vec::new();
+                        let bs = &bucket_starts[w];
+                        let mut b: usize = bs.partition_point(|&st| st as usize <= cs_lo) - 1;
+                        let mut pos = cs_lo;
+                        while pos < cs_hi {
+                            let end = (pos + SUBCHUNK).min(cs_hi);
+                            let len = unsafe {
+                                rc(
+                                    points.as_ptr() as *const u64,
+                                    phi_ptr,
+                                    beta_ptr,
+                                    schedules[w].as_ptr(),
+                                    pos,
+                                    end,
+                                    bs.as_ptr(),
+                                    &mut b,
+                                    cpts.as_mut_ptr() as *mut u64,
+                                    cbk.as_mut_ptr(),
+                                    packed.as_mut_ptr() as *mut u64,
+                                    pair_dest.as_mut_ptr(),
+                                )
+                            };
+                            for k in 0..len {
+                                let slot = cbk[k] as usize + 1 - my_lo;
+                                if present[slot] != 0 {
+                                    overflow.push((slot as u32, cpts[k]));
+                                } else {
+                                    dense[slot] = cpts[k];
+                                    present[slot] = 1;
+                                }
+                            }
+                            pos = end;
+                        }
+                        if !overflow.is_empty() {
+                            let mut n = 0usize;
+                            let mut k = 0;
+                            while k < overflow.len() {
+                                let slot = overflow[k].0;
+                                cpts[n] = dense[slot as usize];
+                                cbk[n] = slot;
+                                n += 1;
+                                while k < overflow.len() && overflow[k].0 == slot {
+                                    cpts[n] = overflow[k].1;
+                                    cbk[n] = slot;
+                                    n += 1;
+                                    k += 1;
+                                }
+                            }
+                            let len = unsafe {
+                                tr(
+                                    cpts.as_mut_ptr() as *mut u64,
+                                    cbk.as_mut_ptr(),
+                                    n,
+                                    packed.as_mut_ptr() as *mut u64,
+                                    pair_dest.as_mut_ptr(),
+                                )
+                            };
+                            let mut seen = vec![false; width];
+                            for k in 0..len {
+                                dense[cbk[k] as usize] = cpts[k];
+                                seen[cbk[k] as usize] = true;
+                            }
+                            for (slot, _) in overflow.iter() {
+                                if !seen[*slot as usize] {
+                                    present[*slot as usize] = 0;
+                                }
+                            }
+                        }
+                        Partial { lo: my_lo, dense, present }
+                    })
+                    .collect();
+            }
             let mut block_p: Vec<Affine<P>> = Vec::with_capacity(SUBCHUNK);
             let mut run_id: Vec<u32> = Vec::with_capacity(SUBCHUNK);
             let mut run_len: Vec<u32> = Vec::with_capacity(SUBCHUNK);

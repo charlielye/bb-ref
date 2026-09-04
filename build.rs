@@ -60,4 +60,9 @@ fn main() {
     assert!(status.success());
     println!("cargo:rustc-link-search=native={out}");
     println!("cargo:rustc-link-lib=static=bbkernel");
+    // bb's batch_invert error path references libc++'s std::string; wasm-ld pulls only the
+    // referenced members from the wasi-sdk's static libc++.
+    println!("cargo:rustc-link-search=native={sdk}/share/wasi-sysroot/lib/wasm32-wasi-threads");
+    println!("cargo:rustc-link-lib=static=c++");
+    println!("cargo:rustc-link-lib=static=c++abi");
 }

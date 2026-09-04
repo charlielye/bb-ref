@@ -221,3 +221,20 @@ Update 11 — bb Stages 5/6a/6b/7 replicated (commit below); ours-vs-bb structur
  copy bb's reduce_chunk/tree_reduce_in_place/drain_batch (anonymous-namespace templates, ~120
  lines, public-header deps only) into csrc and compile with bb's flags — bb's 6a bytes — with
  an equal-x guard for our general-point callers.
+
+Update 12 — bb 6a inner loop linked from C (OPT-IN, correctness bug pending):
+Ported bb's reduce_chunk / tree_reduce_in_place / drain_batch (the Stage 6a gather + batched-
+affine tree) into csrc/bb_kernel.cpp, compiled with bb's flags and LINKED WITH THE WASI-SDK
+STATIC libc++ (bb's batch_invert error path needs std::string; wasm-ld pulls only the referenced
+members; throw_or_abort_impl/assert_failure stubbed to __builtin_trap). Reduce6a<Params,Field>
+mirrors bb's ThreadScratch (8 VectorField runs, BATCH_CAPACITY 256, pair_dest). Two bb-ref-only
+deltas: outputs reduce_once on write (bb-ref stores canonical), and equal-x / infinity operands
+are settled inline (bb's unsafe path assumes them away). Driven from Stage 6a per (thread,
+window) sub-chunk; the densify + overflow bookkeeping stays in Rust.
+STATUS: mechanism PROVEN — compiles, links libc++ in-module, runs, and the flow is FASTER
+(5.72 s vs 5.87 committed). But it computes a WRONG result (matches_ark ark-mismatch; flow proof
+differs at byte 41008) — deterministic, not a crash, so a systematic error in the C tree/gather
+(NOT beta: both the phi-table flow and the on-the-fly matches_ark path fail; NOT threading). The
+Rust 6a is correct on identical input. Gated behind BBREF_C6A=1; default = Rust 6a (byte-exact,
+suites 66/76 green). Next: isolate with a tiny reduce_chunk-vs-Rust-tree diff harness (same
+gathered block in, compare survivors) — the bug is in ~30 lines of gather/tree, the 5.72 is real.
