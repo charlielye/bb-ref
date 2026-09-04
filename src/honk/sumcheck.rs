@@ -9,7 +9,7 @@
 use super::flavor::{FlavorDesc, Layout};
 use super::relations::{RelationParams, Row};
 use super::graded::{lift_params, Graded, MAX_LEN as GRADED_MAX_LEN};
-use super::quadf::{lift_params_quad, QuadF};
+use super::quadf::{lift_params_quad, QuadConsts, QuadF};
 use crate::base::field::NativeField;
 use crate::base::field::{FieldLike, U256};
 use crate::base::group::Curve;
@@ -914,7 +914,7 @@ fn accumulate_edges_quad<F, R>(
     d: usize,
 ) -> Accumulators<F>
 where
-    F: NativeField,
+    F: NativeField + QuadConsts,
     R: RelationSet<F> + RelationSet<QuadF<F>> + Sync,
     RelationParams<F>: Sync,
 {
@@ -1260,7 +1260,7 @@ pub struct RoundProver<'a, F> {
     used: Vec<Vec<usize>>,
 }
 
-impl<'a, F: NativeField> RoundProver<'a, F>
+impl<'a, F: NativeField + QuadConsts> RoundProver<'a, F>
 where
     RelationParams<F>: Sync,
 {
@@ -1572,7 +1572,7 @@ pub fn prove_sumcheck<C: Curve>(
     ck: Option<&Ck<C::G>>,
 ) -> SumcheckProverOutput<C>
 where
-    C::Fr: NativeField,
+    C::Fr: NativeField + QuadConsts,
     C::G: crate::base::msm::BatchMsm<ScalarField = C::Fr>,
     RelationParams<C::Fr>: Sync,
 {
@@ -1680,8 +1680,8 @@ mod tests {
         fn offset_only(&self, _r: usize) -> bool {
             false
         }
-        fn accumulate(&self, _r: usize, acc: &mut [Fr], row: &[Fr], _p: &RelationParams<Fr>, scaling: &Fr) {
-            acc[0] += row[0] * row[1] * scaling;
+        fn accumulate(&self, _r: usize, acc: &mut [T], row: &[T], _p: &RelationParams<T>, scaling: &T) {
+            acc[0] += row[0].clone() * &row[1] * scaling;
         }
         fn partial_length(&self, _r: usize) -> usize {
             3

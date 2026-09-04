@@ -9,8 +9,18 @@
 
 use super::relations::RelationParams;
 use crate::base::field::{FieldLike, NativeField};
+
+/// Marker carrying the packed-kernel constants on wasm; a blanket marker elsewhere, so generic
+/// code can bound on it unconditionally.
+#[cfg(not(all(target_family = "wasm", target_feature = "simd128")))]
+pub trait QuadConsts: NativeField {}
+#[cfg(not(all(target_family = "wasm", target_feature = "simd128")))]
+impl<F: NativeField> QuadConsts for F {}
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
+#[cfg(not(all(target_family = "wasm", target_feature = "simd128")))]
+mod native_repr {
+use super::*;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct QuadF<F>(pub [F; 4]);
 
@@ -112,8 +122,17 @@ impl<F: NativeField> FieldLike for QuadF<F> {
     fn assert_equal(&self, _other: &Self) {}
 }
 
+}
+#[cfg(not(all(target_family = "wasm", target_feature = "simd128")))]
+pub use native_repr::QuadF;
+
+#[cfg(all(target_family = "wasm", target_feature = "simd128"))]
+mod packed_repr;
+#[cfg(all(target_family = "wasm", target_feature = "simd128"))]
+pub use packed_repr::{QuadConsts, QuadF};
+
 /// The relation parameters broadcast into quad lanes.
-pub fn lift_params_quad<F: NativeField>(p: &RelationParams<F>) -> RelationParams<QuadF<F>> {
+pub fn lift_params_quad<F: NativeField + QuadConsts>(p: &RelationParams<F>) -> RelationParams<QuadF<F>> {
     let c = |v: &F| QuadF::splat(*v);
     RelationParams {
         eta: c(&p.eta),
