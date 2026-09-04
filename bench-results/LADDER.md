@@ -99,11 +99,14 @@ chord kernel (pack operands once, keep dx/dy/xsum/ax/ay as packed VFs in scratch
 inverses via bb's clean invert_vartime bypassing the zero-assert, BATCH=2048 streaming, double-
 buffered read-only-ps classify). = bb's tree_reduce_in_place + drain_batch shape. Results:
   microbench 8t:  2^17 138->127 (1.34x->1.23x), 2^18 285->269 (1.46x->1.38x), 2^19 547->510 (1.50x->1.40x)
-Real movement toward parity but NOT parity — partly because WASM HAS NO PREFETCH (bb's documented
-4-10% gather-prefetch win is unavailable to us; the gather is random-64B-load memory-bound).
+Real movement toward parity but NOT parity. (RETRACTED EARLIER CLAIM: I blamed wasm's lack of a
+prefetch instruction. That is wrong as an explanation — __builtin_prefetch compiles to NOTHING on
+wasm (verified: clang emits an empty body), so bb.wasm gets no prefetch either. It cannot explain
+any bb.wasm-vs-bb-ref.wasm difference. The residual is prover-code constant factors, full stop.)
 CRUCIALLY it is FLOW-NEGATIVE (back-to-back A/B: base 5.85/5.91 vs fused 5.95/5.93): the pinned
 flow's MSMs are SMALL (biggest 78k pts, most <8k) where the port's per-chunk fixed cost (double-
 buffer alloc, BY inverses) loses to the simple scatter drain. REVERTED. A size-gated dual path
 (fused for n>=2^16, scatter below) would keep both but adds complexity for zero current-flow gain.
-CONCLUSION: MSM at current-flow scale can't beat bb on wasm (no prefetch); the structural port only
-helps 2^17+ MSMs the pinned flows don't have. The remaining flow gap is THREAD IDLE, not MSM.
+CONCLUSION: the structural port helps 2^17+ MSMs; at the small sizes the pinned flows actually use
+(<=78k) its per-chunk fixed costs lose. A size-gated dual path would bank both. The MSM gap that
+remains is prover-code constant factors — no runtime excuse.
