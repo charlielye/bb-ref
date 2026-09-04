@@ -652,6 +652,10 @@ const fn first4<T: MontConfig<N>, const N: usize>() -> [u64; 4] {
 
 #[cfg(target_family = "wasm")]
 pub mod wasm_mont {
+    /// 2^-29 mod p, 29-bit limbs (the Yuval-reduction constant), for bn254 Fr and Fq.
+    pub const FR_RINV29: [u32; 9] = [0x18f05361, 0x12bb1fe, 0xf5d8135, 0x1e6275f6, 0x7e7a880, 0x10c6bf1f, 0x11f74a6c, 0x6fdaecb, 0x183227];
+    pub const FQ_RINV29: [u32; 9] = [0x17789a9f, 0x5ffc3dc, 0xd6bde42, 0x1cf152e3, 0x18eb055f, 0xed815e2, 0x16626d2, 0xb8bab0f, 0x6d7c4];
+
     pub const MASK29: u64 = (1 << 29) - 1;
     pub const MASK24: u64 = (1 << 24) - 1;
 
@@ -918,7 +922,1033 @@ pub mod wasm_mont {
     }
 
 }
-    pub struct MontBackend<T: MontConfig<N>, const N: usize>(PhantomData<T>);
+    /// Four-lane SIMD Montgomery multiply in the standard 2^256 domain, for batched loops:
+/// operands and result stay in the transposed 29-bit-limb layout (`QuadFp`), so packing is
+/// paid once per loop, not per multiply — bb's VectorField pattern, whose in-loop throughput
+/// on V8 measures ~4x the scalar path (dependency-chain microbenches wildly understate it).
+/// Karatsuba 5+4, then 8 radix-2^29 + 1 radix-2^24 Montgomery rounds (÷2^256 exactly), then
+/// realignment to 29-bit limbs. Lanes are independent; values are coarse [0, 2p).
+#[cfg(all(target_family = "wasm", target_feature = "simd128"))]
+pub mod quad256 {
+    use super::wasm_mont::{to29, MASK24, MASK29};
+    use core::arch::wasm32::*;
+
+    /// 4 field elements, transposed into u32x4 lanes per limb.
+    #[derive(Clone, Copy)]
+    pub struct QuadFp {
+        pub limbs: [v128; 9],
+    }
+
+    impl QuadFp {
+        /// Pack four canonical 4x64 values (the stored ark form).
+        pub fn pack(e: &[[u64; 4]; 4]) -> QuadFp {
+            let l: [[u64; 9]; 4] = [to29(&e[0]), to29(&e[1]), to29(&e[2]), to29(&e[3])];
+            QuadFp {
+                limbs: core::array::from_fn(|k| {
+                    u32x4(l[0][k] as u32, l[1][k] as u32, l[2][k] as u32, l[3][k] as u32)
+                }),
+            }
+        }
+        /// Unpack to canonical 4x64: reduce each lane from [0, 2p), repack bits.
+        pub fn unpack(&self, modulus: &[u64; 4]) -> [[u64; 4]; 4] {
+            let p = to29(modulus);
+            let mut out = [[0u64; 4]; 4];
+            for lane in 0..4 {
+                let mut a = [0u64; 9];
+                for k in 0..9 {
+                    a[k] = match lane {
+                        0 => u32x4_extract_lane::<0>(self.limbs[k]) as u64,
+                        1 => u32x4_extract_lane::<1>(self.limbs[k]) as u64,
+                        2 => u32x4_extract_lane::<2>(self.limbs[k]) as u64,
+                        _ => u32x4_extract_lane::<3>(self.limbs[k]) as u64,
+                    };
+                }
+                let mut borrow = 0i64;
+                let mut d = [0u64; 9];
+                for i in 0..9 {
+                    let v = a[i] as i64 - p[i] as i64 - borrow;
+                    d[i] = (v & MASK29 as i64) as u64;
+                    borrow = (v >> 63) & 1;
+                }
+                let r = if borrow == 1 { a } else { d };
+                for (i, &l) in r.iter().enumerate() {
+                    let bit = 29 * i;
+                    let (limb, sh) = (bit / 64, bit % 64);
+                    out[lane][limb] |= l << sh;
+                    if sh > 35 && limb + 1 < 4 {
+                        out[lane][limb + 1] |= l >> (64 - sh);
+                    }
+                }
+            }
+            out
+        }
+    }
+
+    /// Per-lane `a * b / 2^256 mod p`, coarse in/out; fully unrolled.
+    #[allow(clippy::too_many_lines)]
+    pub fn mont_mul(a: &QuadFp, b: &QuadFp, p29: &[u64; 9], inv: u64) -> QuadFp {
+        let invv = u32x4_splat(inv as u32);
+        let mask64 = u64x2_splat(MASK29);
+        let mask24 = u64x2_splat(MASK24);
+        let p0 = u32x4_splat(p29[0] as u32);
+        let p1 = u32x4_splat(p29[1] as u32);
+        let p2 = u32x4_splat(p29[2] as u32);
+        let p3 = u32x4_splat(p29[3] as u32);
+        let p4 = u32x4_splat(p29[4] as u32);
+        let p5 = u32x4_splat(p29[5] as u32);
+        let p6 = u32x4_splat(p29[6] as u32);
+        let p7 = u32x4_splat(p29[7] as u32);
+        let p8 = u32x4_splat(p29[8] as u32);
+        let a0 = a.limbs[0];
+        let b0 = b.limbs[0];
+        let a1 = a.limbs[1];
+        let b1 = b.limbs[1];
+        let a2 = a.limbs[2];
+        let b2 = b.limbs[2];
+        let a3 = a.limbs[3];
+        let b3 = b.limbs[3];
+        let a4 = a.limbs[4];
+        let b4 = b.limbs[4];
+        let a5 = a.limbs[5];
+        let b5 = b.limbs[5];
+        let a6 = a.limbs[6];
+        let b6 = b.limbs[6];
+        let a7 = a.limbs[7];
+        let b7 = b.limbs[7];
+        let a8 = a.limbs[8];
+        let b8 = b.limbs[8];
+        let sl0 = u32x4_add(a0, a5);
+        let sr0 = u32x4_add(b0, b5);
+        let sl1 = u32x4_add(a1, a6);
+        let sr1 = u32x4_add(b1, b6);
+        let sl2 = u32x4_add(a2, a7);
+        let sr2 = u32x4_add(b2, b7);
+        let sl3 = u32x4_add(a3, a8);
+        let sr3 = u32x4_add(b3, b8);
+        let sl4 = a4;
+        let sr4 = b4;
+        let pl0_l = u64x2_extmul_low_u32x4(a0, b0);
+        let pl0_h = u64x2_extmul_high_u32x4(a0, b0);
+        let pl1_l = u64x2_add(u64x2_extmul_low_u32x4(a0, b1), u64x2_extmul_low_u32x4(a1, b0));
+        let pl1_h = u64x2_add(u64x2_extmul_high_u32x4(a0, b1), u64x2_extmul_high_u32x4(a1, b0));
+        let pl2_l = u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a0, b2), u64x2_extmul_low_u32x4(a1, b1)), u64x2_extmul_low_u32x4(a2, b0));
+        let pl2_h = u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a0, b2), u64x2_extmul_high_u32x4(a1, b1)), u64x2_extmul_high_u32x4(a2, b0));
+        let pl3_l = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a0, b3), u64x2_extmul_low_u32x4(a1, b2)), u64x2_extmul_low_u32x4(a2, b1)), u64x2_extmul_low_u32x4(a3, b0));
+        let pl3_h = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a0, b3), u64x2_extmul_high_u32x4(a1, b2)), u64x2_extmul_high_u32x4(a2, b1)), u64x2_extmul_high_u32x4(a3, b0));
+        let pl4_l = u64x2_add(u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a0, b4), u64x2_extmul_low_u32x4(a1, b3)), u64x2_extmul_low_u32x4(a2, b2)), u64x2_extmul_low_u32x4(a3, b1)), u64x2_extmul_low_u32x4(a4, b0));
+        let pl4_h = u64x2_add(u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a0, b4), u64x2_extmul_high_u32x4(a1, b3)), u64x2_extmul_high_u32x4(a2, b2)), u64x2_extmul_high_u32x4(a3, b1)), u64x2_extmul_high_u32x4(a4, b0));
+        let pl5_l = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a1, b4), u64x2_extmul_low_u32x4(a2, b3)), u64x2_extmul_low_u32x4(a3, b2)), u64x2_extmul_low_u32x4(a4, b1));
+        let pl5_h = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a1, b4), u64x2_extmul_high_u32x4(a2, b3)), u64x2_extmul_high_u32x4(a3, b2)), u64x2_extmul_high_u32x4(a4, b1));
+        let pl6_l = u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a2, b4), u64x2_extmul_low_u32x4(a3, b3)), u64x2_extmul_low_u32x4(a4, b2));
+        let pl6_h = u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a2, b4), u64x2_extmul_high_u32x4(a3, b3)), u64x2_extmul_high_u32x4(a4, b2));
+        let pl7_l = u64x2_add(u64x2_extmul_low_u32x4(a3, b4), u64x2_extmul_low_u32x4(a4, b3));
+        let pl7_h = u64x2_add(u64x2_extmul_high_u32x4(a3, b4), u64x2_extmul_high_u32x4(a4, b3));
+        let pl8_l = u64x2_extmul_low_u32x4(a4, b4);
+        let pl8_h = u64x2_extmul_high_u32x4(a4, b4);
+        let ph0_l = u64x2_extmul_low_u32x4(a5, b5);
+        let ph0_h = u64x2_extmul_high_u32x4(a5, b5);
+        let ph1_l = u64x2_add(u64x2_extmul_low_u32x4(a5, b6), u64x2_extmul_low_u32x4(a6, b5));
+        let ph1_h = u64x2_add(u64x2_extmul_high_u32x4(a5, b6), u64x2_extmul_high_u32x4(a6, b5));
+        let ph2_l = u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a5, b7), u64x2_extmul_low_u32x4(a6, b6)), u64x2_extmul_low_u32x4(a7, b5));
+        let ph2_h = u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a5, b7), u64x2_extmul_high_u32x4(a6, b6)), u64x2_extmul_high_u32x4(a7, b5));
+        let ph3_l = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a5, b8), u64x2_extmul_low_u32x4(a6, b7)), u64x2_extmul_low_u32x4(a7, b6)), u64x2_extmul_low_u32x4(a8, b5));
+        let ph3_h = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a5, b8), u64x2_extmul_high_u32x4(a6, b7)), u64x2_extmul_high_u32x4(a7, b6)), u64x2_extmul_high_u32x4(a8, b5));
+        let ph4_l = u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a6, b8), u64x2_extmul_low_u32x4(a7, b7)), u64x2_extmul_low_u32x4(a8, b6));
+        let ph4_h = u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a6, b8), u64x2_extmul_high_u32x4(a7, b7)), u64x2_extmul_high_u32x4(a8, b6));
+        let ph5_l = u64x2_add(u64x2_extmul_low_u32x4(a7, b8), u64x2_extmul_low_u32x4(a8, b7));
+        let ph5_h = u64x2_add(u64x2_extmul_high_u32x4(a7, b8), u64x2_extmul_high_u32x4(a8, b7));
+        let ph6_l = u64x2_extmul_low_u32x4(a8, b8);
+        let ph6_h = u64x2_extmul_high_u32x4(a8, b8);
+        let pc0_l = u64x2_extmul_low_u32x4(sl0, sr0);
+        let pc0_h = u64x2_extmul_high_u32x4(sl0, sr0);
+        let pc1_l = u64x2_add(u64x2_extmul_low_u32x4(sl0, sr1), u64x2_extmul_low_u32x4(sl1, sr0));
+        let pc1_h = u64x2_add(u64x2_extmul_high_u32x4(sl0, sr1), u64x2_extmul_high_u32x4(sl1, sr0));
+        let pc2_l = u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(sl0, sr2), u64x2_extmul_low_u32x4(sl1, sr1)), u64x2_extmul_low_u32x4(sl2, sr0));
+        let pc2_h = u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(sl0, sr2), u64x2_extmul_high_u32x4(sl1, sr1)), u64x2_extmul_high_u32x4(sl2, sr0));
+        let pc3_l = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(sl0, sr3), u64x2_extmul_low_u32x4(sl1, sr2)), u64x2_extmul_low_u32x4(sl2, sr1)), u64x2_extmul_low_u32x4(sl3, sr0));
+        let pc3_h = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(sl0, sr3), u64x2_extmul_high_u32x4(sl1, sr2)), u64x2_extmul_high_u32x4(sl2, sr1)), u64x2_extmul_high_u32x4(sl3, sr0));
+        let pc4_l = u64x2_add(u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(sl0, sr4), u64x2_extmul_low_u32x4(sl1, sr3)), u64x2_extmul_low_u32x4(sl2, sr2)), u64x2_extmul_low_u32x4(sl3, sr1)), u64x2_extmul_low_u32x4(sl4, sr0));
+        let pc4_h = u64x2_add(u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(sl0, sr4), u64x2_extmul_high_u32x4(sl1, sr3)), u64x2_extmul_high_u32x4(sl2, sr2)), u64x2_extmul_high_u32x4(sl3, sr1)), u64x2_extmul_high_u32x4(sl4, sr0));
+        let pc5_l = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(sl1, sr4), u64x2_extmul_low_u32x4(sl2, sr3)), u64x2_extmul_low_u32x4(sl3, sr2)), u64x2_extmul_low_u32x4(sl4, sr1));
+        let pc5_h = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(sl1, sr4), u64x2_extmul_high_u32x4(sl2, sr3)), u64x2_extmul_high_u32x4(sl3, sr2)), u64x2_extmul_high_u32x4(sl4, sr1));
+        let pc6_l = u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(sl2, sr4), u64x2_extmul_low_u32x4(sl3, sr3)), u64x2_extmul_low_u32x4(sl4, sr2));
+        let pc6_h = u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(sl2, sr4), u64x2_extmul_high_u32x4(sl3, sr3)), u64x2_extmul_high_u32x4(sl4, sr2));
+        let pc7_l = u64x2_add(u64x2_extmul_low_u32x4(sl3, sr4), u64x2_extmul_low_u32x4(sl4, sr3));
+        let pc7_h = u64x2_add(u64x2_extmul_high_u32x4(sl3, sr4), u64x2_extmul_high_u32x4(sl4, sr3));
+        let pc8_l = u64x2_extmul_low_u32x4(sl4, sr4);
+        let pc8_h = u64x2_extmul_high_u32x4(sl4, sr4);
+        let mut t0_l = pl0_l;
+        let mut t1_l = pl1_l;
+        let mut t2_l = pl2_l;
+        let mut t3_l = pl3_l;
+        let mut t4_l = pl4_l;
+        let m0_l = u64x2_sub(u64x2_sub(pc0_l, pl0_l), ph0_l);
+        let m1_l = u64x2_sub(u64x2_sub(pc1_l, pl1_l), ph1_l);
+        let m2_l = u64x2_sub(u64x2_sub(pc2_l, pl2_l), ph2_l);
+        let m3_l = u64x2_sub(u64x2_sub(pc3_l, pl3_l), ph3_l);
+        let m4_l = u64x2_sub(u64x2_sub(pc4_l, pl4_l), ph4_l);
+        let m5_l = u64x2_sub(u64x2_sub(pc5_l, pl5_l), ph5_l);
+        let m6_l = u64x2_sub(u64x2_sub(pc6_l, pl6_l), ph6_l);
+        let m7_l = u64x2_sub(pc7_l, pl7_l);
+        let m8_l = u64x2_sub(pc8_l, pl8_l);
+        let mut t5_l = u64x2_add(pl5_l, m0_l);
+        let mut t6_l = u64x2_add(pl6_l, m1_l);
+        let mut t7_l = u64x2_add(pl7_l, m2_l);
+        let mut t8_l = u64x2_add(pl8_l, m3_l);
+        let mut t9_l = m4_l;
+        let mut t10_l = u64x2_add(m5_l, ph0_l);
+        let mut t11_l = u64x2_add(m6_l, ph1_l);
+        let mut t12_l = u64x2_add(m7_l, ph2_l);
+        let mut t13_l = u64x2_add(m8_l, ph3_l);
+        let mut t14_l = ph4_l;
+        let mut t15_l = ph5_l;
+        let mut t16_l = ph6_l;
+        let mut t17_l = u64x2(0, 0);
+        let mut t0_h = pl0_h;
+        let mut t1_h = pl1_h;
+        let mut t2_h = pl2_h;
+        let mut t3_h = pl3_h;
+        let mut t4_h = pl4_h;
+        let m0_h = u64x2_sub(u64x2_sub(pc0_h, pl0_h), ph0_h);
+        let m1_h = u64x2_sub(u64x2_sub(pc1_h, pl1_h), ph1_h);
+        let m2_h = u64x2_sub(u64x2_sub(pc2_h, pl2_h), ph2_h);
+        let m3_h = u64x2_sub(u64x2_sub(pc3_h, pl3_h), ph3_h);
+        let m4_h = u64x2_sub(u64x2_sub(pc4_h, pl4_h), ph4_h);
+        let m5_h = u64x2_sub(u64x2_sub(pc5_h, pl5_h), ph5_h);
+        let m6_h = u64x2_sub(u64x2_sub(pc6_h, pl6_h), ph6_h);
+        let m7_h = u64x2_sub(pc7_h, pl7_h);
+        let m8_h = u64x2_sub(pc8_h, pl8_h);
+        let mut t5_h = u64x2_add(pl5_h, m0_h);
+        let mut t6_h = u64x2_add(pl6_h, m1_h);
+        let mut t7_h = u64x2_add(pl7_h, m2_h);
+        let mut t8_h = u64x2_add(pl8_h, m3_h);
+        let mut t9_h = m4_h;
+        let mut t10_h = u64x2_add(m5_h, ph0_h);
+        let mut t11_h = u64x2_add(m6_h, ph1_h);
+        let mut t12_h = u64x2_add(m7_h, ph2_h);
+        let mut t13_h = u64x2_add(m8_h, ph3_h);
+        let mut t14_h = ph4_h;
+        let mut t15_h = ph5_h;
+        let mut t16_h = ph6_h;
+        let mut t17_h = u64x2(0, 0);
+        let k4_of = |tl: v128, th: v128, maskk: v128| -> v128 {
+            let kt = u32x4_shuffle::<0, 2, 4, 6>(v128_and(tl, mask64), v128_and(th, mask64));
+            let ml = v128_and(u64x2_extmul_low_u32x4(kt, invv), maskk);
+            let mh = v128_and(u64x2_extmul_high_u32x4(kt, invv), maskk);
+            u32x4_shuffle::<0, 2, 4, 6>(ml, mh)
+        };
+        let k0 = k4_of(t0_l, t0_h, mask64);
+        t0_l = u64x2_add(t0_l, u64x2_extmul_low_u32x4(k0, p0));
+        t0_h = u64x2_add(t0_h, u64x2_extmul_high_u32x4(k0, p0));
+        t1_l = u64x2_add(t1_l, u64x2_extmul_low_u32x4(k0, p1));
+        t1_h = u64x2_add(t1_h, u64x2_extmul_high_u32x4(k0, p1));
+        t2_l = u64x2_add(t2_l, u64x2_extmul_low_u32x4(k0, p2));
+        t2_h = u64x2_add(t2_h, u64x2_extmul_high_u32x4(k0, p2));
+        t3_l = u64x2_add(t3_l, u64x2_extmul_low_u32x4(k0, p3));
+        t3_h = u64x2_add(t3_h, u64x2_extmul_high_u32x4(k0, p3));
+        t4_l = u64x2_add(t4_l, u64x2_extmul_low_u32x4(k0, p4));
+        t4_h = u64x2_add(t4_h, u64x2_extmul_high_u32x4(k0, p4));
+        t5_l = u64x2_add(t5_l, u64x2_extmul_low_u32x4(k0, p5));
+        t5_h = u64x2_add(t5_h, u64x2_extmul_high_u32x4(k0, p5));
+        t6_l = u64x2_add(t6_l, u64x2_extmul_low_u32x4(k0, p6));
+        t6_h = u64x2_add(t6_h, u64x2_extmul_high_u32x4(k0, p6));
+        t7_l = u64x2_add(t7_l, u64x2_extmul_low_u32x4(k0, p7));
+        t7_h = u64x2_add(t7_h, u64x2_extmul_high_u32x4(k0, p7));
+        t8_l = u64x2_add(t8_l, u64x2_extmul_low_u32x4(k0, p8));
+        t8_h = u64x2_add(t8_h, u64x2_extmul_high_u32x4(k0, p8));
+        t1_l = u64x2_add(t1_l, u64x2_shr(t0_l, 29));
+        t1_h = u64x2_add(t1_h, u64x2_shr(t0_h, 29));
+        let k1 = k4_of(t1_l, t1_h, mask64);
+        t1_l = u64x2_add(t1_l, u64x2_extmul_low_u32x4(k1, p0));
+        t1_h = u64x2_add(t1_h, u64x2_extmul_high_u32x4(k1, p0));
+        t2_l = u64x2_add(t2_l, u64x2_extmul_low_u32x4(k1, p1));
+        t2_h = u64x2_add(t2_h, u64x2_extmul_high_u32x4(k1, p1));
+        t3_l = u64x2_add(t3_l, u64x2_extmul_low_u32x4(k1, p2));
+        t3_h = u64x2_add(t3_h, u64x2_extmul_high_u32x4(k1, p2));
+        t4_l = u64x2_add(t4_l, u64x2_extmul_low_u32x4(k1, p3));
+        t4_h = u64x2_add(t4_h, u64x2_extmul_high_u32x4(k1, p3));
+        t5_l = u64x2_add(t5_l, u64x2_extmul_low_u32x4(k1, p4));
+        t5_h = u64x2_add(t5_h, u64x2_extmul_high_u32x4(k1, p4));
+        t6_l = u64x2_add(t6_l, u64x2_extmul_low_u32x4(k1, p5));
+        t6_h = u64x2_add(t6_h, u64x2_extmul_high_u32x4(k1, p5));
+        t7_l = u64x2_add(t7_l, u64x2_extmul_low_u32x4(k1, p6));
+        t7_h = u64x2_add(t7_h, u64x2_extmul_high_u32x4(k1, p6));
+        t8_l = u64x2_add(t8_l, u64x2_extmul_low_u32x4(k1, p7));
+        t8_h = u64x2_add(t8_h, u64x2_extmul_high_u32x4(k1, p7));
+        t9_l = u64x2_add(t9_l, u64x2_extmul_low_u32x4(k1, p8));
+        t9_h = u64x2_add(t9_h, u64x2_extmul_high_u32x4(k1, p8));
+        t2_l = u64x2_add(t2_l, u64x2_shr(t1_l, 29));
+        t2_h = u64x2_add(t2_h, u64x2_shr(t1_h, 29));
+        let k2 = k4_of(t2_l, t2_h, mask64);
+        t2_l = u64x2_add(t2_l, u64x2_extmul_low_u32x4(k2, p0));
+        t2_h = u64x2_add(t2_h, u64x2_extmul_high_u32x4(k2, p0));
+        t3_l = u64x2_add(t3_l, u64x2_extmul_low_u32x4(k2, p1));
+        t3_h = u64x2_add(t3_h, u64x2_extmul_high_u32x4(k2, p1));
+        t4_l = u64x2_add(t4_l, u64x2_extmul_low_u32x4(k2, p2));
+        t4_h = u64x2_add(t4_h, u64x2_extmul_high_u32x4(k2, p2));
+        t5_l = u64x2_add(t5_l, u64x2_extmul_low_u32x4(k2, p3));
+        t5_h = u64x2_add(t5_h, u64x2_extmul_high_u32x4(k2, p3));
+        t6_l = u64x2_add(t6_l, u64x2_extmul_low_u32x4(k2, p4));
+        t6_h = u64x2_add(t6_h, u64x2_extmul_high_u32x4(k2, p4));
+        t7_l = u64x2_add(t7_l, u64x2_extmul_low_u32x4(k2, p5));
+        t7_h = u64x2_add(t7_h, u64x2_extmul_high_u32x4(k2, p5));
+        t8_l = u64x2_add(t8_l, u64x2_extmul_low_u32x4(k2, p6));
+        t8_h = u64x2_add(t8_h, u64x2_extmul_high_u32x4(k2, p6));
+        t9_l = u64x2_add(t9_l, u64x2_extmul_low_u32x4(k2, p7));
+        t9_h = u64x2_add(t9_h, u64x2_extmul_high_u32x4(k2, p7));
+        t10_l = u64x2_add(t10_l, u64x2_extmul_low_u32x4(k2, p8));
+        t10_h = u64x2_add(t10_h, u64x2_extmul_high_u32x4(k2, p8));
+        t3_l = u64x2_add(t3_l, u64x2_shr(t2_l, 29));
+        t3_h = u64x2_add(t3_h, u64x2_shr(t2_h, 29));
+        let k3 = k4_of(t3_l, t3_h, mask64);
+        t3_l = u64x2_add(t3_l, u64x2_extmul_low_u32x4(k3, p0));
+        t3_h = u64x2_add(t3_h, u64x2_extmul_high_u32x4(k3, p0));
+        t4_l = u64x2_add(t4_l, u64x2_extmul_low_u32x4(k3, p1));
+        t4_h = u64x2_add(t4_h, u64x2_extmul_high_u32x4(k3, p1));
+        t5_l = u64x2_add(t5_l, u64x2_extmul_low_u32x4(k3, p2));
+        t5_h = u64x2_add(t5_h, u64x2_extmul_high_u32x4(k3, p2));
+        t6_l = u64x2_add(t6_l, u64x2_extmul_low_u32x4(k3, p3));
+        t6_h = u64x2_add(t6_h, u64x2_extmul_high_u32x4(k3, p3));
+        t7_l = u64x2_add(t7_l, u64x2_extmul_low_u32x4(k3, p4));
+        t7_h = u64x2_add(t7_h, u64x2_extmul_high_u32x4(k3, p4));
+        t8_l = u64x2_add(t8_l, u64x2_extmul_low_u32x4(k3, p5));
+        t8_h = u64x2_add(t8_h, u64x2_extmul_high_u32x4(k3, p5));
+        t9_l = u64x2_add(t9_l, u64x2_extmul_low_u32x4(k3, p6));
+        t9_h = u64x2_add(t9_h, u64x2_extmul_high_u32x4(k3, p6));
+        t10_l = u64x2_add(t10_l, u64x2_extmul_low_u32x4(k3, p7));
+        t10_h = u64x2_add(t10_h, u64x2_extmul_high_u32x4(k3, p7));
+        t11_l = u64x2_add(t11_l, u64x2_extmul_low_u32x4(k3, p8));
+        t11_h = u64x2_add(t11_h, u64x2_extmul_high_u32x4(k3, p8));
+        t4_l = u64x2_add(t4_l, u64x2_shr(t3_l, 29));
+        t4_h = u64x2_add(t4_h, u64x2_shr(t3_h, 29));
+        let k4 = k4_of(t4_l, t4_h, mask64);
+        t4_l = u64x2_add(t4_l, u64x2_extmul_low_u32x4(k4, p0));
+        t4_h = u64x2_add(t4_h, u64x2_extmul_high_u32x4(k4, p0));
+        t5_l = u64x2_add(t5_l, u64x2_extmul_low_u32x4(k4, p1));
+        t5_h = u64x2_add(t5_h, u64x2_extmul_high_u32x4(k4, p1));
+        t6_l = u64x2_add(t6_l, u64x2_extmul_low_u32x4(k4, p2));
+        t6_h = u64x2_add(t6_h, u64x2_extmul_high_u32x4(k4, p2));
+        t7_l = u64x2_add(t7_l, u64x2_extmul_low_u32x4(k4, p3));
+        t7_h = u64x2_add(t7_h, u64x2_extmul_high_u32x4(k4, p3));
+        t8_l = u64x2_add(t8_l, u64x2_extmul_low_u32x4(k4, p4));
+        t8_h = u64x2_add(t8_h, u64x2_extmul_high_u32x4(k4, p4));
+        t9_l = u64x2_add(t9_l, u64x2_extmul_low_u32x4(k4, p5));
+        t9_h = u64x2_add(t9_h, u64x2_extmul_high_u32x4(k4, p5));
+        t10_l = u64x2_add(t10_l, u64x2_extmul_low_u32x4(k4, p6));
+        t10_h = u64x2_add(t10_h, u64x2_extmul_high_u32x4(k4, p6));
+        t11_l = u64x2_add(t11_l, u64x2_extmul_low_u32x4(k4, p7));
+        t11_h = u64x2_add(t11_h, u64x2_extmul_high_u32x4(k4, p7));
+        t12_l = u64x2_add(t12_l, u64x2_extmul_low_u32x4(k4, p8));
+        t12_h = u64x2_add(t12_h, u64x2_extmul_high_u32x4(k4, p8));
+        t5_l = u64x2_add(t5_l, u64x2_shr(t4_l, 29));
+        t5_h = u64x2_add(t5_h, u64x2_shr(t4_h, 29));
+        let k5 = k4_of(t5_l, t5_h, mask64);
+        t5_l = u64x2_add(t5_l, u64x2_extmul_low_u32x4(k5, p0));
+        t5_h = u64x2_add(t5_h, u64x2_extmul_high_u32x4(k5, p0));
+        t6_l = u64x2_add(t6_l, u64x2_extmul_low_u32x4(k5, p1));
+        t6_h = u64x2_add(t6_h, u64x2_extmul_high_u32x4(k5, p1));
+        t7_l = u64x2_add(t7_l, u64x2_extmul_low_u32x4(k5, p2));
+        t7_h = u64x2_add(t7_h, u64x2_extmul_high_u32x4(k5, p2));
+        t8_l = u64x2_add(t8_l, u64x2_extmul_low_u32x4(k5, p3));
+        t8_h = u64x2_add(t8_h, u64x2_extmul_high_u32x4(k5, p3));
+        t9_l = u64x2_add(t9_l, u64x2_extmul_low_u32x4(k5, p4));
+        t9_h = u64x2_add(t9_h, u64x2_extmul_high_u32x4(k5, p4));
+        t10_l = u64x2_add(t10_l, u64x2_extmul_low_u32x4(k5, p5));
+        t10_h = u64x2_add(t10_h, u64x2_extmul_high_u32x4(k5, p5));
+        t11_l = u64x2_add(t11_l, u64x2_extmul_low_u32x4(k5, p6));
+        t11_h = u64x2_add(t11_h, u64x2_extmul_high_u32x4(k5, p6));
+        t12_l = u64x2_add(t12_l, u64x2_extmul_low_u32x4(k5, p7));
+        t12_h = u64x2_add(t12_h, u64x2_extmul_high_u32x4(k5, p7));
+        t13_l = u64x2_add(t13_l, u64x2_extmul_low_u32x4(k5, p8));
+        t13_h = u64x2_add(t13_h, u64x2_extmul_high_u32x4(k5, p8));
+        t6_l = u64x2_add(t6_l, u64x2_shr(t5_l, 29));
+        t6_h = u64x2_add(t6_h, u64x2_shr(t5_h, 29));
+        let k6 = k4_of(t6_l, t6_h, mask64);
+        t6_l = u64x2_add(t6_l, u64x2_extmul_low_u32x4(k6, p0));
+        t6_h = u64x2_add(t6_h, u64x2_extmul_high_u32x4(k6, p0));
+        t7_l = u64x2_add(t7_l, u64x2_extmul_low_u32x4(k6, p1));
+        t7_h = u64x2_add(t7_h, u64x2_extmul_high_u32x4(k6, p1));
+        t8_l = u64x2_add(t8_l, u64x2_extmul_low_u32x4(k6, p2));
+        t8_h = u64x2_add(t8_h, u64x2_extmul_high_u32x4(k6, p2));
+        t9_l = u64x2_add(t9_l, u64x2_extmul_low_u32x4(k6, p3));
+        t9_h = u64x2_add(t9_h, u64x2_extmul_high_u32x4(k6, p3));
+        t10_l = u64x2_add(t10_l, u64x2_extmul_low_u32x4(k6, p4));
+        t10_h = u64x2_add(t10_h, u64x2_extmul_high_u32x4(k6, p4));
+        t11_l = u64x2_add(t11_l, u64x2_extmul_low_u32x4(k6, p5));
+        t11_h = u64x2_add(t11_h, u64x2_extmul_high_u32x4(k6, p5));
+        t12_l = u64x2_add(t12_l, u64x2_extmul_low_u32x4(k6, p6));
+        t12_h = u64x2_add(t12_h, u64x2_extmul_high_u32x4(k6, p6));
+        t13_l = u64x2_add(t13_l, u64x2_extmul_low_u32x4(k6, p7));
+        t13_h = u64x2_add(t13_h, u64x2_extmul_high_u32x4(k6, p7));
+        t14_l = u64x2_add(t14_l, u64x2_extmul_low_u32x4(k6, p8));
+        t14_h = u64x2_add(t14_h, u64x2_extmul_high_u32x4(k6, p8));
+        t7_l = u64x2_add(t7_l, u64x2_shr(t6_l, 29));
+        t7_h = u64x2_add(t7_h, u64x2_shr(t6_h, 29));
+        let k7 = k4_of(t7_l, t7_h, mask64);
+        t7_l = u64x2_add(t7_l, u64x2_extmul_low_u32x4(k7, p0));
+        t7_h = u64x2_add(t7_h, u64x2_extmul_high_u32x4(k7, p0));
+        t8_l = u64x2_add(t8_l, u64x2_extmul_low_u32x4(k7, p1));
+        t8_h = u64x2_add(t8_h, u64x2_extmul_high_u32x4(k7, p1));
+        t9_l = u64x2_add(t9_l, u64x2_extmul_low_u32x4(k7, p2));
+        t9_h = u64x2_add(t9_h, u64x2_extmul_high_u32x4(k7, p2));
+        t10_l = u64x2_add(t10_l, u64x2_extmul_low_u32x4(k7, p3));
+        t10_h = u64x2_add(t10_h, u64x2_extmul_high_u32x4(k7, p3));
+        t11_l = u64x2_add(t11_l, u64x2_extmul_low_u32x4(k7, p4));
+        t11_h = u64x2_add(t11_h, u64x2_extmul_high_u32x4(k7, p4));
+        t12_l = u64x2_add(t12_l, u64x2_extmul_low_u32x4(k7, p5));
+        t12_h = u64x2_add(t12_h, u64x2_extmul_high_u32x4(k7, p5));
+        t13_l = u64x2_add(t13_l, u64x2_extmul_low_u32x4(k7, p6));
+        t13_h = u64x2_add(t13_h, u64x2_extmul_high_u32x4(k7, p6));
+        t14_l = u64x2_add(t14_l, u64x2_extmul_low_u32x4(k7, p7));
+        t14_h = u64x2_add(t14_h, u64x2_extmul_high_u32x4(k7, p7));
+        t15_l = u64x2_add(t15_l, u64x2_extmul_low_u32x4(k7, p8));
+        t15_h = u64x2_add(t15_h, u64x2_extmul_high_u32x4(k7, p8));
+        t8_l = u64x2_add(t8_l, u64x2_shr(t7_l, 29));
+        t8_h = u64x2_add(t8_h, u64x2_shr(t7_h, 29));
+        let k8 = k4_of(t8_l, t8_h, mask24);
+        t8_l = u64x2_add(t8_l, u64x2_extmul_low_u32x4(k8, p0));
+        t8_h = u64x2_add(t8_h, u64x2_extmul_high_u32x4(k8, p0));
+        t9_l = u64x2_add(t9_l, u64x2_extmul_low_u32x4(k8, p1));
+        t9_h = u64x2_add(t9_h, u64x2_extmul_high_u32x4(k8, p1));
+        t10_l = u64x2_add(t10_l, u64x2_extmul_low_u32x4(k8, p2));
+        t10_h = u64x2_add(t10_h, u64x2_extmul_high_u32x4(k8, p2));
+        t11_l = u64x2_add(t11_l, u64x2_extmul_low_u32x4(k8, p3));
+        t11_h = u64x2_add(t11_h, u64x2_extmul_high_u32x4(k8, p3));
+        t12_l = u64x2_add(t12_l, u64x2_extmul_low_u32x4(k8, p4));
+        t12_h = u64x2_add(t12_h, u64x2_extmul_high_u32x4(k8, p4));
+        t13_l = u64x2_add(t13_l, u64x2_extmul_low_u32x4(k8, p5));
+        t13_h = u64x2_add(t13_h, u64x2_extmul_high_u32x4(k8, p5));
+        t14_l = u64x2_add(t14_l, u64x2_extmul_low_u32x4(k8, p6));
+        t14_h = u64x2_add(t14_h, u64x2_extmul_high_u32x4(k8, p6));
+        t15_l = u64x2_add(t15_l, u64x2_extmul_low_u32x4(k8, p7));
+        t15_h = u64x2_add(t15_h, u64x2_extmul_high_u32x4(k8, p7));
+        t16_l = u64x2_add(t16_l, u64x2_extmul_low_u32x4(k8, p8));
+        t16_h = u64x2_add(t16_h, u64x2_extmul_high_u32x4(k8, p8));
+        t9_l = u64x2_add(t9_l, u64x2_shr(t8_l, 29));
+        t8_l = v128_and(t8_l, mask64);
+        t9_h = u64x2_add(t9_h, u64x2_shr(t8_h, 29));
+        t8_h = v128_and(t8_h, mask64);
+        t10_l = u64x2_add(t10_l, u64x2_shr(t9_l, 29));
+        t9_l = v128_and(t9_l, mask64);
+        t10_h = u64x2_add(t10_h, u64x2_shr(t9_h, 29));
+        t9_h = v128_and(t9_h, mask64);
+        t11_l = u64x2_add(t11_l, u64x2_shr(t10_l, 29));
+        t10_l = v128_and(t10_l, mask64);
+        t11_h = u64x2_add(t11_h, u64x2_shr(t10_h, 29));
+        t10_h = v128_and(t10_h, mask64);
+        t12_l = u64x2_add(t12_l, u64x2_shr(t11_l, 29));
+        t11_l = v128_and(t11_l, mask64);
+        t12_h = u64x2_add(t12_h, u64x2_shr(t11_h, 29));
+        t11_h = v128_and(t11_h, mask64);
+        t13_l = u64x2_add(t13_l, u64x2_shr(t12_l, 29));
+        t12_l = v128_and(t12_l, mask64);
+        t13_h = u64x2_add(t13_h, u64x2_shr(t12_h, 29));
+        t12_h = v128_and(t12_h, mask64);
+        t14_l = u64x2_add(t14_l, u64x2_shr(t13_l, 29));
+        t13_l = v128_and(t13_l, mask64);
+        t14_h = u64x2_add(t14_h, u64x2_shr(t13_h, 29));
+        t13_h = v128_and(t13_h, mask64);
+        t15_l = u64x2_add(t15_l, u64x2_shr(t14_l, 29));
+        t14_l = v128_and(t14_l, mask64);
+        t15_h = u64x2_add(t15_h, u64x2_shr(t14_h, 29));
+        t14_h = v128_and(t14_h, mask64);
+        t16_l = u64x2_add(t16_l, u64x2_shr(t15_l, 29));
+        t15_l = v128_and(t15_l, mask64);
+        t16_h = u64x2_add(t16_h, u64x2_shr(t15_h, 29));
+        t15_h = v128_and(t15_h, mask64);
+        t17_l = u64x2_add(t17_l, u64x2_shr(t16_l, 29));
+        t16_l = v128_and(t16_l, mask64);
+        t17_h = u64x2_add(t17_h, u64x2_shr(t16_h, 29));
+        t16_h = v128_and(t16_h, mask64);
+        let o0_l = v128_and(v128_or(u64x2_shr(t8_l, 24), u64x2_shl(t9_l, 5)), mask64);
+        let o0_h = v128_and(v128_or(u64x2_shr(t8_h, 24), u64x2_shl(t9_h, 5)), mask64);
+        let o1_l = v128_and(v128_or(u64x2_shr(t9_l, 24), u64x2_shl(t10_l, 5)), mask64);
+        let o1_h = v128_and(v128_or(u64x2_shr(t9_h, 24), u64x2_shl(t10_h, 5)), mask64);
+        let o2_l = v128_and(v128_or(u64x2_shr(t10_l, 24), u64x2_shl(t11_l, 5)), mask64);
+        let o2_h = v128_and(v128_or(u64x2_shr(t10_h, 24), u64x2_shl(t11_h, 5)), mask64);
+        let o3_l = v128_and(v128_or(u64x2_shr(t11_l, 24), u64x2_shl(t12_l, 5)), mask64);
+        let o3_h = v128_and(v128_or(u64x2_shr(t11_h, 24), u64x2_shl(t12_h, 5)), mask64);
+        let o4_l = v128_and(v128_or(u64x2_shr(t12_l, 24), u64x2_shl(t13_l, 5)), mask64);
+        let o4_h = v128_and(v128_or(u64x2_shr(t12_h, 24), u64x2_shl(t13_h, 5)), mask64);
+        let o5_l = v128_and(v128_or(u64x2_shr(t13_l, 24), u64x2_shl(t14_l, 5)), mask64);
+        let o5_h = v128_and(v128_or(u64x2_shr(t13_h, 24), u64x2_shl(t14_h, 5)), mask64);
+        let o6_l = v128_and(v128_or(u64x2_shr(t14_l, 24), u64x2_shl(t15_l, 5)), mask64);
+        let o6_h = v128_and(v128_or(u64x2_shr(t14_h, 24), u64x2_shl(t15_h, 5)), mask64);
+        let o7_l = v128_and(v128_or(u64x2_shr(t15_l, 24), u64x2_shl(t16_l, 5)), mask64);
+        let o7_h = v128_and(v128_or(u64x2_shr(t15_h, 24), u64x2_shl(t16_h, 5)), mask64);
+        let o8_l = v128_and(v128_or(u64x2_shr(t16_l, 24), u64x2_shl(t17_l, 5)), mask64);
+        let o8_h = v128_and(v128_or(u64x2_shr(t16_h, 24), u64x2_shl(t17_h, 5)), mask64);
+        QuadFp {
+            limbs: [
+                u32x4_shuffle::<0, 2, 4, 6>(o0_l, o0_h),
+                u32x4_shuffle::<0, 2, 4, 6>(o1_l, o1_h),
+                u32x4_shuffle::<0, 2, 4, 6>(o2_l, o2_h),
+                u32x4_shuffle::<0, 2, 4, 6>(o3_l, o3_h),
+                u32x4_shuffle::<0, 2, 4, 6>(o4_l, o4_h),
+                u32x4_shuffle::<0, 2, 4, 6>(o5_l, o5_h),
+                u32x4_shuffle::<0, 2, 4, 6>(o6_l, o6_h),
+                u32x4_shuffle::<0, 2, 4, 6>(o7_l, o7_h),
+                u32x4_shuffle::<0, 2, 4, 6>(o8_l, o8_h),
+            ],
+        }
+    }
+}
+
+/// bb's exact wasm multiply as a 4-lane SIMD kernel: Karatsuba 5+4, eight Yuval reductions
+/// (the round multiplier is the masked low limb — no inverse multiply) and one standard
+/// Montgomery round, dividing by 2^261. Batched loops absorb the 2^-5 domain drift into a
+/// pre-scaled constant operand (`scale32`), keeping stored values in ark's 2^256 domain.
+#[cfg(all(target_family = "wasm", target_feature = "simd128"))]
+pub mod quad261 {
+    pub use super::quad256::QuadFp;
+    use super::wasm_mont::MASK29;
+    use core::arch::wasm32::*;
+
+
+    /// Lanewise `a + b` on coarse [0, 2p) values: add limbs, normalize, subtract 2p per lane if
+    /// the lane reached it (compute both, blend on the borrow mask). Output back in [0, 2p).
+    pub fn add(a: &QuadFp, b: &QuadFp, twop29: &[u32; 9], c: &Consts) -> QuadFp {
+        let mask64 = c.mask64;
+        let mut sl = [u64x2(0, 0); 9];
+        let mut sh = [u64x2(0, 0); 9];
+        let (mut cl, mut ch) = (u64x2(0, 0), u64x2(0, 0));
+        for k in 0..9 {
+            let al = u64x2_extend_low_u32x4(a.limbs[k]);
+            let ah = u64x2_extend_high_u32x4(a.limbs[k]);
+            let bl = u64x2_extend_low_u32x4(b.limbs[k]);
+            let bh = u64x2_extend_high_u32x4(b.limbs[k]);
+            let vl = u64x2_add(u64x2_add(al, bl), cl);
+            let vh = u64x2_add(u64x2_add(ah, bh), ch);
+            sl[k] = v128_and(vl, mask64);
+            sh[k] = v128_and(vh, mask64);
+            cl = u64x2_shr(vl, 29);
+            ch = u64x2_shr(vh, 29);
+        }
+        // subtract 2p with borrow; select per lane on final borrow
+        let mut dl = [u64x2(0, 0); 9];
+        let mut dh = [u64x2(0, 0); 9];
+        let (mut bwl, mut bwh) = (u64x2(0, 0), u64x2(0, 0));
+        for k in 0..9 {
+            let t = u64x2_splat(twop29[k] as u64);
+            let vl = u64x2_sub(u64x2_sub(sl[k], t), bwl);
+            let vh = u64x2_sub(u64x2_sub(sh[k], t), bwh);
+            dl[k] = v128_and(vl, mask64);
+            dh[k] = v128_and(vh, mask64);
+            bwl = u64x2_shr(vl, 63);
+            bwh = u64x2_shr(vh, 63);
+        }
+        // borrow==1 -> keep sum; else keep difference
+        let keepl = i64x2_ne(bwl, u64x2(0, 0));
+        let keeph = i64x2_ne(bwh, u64x2(0, 0));
+        let mut out = [u32x4_splat(0); 9];
+        for k in 0..9 {
+            let l = v128_bitselect(sl[k], dl[k], keepl);
+            let h = v128_bitselect(sh[k], dh[k], keeph);
+            out[k] = u32x4_shuffle::<0, 2, 4, 6>(l, h);
+        }
+        QuadFp { limbs: out }
+    }
+
+    /// Lanewise `a - b` on coarse values: computed as `(a + 2p) - b` (non-negative for a, b in
+    /// [0, 2p)), then one conditional 2p subtraction back into the coarse range.
+    pub fn sub(a: &QuadFp, b: &QuadFp, twop29: &[u32; 9], c: &Consts) -> QuadFp {
+        let mask64 = c.mask64;
+        let mut out = [u32x4_splat(0); 9];
+        let (mut cl, mut ch) = (u64x2(0, 0), u64x2(0, 0));
+        let (mut bwl, mut bwh) = (u64x2(0, 0), u64x2(0, 0));
+        for k in 0..9 {
+            let t = u64x2_splat(twop29[k] as u64);
+            let al = u64x2_extend_low_u32x4(a.limbs[k]);
+            let ah = u64x2_extend_high_u32x4(a.limbs[k]);
+            let bl = u64x2_extend_low_u32x4(b.limbs[k]);
+            let bh = u64x2_extend_high_u32x4(b.limbs[k]);
+            // (a + 2p + carry) is at most ~2^31 per limb; borrow from the previous limb's
+            // subtraction is 0/1; the whole lane value is non-negative, so limbwise
+            // wrap + mask + sign-bit borrow is exact.
+            let vl = u64x2_sub(u64x2_add(u64x2_add(al, t), cl), u64x2_add(bl, bwl));
+            let vh = u64x2_sub(u64x2_add(u64x2_add(ah, t), ch), u64x2_add(bh, bwh));
+            out[k] = u32x4_shuffle::<0, 2, 4, 6>(v128_and(vl, mask64), v128_and(vh, mask64));
+            // carry of the addition part and borrow of the subtraction part, recovered from the
+            // signed value: v in (-2^30, 2^31); v >> 29 (arithmetic) is the signed carry.
+            cl = u64x2_shr(u64x2_add(vl, u64x2_splat(1 << 35)), 29);
+            cl = u64x2_sub(cl, u64x2_splat(1 << 6));
+            ch = u64x2_shr(u64x2_add(vh, u64x2_splat(1 << 35)), 29);
+            ch = u64x2_sub(ch, u64x2_splat(1 << 6));
+            // fold the signed carry: positive part continues as carry, negative as borrow
+            let zero = u64x2(0, 0);
+            let negl = i64x2_lt(cl, zero);
+            let negh = i64x2_lt(ch, zero);
+            bwl = v128_bitselect(u64x2_sub(zero, cl), zero, negl);
+            bwh = v128_bitselect(u64x2_sub(zero, ch), zero, negh);
+            cl = v128_bitselect(zero, cl, negl);
+            ch = v128_bitselect(zero, ch, negh);
+        }
+        let q = QuadFp { limbs: out };
+        cond_sub_twop(&q, twop29, c)
+    }
+
+    /// Subtract 2p per lane where the value is >= 2p.
+    pub fn cond_sub_twop(a: &QuadFp, twop29: &[u32; 9], c: &Consts) -> QuadFp {
+        let mask64 = c.mask64;
+        let mut dl = [u64x2(0, 0); 9];
+        let mut dh = [u64x2(0, 0); 9];
+        let mut al = [u64x2(0, 0); 9];
+        let mut ah = [u64x2(0, 0); 9];
+        let (mut bwl, mut bwh) = (u64x2(0, 0), u64x2(0, 0));
+        for k in 0..9 {
+            let t = u64x2_splat(twop29[k] as u64);
+            al[k] = u64x2_extend_low_u32x4(a.limbs[k]);
+            ah[k] = u64x2_extend_high_u32x4(a.limbs[k]);
+            let vl = u64x2_sub(u64x2_sub(al[k], t), bwl);
+            let vh = u64x2_sub(u64x2_sub(ah[k], t), bwh);
+            dl[k] = v128_and(vl, mask64);
+            dh[k] = v128_and(vh, mask64);
+            bwl = u64x2_shr(vl, 63);
+            bwh = u64x2_shr(vh, 63);
+        }
+        let keepl = i64x2_ne(bwl, u64x2(0, 0));
+        let keeph = i64x2_ne(bwh, u64x2(0, 0));
+        let mut out = [u32x4_splat(0); 9];
+        for k in 0..9 {
+            let l = v128_bitselect(al[k], dl[k], keepl);
+            let h = v128_bitselect(ah[k], dh[k], keeph);
+            out[k] = u32x4_shuffle::<0, 2, 4, 6>(l, h);
+        }
+        QuadFp { limbs: out }
+    }
+
+    /// Splatted per-field constants, prepared once per loop instead of per multiply.
+    #[derive(Clone, Copy)]
+    pub struct Consts {
+        pub ri: [v128; 9],
+        pub p: [v128; 9],
+        pub invv: v128,
+        pub mask64: v128,
+    }
+
+    impl Consts {
+        pub fn new(rinv29: &[u32; 9], p29: &[u64; 9], inv: u64) -> Self {
+            Consts {
+                ri: core::array::from_fn(|k| u32x4_splat(rinv29[k])),
+                p: core::array::from_fn(|k| u32x4_splat(p29[k] as u32)),
+                invv: u32x4_splat(inv as u32),
+                mask64: u64x2_splat(MASK29),
+            }
+        }
+    }
+
+    /// Per-lane `a * b / 2^261 mod p`, coarse in/out.
+    #[allow(clippy::too_many_lines)]
+    pub fn mont_mul(a: &QuadFp, b: &QuadFp, c: &Consts) -> QuadFp {
+        let mask64 = c.mask64;
+        let invv = c.invv;
+        let ri0 = c.ri[0];
+        let p0 = c.p[0];
+        let ri1 = c.ri[1];
+        let p1 = c.p[1];
+        let ri2 = c.ri[2];
+        let p2 = c.p[2];
+        let ri3 = c.ri[3];
+        let p3 = c.p[3];
+        let ri4 = c.ri[4];
+        let p4 = c.p[4];
+        let ri5 = c.ri[5];
+        let p5 = c.p[5];
+        let ri6 = c.ri[6];
+        let p6 = c.p[6];
+        let ri7 = c.ri[7];
+        let p7 = c.p[7];
+        let ri8 = c.ri[8];
+        let p8 = c.p[8];
+        let a0 = a.limbs[0];
+        let b0 = b.limbs[0];
+        let a1 = a.limbs[1];
+        let b1 = b.limbs[1];
+        let a2 = a.limbs[2];
+        let b2 = b.limbs[2];
+        let a3 = a.limbs[3];
+        let b3 = b.limbs[3];
+        let a4 = a.limbs[4];
+        let b4 = b.limbs[4];
+        let a5 = a.limbs[5];
+        let b5 = b.limbs[5];
+        let a6 = a.limbs[6];
+        let b6 = b.limbs[6];
+        let a7 = a.limbs[7];
+        let b7 = b.limbs[7];
+        let a8 = a.limbs[8];
+        let b8 = b.limbs[8];
+        let sl0 = u32x4_add(a0, a5);
+        let sr0 = u32x4_add(b0, b5);
+        let sl1 = u32x4_add(a1, a6);
+        let sr1 = u32x4_add(b1, b6);
+        let sl2 = u32x4_add(a2, a7);
+        let sr2 = u32x4_add(b2, b7);
+        let sl3 = u32x4_add(a3, a8);
+        let sr3 = u32x4_add(b3, b8);
+        let sl4 = a4;
+        let sr4 = b4;
+        let pl0_l = u64x2_extmul_low_u32x4(a0, b0);
+        let pl0_h = u64x2_extmul_high_u32x4(a0, b0);
+        let pl1_l = u64x2_add(u64x2_extmul_low_u32x4(a0, b1), u64x2_extmul_low_u32x4(a1, b0));
+        let pl1_h = u64x2_add(u64x2_extmul_high_u32x4(a0, b1), u64x2_extmul_high_u32x4(a1, b0));
+        let pl2_l = u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a0, b2), u64x2_extmul_low_u32x4(a1, b1)), u64x2_extmul_low_u32x4(a2, b0));
+        let pl2_h = u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a0, b2), u64x2_extmul_high_u32x4(a1, b1)), u64x2_extmul_high_u32x4(a2, b0));
+        let pl3_l = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a0, b3), u64x2_extmul_low_u32x4(a1, b2)), u64x2_extmul_low_u32x4(a2, b1)), u64x2_extmul_low_u32x4(a3, b0));
+        let pl3_h = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a0, b3), u64x2_extmul_high_u32x4(a1, b2)), u64x2_extmul_high_u32x4(a2, b1)), u64x2_extmul_high_u32x4(a3, b0));
+        let pl4_l = u64x2_add(u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a0, b4), u64x2_extmul_low_u32x4(a1, b3)), u64x2_extmul_low_u32x4(a2, b2)), u64x2_extmul_low_u32x4(a3, b1)), u64x2_extmul_low_u32x4(a4, b0));
+        let pl4_h = u64x2_add(u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a0, b4), u64x2_extmul_high_u32x4(a1, b3)), u64x2_extmul_high_u32x4(a2, b2)), u64x2_extmul_high_u32x4(a3, b1)), u64x2_extmul_high_u32x4(a4, b0));
+        let pl5_l = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a1, b4), u64x2_extmul_low_u32x4(a2, b3)), u64x2_extmul_low_u32x4(a3, b2)), u64x2_extmul_low_u32x4(a4, b1));
+        let pl5_h = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a1, b4), u64x2_extmul_high_u32x4(a2, b3)), u64x2_extmul_high_u32x4(a3, b2)), u64x2_extmul_high_u32x4(a4, b1));
+        let pl6_l = u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a2, b4), u64x2_extmul_low_u32x4(a3, b3)), u64x2_extmul_low_u32x4(a4, b2));
+        let pl6_h = u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a2, b4), u64x2_extmul_high_u32x4(a3, b3)), u64x2_extmul_high_u32x4(a4, b2));
+        let pl7_l = u64x2_add(u64x2_extmul_low_u32x4(a3, b4), u64x2_extmul_low_u32x4(a4, b3));
+        let pl7_h = u64x2_add(u64x2_extmul_high_u32x4(a3, b4), u64x2_extmul_high_u32x4(a4, b3));
+        let pl8_l = u64x2_extmul_low_u32x4(a4, b4);
+        let pl8_h = u64x2_extmul_high_u32x4(a4, b4);
+        let ph0_l = u64x2_extmul_low_u32x4(a5, b5);
+        let ph0_h = u64x2_extmul_high_u32x4(a5, b5);
+        let ph1_l = u64x2_add(u64x2_extmul_low_u32x4(a5, b6), u64x2_extmul_low_u32x4(a6, b5));
+        let ph1_h = u64x2_add(u64x2_extmul_high_u32x4(a5, b6), u64x2_extmul_high_u32x4(a6, b5));
+        let ph2_l = u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a5, b7), u64x2_extmul_low_u32x4(a6, b6)), u64x2_extmul_low_u32x4(a7, b5));
+        let ph2_h = u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a5, b7), u64x2_extmul_high_u32x4(a6, b6)), u64x2_extmul_high_u32x4(a7, b5));
+        let ph3_l = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a5, b8), u64x2_extmul_low_u32x4(a6, b7)), u64x2_extmul_low_u32x4(a7, b6)), u64x2_extmul_low_u32x4(a8, b5));
+        let ph3_h = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a5, b8), u64x2_extmul_high_u32x4(a6, b7)), u64x2_extmul_high_u32x4(a7, b6)), u64x2_extmul_high_u32x4(a8, b5));
+        let ph4_l = u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(a6, b8), u64x2_extmul_low_u32x4(a7, b7)), u64x2_extmul_low_u32x4(a8, b6));
+        let ph4_h = u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(a6, b8), u64x2_extmul_high_u32x4(a7, b7)), u64x2_extmul_high_u32x4(a8, b6));
+        let ph5_l = u64x2_add(u64x2_extmul_low_u32x4(a7, b8), u64x2_extmul_low_u32x4(a8, b7));
+        let ph5_h = u64x2_add(u64x2_extmul_high_u32x4(a7, b8), u64x2_extmul_high_u32x4(a8, b7));
+        let ph6_l = u64x2_extmul_low_u32x4(a8, b8);
+        let ph6_h = u64x2_extmul_high_u32x4(a8, b8);
+        let pc0_l = u64x2_extmul_low_u32x4(sl0, sr0);
+        let pc0_h = u64x2_extmul_high_u32x4(sl0, sr0);
+        let pc1_l = u64x2_add(u64x2_extmul_low_u32x4(sl0, sr1), u64x2_extmul_low_u32x4(sl1, sr0));
+        let pc1_h = u64x2_add(u64x2_extmul_high_u32x4(sl0, sr1), u64x2_extmul_high_u32x4(sl1, sr0));
+        let pc2_l = u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(sl0, sr2), u64x2_extmul_low_u32x4(sl1, sr1)), u64x2_extmul_low_u32x4(sl2, sr0));
+        let pc2_h = u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(sl0, sr2), u64x2_extmul_high_u32x4(sl1, sr1)), u64x2_extmul_high_u32x4(sl2, sr0));
+        let pc3_l = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(sl0, sr3), u64x2_extmul_low_u32x4(sl1, sr2)), u64x2_extmul_low_u32x4(sl2, sr1)), u64x2_extmul_low_u32x4(sl3, sr0));
+        let pc3_h = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(sl0, sr3), u64x2_extmul_high_u32x4(sl1, sr2)), u64x2_extmul_high_u32x4(sl2, sr1)), u64x2_extmul_high_u32x4(sl3, sr0));
+        let pc4_l = u64x2_add(u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(sl0, sr4), u64x2_extmul_low_u32x4(sl1, sr3)), u64x2_extmul_low_u32x4(sl2, sr2)), u64x2_extmul_low_u32x4(sl3, sr1)), u64x2_extmul_low_u32x4(sl4, sr0));
+        let pc4_h = u64x2_add(u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(sl0, sr4), u64x2_extmul_high_u32x4(sl1, sr3)), u64x2_extmul_high_u32x4(sl2, sr2)), u64x2_extmul_high_u32x4(sl3, sr1)), u64x2_extmul_high_u32x4(sl4, sr0));
+        let pc5_l = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(sl1, sr4), u64x2_extmul_low_u32x4(sl2, sr3)), u64x2_extmul_low_u32x4(sl3, sr2)), u64x2_extmul_low_u32x4(sl4, sr1));
+        let pc5_h = u64x2_add(u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(sl1, sr4), u64x2_extmul_high_u32x4(sl2, sr3)), u64x2_extmul_high_u32x4(sl3, sr2)), u64x2_extmul_high_u32x4(sl4, sr1));
+        let pc6_l = u64x2_add(u64x2_add(u64x2_extmul_low_u32x4(sl2, sr4), u64x2_extmul_low_u32x4(sl3, sr3)), u64x2_extmul_low_u32x4(sl4, sr2));
+        let pc6_h = u64x2_add(u64x2_add(u64x2_extmul_high_u32x4(sl2, sr4), u64x2_extmul_high_u32x4(sl3, sr3)), u64x2_extmul_high_u32x4(sl4, sr2));
+        let pc7_l = u64x2_add(u64x2_extmul_low_u32x4(sl3, sr4), u64x2_extmul_low_u32x4(sl4, sr3));
+        let pc7_h = u64x2_add(u64x2_extmul_high_u32x4(sl3, sr4), u64x2_extmul_high_u32x4(sl4, sr3));
+        let pc8_l = u64x2_extmul_low_u32x4(sl4, sr4);
+        let pc8_h = u64x2_extmul_high_u32x4(sl4, sr4);
+        let mut t0_l = pl0_l;
+        let mut t1_l = pl1_l;
+        let mut t2_l = pl2_l;
+        let mut t3_l = pl3_l;
+        let mut t4_l = pl4_l;
+        let m0_l = u64x2_sub(u64x2_sub(pc0_l, pl0_l), ph0_l);
+        let m1_l = u64x2_sub(u64x2_sub(pc1_l, pl1_l), ph1_l);
+        let m2_l = u64x2_sub(u64x2_sub(pc2_l, pl2_l), ph2_l);
+        let m3_l = u64x2_sub(u64x2_sub(pc3_l, pl3_l), ph3_l);
+        let m4_l = u64x2_sub(u64x2_sub(pc4_l, pl4_l), ph4_l);
+        let m5_l = u64x2_sub(u64x2_sub(pc5_l, pl5_l), ph5_l);
+        let m6_l = u64x2_sub(u64x2_sub(pc6_l, pl6_l), ph6_l);
+        let m7_l = u64x2_sub(pc7_l, pl7_l);
+        let m8_l = u64x2_sub(pc8_l, pl8_l);
+        let mut t5_l = u64x2_add(pl5_l, m0_l);
+        let mut t6_l = u64x2_add(pl6_l, m1_l);
+        let mut t7_l = u64x2_add(pl7_l, m2_l);
+        let mut t8_l = u64x2_add(pl8_l, m3_l);
+        let mut t9_l = m4_l;
+        let mut t10_l = u64x2_add(m5_l, ph0_l);
+        let mut t11_l = u64x2_add(m6_l, ph1_l);
+        let mut t12_l = u64x2_add(m7_l, ph2_l);
+        let mut t13_l = u64x2_add(m8_l, ph3_l);
+        let mut t14_l = ph4_l;
+        let mut t15_l = ph5_l;
+        let mut t16_l = ph6_l;
+        let mut t0_h = pl0_h;
+        let mut t1_h = pl1_h;
+        let mut t2_h = pl2_h;
+        let mut t3_h = pl3_h;
+        let mut t4_h = pl4_h;
+        let m0_h = u64x2_sub(u64x2_sub(pc0_h, pl0_h), ph0_h);
+        let m1_h = u64x2_sub(u64x2_sub(pc1_h, pl1_h), ph1_h);
+        let m2_h = u64x2_sub(u64x2_sub(pc2_h, pl2_h), ph2_h);
+        let m3_h = u64x2_sub(u64x2_sub(pc3_h, pl3_h), ph3_h);
+        let m4_h = u64x2_sub(u64x2_sub(pc4_h, pl4_h), ph4_h);
+        let m5_h = u64x2_sub(u64x2_sub(pc5_h, pl5_h), ph5_h);
+        let m6_h = u64x2_sub(u64x2_sub(pc6_h, pl6_h), ph6_h);
+        let m7_h = u64x2_sub(pc7_h, pl7_h);
+        let m8_h = u64x2_sub(pc8_h, pl8_h);
+        let mut t5_h = u64x2_add(pl5_h, m0_h);
+        let mut t6_h = u64x2_add(pl6_h, m1_h);
+        let mut t7_h = u64x2_add(pl7_h, m2_h);
+        let mut t8_h = u64x2_add(pl8_h, m3_h);
+        let mut t9_h = m4_h;
+        let mut t10_h = u64x2_add(m5_h, ph0_h);
+        let mut t11_h = u64x2_add(m6_h, ph1_h);
+        let mut t12_h = u64x2_add(m7_h, ph2_h);
+        let mut t13_h = u64x2_add(m8_h, ph3_h);
+        let mut t14_h = ph4_h;
+        let mut t15_h = ph5_h;
+        let mut t16_h = ph6_h;
+        let kml = v128_and(t0_l, mask64);
+        let kmh = v128_and(t0_h, mask64);
+        let k0 = u32x4_shuffle::<0, 2, 4, 6>(kml, kmh);
+        t1_l = u64x2_add(t1_l, u64x2_shr(t0_l, 29));
+        t1_h = u64x2_add(t1_h, u64x2_shr(t0_h, 29));
+        t1_l = u64x2_add(t1_l, u64x2_extmul_low_u32x4(k0, ri0));
+        t1_h = u64x2_add(t1_h, u64x2_extmul_high_u32x4(k0, ri0));
+        t2_l = u64x2_add(t2_l, u64x2_extmul_low_u32x4(k0, ri1));
+        t2_h = u64x2_add(t2_h, u64x2_extmul_high_u32x4(k0, ri1));
+        t3_l = u64x2_add(t3_l, u64x2_extmul_low_u32x4(k0, ri2));
+        t3_h = u64x2_add(t3_h, u64x2_extmul_high_u32x4(k0, ri2));
+        t4_l = u64x2_add(t4_l, u64x2_extmul_low_u32x4(k0, ri3));
+        t4_h = u64x2_add(t4_h, u64x2_extmul_high_u32x4(k0, ri3));
+        t5_l = u64x2_add(t5_l, u64x2_extmul_low_u32x4(k0, ri4));
+        t5_h = u64x2_add(t5_h, u64x2_extmul_high_u32x4(k0, ri4));
+        t6_l = u64x2_add(t6_l, u64x2_extmul_low_u32x4(k0, ri5));
+        t6_h = u64x2_add(t6_h, u64x2_extmul_high_u32x4(k0, ri5));
+        t7_l = u64x2_add(t7_l, u64x2_extmul_low_u32x4(k0, ri6));
+        t7_h = u64x2_add(t7_h, u64x2_extmul_high_u32x4(k0, ri6));
+        t8_l = u64x2_add(t8_l, u64x2_extmul_low_u32x4(k0, ri7));
+        t8_h = u64x2_add(t8_h, u64x2_extmul_high_u32x4(k0, ri7));
+        t9_l = u64x2_add(t9_l, u64x2_extmul_low_u32x4(k0, ri8));
+        t9_h = u64x2_add(t9_h, u64x2_extmul_high_u32x4(k0, ri8));
+        let kml = v128_and(t1_l, mask64);
+        let kmh = v128_and(t1_h, mask64);
+        let k1 = u32x4_shuffle::<0, 2, 4, 6>(kml, kmh);
+        t2_l = u64x2_add(t2_l, u64x2_shr(t1_l, 29));
+        t2_h = u64x2_add(t2_h, u64x2_shr(t1_h, 29));
+        t2_l = u64x2_add(t2_l, u64x2_extmul_low_u32x4(k1, ri0));
+        t2_h = u64x2_add(t2_h, u64x2_extmul_high_u32x4(k1, ri0));
+        t3_l = u64x2_add(t3_l, u64x2_extmul_low_u32x4(k1, ri1));
+        t3_h = u64x2_add(t3_h, u64x2_extmul_high_u32x4(k1, ri1));
+        t4_l = u64x2_add(t4_l, u64x2_extmul_low_u32x4(k1, ri2));
+        t4_h = u64x2_add(t4_h, u64x2_extmul_high_u32x4(k1, ri2));
+        t5_l = u64x2_add(t5_l, u64x2_extmul_low_u32x4(k1, ri3));
+        t5_h = u64x2_add(t5_h, u64x2_extmul_high_u32x4(k1, ri3));
+        t6_l = u64x2_add(t6_l, u64x2_extmul_low_u32x4(k1, ri4));
+        t6_h = u64x2_add(t6_h, u64x2_extmul_high_u32x4(k1, ri4));
+        t7_l = u64x2_add(t7_l, u64x2_extmul_low_u32x4(k1, ri5));
+        t7_h = u64x2_add(t7_h, u64x2_extmul_high_u32x4(k1, ri5));
+        t8_l = u64x2_add(t8_l, u64x2_extmul_low_u32x4(k1, ri6));
+        t8_h = u64x2_add(t8_h, u64x2_extmul_high_u32x4(k1, ri6));
+        t9_l = u64x2_add(t9_l, u64x2_extmul_low_u32x4(k1, ri7));
+        t9_h = u64x2_add(t9_h, u64x2_extmul_high_u32x4(k1, ri7));
+        t10_l = u64x2_add(t10_l, u64x2_extmul_low_u32x4(k1, ri8));
+        t10_h = u64x2_add(t10_h, u64x2_extmul_high_u32x4(k1, ri8));
+        let kml = v128_and(t2_l, mask64);
+        let kmh = v128_and(t2_h, mask64);
+        let k2 = u32x4_shuffle::<0, 2, 4, 6>(kml, kmh);
+        t3_l = u64x2_add(t3_l, u64x2_shr(t2_l, 29));
+        t3_h = u64x2_add(t3_h, u64x2_shr(t2_h, 29));
+        t3_l = u64x2_add(t3_l, u64x2_extmul_low_u32x4(k2, ri0));
+        t3_h = u64x2_add(t3_h, u64x2_extmul_high_u32x4(k2, ri0));
+        t4_l = u64x2_add(t4_l, u64x2_extmul_low_u32x4(k2, ri1));
+        t4_h = u64x2_add(t4_h, u64x2_extmul_high_u32x4(k2, ri1));
+        t5_l = u64x2_add(t5_l, u64x2_extmul_low_u32x4(k2, ri2));
+        t5_h = u64x2_add(t5_h, u64x2_extmul_high_u32x4(k2, ri2));
+        t6_l = u64x2_add(t6_l, u64x2_extmul_low_u32x4(k2, ri3));
+        t6_h = u64x2_add(t6_h, u64x2_extmul_high_u32x4(k2, ri3));
+        t7_l = u64x2_add(t7_l, u64x2_extmul_low_u32x4(k2, ri4));
+        t7_h = u64x2_add(t7_h, u64x2_extmul_high_u32x4(k2, ri4));
+        t8_l = u64x2_add(t8_l, u64x2_extmul_low_u32x4(k2, ri5));
+        t8_h = u64x2_add(t8_h, u64x2_extmul_high_u32x4(k2, ri5));
+        t9_l = u64x2_add(t9_l, u64x2_extmul_low_u32x4(k2, ri6));
+        t9_h = u64x2_add(t9_h, u64x2_extmul_high_u32x4(k2, ri6));
+        t10_l = u64x2_add(t10_l, u64x2_extmul_low_u32x4(k2, ri7));
+        t10_h = u64x2_add(t10_h, u64x2_extmul_high_u32x4(k2, ri7));
+        t11_l = u64x2_add(t11_l, u64x2_extmul_low_u32x4(k2, ri8));
+        t11_h = u64x2_add(t11_h, u64x2_extmul_high_u32x4(k2, ri8));
+        let kml = v128_and(t3_l, mask64);
+        let kmh = v128_and(t3_h, mask64);
+        let k3 = u32x4_shuffle::<0, 2, 4, 6>(kml, kmh);
+        t4_l = u64x2_add(t4_l, u64x2_shr(t3_l, 29));
+        t4_h = u64x2_add(t4_h, u64x2_shr(t3_h, 29));
+        t4_l = u64x2_add(t4_l, u64x2_extmul_low_u32x4(k3, ri0));
+        t4_h = u64x2_add(t4_h, u64x2_extmul_high_u32x4(k3, ri0));
+        t5_l = u64x2_add(t5_l, u64x2_extmul_low_u32x4(k3, ri1));
+        t5_h = u64x2_add(t5_h, u64x2_extmul_high_u32x4(k3, ri1));
+        t6_l = u64x2_add(t6_l, u64x2_extmul_low_u32x4(k3, ri2));
+        t6_h = u64x2_add(t6_h, u64x2_extmul_high_u32x4(k3, ri2));
+        t7_l = u64x2_add(t7_l, u64x2_extmul_low_u32x4(k3, ri3));
+        t7_h = u64x2_add(t7_h, u64x2_extmul_high_u32x4(k3, ri3));
+        t8_l = u64x2_add(t8_l, u64x2_extmul_low_u32x4(k3, ri4));
+        t8_h = u64x2_add(t8_h, u64x2_extmul_high_u32x4(k3, ri4));
+        t9_l = u64x2_add(t9_l, u64x2_extmul_low_u32x4(k3, ri5));
+        t9_h = u64x2_add(t9_h, u64x2_extmul_high_u32x4(k3, ri5));
+        t10_l = u64x2_add(t10_l, u64x2_extmul_low_u32x4(k3, ri6));
+        t10_h = u64x2_add(t10_h, u64x2_extmul_high_u32x4(k3, ri6));
+        t11_l = u64x2_add(t11_l, u64x2_extmul_low_u32x4(k3, ri7));
+        t11_h = u64x2_add(t11_h, u64x2_extmul_high_u32x4(k3, ri7));
+        t12_l = u64x2_add(t12_l, u64x2_extmul_low_u32x4(k3, ri8));
+        t12_h = u64x2_add(t12_h, u64x2_extmul_high_u32x4(k3, ri8));
+        let kml = v128_and(t4_l, mask64);
+        let kmh = v128_and(t4_h, mask64);
+        let k4 = u32x4_shuffle::<0, 2, 4, 6>(kml, kmh);
+        t5_l = u64x2_add(t5_l, u64x2_shr(t4_l, 29));
+        t5_h = u64x2_add(t5_h, u64x2_shr(t4_h, 29));
+        t5_l = u64x2_add(t5_l, u64x2_extmul_low_u32x4(k4, ri0));
+        t5_h = u64x2_add(t5_h, u64x2_extmul_high_u32x4(k4, ri0));
+        t6_l = u64x2_add(t6_l, u64x2_extmul_low_u32x4(k4, ri1));
+        t6_h = u64x2_add(t6_h, u64x2_extmul_high_u32x4(k4, ri1));
+        t7_l = u64x2_add(t7_l, u64x2_extmul_low_u32x4(k4, ri2));
+        t7_h = u64x2_add(t7_h, u64x2_extmul_high_u32x4(k4, ri2));
+        t8_l = u64x2_add(t8_l, u64x2_extmul_low_u32x4(k4, ri3));
+        t8_h = u64x2_add(t8_h, u64x2_extmul_high_u32x4(k4, ri3));
+        t9_l = u64x2_add(t9_l, u64x2_extmul_low_u32x4(k4, ri4));
+        t9_h = u64x2_add(t9_h, u64x2_extmul_high_u32x4(k4, ri4));
+        t10_l = u64x2_add(t10_l, u64x2_extmul_low_u32x4(k4, ri5));
+        t10_h = u64x2_add(t10_h, u64x2_extmul_high_u32x4(k4, ri5));
+        t11_l = u64x2_add(t11_l, u64x2_extmul_low_u32x4(k4, ri6));
+        t11_h = u64x2_add(t11_h, u64x2_extmul_high_u32x4(k4, ri6));
+        t12_l = u64x2_add(t12_l, u64x2_extmul_low_u32x4(k4, ri7));
+        t12_h = u64x2_add(t12_h, u64x2_extmul_high_u32x4(k4, ri7));
+        t13_l = u64x2_add(t13_l, u64x2_extmul_low_u32x4(k4, ri8));
+        t13_h = u64x2_add(t13_h, u64x2_extmul_high_u32x4(k4, ri8));
+        let kml = v128_and(t5_l, mask64);
+        let kmh = v128_and(t5_h, mask64);
+        let k5 = u32x4_shuffle::<0, 2, 4, 6>(kml, kmh);
+        t6_l = u64x2_add(t6_l, u64x2_shr(t5_l, 29));
+        t6_h = u64x2_add(t6_h, u64x2_shr(t5_h, 29));
+        t6_l = u64x2_add(t6_l, u64x2_extmul_low_u32x4(k5, ri0));
+        t6_h = u64x2_add(t6_h, u64x2_extmul_high_u32x4(k5, ri0));
+        t7_l = u64x2_add(t7_l, u64x2_extmul_low_u32x4(k5, ri1));
+        t7_h = u64x2_add(t7_h, u64x2_extmul_high_u32x4(k5, ri1));
+        t8_l = u64x2_add(t8_l, u64x2_extmul_low_u32x4(k5, ri2));
+        t8_h = u64x2_add(t8_h, u64x2_extmul_high_u32x4(k5, ri2));
+        t9_l = u64x2_add(t9_l, u64x2_extmul_low_u32x4(k5, ri3));
+        t9_h = u64x2_add(t9_h, u64x2_extmul_high_u32x4(k5, ri3));
+        t10_l = u64x2_add(t10_l, u64x2_extmul_low_u32x4(k5, ri4));
+        t10_h = u64x2_add(t10_h, u64x2_extmul_high_u32x4(k5, ri4));
+        t11_l = u64x2_add(t11_l, u64x2_extmul_low_u32x4(k5, ri5));
+        t11_h = u64x2_add(t11_h, u64x2_extmul_high_u32x4(k5, ri5));
+        t12_l = u64x2_add(t12_l, u64x2_extmul_low_u32x4(k5, ri6));
+        t12_h = u64x2_add(t12_h, u64x2_extmul_high_u32x4(k5, ri6));
+        t13_l = u64x2_add(t13_l, u64x2_extmul_low_u32x4(k5, ri7));
+        t13_h = u64x2_add(t13_h, u64x2_extmul_high_u32x4(k5, ri7));
+        t14_l = u64x2_add(t14_l, u64x2_extmul_low_u32x4(k5, ri8));
+        t14_h = u64x2_add(t14_h, u64x2_extmul_high_u32x4(k5, ri8));
+        let kml = v128_and(t6_l, mask64);
+        let kmh = v128_and(t6_h, mask64);
+        let k6 = u32x4_shuffle::<0, 2, 4, 6>(kml, kmh);
+        t7_l = u64x2_add(t7_l, u64x2_shr(t6_l, 29));
+        t7_h = u64x2_add(t7_h, u64x2_shr(t6_h, 29));
+        t7_l = u64x2_add(t7_l, u64x2_extmul_low_u32x4(k6, ri0));
+        t7_h = u64x2_add(t7_h, u64x2_extmul_high_u32x4(k6, ri0));
+        t8_l = u64x2_add(t8_l, u64x2_extmul_low_u32x4(k6, ri1));
+        t8_h = u64x2_add(t8_h, u64x2_extmul_high_u32x4(k6, ri1));
+        t9_l = u64x2_add(t9_l, u64x2_extmul_low_u32x4(k6, ri2));
+        t9_h = u64x2_add(t9_h, u64x2_extmul_high_u32x4(k6, ri2));
+        t10_l = u64x2_add(t10_l, u64x2_extmul_low_u32x4(k6, ri3));
+        t10_h = u64x2_add(t10_h, u64x2_extmul_high_u32x4(k6, ri3));
+        t11_l = u64x2_add(t11_l, u64x2_extmul_low_u32x4(k6, ri4));
+        t11_h = u64x2_add(t11_h, u64x2_extmul_high_u32x4(k6, ri4));
+        t12_l = u64x2_add(t12_l, u64x2_extmul_low_u32x4(k6, ri5));
+        t12_h = u64x2_add(t12_h, u64x2_extmul_high_u32x4(k6, ri5));
+        t13_l = u64x2_add(t13_l, u64x2_extmul_low_u32x4(k6, ri6));
+        t13_h = u64x2_add(t13_h, u64x2_extmul_high_u32x4(k6, ri6));
+        t14_l = u64x2_add(t14_l, u64x2_extmul_low_u32x4(k6, ri7));
+        t14_h = u64x2_add(t14_h, u64x2_extmul_high_u32x4(k6, ri7));
+        t15_l = u64x2_add(t15_l, u64x2_extmul_low_u32x4(k6, ri8));
+        t15_h = u64x2_add(t15_h, u64x2_extmul_high_u32x4(k6, ri8));
+        let kml = v128_and(t7_l, mask64);
+        let kmh = v128_and(t7_h, mask64);
+        let k7 = u32x4_shuffle::<0, 2, 4, 6>(kml, kmh);
+        t8_l = u64x2_add(t8_l, u64x2_shr(t7_l, 29));
+        t8_h = u64x2_add(t8_h, u64x2_shr(t7_h, 29));
+        t8_l = u64x2_add(t8_l, u64x2_extmul_low_u32x4(k7, ri0));
+        t8_h = u64x2_add(t8_h, u64x2_extmul_high_u32x4(k7, ri0));
+        t9_l = u64x2_add(t9_l, u64x2_extmul_low_u32x4(k7, ri1));
+        t9_h = u64x2_add(t9_h, u64x2_extmul_high_u32x4(k7, ri1));
+        t10_l = u64x2_add(t10_l, u64x2_extmul_low_u32x4(k7, ri2));
+        t10_h = u64x2_add(t10_h, u64x2_extmul_high_u32x4(k7, ri2));
+        t11_l = u64x2_add(t11_l, u64x2_extmul_low_u32x4(k7, ri3));
+        t11_h = u64x2_add(t11_h, u64x2_extmul_high_u32x4(k7, ri3));
+        t12_l = u64x2_add(t12_l, u64x2_extmul_low_u32x4(k7, ri4));
+        t12_h = u64x2_add(t12_h, u64x2_extmul_high_u32x4(k7, ri4));
+        t13_l = u64x2_add(t13_l, u64x2_extmul_low_u32x4(k7, ri5));
+        t13_h = u64x2_add(t13_h, u64x2_extmul_high_u32x4(k7, ri5));
+        t14_l = u64x2_add(t14_l, u64x2_extmul_low_u32x4(k7, ri6));
+        t14_h = u64x2_add(t14_h, u64x2_extmul_high_u32x4(k7, ri6));
+        t15_l = u64x2_add(t15_l, u64x2_extmul_low_u32x4(k7, ri7));
+        t15_h = u64x2_add(t15_h, u64x2_extmul_high_u32x4(k7, ri7));
+        t16_l = u64x2_add(t16_l, u64x2_extmul_low_u32x4(k7, ri8));
+        t16_h = u64x2_add(t16_h, u64x2_extmul_high_u32x4(k7, ri8));
+        let kt = u32x4_shuffle::<0, 2, 4, 6>(v128_and(t8_l, mask64), v128_and(t8_h, mask64));
+        let kl = v128_and(u64x2_extmul_low_u32x4(kt, invv), mask64);
+        let kh = v128_and(u64x2_extmul_high_u32x4(kt, invv), mask64);
+        let k8 = u32x4_shuffle::<0, 2, 4, 6>(kl, kh);
+        t8_l = u64x2_add(t8_l, u64x2_extmul_low_u32x4(k8, p0));
+        t8_h = u64x2_add(t8_h, u64x2_extmul_high_u32x4(k8, p0));
+        t9_l = u64x2_add(t9_l, u64x2_extmul_low_u32x4(k8, p1));
+        t9_h = u64x2_add(t9_h, u64x2_extmul_high_u32x4(k8, p1));
+        t10_l = u64x2_add(t10_l, u64x2_extmul_low_u32x4(k8, p2));
+        t10_h = u64x2_add(t10_h, u64x2_extmul_high_u32x4(k8, p2));
+        t11_l = u64x2_add(t11_l, u64x2_extmul_low_u32x4(k8, p3));
+        t11_h = u64x2_add(t11_h, u64x2_extmul_high_u32x4(k8, p3));
+        t12_l = u64x2_add(t12_l, u64x2_extmul_low_u32x4(k8, p4));
+        t12_h = u64x2_add(t12_h, u64x2_extmul_high_u32x4(k8, p4));
+        t13_l = u64x2_add(t13_l, u64x2_extmul_low_u32x4(k8, p5));
+        t13_h = u64x2_add(t13_h, u64x2_extmul_high_u32x4(k8, p5));
+        t14_l = u64x2_add(t14_l, u64x2_extmul_low_u32x4(k8, p6));
+        t14_h = u64x2_add(t14_h, u64x2_extmul_high_u32x4(k8, p6));
+        t15_l = u64x2_add(t15_l, u64x2_extmul_low_u32x4(k8, p7));
+        t15_h = u64x2_add(t15_h, u64x2_extmul_high_u32x4(k8, p7));
+        t16_l = u64x2_add(t16_l, u64x2_extmul_low_u32x4(k8, p8));
+        t16_h = u64x2_add(t16_h, u64x2_extmul_high_u32x4(k8, p8));
+        t9_l = u64x2_add(t9_l, u64x2_shr(t8_l, 29));
+        t9_h = u64x2_add(t9_h, u64x2_shr(t8_h, 29));
+        let mut t17_l = u64x2(0, 0);
+        let mut t17_h = u64x2(0, 0);
+        t10_l = u64x2_add(t10_l, u64x2_shr(t9_l, 29));
+        t9_l = v128_and(t9_l, mask64);
+        t10_h = u64x2_add(t10_h, u64x2_shr(t9_h, 29));
+        t9_h = v128_and(t9_h, mask64);
+        t11_l = u64x2_add(t11_l, u64x2_shr(t10_l, 29));
+        t10_l = v128_and(t10_l, mask64);
+        t11_h = u64x2_add(t11_h, u64x2_shr(t10_h, 29));
+        t10_h = v128_and(t10_h, mask64);
+        t12_l = u64x2_add(t12_l, u64x2_shr(t11_l, 29));
+        t11_l = v128_and(t11_l, mask64);
+        t12_h = u64x2_add(t12_h, u64x2_shr(t11_h, 29));
+        t11_h = v128_and(t11_h, mask64);
+        t13_l = u64x2_add(t13_l, u64x2_shr(t12_l, 29));
+        t12_l = v128_and(t12_l, mask64);
+        t13_h = u64x2_add(t13_h, u64x2_shr(t12_h, 29));
+        t12_h = v128_and(t12_h, mask64);
+        t14_l = u64x2_add(t14_l, u64x2_shr(t13_l, 29));
+        t13_l = v128_and(t13_l, mask64);
+        t14_h = u64x2_add(t14_h, u64x2_shr(t13_h, 29));
+        t13_h = v128_and(t13_h, mask64);
+        t15_l = u64x2_add(t15_l, u64x2_shr(t14_l, 29));
+        t14_l = v128_and(t14_l, mask64);
+        t15_h = u64x2_add(t15_h, u64x2_shr(t14_h, 29));
+        t14_h = v128_and(t14_h, mask64);
+        t16_l = u64x2_add(t16_l, u64x2_shr(t15_l, 29));
+        t15_l = v128_and(t15_l, mask64);
+        t16_h = u64x2_add(t16_h, u64x2_shr(t15_h, 29));
+        t15_h = v128_and(t15_h, mask64);
+        t17_l = u64x2_add(t17_l, u64x2_shr(t16_l, 29));
+        t16_l = v128_and(t16_l, mask64);
+        t17_h = u64x2_add(t17_h, u64x2_shr(t16_h, 29));
+        t16_h = v128_and(t16_h, mask64);
+        QuadFp {
+            limbs: [
+                u32x4_shuffle::<0, 2, 4, 6>(t9_l, t9_h),
+                u32x4_shuffle::<0, 2, 4, 6>(t10_l, t10_h),
+                u32x4_shuffle::<0, 2, 4, 6>(t11_l, t11_h),
+                u32x4_shuffle::<0, 2, 4, 6>(t12_l, t12_h),
+                u32x4_shuffle::<0, 2, 4, 6>(t13_l, t13_h),
+                u32x4_shuffle::<0, 2, 4, 6>(t14_l, t14_h),
+                u32x4_shuffle::<0, 2, 4, 6>(t15_l, t15_h),
+                u32x4_shuffle::<0, 2, 4, 6>(t16_l, t16_h),
+                u32x4_shuffle::<0, 2, 4, 6>(t17_l, t17_h),
+            ],
+        }
+    }
+}
+
+pub struct MontBackend<T: MontConfig<N>, const N: usize>(PhantomData<T>);
 
 impl<T: MontConfig<N>, const N: usize> FpConfig<N> for MontBackend<T, N> {
     /// The modulus of the field.

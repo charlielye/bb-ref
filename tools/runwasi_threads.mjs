@@ -81,9 +81,13 @@ if (isMainThread) {
   const ctl = new Int32Array(new SharedArrayBuffer(8));
   ctl[0] = 2; // next tid
   let spawned = 0;
+  const prof = env.WASI_CPU_PROF; // directory: write one .cpuprofile per thread
   const spawn = (role, extra) => {
     if (role === 'thread' && env.WASI_THREADS_DEBUG) console.error(`[harness] spawn #${++spawned} tid=${extra.tid} @${(performance.now()/1000).toFixed(2)}s`);
-    const w = new Worker(SELF, { workerData: { role, module, memory, ctl, args: argv.slice(2), ...extra } });
+    const w = new Worker(SELF, {
+      workerData: { role, module, memory, ctl, args: argv.slice(2), ...extra },
+      execArgv: prof ? ['--cpu-prof', '--cpu-prof-dir', prof] : [],
+    });
     w.on('message', (m) => {
       if (m.spawn) spawn('thread', m.spawn);
       if (m.exit !== undefined) {
