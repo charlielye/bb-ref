@@ -190,6 +190,223 @@ pub(crate) fn pass_add<P: SWCurveConfig>(
     }
 }
 
+/// Scratch for the bb-kernel batched affine passes (feature `bbkernel`), reused across the
+/// ~hundreds of passes a fold chunk performs.
+#[cfg(all(feature = "bbkernel", target_family = "wasm", target_feature = "simd128"))]
+pub(crate) struct BbkPassScratch<F> {
+    ax: Vec<F>,
+    ay: Vec<F>,
+    bx: Vec<F>,
+    by: Vec<F>,
+    ox: Vec<F>,
+    oy: Vec<F>,
+    scratch: Vec<F>,
+    dst: Vec<u32>,
+}
+
+#[cfg(all(feature = "bbkernel", target_family = "wasm", target_feature = "simd128"))]
+impl<F: Copy> BbkPassScratch<F> {
+    pub(crate) fn new() -> Self {
+        BbkPassScratch {
+            ax: Vec::new(),
+            ay: Vec::new(),
+            bx: Vec::new(),
+            by: Vec::new(),
+            ox: Vec::new(),
+            oy: Vec::new(),
+            scratch: Vec::new(),
+            dst: Vec::new(),
+        }
+    }
+}
+
+/// `acc[i] += addend[i]` with the chord additions through bb's clang-compiled kernels: exact
+/// (set/infinity/doubling lanes take the scalar path), one batched inversion per call. Fr/Fq
+/// only — the fold call sites are bn254/grumpkin.
+#[cfg(all(feature = "bbkernel", target_family = "wasm", target_feature = "simd128"))]
+fn pass_add_bbk<P: SWCurveConfig>(
+    acc: &mut [Option<Affine<P>>],
+    addend: &[Option<Affine<P>>],
+    s: &mut BbkPassScratch<P::BaseField>,
+    dens: &mut Vec<P::BaseField>,
+) -> bool
+where
+    P::BaseField: 'static,
+{
+    use core::any::TypeId;
+    use crate::base::packed::bbk;
+    type C1 = unsafe extern "C" fn(*const u64, *const u64, usize, *mut u64, *mut u64);
+    type C2 = unsafe extern "C" fn(
+        *const u64,
+        *const u64,
+        *const u64,
+        *const u64,
+        usize,
+        *mut u64,
+        *const u64,
+        *const u64,
+        *mut u64,
+        *mut u64,
+    );
+    let (c1, c2): (C1, C2) = if TypeId::of::<P::BaseField>() == TypeId::of::<crate::base::Fr>() {
+        (bbk::bbref_chord1_fr, bbk::bbref_chord2_fr)
+    } else if TypeId::of::<P::BaseField>() == TypeId::of::<crate::base::Fq>() {
+        (bbk::bbref_chord1_fq, bbk::bbref_chord2_fq)
+    } else {
+        return false;
+    };
+    s.ax.clear();
+    s.ay.clear();
+    s.bx.clear();
+    s.by.clear();
+    s.dst.clear();
+    // Rare non-chord pairs (equal or inverse x): scalar, with individual inversions.
+    for (i, a) in acc.iter_mut().enumerate() {
+        match (&a, addend[i]) {
+            (_, None) => {}
+            (None, Some(q)) => *a = Some(q),
+            (Some(p), Some(q)) => {
+                if p.x == q.x {
+                    if p.y == q.y {
+                        let d = ark_ff::Field::inverse(&p.y.double()).expect("doubling a 2-torsion point");
+                        let xx = p.x.square();
+                        let lambda = (xx.double() + xx) * d;
+                        let x3 = lambda.square() - p.x.double();
+                        let y3 = lambda * (p.x - x3) - p.y;
+                        *a = Some(Affine::<P>::new_unchecked(x3, y3));
+                    } else {
+                        *a = None;
+                    }
+                } else {
+                    s.ax.push(p.x);
+                    s.ay.push(p.y);
+                    s.bx.push(q.x);
+                    s.by.push(q.y);
+                    s.dst.push(i as u32);
+                }
+            }
+        }
+    }
+    if s.dst.is_empty() {
+        return true;
+    }
+    let w = unsafe { bbk::bbref_chord_width() };
+    while s.ax.len() % w != 0 {
+        s.ax.push(s.ax[0]);
+        s.ay.push(s.ay[0]);
+        s.bx.push(s.bx[0]);
+        s.by.push(s.by[0]);
+    }
+    let n = s.ax.len();
+    s.ox.resize(n, s.ax[0]);
+    s.oy.resize(n, s.ax[0]);
+    s.scratch.resize(2 * n, s.ax[0]);
+    let (dx, prod) = s.scratch.split_at_mut(n);
+    unsafe {
+        c1(
+            s.ax.as_ptr() as *const u64,
+            s.bx.as_ptr() as *const u64,
+            n,
+            dx.as_mut_ptr() as *mut u64,
+            prod.as_mut_ptr() as *mut u64,
+        )
+    };
+    dens.clear();
+    dens.extend_from_slice(&prod[n - w..]);
+    ark_ff::batch_inversion(dens);
+    unsafe {
+        c2(
+            s.ax.as_ptr() as *const u64,
+            s.ay.as_ptr() as *const u64,
+            s.bx.as_ptr() as *const u64,
+            s.by.as_ptr() as *const u64,
+            n,
+            dx.as_mut_ptr() as *mut u64,
+            prod.as_ptr() as *const u64,
+            dens.as_ptr() as *const u64,
+            s.ox.as_mut_ptr() as *mut u64,
+            s.oy.as_mut_ptr() as *mut u64,
+        )
+    };
+    for (k, &i) in s.dst.iter().enumerate() {
+        acc[i as usize] = Some(Affine::<P>::new_unchecked(s.ox[k], s.oy[k]));
+    }
+    true
+}
+
+/// `acc[i] = 2 acc[i]` through bb's kernels; `None` lanes skip.
+#[cfg(all(feature = "bbkernel", target_family = "wasm", target_feature = "simd128"))]
+fn pass_dbl_bbk<P: SWCurveConfig>(
+    acc: &mut [Option<Affine<P>>],
+    s: &mut BbkPassScratch<P::BaseField>,
+    dens: &mut Vec<P::BaseField>,
+) -> bool
+where
+    P::BaseField: 'static,
+{
+    use core::any::TypeId;
+    use crate::base::packed::bbk;
+    type D1 = unsafe extern "C" fn(*const u64, usize, *mut u64, *mut u64);
+    type D2 = unsafe extern "C" fn(*const u64, *const u64, usize, *mut u64, *const u64, *const u64, *mut u64, *mut u64);
+    let (d1, d2): (D1, D2) = if TypeId::of::<P::BaseField>() == TypeId::of::<crate::base::Fr>() {
+        (bbk::bbref_dbl1_fr, bbk::bbref_dbl2_fr)
+    } else if TypeId::of::<P::BaseField>() == TypeId::of::<crate::base::Fq>() {
+        (bbk::bbref_dbl1_fq, bbk::bbref_dbl2_fq)
+    } else {
+        return false;
+    };
+    s.ax.clear();
+    s.ay.clear();
+    s.dst.clear();
+    for (i, a) in acc.iter().enumerate() {
+        if let Some(p) = a {
+            s.ax.push(p.x);
+            s.ay.push(p.y);
+            s.dst.push(i as u32);
+        }
+    }
+    if s.dst.is_empty() {
+        return true;
+    }
+    let w = unsafe { bbk::bbref_chord_width() };
+    while s.ax.len() % w != 0 {
+        s.ax.push(s.ax[0]);
+        s.ay.push(s.ay[0]);
+    }
+    let n = s.ax.len();
+    s.ox.resize(n, s.ax[0]);
+    s.oy.resize(n, s.ax[0]);
+    s.scratch.resize(2 * n, s.ax[0]);
+    let (den, prod) = s.scratch.split_at_mut(n);
+    unsafe {
+        d1(
+            s.ay.as_ptr() as *const u64,
+            n,
+            den.as_mut_ptr() as *mut u64,
+            prod.as_mut_ptr() as *mut u64,
+        )
+    };
+    dens.clear();
+    dens.extend_from_slice(&prod[n - w..]);
+    ark_ff::batch_inversion(dens);
+    unsafe {
+        d2(
+            s.ax.as_ptr() as *const u64,
+            s.ay.as_ptr() as *const u64,
+            n,
+            den.as_mut_ptr() as *mut u64,
+            prod.as_ptr() as *const u64,
+            dens.as_ptr() as *const u64,
+            s.ox.as_mut_ptr() as *mut u64,
+            s.oy.as_mut_ptr() as *mut u64,
+        )
+    };
+    for (k, &i) in s.dst.iter().enumerate() {
+        acc[i as usize] = Some(Affine::<P>::new_unchecked(s.ox[k], s.oy[k]));
+    }
+    true
+}
+
 /// `out[i] = (u1·u2)·g[i] + u1·g[i+q] + u2·g[i+2q] + g[i+3q]` over the four quarters of `g`.
 /// `u1`, `u2` must be short (≤128-bit) transcript challenges.
 pub fn fold_points_two_rounds<P: SWCurveConfig>(
@@ -238,6 +455,10 @@ pub fn fold_points_two_rounds<P: SWCurveConfig>(
             let m = chunk.min(q - s);
             let mut dens: Vec<P::BaseField> = Vec::with_capacity(m);
             let mut kinds: Vec<u8> = Vec::with_capacity(m);
+            #[cfg(all(feature = "bbkernel", target_family = "wasm", target_feature = "simd128"))]
+            let mut bbs = BbkPassScratch::<P::BaseField>::new();
+            #[cfg(all(feature = "bbkernel", target_family = "wasm", target_feature = "simd128"))]
+            let mut addend_buf: Vec<Option<Affine<P>>> = Vec::with_capacity(m);
             // Tables [B, 2B, .., 8B] per multiplied base; term 2 reads P0's table through φ.
             let bases = [&p0[s..s + m], &p1[s..s + m], &p2[s..s + m]];
             let mut tables: Vec<Vec<Option<Affine<P>>>> = Vec::with_capacity(24);
@@ -245,10 +466,24 @@ pub fn fold_points_two_rounds<P: SWCurveConfig>(
                 let start = tables.len();
                 tables.push(b.iter().map(|p| Some(*p)).collect());
                 let mut dbld = tables[start].clone();
+                #[cfg(all(feature = "bbkernel", target_family = "wasm", target_feature = "simd128"))]
+                if !pass_dbl_bbk::<P>(&mut dbld, &mut bbs, &mut dens) {
+                    pass_dbl(&mut dbld, &mut dens);
+                }
+                #[cfg(not(all(feature = "bbkernel", target_family = "wasm", target_feature = "simd128")))]
                 pass_dbl(&mut dbld, &mut dens);
                 tables.push(dbld);
                 for _ in 2..8 {
                     let mut next = tables.last().unwrap().clone();
+                    #[cfg(all(feature = "bbkernel", target_family = "wasm", target_feature = "simd128"))]
+                    {
+                        addend_buf.clear();
+                        addend_buf.extend(b.iter().map(|p| Some(*p)));
+                        if !pass_add_bbk::<P>(&mut next, &addend_buf, &mut bbs, &mut dens) {
+                            pass_add(&mut next, |i| Some(b[i]), &mut dens, &mut kinds);
+                        }
+                    }
+                    #[cfg(not(all(feature = "bbkernel", target_family = "wasm", target_feature = "simd128")))]
                     pass_add(&mut next, |i| Some(b[i]), &mut dens, &mut kinds);
                     tables.push(next);
                 }
@@ -275,6 +510,10 @@ pub fn fold_points_two_rounds<P: SWCurveConfig>(
             for w in (0..=top).rev() {
                 if started {
                     for _ in 0..4 {
+                        #[cfg(all(feature = "bbkernel", target_family = "wasm", target_feature = "simd128"))]
+                        if pass_dbl_bbk::<P>(&mut acc, &mut bbs, &mut dens) {
+                            continue;
+                        }
                         pass_dbl(&mut acc, &mut dens);
                     }
                 }
@@ -284,6 +523,16 @@ pub fn fold_points_two_rounds<P: SWCurveConfig>(
                         continue;
                     }
                     if started {
+                        #[cfg(all(feature = "bbkernel", target_family = "wasm", target_feature = "simd128"))]
+                        {
+                            addend_buf.clear();
+                            addend_buf.extend((0..m).map(|i| entry(term, d, i)));
+                            if !pass_add_bbk::<P>(&mut acc, &addend_buf, &mut bbs, &mut dens) {
+                                pass_add(&mut acc, |i| entry(term, d, i), &mut dens, &mut kinds);
+                            }
+                            continue;
+                        }
+                        #[allow(unreachable_code)]
                         pass_add(&mut acc, |i| entry(term, d, i), &mut dens, &mut kinds);
                     } else {
                         for (i, a) in acc.iter_mut().enumerate() {
@@ -293,6 +542,15 @@ pub fn fold_points_two_rounds<P: SWCurveConfig>(
                     }
                 }
             }
+            #[cfg(all(feature = "bbkernel", target_family = "wasm", target_feature = "simd128"))]
+            {
+                addend_buf.clear();
+                addend_buf.extend((0..m).map(|i| Some(p3[s + i])));
+                if !pass_add_bbk::<P>(&mut acc, &addend_buf, &mut bbs, &mut dens) {
+                    pass_add(&mut acc, |i| Some(p3[s + i]), &mut dens, &mut kinds);
+                }
+            }
+            #[cfg(not(all(feature = "bbkernel", target_family = "wasm", target_feature = "simd128")))]
             pass_add(&mut acc, |i| Some(p3[s + i]), &mut dens, &mut kinds);
             acc.into_iter()
                 .map(|a| a.unwrap_or(Affine::<P>::zero()))

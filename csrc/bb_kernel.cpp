@@ -136,6 +136,79 @@ void chord_phase2(const uint64_t* ax_,
     }
 }
 
+// Batched affine doublings, same two-phase split as the chords: phase 1 fills den = 2y and the
+// five-lane running products; the caller inverts the last VF::SIZE products; phase 2 unwinds and
+// applies lambda = 3x^2 / 2y, x3 = lambda^2 - 2x, y3 = lambda (x - x3) - y, reduced once.
+// n must be a multiple of VF::SIZE (caller pads with a valid point, outputs ignored).
+template <typename Params, typename Field>
+void dbl_phase1(const uint64_t* y_, size_t n, uint64_t* den_, uint64_t* prod_)
+{
+    using VF = bb::VectorField<Params>;
+    constexpr size_t W = VF::SIZE;
+    const auto* y = reinterpret_cast<const Field*>(y_);
+    auto* den = reinterpret_cast<Field*>(den_);
+    auto* prod = reinterpret_cast<Field*>(prod_);
+    const size_t blocks = n / W;
+    for (size_t g = 0; g < blocks; ++g) {
+        const VF vy(&y[g * W]);
+        VF d = vy + vy;
+        d.store_to(&den[g * W]);
+        if (g == 0) {
+            d.store_to(&prod[0]);
+        } else {
+            const VF p(&prod[(g - 1) * W]);
+            (p * d).store_to(&prod[g * W]);
+        }
+    }
+}
+
+template <typename Params, typename Field>
+void dbl_phase2(const uint64_t* x_,
+                const uint64_t* y_,
+                size_t n,
+                uint64_t* den_,
+                const uint64_t* prod_,
+                const uint64_t* lane_inv_,
+                uint64_t* ox_,
+                uint64_t* oy_)
+{
+    using VF = bb::VectorField<Params>;
+    constexpr size_t W = VF::SIZE;
+    const auto* x = reinterpret_cast<const Field*>(x_);
+    const auto* y = reinterpret_cast<const Field*>(y_);
+    auto* den = reinterpret_cast<Field*>(den_);
+    const auto* prod = reinterpret_cast<const Field*>(prod_);
+    const auto* lane_inv = reinterpret_cast<const Field*>(lane_inv_);
+    auto* ox = reinterpret_cast<Field*>(ox_);
+    auto* oy = reinterpret_cast<Field*>(oy_);
+    const size_t blocks = n / W;
+    {
+        VF vinv(&lane_inv[0]);
+        for (size_t g = blocks; g-- > 1;) {
+            const VF p(&prod[(g - 1) * W]);
+            const VF d(&den[g * W]);
+            (vinv * p).store_to(&den[g * W]);
+            vinv = vinv * d;
+        }
+        vinv.store_to(&den[0]);
+    }
+    for (size_t g = 0; g < blocks; ++g) {
+        const VF vx(&x[g * W]);
+        const VF vy(&y[g * W]);
+        const VF vinv(&den[g * W]);
+        const VF xx = vx * vx;
+        const VF lambda = (xx + xx + xx) * vinv;
+        const VF x3 = lambda * lambda - (vx + vx);
+        const VF y3 = lambda * (vx - x3) - vy;
+        x3.store_to(&ox[g * W]);
+        y3.store_to(&oy[g * W]);
+        for (size_t k = 0; k < W; ++k) {
+            ox[g * W + k].self_reduce_once();
+            oy[g * W + k].self_reduce_once();
+        }
+    }
+}
+
 } // namespace
 
 extern "C" {
@@ -171,6 +244,36 @@ void bbref_chord2_fr(const uint64_t* ax,
                      uint64_t* oy)
 {
     chord_phase2<bb::Bn254FrParams, bb::fr>(ax, ay, bx, by, n, dx, prod, lane_inv, ox, oy);
+}
+void bbref_dbl1_fr(const uint64_t* y, size_t n, uint64_t* den, uint64_t* prod)
+{
+    dbl_phase1<bb::Bn254FrParams, bb::fr>(y, n, den, prod);
+}
+void bbref_dbl1_fq(const uint64_t* y, size_t n, uint64_t* den, uint64_t* prod)
+{
+    dbl_phase1<bb::Bn254FqParams, bb::fq>(y, n, den, prod);
+}
+void bbref_dbl2_fr(const uint64_t* x,
+                   const uint64_t* y,
+                   size_t n,
+                   uint64_t* den,
+                   const uint64_t* prod,
+                   const uint64_t* lane_inv,
+                   uint64_t* ox,
+                   uint64_t* oy)
+{
+    dbl_phase2<bb::Bn254FrParams, bb::fr>(x, y, n, den, prod, lane_inv, ox, oy);
+}
+void bbref_dbl2_fq(const uint64_t* x,
+                   const uint64_t* y,
+                   size_t n,
+                   uint64_t* den,
+                   const uint64_t* prod,
+                   const uint64_t* lane_inv,
+                   uint64_t* ox,
+                   uint64_t* oy)
+{
+    dbl_phase2<bb::Bn254FqParams, bb::fq>(x, y, n, den, prod, lane_inv, ox, oy);
 }
 void bbref_chord2_fq(const uint64_t* ax,
                      const uint64_t* ay,
