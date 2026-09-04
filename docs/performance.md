@@ -242,6 +242,19 @@ wasm field's target: bb's wasm field (9×29-bit limbs, SIMD, Yuval reduction) ex
 because 64-bit Montgomery compiles badly to wasm; matching its shape should recover a large
 fraction of the 6×, putting browser proving in the ~7–9s range.
 
+What landed from this: the vendored ark-ff now dispatches wasm builds' 4-limb field mul/square
+to bb's per-call 29-bit scheme (nine 29-bit limbs — every product fits one `i64.mul` — with
+Karatsuba 5+4 and 8×2^29 + 1×2^24 Montgomery rounds dividing by exactly 2^256, so the stored
+representation and every proof byte match the native build). Measured: V8 mul 87.5→63.7ns
+(bb's own wasm field: 57.5ns); **the canonical chonk flow under wasmtime dropped 19.0→10.5s**
+(same-session A/B; the earlier 16.9s figure and wasmtime RSS numbers vary run to run — treat
+wasmtime `%M` as noise and compare wall only within a session). wasm/native is now ~2.8×
+against bb's 2.2×; the rest is bb's batched VectorField kernels in hot loops (its 5-wide
+scalar+SIMD `q1s1` design — a single-element mix5 port measured *worse*, 66ns/elt, so that
+work only pays as genuinely batched call sites). The standalone `base/mont29.rs` core (scalar
+54ns, SIMD quad 52ns/elt on V8) is the reference implementation and cross-check for all of
+this.
+
 The next planned wins are algorithmic rather than micro-architectural — GLV over a
 precomputed φ(SRS) (output-preserving), then protocol-level experiments (GKR for grand
 products, small-value sumcheck) behind feature flags as upstream candidates for bb itself.
