@@ -139,6 +139,17 @@ fn main() {
         }
         black_box((sa5, qa5.unpack()));
         println!("m29 mix5 mul: {:.2} ns/element", t.elapsed().as_nanos() as f64 / n as f64);
+        // quad throughput: 4 independent quad chains = 16 elements in flight
+        let mut qs = [quad::Quad::pack(&e), qb, quad::Quad::pack(&f), quad::Quad::pack(&e)];
+        let t = Instant::now();
+        for _ in 0..n / 16 {
+            qs[0] = quad::mont_mul_u(&qs[0], &qb, &FR_P, FR_INV);
+            qs[1] = quad::mont_mul_u(&qs[1], &qb, &FR_P, FR_INV);
+            qs[2] = quad::mont_mul_u(&qs[2], &qb, &FR_P, FR_INV);
+            qs[3] = quad::mont_mul_u(&qs[3], &qb, &FR_P, FR_INV);
+        }
+        black_box((qs[0].unpack(), qs[1].unpack(), qs[2].unpack(), qs[3].unpack()));
+        println!("m29 quad mul x4-ilp: {:.2} ns/element", t.elapsed().as_nanos() as f64 / n as f64);
     }
     for (name, f) in [
         ("mul", (|a: &mut Fr, b: &Fr| *a *= b) as fn(&mut Fr, &Fr)),
