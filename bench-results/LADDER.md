@@ -238,3 +238,25 @@ differs at byte 41008) — deterministic, not a crash, so a systematic error in 
 Rust 6a is correct on identical input. Gated behind BBREF_C6A=1; default = Rust 6a (byte-exact,
 suites 66/76 green). Next: isolate with a tiny reduce_chunk-vs-Rust-tree diff harness (same
 gathered block in, compare survivors) — the bug is in ~30 lines of gather/tree, the 5.72 is real.
+
+Update 13 — INSTRUMENTED decomposition of the 2^19 MSM gap (the "1.23x", answering "where does it go"):
+Split Stage 6a into gather / tree_reduce / densify (s6a_timing, BBREF_MSM_TIMING) and timed the
+linked bb-C 6a (BBREF_C6A=1) against the Rust 6a on identical input. 2^19, 8 threads, ours 455 ms
+vs bb 365 ms:
+  stage                         CPU (sum/8t)   wall     share   notes
+  tree (batch-affine adds)      2230 ms        279 ms   61%     field arith floor ~1950 CPU (65M muls,
+                                                                 shared with bb) + ~280 CPU Rust walk
+  gather (point fetch+phi+sign)  900 ms        112 ms   25%     random 64B SRS load; memory-latency
+                                                                 bound; bb's prefetch is a wasm no-op
+  densify                          3 ms          0 ms    0%
+  stages 1-3 (digit decode/scatter)            ~28 ms   6%      scalar carry-Booth vs bb Constantine SIMDx4
+  6b + horner                                  ~20 ms   4%
+CONCLUSION: 61% is batch-affine field arithmetic BOTH provers pay (irreducible floor ~244 ms wall).
+Our excess over bb splits: (a) ~38 ms tree-walk orchestration — linked bb-C 6a recovers it
+(C path 353 vs Rust 395 ms wall for 6a); (b) gather is memory-bound and ~equal (bb can't prefetch
+on wasm either); (c) with bb's EXACT 6a linked, total is 411 vs bb 365 = the residual 46 ms is
+OUTSIDE 6a: stages 1-4 digit decode (our scalar carry-Booth vs bb's Constantine SIMDx4) + 6b + horner.
+CAVEAT: msmbench uses msm()/None -> on-the-fly phi = a field mul per endo entry that inflates
+`gather`; the real flow commits carry a precomputed phi table (no mul), so flow MSM is relatively
+better than msmbench's 1.23x. Next replication targets, ranked: fix the linked-6a bug (recovers
+~38 ms), then port bb's Constantine SIMDx4 digit recoder (stages 1/4, ~the 46 ms residual).

@@ -260,7 +260,9 @@ where
     mark("3 scatter");
     if std::env::var_os("BBREF_MSM_STATS").is_some() {
         let entries: usize = schedules.iter().map(|s| s.len()).sum();
-        eprintln!("[msm-stats] n={n} active={n_active} bits={effective_bits} c={c} windows={num_windows} entries={entries}");
+        eprintln!(
+            "[msm-stats] n={n} active={n_active} bits={effective_bits} c={c} windows={num_windows} entries={entries}"
+        );
     }
     // bb Stage 5: each window's schedule is cut into `threads` chunks by schedule index and every
     // chunk's bucket range [lo, hi] is recorded (a bucket run straddling a cut yields one partial on
@@ -308,7 +310,20 @@ where
     let bbk6a = {
         use crate::base::packed::bbk;
         use core::any::TypeId;
-        type RC = unsafe extern "C" fn(*const u64, *const u64, *const u64, *const u32, usize, usize, *const u32, *mut usize, *mut u64, *mut u32, *mut u64, *mut u32) -> usize;
+        type RC = unsafe extern "C" fn(
+            *const u64,
+            *const u64,
+            *const u64,
+            *const u32,
+            usize,
+            usize,
+            *const u32,
+            *mut usize,
+            *mut u64,
+            *mut u32,
+            *mut u64,
+            *mut u32,
+        ) -> usize;
         type TR = unsafe extern "C" fn(*mut u64, *mut u32, usize, *mut u64, *mut u32) -> usize;
         if TypeId::of::<P::BaseField>() == TypeId::of::<crate::base::Fr>() {
             Some((bbk::bbref_reduce_chunk_fr as RC, bbk::bbref_tree_reduce_fr as TR))
@@ -318,6 +333,7 @@ where
             None
         }
     };
+    s6a_timing::reset();
     let max_chunk_len = chunks
         .iter()
         .flat_map(|c| (0..threads).map(move |t| c.start[t + 1] - c.start[t]))
@@ -331,7 +347,11 @@ where
             // densify + overflow bookkeeping stays in Rust (bb keeps that in the same function; the
             // split is the linkage boundary, not an algorithmic change).
             #[cfg(all(feature = "bbkernel", target_family = "wasm", target_feature = "simd128"))]
-            if let Some((rc, tr)) = if std::env::var_os("BBREF_C6A").is_some() { bbk6a } else { None } {
+            if let Some((rc, tr)) = if std::env::var_os("BBREF_C6A").is_some() {
+                bbk6a
+            } else {
+                None
+            } {
                 use crate::base::packed::bbk;
                 let cap = SUBCHUNK.max(2 * (max_chunk_len / SUBCHUNK + 2));
                 let mut cpts: Vec<Affine<P>> = vec![Affine::<P>::zero(); cap];
@@ -353,7 +373,11 @@ where
                         let ch = &chunks[w];
                         let (cs_lo, cs_hi) = (ch.start[t], ch.start[t + 1]);
                         if cs_lo == cs_hi {
-                            return Partial { lo: 0, dense: Vec::new(), present: Vec::new() };
+                            return Partial {
+                                lo: 0,
+                                dense: Vec::new(),
+                                present: Vec::new(),
+                            };
                         }
                         let (my_lo, my_hi) = (ch.lo[t], ch.hi[t]);
                         let width = my_hi - my_lo + 1;
@@ -427,7 +451,11 @@ where
                                 }
                             }
                         }
-                        Partial { lo: my_lo, dense, present }
+                        Partial {
+                            lo: my_lo,
+                            dense,
+                            present,
+                        }
                     })
                     .collect();
             }
@@ -440,7 +468,11 @@ where
                     let ch = &chunks[w];
                     let (cs_lo, cs_hi) = (ch.start[t], ch.start[t + 1]);
                     if cs_lo == cs_hi {
-                        return Partial { lo: 0, dense: Vec::new(), present: Vec::new() };
+                        return Partial {
+                            lo: 0,
+                            dense: Vec::new(),
+                            present: Vec::new(),
+                        };
                     }
                     let (my_lo, my_hi) = (ch.lo[t], ch.hi[t]);
                     let width = my_hi - my_lo + 1;
@@ -452,8 +484,11 @@ where
                     // 0-based bucket cursor: bs[b] <= pos < bs[b + 1]; the digit is b + 1.
                     let mut b = bs.partition_point(|&st| st as usize <= cs_lo) - 1;
                     let mut pos = cs_lo;
+                    let (mut tg, mut tt, mut td) = (0u64, 0u64, 0u64);
+                    let now = || std::time::Instant::now();
                     while pos < cs_hi {
                         let end = (pos + SUBCHUNK).min(cs_hi);
+                        let t_g = timing.then(now);
                         block_p.clear();
                         run_id.clear();
                         run_len.clear();
@@ -487,7 +522,15 @@ where
                             run_id.push(cur);
                             run_len.push(cnt);
                         }
+                        if let Some(t) = t_g {
+                            tg += t.elapsed().as_nanos() as u64;
+                        }
+                        let t_t = timing.then(now);
                         tree_reduce(&mut run_id, &mut run_len, &mut block_p, &mut scratch);
+                        if let Some(t) = t_t {
+                            tt += t.elapsed().as_nanos() as u64;
+                        }
+                        let t_d = timing.then(now);
                         let mut idx = 0;
                         for r in 0..run_id.len() {
                             for _ in 0..run_len[r] {
@@ -500,6 +543,9 @@ where
                                 }
                                 idx += 1;
                             }
+                        }
+                        if let Some(t) = t_d {
+                            td += t.elapsed().as_nanos() as u64;
                         }
                         pos = end;
                     }
@@ -541,12 +587,20 @@ where
                             }
                         }
                     }
-                    Partial { lo: my_lo, dense, present }
+                    crate::base::msm::s6a_timing::add(tg, tt, td);
+                    Partial {
+                        lo: my_lo,
+                        dense,
+                        present,
+                    }
                 })
                 .collect()
         })
         .collect();
 
+    if timing {
+        eprintln!("[msm 4a] {}", s6a_timing::report());
+    }
     mark("4 tree");
     // bb Stage 6b: rebalanced tasks own uniform digit ranges [lo_d, hi_d] over 1..=half. Each task
     // gathers the contributing threads' partials for every window into a column (SoA) layout with a
@@ -555,7 +609,10 @@ where
     // (R = Σ B_d, L = Σ (d − lo + 1) B_d); the window's weighted sum is L + (lo − 1) R.
     let active_digits = half;
     let lo_part: Vec<usize> = (0..=threads).map(|t| 1 + t * active_digits / threads).collect();
-    let max_per_task = (0..threads).map(|t| lo_part[t + 1].saturating_sub(lo_part[t])).max().unwrap_or(1);
+    let max_per_task = (0..threads)
+        .map(|t| lo_part[t + 1].saturating_sub(lo_part[t]))
+        .max()
+        .unwrap_or(1);
     let stride = max_per_task.max(2).next_power_of_two();
     let per_task: Vec<Vec<Projective<P>>> = (0..threads)
         .into_par_iter()
@@ -670,7 +727,11 @@ struct BucketChunkInfo {
 }
 impl Default for BucketChunkInfo {
     fn default() -> Self {
-        BucketChunkInfo { empty: true, lo: 0, buckets_padded: 0 }
+        BucketChunkInfo {
+            empty: true,
+            lo: 0,
+            buckets_padded: 0,
+        }
     }
 }
 
@@ -696,7 +757,10 @@ fn try_filter_pair<P: SWCurveConfig>(
     }
     if dx[dst] == dx[src] {
         if dy[dst] == dy[src] {
-            let d = Affine::<P>::new_unchecked(dx[dst], dy[dst]).into_group().double().into_affine();
+            let d = Affine::<P>::new_unchecked(dx[dst], dy[dst])
+                .into_group()
+                .double()
+                .into_affine();
             dx[dst] = d.x;
             dy[dst] = d.y;
         } else {
@@ -1094,6 +1158,33 @@ fn tree_reduce_scalar<P: SWCurveConfig>(
 /// pairs per lane group with one batched inversion per level per lane. Doublings (duplicate
 /// points inside one bucket) and the <4-pair tail take the scalar path; inverse pairs
 /// annihilate. This is bb's Stage-6a `tree_reduce_in_place` + `drain_batch` shape.
+/// Stage 6a sub-timing (BBREF_MSM_TIMING): gather / tree_reduce / densify nanoseconds summed
+/// across workers, printed from the driver at the "4 tree" mark.
+pub mod s6a_timing {
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    pub static GATHER: AtomicU64 = AtomicU64::new(0);
+    pub static TREE: AtomicU64 = AtomicU64::new(0);
+    pub static DENSIFY: AtomicU64 = AtomicU64::new(0);
+    pub fn reset() {
+        GATHER.store(0, Relaxed);
+        TREE.store(0, Relaxed);
+        DENSIFY.store(0, Relaxed);
+    }
+    pub fn add(g: u64, t: u64, d: u64) {
+        GATHER.fetch_add(g, Relaxed);
+        TREE.fetch_add(t, Relaxed);
+        DENSIFY.fetch_add(d, Relaxed);
+    }
+    pub fn report() -> String {
+        format!(
+            "gather {:.0}ms tree {:.0}ms densify {:.0}ms (sum over workers)",
+            GATHER.load(Relaxed) as f64 / 1e6,
+            TREE.load(Relaxed) as f64 / 1e6,
+            DENSIFY.load(Relaxed) as f64 / 1e6
+        )
+    }
+}
+
 #[cfg(all(target_family = "wasm", target_feature = "simd128"))]
 mod packed_tree {
     use super::*;
@@ -1340,7 +1431,6 @@ mod packed_tree {
         }
     }
 
-
     /// Drain through bb's clang-compiled chord kernels (feature `bbkernel`): phase 1 builds the
     /// denominators and five-lane product chains, the single inversion of the lane totals runs
     /// here (ark), phase 2 unwinds and applies. Staging is padded to the kernel width with a
@@ -1441,12 +1531,8 @@ mod packed_tree {
     }
 }
 
-
 /// `sum_b (b+1) * B_b` over singleton buckets: segmented double running sums, the affine chain
 /// steps batched across segments, segment totals recombined in projective.
-
-
-
 
 /// Small-input fallback. NOT arkworks' `msm_unchecked`: ark's parallel MSM builds a brand-new
 /// rayon thread pool per chunk per call (`msm_chunks` in ark-ec) — 1,526 thread spawns per chonk
