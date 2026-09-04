@@ -255,7 +255,11 @@ against bb's 2.2×; the batched-SIMD theory for the rest is
 VectorField mul at 52.2ns/element against its scalar's 52.7 — identical. wasm SIMD (2×64-bit
 lanes, `extmul` needing lane shuffles under the JIT) does not beat scalar 29-bit code here,
 for bb or for us; three of our own SIMD variants (two quad layouts and a stay-packed
-2^256-domain kernel with Karatsuba) confirmed the same, all correct, none faster. bb's
+2^256-domain kernel with Karatsuba) confirmed the same, all correct, none faster — and under
+V8 bb's VectorField is actually 1.76× *slower* than its own scalar (132 vs 75ns/element).
+Caveat that keeps this honest: every number here is x86. wasm's `extmul` maps cleanly to ARM
+NEON and awkwardly to x86, and bb's browser users are largely ARM (Apple Silicon, phones) —
+re-run both field benches on an ARM box before treating wasm SIMD as settled for mobile. bb's
 remaining edge is scalar kernel quality per runtime: under V8 our mul is within 8% of bb's
 (61.9 vs 57.5ns); under wasmtime/cranelift the gap is wider (~75 vs 52.7) — but browsers
 don't run cranelift, so that gap is a bench-harness artifact, not a user-facing one. Also measured on the way: wasm allocator contention is a null (wasm scales 3.95× on 8
