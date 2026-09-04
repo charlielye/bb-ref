@@ -152,3 +152,17 @@ of AoS staging that chord1p re-reads and packs = a 256 B/pair memory round trip 
 est. 60-100 ms), bucket_reduce 38 (scalar pass_add), stages 1-3 34. Next structural item if
 pursuing 2^19 parity: pack-on-push (C `pack5` called per 5 pairs from the classify loop writing
 packed VFs straight into the drain scratch; chord1p then starts from packed operands).
+
+Update 8 — pack-on-push (bb's push_point/drain_batch shape) measured NEUTRAL, reverted:
+Implemented: classify walk packs each W-block straight into the drain scratch via a C `push5`
+(no AoS staging), drains a batch (prefix chain, one inversion, finish+scatter) when it fills or the
+level ends; fixed stride per level = min(pair upper bound, batch) so small MSMs stay small.
+Byte-exact, suites green. Numbers vs the committed 167a935: 1t 2^17 tree 755->780 / all-in
+866->889 (+3%, noise edge); 8t 2^16 61->62, 2^17 116->111, 2^18 227->228, 2^19 458->442; flow
+5.91/5.87/5.93 vs 5.91/5.89/5.89. Within the day's +-2-4% bands => no measured win => reverted.
+FINDING: the 256 B/pair AoS staging round trip I estimated at 60-100 ms is NOT a cost (cache-hot
+writes/reads). The classify walk's ~180 ms @2^17 1t is the loop itself (per-pair branchy
+bookkeeping, run structure, Vec pushes), and copying the pair out was already a no-op (Update 7).
+Remaining MSM ladder gap @8t: 2^17 1.12x, 2^18 1.16x, 2^19 1.25x; 1t 2^17 1.31x. Field kernels at
+parity; drain at streaming rate; what is left is walk/bookkeeping + bucket_reduce (scalar) +
+stages 1-3, each ~4-20% of the 1t tree — no single dominant item.
