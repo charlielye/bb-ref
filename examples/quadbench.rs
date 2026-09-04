@@ -161,6 +161,42 @@ fn run() {
     black_box(warr[0].hsum());
     println!("QuadF mul:   {:6.2} ns/elt", per_elt(t.elapsed(), reps));
 
+    // L1: bb's clang-compiled q1s1 kernels linked in (csrc/bb_kernel.o), same slices as axpy.
+    #[cfg(feature = "bbkernel")]
+    {
+        unsafe extern "C" {
+            fn bbref_axpy_fr(dst: *mut u64, src: *const u64, scalar: *const u64, n: usize);
+        }
+        // Cross-check vs ark ops on our stored bytes.
+        for n in [1usize, 4, 5, 23] {
+            let mut d: Vec<Fr> = (0..n).map(|_| Fr::rand(&mut rng)).collect();
+            let a: Vec<Fr> = (0..n).map(|_| Fr::rand(&mut rng)).collect();
+            let sc = Fr::rand(&mut rng);
+            let expect: Vec<Fr> = d.iter().zip(&a).map(|(x, y)| *x + *y * sc).collect();
+            unsafe {
+                bbref_axpy_fr(d.as_mut_ptr() as *mut u64, a.as_ptr() as *const u64, &sc as *const Fr as *const u64, n)
+            };
+            assert_eq!(d, expect, "bb axpy n={n}");
+        }
+        println!("bb kernel cross-checks OK");
+        let mut d: Vec<Fr> = (0..NQ * 4).map(|_| Fr::rand(&mut rng)).collect();
+        let a: Vec<Fr> = (0..NQ * 4).map(|_| Fr::rand(&mut rng)).collect();
+        let sc = Fr::rand(&mut rng);
+        let t = Instant::now();
+        for _ in 0..reps {
+            unsafe {
+                bbref_axpy_fr(
+                    d.as_mut_ptr() as *mut u64,
+                    a.as_ptr() as *const u64,
+                    &sc as *const Fr as *const u64,
+                    NQ * 4,
+                )
+            };
+        }
+        black_box(d[0]);
+        println!("bb axpy:     {:6.2} ns/elt", per_elt(t.elapsed(), reps));
+    }
+
     // L1: axpy and one full fold ladder (matched against bb add_scaled_bench / fold loops).
     let mut dst: Vec<Fr> = (0..1 << 16).map(|_| Fr::rand(&mut rng)).collect();
     let src: Vec<Fr> = (0..1 << 16).map(|_| Fr::rand(&mut rng)).collect();

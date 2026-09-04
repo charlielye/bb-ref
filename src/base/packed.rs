@@ -66,9 +66,64 @@ fn axpy<F: QuadConsts>(dst: &mut [F], src: &[F], s: &F) {
     }
 }
 
+/// bb's clang-compiled q1s1 kernels (feature `bbkernel`; see build.rs and csrc/bb_kernel.cpp).
+#[cfg(feature = "bbkernel")]
+pub mod bbk {
+    unsafe extern "C" {
+        pub fn bbref_axpy_fr(dst: *mut u64, src: *const u64, scalar: *const u64, n: usize);
+        pub fn bbref_axpy_fq(dst: *mut u64, src: *const u64, scalar: *const u64, n: usize);
+        pub fn bbref_chord_width() -> usize;
+        pub fn bbref_chord1_fr(ax: *const u64, bx: *const u64, n: usize, dx: *mut u64, prod: *mut u64);
+        pub fn bbref_chord1_fq(ax: *const u64, bx: *const u64, n: usize, dx: *mut u64, prod: *mut u64);
+        pub fn bbref_chord2_fr(
+            ax: *const u64,
+            ay: *const u64,
+            bx: *const u64,
+            by: *const u64,
+            n: usize,
+            dx: *mut u64,
+            prod: *const u64,
+            lane_inv: *const u64,
+            ox: *mut u64,
+            oy: *mut u64,
+        );
+        pub fn bbref_chord2_fq(
+            ax: *const u64,
+            ay: *const u64,
+            bx: *const u64,
+            by: *const u64,
+            n: usize,
+            dx: *mut u64,
+            prod: *const u64,
+            lane_inv: *const u64,
+            ox: *mut u64,
+            oy: *mut u64,
+        );
+    }
+}
+
 /// `dst[i] += s * src[i]` over the overlap through the packed kernels; false if `F` has no
 /// packed form (caller runs its scalar loop).
 pub fn try_axpy<F: 'static>(dst: &mut [F], src: &[F], s: &F) -> bool {
+    #[cfg(feature = "bbkernel")]
+    {
+        let n = dst.len().min(src.len());
+        if TypeId::of::<F>() == TypeId::of::<Fr>() {
+            unsafe { bbk::bbref_axpy_fr(dst.as_mut_ptr() as *mut u64, src.as_ptr() as *const u64, s as *const F as *const u64, n) };
+            return true;
+        }
+        if TypeId::of::<F>() == TypeId::of::<Fq>() {
+            unsafe { bbk::bbref_axpy_fq(dst.as_mut_ptr() as *mut u64, src.as_ptr() as *const u64, s as *const F as *const u64, n) };
+            return true;
+        }
+        return false;
+    }
+    #[cfg(not(feature = "bbkernel"))]
+    try_axpy_quad(dst, src, s)
+}
+
+#[cfg_attr(feature = "bbkernel", allow(dead_code))]
+fn try_axpy_quad<F: 'static>(dst: &mut [F], src: &[F], s: &F) -> bool {
     if TypeId::of::<F>() == TypeId::of::<Fr>() {
         axpy::<Fr>(reslice(dst), reslice_ref(src), &stored_as::<F, Fr>(s));
         return true;

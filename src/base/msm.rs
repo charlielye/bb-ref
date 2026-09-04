@@ -548,6 +548,12 @@ mod packed_tree {
         by: Vec<P::BaseField>,
         dest: Vec<u32>,
         dbl_dest: Vec<u32>,
+        #[cfg(feature = "bbkernel")]
+        ox: Vec<P::BaseField>,
+        #[cfg(feature = "bbkernel")]
+        oy: Vec<P::BaseField>,
+        #[cfg(feature = "bbkernel")]
+        cscratch: Vec<P::BaseField>,
         // Packed operands and batched-inversion chain, one entry per lane group.
         qax: Vec<QuadFp>,
         qbx: Vec<QuadFp>,
@@ -568,6 +574,12 @@ mod packed_tree {
                 by: Vec::with_capacity(half),
                 dest: Vec::with_capacity(half),
                 dbl_dest: Vec::new(),
+                #[cfg(feature = "bbkernel")]
+                ox: Vec::new(),
+                #[cfg(feature = "bbkernel")]
+                oy: Vec::new(),
+                #[cfg(feature = "bbkernel")]
+                cscratch: Vec::new(),
                 qax: Vec::with_capacity(half / 4 + 1),
                 qbx: Vec::with_capacity(half / 4 + 1),
                 qden: Vec::with_capacity(half / 4 + 1),
@@ -648,6 +660,12 @@ mod packed_tree {
     where
         P::BaseField: QuadConsts,
     {
+        // The bb-kernel drain loses its isolated 1t rung to the QuadFp chain below (~+15%/pair)
+        // but wins the real flow at 8t (6.11 vs 6.23 s canonical) — flow-verified, kept.
+        #[cfg(feature = "bbkernel")]
+        if drain_bbk::<P>(s, ps) {
+            return;
+        }
         let p = &mut s.packed;
         let groups = p.ax.len() / 4;
         if groups > 0 {
@@ -758,6 +776,104 @@ mod packed_tree {
             let y3 = lambda * (x - x3) - y;
             ps[dst as usize] = Affine::<P>::new_unchecked(x3, y3);
         }
+    }
+
+
+    /// Drain through bb's clang-compiled chord kernels (feature `bbkernel`): phase 1 builds the
+    /// denominators and five-lane product chains, the single inversion of the lane totals runs
+    /// here (ark), phase 2 unwinds and applies. Staging is padded to the kernel width with a
+    /// repeated valid pair (outputs ignored); doublings run the scalar batched path. Returns
+    /// false for base fields without a kernel.
+    #[cfg(feature = "bbkernel")]
+    fn drain_bbk<P: SWCurveConfig>(s: &mut TreeScratch<P>, ps: &mut [Affine<P>]) -> bool
+    where
+        P::BaseField: QuadConsts,
+    {
+        use crate::base::packed::bbk;
+        use core::any::TypeId;
+        type C1 = unsafe extern "C" fn(*const u64, *const u64, usize, *mut u64, *mut u64);
+        type C2 = unsafe extern "C" fn(
+            *const u64,
+            *const u64,
+            *const u64,
+            *const u64,
+            usize,
+            *mut u64,
+            *const u64,
+            *const u64,
+            *mut u64,
+            *mut u64,
+        );
+        let (c1, c2): (C1, C2) = if TypeId::of::<P::BaseField>() == TypeId::of::<crate::base::Fr>() {
+            (bbk::bbref_chord1_fr, bbk::bbref_chord2_fr)
+        } else if TypeId::of::<P::BaseField>() == TypeId::of::<ark_bn254::Fq>() {
+            (bbk::bbref_chord1_fq, bbk::bbref_chord2_fq)
+        } else {
+            return false;
+        };
+        let p = &mut s.packed;
+        if !p.ax.is_empty() {
+            let w = unsafe { bbk::bbref_chord_width() };
+            while p.ax.len() % w != 0 {
+                p.ax.push(p.ax[0]);
+                p.ay.push(p.ay[0]);
+                p.bx.push(p.bx[0]);
+                p.by.push(p.by[0]);
+            }
+            let n = p.ax.len();
+            p.ox.resize(n, p.ax[0]);
+            p.oy.resize(n, p.ax[0]);
+            p.cscratch.resize(2 * n, p.ax[0]);
+            let (dx, prod) = p.cscratch.split_at_mut(n);
+            unsafe {
+                c1(
+                    p.ax.as_ptr() as *const u64,
+                    p.bx.as_ptr() as *const u64,
+                    n,
+                    dx.as_mut_ptr() as *mut u64,
+                    prod.as_mut_ptr() as *mut u64,
+                )
+            };
+            // One inversion for the whole level: the last w chain products, batched.
+            let mut lane_inv: Vec<P::BaseField> = prod[n - w..].to_vec();
+            batch_invert_nonzero(&mut lane_inv, &mut s.prod);
+            unsafe {
+                c2(
+                    p.ax.as_ptr() as *const u64,
+                    p.ay.as_ptr() as *const u64,
+                    p.bx.as_ptr() as *const u64,
+                    p.by.as_ptr() as *const u64,
+                    n,
+                    dx.as_mut_ptr() as *mut u64,
+                    prod.as_ptr() as *const u64,
+                    lane_inv.as_ptr() as *const u64,
+                    p.ox.as_mut_ptr() as *mut u64,
+                    p.oy.as_mut_ptr() as *mut u64,
+                )
+            };
+            for (k, &d) in p.dest.iter().enumerate() {
+                ps[d as usize] = Affine::<P>::new_unchecked(p.ox[k], p.oy[k]);
+            }
+        }
+        // Doublings through the scalar batched path.
+        s.dens.clear();
+        for &d in &p.dbl_dest {
+            s.dens.push(ps[d as usize].y.double());
+        }
+        if !s.dens.is_empty() {
+            batch_invert_nonzero(&mut s.dens, &mut s.prod);
+            let mut inv = s.dens.iter();
+            for &dst in &p.dbl_dest {
+                let d = *inv.next().unwrap();
+                let (x, y) = (ps[dst as usize].x, ps[dst as usize].y);
+                let xx = x.square();
+                let lambda = (xx.double() + xx) * d;
+                let x3 = lambda.square() - x.double();
+                let y3 = lambda * (x - x3) - y;
+                ps[dst as usize] = Affine::<P>::new_unchecked(x3, y3);
+            }
+        }
+        true
     }
 }
 
