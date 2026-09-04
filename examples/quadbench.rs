@@ -1,6 +1,7 @@
-//! quad256 array-THROUGHPUT benchmark: `c[i] = a[i] * b` over independent quads — the real loop
-//! shape. Dependency-chain benches understate wasm SIMD throughput by 4–8× (measured on bb's
-//! VectorField: 132 ns/elt chain latency vs ~16 ns/elt in-loop). wasm+simd128 only.
+//! L0/L1 wasm kernel rungs, matched against bb's `fr_bench`/`vector_field_bench`/
+//! `add_scaled_bench`: array THROUGHPUT (`c[i] = a[i] op b`) over independent elements —
+//! dependency-chain benches understate wasm SIMD by 4-8x. The wasm stored form is the 2^261
+//! Montgomery domain, so the packed kernels run directly on stored bytes. wasm+simd128 only.
 
 fn main() {
     #[cfg(all(target_family = "wasm", target_feature = "simd128"))]
@@ -10,10 +11,14 @@ fn main() {
 }
 
 #[cfg(all(target_family = "wasm", target_feature = "simd128"))]
+const NQ: usize = 4096;
+
+#[cfg(all(target_family = "wasm", target_feature = "simd128"))]
 fn run() {
-    use ark_ff::fields::models::fp::montgomery_backend::{quad256, wasm_mont};
-    use ark_ff::{PrimeField, UniformRand};
+    use ark_ff::fields::models::fp::montgomery_backend::quad261::{self, QuadFp};
+    use ark_ff::UniformRand;
     use bb_ref::base::Fr;
+    use bb_ref::honk::quadf::{QuadConsts, QuadF};
     use std::hint::black_box;
     use std::time::Instant;
 
@@ -22,152 +27,40 @@ fn run() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(16_000_000);
     let mut rng = ark_std::test_rng();
-    let modulus: [u64; 4] = Fr::MODULUS.as_ref().try_into().unwrap();
-    let p29 = wasm_mont::to29(&modulus);
-    let inv = wasm_mont::inv29(p29[0]);
+    let kc = <Fr as QuadConsts>::kc();
     let stored = |x: Fr| -> [u64; 4] { unsafe { core::mem::transmute::<Fr, [u64; 4]>(x) } };
+    let unstored = |l: [u64; 4]| -> Fr { unsafe { core::mem::transmute::<[u64; 4], Fr>(l) } };
 
+    // Cross-checks: packed mul/add/sub on stored bytes agree with ark ops.
     for _ in 0..2000 {
         let xs: [Fr; 4] = core::array::from_fn(|_| Fr::rand(&mut rng));
         let ys: [Fr; 4] = core::array::from_fn(|_| Fr::rand(&mut rng));
-        let qa = quad256::QuadFp::pack(&[stored(xs[0]), stored(xs[1]), stored(xs[2]), stored(xs[3])]);
-        let qb = quad256::QuadFp::pack(&[stored(ys[0]), stored(ys[1]), stored(ys[2]), stored(ys[3])]);
-        let qr = quad256::mont_mul(&qa, &qb, &p29, inv).unpack(&modulus);
+        let qa = QuadFp::pack(&[stored(xs[0]), stored(xs[1]), stored(xs[2]), stored(xs[3])]);
+        let qb = QuadFp::pack(&[stored(ys[0]), stored(ys[1]), stored(ys[2]), stored(ys[3])]);
+        let qm = quad261::mont_mul(&qa, &qb, &kc.c).unpack(&kc.modulus);
+        let qs = quad261::add(&qa, &qb, &kc.c).unpack(&kc.modulus);
+        let qd = quad261::sub(&qa, &qb, &kc.c).unpack(&kc.modulus);
         for l in 0..4 {
-            assert_eq!(qr[l], stored(xs[l] * ys[l]), "quad256 lane {l}");
+            assert_eq!(unstored(qm[l]), xs[l] * ys[l], "mul lane {l}");
+            assert_eq!(unstored(qs[l]), xs[l] + ys[l], "add lane {l}");
+            assert_eq!(unstored(qd[l]), xs[l] - ys[l], "sub lane {l}");
         }
     }
-    println!("quad256 cross-check OK");
+    println!("cross-checks OK");
 
-    const NQ: usize = 4096;
-    let mut arr: Vec<quad256::QuadFp> = (0..NQ)
-        .map(|_| {
-            let xs: [Fr; 4] = core::array::from_fn(|_| Fr::rand(&mut rng));
-            quad256::QuadFp::pack(&[stored(xs[0]), stored(xs[1]), stored(xs[2]), stored(xs[3])])
-        })
-        .collect();
-    let ys: [Fr; 4] = core::array::from_fn(|_| Fr::rand(&mut rng));
-    let qb = quad256::QuadFp::pack(&[stored(ys[0]), stored(ys[1]), stored(ys[2]), stored(ys[3])]);
-    let reps = (n / (NQ * 4)).max(1);
-    let t = Instant::now();
-    for _ in 0..reps {
-        for q in arr.iter_mut() {
-            *q = quad256::mont_mul(q, &qb, &p29, inv);
-        }
-    }
-    black_box(arr[0].unpack(&modulus));
-    println!(
-        "quad256 array mul: {:.2} ns/element",
-        t.elapsed().as_nanos() as f64 / (reps * NQ * 4) as f64
-    );
-
-    {
-        use ark_ff::fields::models::fp::montgomery_backend::quad261;
-        use ark_ff::fields::models::fp::montgomery_backend::wasm_mont::FR_RINV29;
-        let qc = quad261::Consts::new(&FR_RINV29, &p29, inv);
-        // Correctness: with b pre-scaled by 32, quad261 (÷2^261) lands exactly in the 2^256
-        // domain: stored(a) * stored(32b) / 2^261 = stored(a*b).
-        for _ in 0..2000 {
-            let xs: [Fr; 4] = core::array::from_fn(|_| Fr::rand(&mut rng));
-            let y = Fr::rand(&mut rng);
-            let y32 = y * Fr::from(32u64);
-            let qa = quad261::QuadFp::pack(&[stored(xs[0]), stored(xs[1]), stored(xs[2]), stored(xs[3])]);
-            let qb = quad261::QuadFp::pack(&[stored(y32); 4]);
-            let qr = quad261::mont_mul(&qa, &qb, &qc).unpack(&modulus);
-            for l in 0..4 {
-                assert_eq!(qr[l], stored(xs[l] * y), "quad261 lane {l}");
-            }
-        }
-        println!("quad261 cross-check OK");
-        // add/sub on naturally-coarse values (mont_mul outputs), vs ark
-        for i in 0..3000 {
-            let xs: [Fr; 4] = core::array::from_fn(|_| Fr::rand(&mut rng));
-            let ys: [Fr; 4] = core::array::from_fn(|_| Fr::rand(&mut rng));
-            let z = Fr::rand(&mut rng);
-            let z32 = z * Fr::from(32u64);
-            let qz = quad261::QuadFp::pack(&[stored(z32); 4]);
-            // coarse operands: products (coarse range outputs)
-            let qa = quad261::mont_mul(&quad261::QuadFp::pack(&[stored(xs[0]), stored(xs[1]), stored(xs[2]), stored(xs[3])]), &qz, &qc);
-            let qb2 = quad261::mont_mul(&quad261::QuadFp::pack(&[stored(ys[0]), stored(ys[1]), stored(ys[2]), stored(ys[3])]), &qz, &qc);
-            let sum = quad261::add(&qa, &qb2, &qc).unpack(&modulus);
-            let dif = quad261::sub(&qa, &qb2, &qc).unpack(&modulus);
-            for l in 0..4 {
-                assert_eq!(sum[l], stored(xs[l] * z + ys[l] * z), "add lane {l} iter {i}");
-                assert_eq!(dif[l], stored(xs[l] * z - ys[l] * z), "sub lane {l} iter {i}");
-            }
-        }
-        println!("quad261 add/sub cross-check OK");
-        let ys: [Fr; 4] = core::array::from_fn(|_| Fr::rand(&mut rng));
-        let qb = quad261::QuadFp::pack(&[stored(ys[0]), stored(ys[1]), stored(ys[2]), stored(ys[3])]);
-        let mut arr2: Vec<quad261::QuadFp> = (0..NQ)
+    fn mk_quads<R: ark_std::rand::Rng>(rng: &mut R) -> Vec<QuadFp> {
+        let stored = |x: Fr| -> [u64; 4] { unsafe { core::mem::transmute::<Fr, [u64; 4]>(x) } };
+        (0..NQ)
             .map(|_| {
-                let xs: [Fr; 4] = core::array::from_fn(|_| Fr::rand(&mut rng));
-                quad261::QuadFp::pack(&[stored(xs[0]), stored(xs[1]), stored(xs[2]), stored(xs[3])])
+                let xs: [Fr; 4] = core::array::from_fn(|_| Fr::rand(rng));
+                QuadFp::pack(&[stored(xs[0]), stored(xs[1]), stored(xs[2]), stored(xs[3])])
             })
-            .collect();
-        let t = Instant::now();
-        for _ in 0..reps {
-            for q in arr2.iter_mut() {
-                *q = quad261::mont_mul(q, &qb, &qc);
-            }
-        }
-        black_box(arr2[0].unpack(&modulus));
-        println!(
-            "quad261 array mul: {:.2} ns/element",
-            t.elapsed().as_nanos() as f64 / (reps * NQ * 4) as f64
-        );
+            .collect()
     }
-    {
-        // MSM tree pass-2 model: per pair lambda=(by-ay)*d, x3=l^2-ax-bx, y3=l*(ax-x3)-ay,
-        // quad (with pack from AoS coords + canonical unpack) vs scalar ark Fq ops.
-        use ark_bn254::Fq;
-        use ark_ff::Field;
-        use ark_ff::fields::models::fp::montgomery_backend::quad261;
-        use ark_ff::fields::models::fp::montgomery_backend::wasm_mont::{inv29, to29, FQ_RINV29};
-        let fq_mod: [u64; 4] = Fq::MODULUS.as_ref().try_into().unwrap();
-        let q29 = to29(&fq_mod);
-        let qinv = inv29(q29[0]);
-        let qc = quad261::Consts::new(&FQ_RINV29, &q29, qinv);
-        let storedq = |x: Fq| -> [u64; 4] { unsafe { core::mem::transmute::<Fq, [u64; 4]>(x) } };
-        const NP: usize = 4096; // pairs
-        let coords: Vec<[Fq; 5]> = (0..NP)
-            .map(|_| core::array::from_fn(|_| Fq::rand(&mut rng)))
-            .collect(); // ax, ay, bx, by, d per pair
-        // scalar
-        let mut outs = vec![(Fq::rand(&mut rng), Fq::rand(&mut rng)); NP];
-        let reps2 = (n / (NP * 6)).max(1);
-        let t = Instant::now();
-        for _ in 0..reps2 {
-            for (i, c) in coords.iter().enumerate() {
-                let (ax, ay, bx, by, d) = (c[0], c[1], c[2], c[3], c[4]);
-                let lambda = (by - ay) * d;
-                let x3 = lambda.square() - ax - bx;
-                let y3 = lambda * (ax - x3) - ay;
-                outs[i] = (x3, y3);
-            }
-        }
-        black_box(&outs);
-        println!("tree pass2 scalar: {:.1} ns/pair", t.elapsed().as_nanos() as f64 / (reps2 * NP) as f64);
-        // quad with pack/unpack per group of 4 pairs
-        let mult32 = |x: Fq| storedq(x * Fq::from(32u64));
-        let t = Instant::now();
-        for _ in 0..reps2 {
-            for g in coords.chunks_exact(4) {
-                let pk = |idx: usize| {
-                    quad261::QuadFp::pack(&[storedq(g[0][idx]), storedq(g[1][idx]), storedq(g[2][idx]), storedq(g[3][idx])])
-                };
-                let (ax, ay, bx, by) = (pk(0), pk(1), pk(2), pk(3));
-                // d pre-scaled by 32 so each mul lands back in the 2^256 domain
-                let d32 = quad261::QuadFp::pack(&[mult32(g[0][4]), mult32(g[1][4]), mult32(g[2][4]), mult32(g[3][4])]);
-                let lambda = quad261::mont_mul(&quad261::sub(&by, &ay, &qc), &d32, &qc);
-                // cost model: op counts match the real formula (2 more muls, 4 subs)
-                let x3 = quad261::sub(&quad261::sub(&quad261::mont_mul(&lambda, &lambda, &qc), &ax, &qc), &bx, &qc);
-                let y3 = quad261::sub(&quad261::mont_mul(&lambda, &quad261::sub(&ax, &x3, &qc), &qc), &ay, &qc);
-                black_box((x3.unpack(&fq_mod), y3.unpack(&fq_mod)));
-            }
-        }
-        println!("tree pass2 quad261 (incl pack/unpack): {:.1} ns/pair", t.elapsed().as_nanos() as f64 / (reps2 * NP) as f64);
-    }
+    let reps = (n / (NQ * 4)).max(1);
+    let per_elt = |t: std::time::Duration, r: usize| t.as_nanos() as f64 / (r * NQ * 4) as f64;
+
+    // L0: scalar mul/add (the mont_mul_261 kernel through ark ops).
     let mut sarr: Vec<Fr> = (0..NQ * 4).map(|_| Fr::rand(&mut rng)).collect();
     let y = Fr::rand(&mut rng);
     let t = Instant::now();
@@ -177,8 +70,125 @@ fn run() {
         }
     }
     black_box(sarr[0]);
+    println!("scalar mul:  {:6.2} ns/elt", per_elt(t.elapsed(), reps));
+
+    let t = Instant::now();
+    for _ in 0..reps {
+        for x in sarr.iter_mut() {
+            *x += y;
+        }
+    }
+    black_box(sarr[0]);
+    println!("scalar add:  {:6.2} ns/elt", per_elt(t.elapsed(), reps));
+
+    // L0: packed mul/add/sub.
+    let mut arr = mk_quads(&mut rng);
+    let ys: [Fr; 4] = core::array::from_fn(|_| Fr::rand(&mut rng));
+    let qb = QuadFp::pack(&[stored(ys[0]), stored(ys[1]), stored(ys[2]), stored(ys[3])]);
+    let t = Instant::now();
+    for _ in 0..reps {
+        for q in arr.iter_mut() {
+            *q = quad261::mont_mul(q, &qb, &kc.c);
+        }
+    }
+    black_box(arr[0].unpack(&kc.modulus));
+    println!("packed mul:  {:6.2} ns/elt", per_elt(t.elapsed(), reps));
+
+    let mut arr2 = mk_quads(&mut rng);
+    let t = Instant::now();
+    for _ in 0..reps {
+        for q in arr2.iter_mut() {
+            *q = quad261::add(q, &qb, &kc.c);
+        }
+    }
+    black_box(arr2[0].unpack(&kc.modulus));
+    println!("packed add:  {:6.2} ns/elt", per_elt(t.elapsed(), reps));
+
+    let mut arr3 = mk_quads(&mut rng);
+    let t = Instant::now();
+    for _ in 0..reps {
+        for q in arr3.iter_mut() {
+            *q = quad261::sub(q, &qb, &kc.c);
+        }
+    }
+    black_box(arr3[0].unpack(&kc.modulus));
+    println!("packed sub:  {:6.2} ns/elt", per_elt(t.elapsed(), reps));
+
+    // L0: pack transpose throughput (packed add on top so the pack isn't dead-coded).
+    let flat: Vec<Fr> = (0..NQ * 4).map(|_| Fr::rand(&mut rng)).collect();
+    let mut acc = arr[0];
+    let t = Instant::now();
+    for _ in 0..reps {
+        for g in 0..NQ {
+            let q = QuadFp::pack(unsafe { &*(flat.as_ptr().add(4 * g) as *const [[u64; 4]; 4]) });
+            acc = quad261::add(&acc, &q, &kc.c);
+        }
+    }
+    black_box(acc.unpack(&kc.modulus));
+    println!("pack+add:    {:6.2} ns/elt", per_elt(t.elapsed(), reps));
+
+    // L0: q1s1 shape — one scalar mul interleaved with one quad mul per block of 5 elements
+    // (bb VectorField's 5-wide trick: the integer unit works in parallel with SIMD).
+    let mut arr5q = mk_quads(&mut rng);
+    let mut arr5s: Vec<Fr> = (0..NQ).map(|_| Fr::rand(&mut rng)).collect();
+    let t = Instant::now();
+    for _ in 0..reps {
+        for (q, sc) in arr5q.iter_mut().zip(arr5s.iter_mut()) {
+            *q = quad261::mont_mul(q, &qb, &kc.c);
+            *sc *= y;
+        }
+    }
+    black_box((arr5q[0].unpack(&kc.modulus), arr5s[0]));
     println!(
-        "scalar array mul: {:.2} ns/element",
-        t.elapsed().as_nanos() as f64 / (reps * NQ * 4) as f64
+        "q1s1 mul:    {:6.2} ns/elt",
+        t.elapsed().as_nanos() as f64 / (reps * NQ * 5) as f64
+    );
+
+    // L0: QuadF wrapper mul (the relation-body call shape: per-op kc(), 144B temporaries).
+    let mut warr: Vec<QuadF<Fr>> = (0..NQ)
+        .map(|_| {
+            let xs: [Fr; 4] = core::array::from_fn(|_| Fr::rand(&mut rng));
+            QuadF::lanes(xs[0], xs[1], xs[2], xs[3])
+        })
+        .collect();
+    let wb = QuadF::lanes(ys[0], ys[1], ys[2], ys[3]);
+    let t = Instant::now();
+    for _ in 0..reps {
+        for q in warr.iter_mut() {
+            *q = *q * &wb;
+        }
+    }
+    black_box(warr[0].hsum());
+    println!("QuadF mul:   {:6.2} ns/elt", per_elt(t.elapsed(), reps));
+
+    // L1: axpy and one full fold ladder (matched against bb add_scaled_bench / fold loops).
+    let mut dst: Vec<Fr> = (0..1 << 16).map(|_| Fr::rand(&mut rng)).collect();
+    let src: Vec<Fr> = (0..1 << 16).map(|_| Fr::rand(&mut rng)).collect();
+    let s = Fr::rand(&mut rng);
+    let r1 = (n / (1 << 18)).max(1);
+    let t = Instant::now();
+    for _ in 0..r1 {
+        assert!(bb_ref::base::packed::try_axpy(&mut dst, &src, &s));
+    }
+    black_box(dst[0]);
+    println!(
+        "axpy:        {:6.2} ns/elt",
+        t.elapsed().as_nanos() as f64 / (r1 * (1 << 16)) as f64
+    );
+
+    let u = Fr::rand(&mut rng);
+    let mut folds = 0usize;
+    let t = Instant::now();
+    for _ in 0..r1 {
+        let mut v = src.clone();
+        while v.len() > 1 {
+            assert!(bb_ref::base::packed::try_fold_halve(&mut v, &u));
+            folds += v.len();
+        }
+        black_box(v[0]);
+    }
+    println!(
+        "fold:        {:6.2} ns/out (incl clone)",
+        t.elapsed().as_nanos() as f64 / folds as f64
     );
 }
