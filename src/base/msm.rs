@@ -552,8 +552,10 @@ mod packed_tree {
         ox: Vec<P::BaseField>,
         #[cfg(feature = "bbkernel")]
         oy: Vec<P::BaseField>,
+        // Opaque byte scratch for the C drain kernels (packed VectorFields); the kernel writes
+        // every word before reading it, so growth is left uninitialized rather than filled.
         #[cfg(feature = "bbkernel")]
-        cscratch: Vec<P::BaseField>,
+        cscratch: Vec<core::mem::MaybeUninit<u64>>,
         // Packed operands and batched-inversion chain, one entry per lane group.
         qax: Vec<QuadFp>,
         qbx: Vec<QuadFp>,
@@ -791,23 +793,12 @@ mod packed_tree {
     {
         use crate::base::packed::bbk;
         use core::any::TypeId;
-        type C1 = unsafe extern "C" fn(*const u64, *const u64, usize, *mut u64, *mut u64);
-        type C2 = unsafe extern "C" fn(
-            *const u64,
-            *const u64,
-            *const u64,
-            *const u64,
-            usize,
-            *mut u64,
-            *const u64,
-            *const u64,
-            *const u32,
-            *mut u64,
-        );
+        type C1 = unsafe extern "C" fn(*const u64, *const u64, *const u64, *const u64, usize, *mut u64, *mut u64);
+        type C2 = unsafe extern "C" fn(usize, *mut u64, *const u64, *const u32, *mut u64);
         let (c1, c2): (C1, C2) = if TypeId::of::<P::BaseField>() == TypeId::of::<crate::base::Fr>() {
-            (bbk::bbref_chord1_fr, bbk::bbref_chord2s_fr)
+            (bbk::bbref_chord1p_fr, bbk::bbref_chord2p_fr)
         } else if TypeId::of::<P::BaseField>() == TypeId::of::<ark_bn254::Fq>() {
-            (bbk::bbref_chord1_fq, bbk::bbref_chord2s_fq)
+            (bbk::bbref_chord1p_fq, bbk::bbref_chord2p_fq)
         } else {
             return false;
         };
@@ -824,35 +815,49 @@ mod packed_tree {
                 p.dest.push(p.dest[0]);
             }
             let n = p.ax.len();
-            p.cscratch.resize(2 * n, p.ax[0]);
-            let (dx, prod) = p.cscratch.split_at_mut(n);
-            unsafe {
-                c1(
-                    p.ax.as_ptr() as *const u64,
-                    p.bx.as_ptr() as *const u64,
-                    n,
-                    dx.as_mut_ptr() as *mut u64,
-                    prod.as_mut_ptr() as *mut u64,
-                )
-            };
-            // One inversion for the whole level: the last w chain products, batched.
-            let mut lane_inv: Vec<P::BaseField> = prod[n - w..].to_vec();
-            batch_invert_nonzero(&mut lane_inv, &mut s.prod);
-            // Phase 2 scatters {x3, y3} straight into ps by dest index (Affine is 64-byte {x,y}).
-            unsafe {
-                c2(
-                    p.ax.as_ptr() as *const u64,
-                    p.ay.as_ptr() as *const u64,
-                    p.bx.as_ptr() as *const u64,
-                    p.by.as_ptr() as *const u64,
-                    n,
-                    dx.as_mut_ptr() as *mut u64,
-                    prod.as_ptr() as *const u64,
-                    lane_inv.as_ptr() as *const u64,
-                    p.dest.as_ptr(),
-                    ps.as_mut_ptr() as *mut u64,
-                )
-            };
+            // Stream the level through the kernels in fixed chunks (bb's BATCH_CAPACITY shape):
+            // one small scratch, allocated once and reused, stays cache-resident. A level-sized
+            // scratch was 3.6x the old footprint and paid memory-growth/page-fault churn on every
+            // rayon split — a flow loss the per-chord rung could not see. Six packed VectorFields
+            // per W-block, sized from the kernel's own sizeof (the 5-wide VF carries a scalar lane
+            // beside the four SIMD lanes).
+            let batch = (4096 / w) * w;
+            // Sized for this level's chunk, capped at the batch: small MSMs (the flow has
+            // thousands) keep a small scratch; a fixed batch-sized buffer per TreeScratch paid
+            // ~1 MB of first-touch page faults per instance.
+            let words = (6 * (n.min(batch) / w) * unsafe { bbk::bbref_vf_size() }).div_ceil(8) + 32;
+            if p.cscratch.len() < words {
+                p.cscratch.resize(words, core::mem::MaybeUninit::uninit());
+            }
+            let mut lane: Vec<P::BaseField> = vec![p.ax[0]; w];
+            let mut off = 0;
+            while off < n {
+                let m = batch.min(n - off);
+                unsafe {
+                    c1(
+                        p.ax.as_ptr().add(off) as *const u64,
+                        p.ay.as_ptr().add(off) as *const u64,
+                        p.bx.as_ptr().add(off) as *const u64,
+                        p.by.as_ptr().add(off) as *const u64,
+                        m,
+                        p.cscratch.as_mut_ptr() as *mut u64,
+                        lane.as_mut_ptr() as *mut u64,
+                    )
+                };
+                // One inversion per chunk: the w lane chain totals, batched.
+                batch_invert_nonzero(&mut lane, &mut s.prod);
+                // Phase 2 reads the packed intermediates and scatters {x3, y3} into ps by dest.
+                unsafe {
+                    c2(
+                        m,
+                        p.cscratch.as_mut_ptr() as *mut u64,
+                        lane.as_ptr() as *const u64,
+                        p.dest.as_ptr().add(off),
+                        ps.as_mut_ptr() as *mut u64,
+                    )
+                };
+                off += m;
+            }
         }
         // Doublings through the scalar batched path.
         s.dens.clear();

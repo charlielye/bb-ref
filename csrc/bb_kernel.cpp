@@ -266,6 +266,78 @@ void chord_phase2_scatter(const uint64_t* ax_,
     }
 }
 
+// Two-phase chord add that keeps its intermediates PACKED between the phases. Phase 1 packs the
+// four operands once and stores ax/ay/dx/dy/xsum and the prefix products as VectorFields in
+// scratch (plain copies, no unpack); phase 2 reads them back as VectorFields (no re-pack), unwinds
+// the chain, finishes, and scatters. The previous pair of kernels round-tripped every intermediate
+// through unpacked Field arrays: 9 packs + 5 unpacks per block around 6 multiplies. This is
+// 4 packs + 2 unpacks. scratch holds 6 VectorFields per W-block; lane_tot gets the W chain totals.
+template <typename Params, typename Field>
+void chord1_packed(const uint64_t* ax_, const uint64_t* ay_, const uint64_t* bx_, const uint64_t* by_,
+                   size_t n, uint64_t* scratch, uint64_t* lane_tot_)
+{
+    using VF = bb::VectorField<Params>;
+    constexpr size_t W = VF::SIZE;
+    const auto* ax = reinterpret_cast<const Field*>(ax_);
+    const auto* ay = reinterpret_cast<const Field*>(ay_);
+    const auto* bx = reinterpret_cast<const Field*>(bx_);
+    const auto* by = reinterpret_cast<const Field*>(by_);
+    const size_t blocks = n / W;
+    VF* AX = reinterpret_cast<VF*>(scratch);
+    VF* AY = AX + blocks;
+    VF* DX = AY + blocks;
+    VF* DY = DX + blocks;
+    VF* XS = DY + blocks;
+    VF* PR = XS + blocks;
+    VF acc = VF::broadcast(Field::one());
+    for (size_t g = 0; g < blocks; ++g) {
+        const VF vax(&ax[g * W]), vay(&ay[g * W]), vbx(&bx[g * W]), vby(&by[g * W]);
+        AX[g] = vax;
+        AY[g] = vay;
+        const VF dx = vbx - vax;
+        DX[g] = dx;
+        DY[g] = vby - vay;
+        XS[g] = vax + vbx;
+        acc = acc * dx;
+        PR[g] = acc;
+    }
+    acc.store_to(reinterpret_cast<Field*>(lane_tot_));
+}
+
+template <typename Params, typename Field>
+void chord2_packed(size_t n, uint64_t* scratch, const uint64_t* lane_inv_, const uint32_t* dst, uint64_t* points)
+{
+    using VF = bb::VectorField<Params>;
+    constexpr size_t W = VF::SIZE;
+    const size_t blocks = n / W;
+    VF* AX = reinterpret_cast<VF*>(scratch);
+    VF* AY = AX + blocks;
+    VF* DX = AY + blocks;
+    VF* DY = DX + blocks;
+    VF* XS = DY + blocks;
+    VF* PR = XS + blocks;
+    auto* pts = reinterpret_cast<Field*>(points);
+    VF vinv(reinterpret_cast<const Field*>(lane_inv_));
+    for (size_t g = blocks; g-- > 0;) {
+        const VF dxg = DX[g];
+        DX[g] = (g == 0) ? vinv : vinv * PR[g - 1];
+        vinv = vinv * dxg;
+    }
+    for (size_t g = 0; g < blocks; ++g) {
+        const VF slope = DY[g] * DX[g];
+        const VF x3 = slope * slope - XS[g];
+        const VF y3 = slope * (AX[g] - x3) - AY[g];
+        Field ox[W], oy[W];
+        x3.store_to(&ox[0]);
+        y3.store_to(&oy[0]);
+        for (size_t k = 0; k < W; ++k) {
+            const uint32_t d = dst[g * W + k];
+            pts[2 * d] = ox[k].reduce_once();
+            pts[2 * d + 1] = oy[k].reduce_once();
+        }
+    }
+}
+
 } // namespace
 
 extern "C" {
@@ -302,6 +374,19 @@ void bbref_chord2_fr(const uint64_t* ax,
 {
     chord_phase2<bb::Bn254FrParams, bb::fr>(ax, ay, bx, by, n, dx, prod, lane_inv, ox, oy);
 }
+static_assert(sizeof(bb::VectorField<bb::Bn254FrParams>) == sizeof(bb::VectorField<bb::Bn254FqParams>));
+size_t bbref_vf_size()
+{
+    return sizeof(bb::VectorField<bb::Bn254FrParams>);
+}
+void bbref_chord1p_fr(const uint64_t* ax, const uint64_t* ay, const uint64_t* bx, const uint64_t* by, size_t n, uint64_t* scratch, uint64_t* lane_tot)
+{ chord1_packed<bb::Bn254FrParams, bb::fr>(ax, ay, bx, by, n, scratch, lane_tot); }
+void bbref_chord1p_fq(const uint64_t* ax, const uint64_t* ay, const uint64_t* bx, const uint64_t* by, size_t n, uint64_t* scratch, uint64_t* lane_tot)
+{ chord1_packed<bb::Bn254FqParams, bb::fq>(ax, ay, bx, by, n, scratch, lane_tot); }
+void bbref_chord2p_fr(size_t n, uint64_t* scratch, const uint64_t* lane_inv, const uint32_t* dst, uint64_t* points)
+{ chord2_packed<bb::Bn254FrParams, bb::fr>(n, scratch, lane_inv, dst, points); }
+void bbref_chord2p_fq(size_t n, uint64_t* scratch, const uint64_t* lane_inv, const uint32_t* dst, uint64_t* points)
+{ chord2_packed<bb::Bn254FqParams, bb::fq>(n, scratch, lane_inv, dst, points); }
 void bbref_chord2s_fr(const uint64_t* ax,
                       const uint64_t* ay,
                       const uint64_t* bx,

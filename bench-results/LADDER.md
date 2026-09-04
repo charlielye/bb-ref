@@ -111,3 +111,27 @@ buffer alloc, BY inverses) loses to the simple scatter drain. REVERTED. A size-g
 CONCLUSION: the structural port helps 2^17+ MSMs; at the small sizes the pinned flows actually use
 (<=78k) its per-chunk fixed costs lose. A size-gated dual path would bank both. The MSM gap that
 remains is prover-code constant factors — no runtime excuse.
+
+Update 6 — the drain rung, and the MSM gap closed to 1.11x @2^17 (flow-positive this time):
+New rung `tools/ab.sh drain` (examples/chordbench.rs): the chord kernel alone on n staged pairs vs
+the same linked VectorField mul streaming (bbref_axpy). Old drain: 270 ns/chord flat across sizes
+= 45 ns/mul-eq (6 muls/chord: 3 for the batched inverse + slope + x3 + y3), vs 35 ns/elt streaming
+— i.e. the drain ran each mul at ~1.3x the streaming rate, exactly the MSM rung ratio. Cause: the
+two phases round-tripped every intermediate through UNPACKED Field arrays, so per 5-chord block it
+did 9 packs + 5 unpacks around 6 multiplies (bb's 4x64->9x29 transpose is ~10 ns/elt).
+Fix (chord1p/chord2p): phase 1 packs the four operands once and stores ax/ay/dx/dy/xsum + prefix
+products as PACKED VectorFields in scratch; phase 2 reads them back (copies, not re-packs). 4 packs
++ 2 unpacks. Drain 270 -> 205 ns/chord = 34 ns/mul-eq: at the streaming rate. Wins at EVERY chord
+count >= 16 (crossover ~8-16; below that both are inversion-dominated).
+Two flow-negative intermediates, both diagnosed and fixed (rung was positive throughout):
+ 1. level-sized packed scratch: 3.6x the footprint (230 B/chord), grown per rayon split ->
+    memory-growth/page-fault churn. Fix: stream in BATCH=4095-chord chunks (bb's BATCH_CAPACITY
+    shape), one small scratch, cache-resident. Also lifted 2^17/2^18 further.
+ 2. fixed batch-sized (~1 MB) scratch per TreeScratch: the flow has thousands of small MSMs whose
+    splits previously used a few KB -> first-touch faults x thousands. Fix: size by min(n, batch).
+Flow drain-size histogram (worker stderr is NOT captured by the harness — accumulate in shared
+statics, print from main): 30.7k drain calls; >1000-chord drains carry 30.8M of 34.3M chords
+(90%); <=20-chord drains 0.18%. Tiny drains are irrelevant to the flow.
+RESULTS (8t, bb commit_random 103/195/365): 2^17 138->114 ms (1.34x->1.11x), 2^18 285->249
+(1.46x->1.28x), 2^19 547->458 (1.50x->1.25x). Flow, paired back-to-back x3: 5.89/5.92/5.89 ->
+5.85/5.83/5.85 (-0.06 s), byte-exact. sizeof(VectorField)=192 B (5-wide: scalar lane + 4 SIMD).

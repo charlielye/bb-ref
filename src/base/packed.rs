@@ -73,6 +73,7 @@ pub mod bbk {
         pub fn bbref_axpy_fr(dst: *mut u64, src: *const u64, scalar: *const u64, n: usize);
         pub fn bbref_axpy_fq(dst: *mut u64, src: *const u64, scalar: *const u64, n: usize);
         pub fn bbref_chord_width() -> usize;
+        pub fn bbref_vf_size() -> usize;
         pub fn bbref_chord1_fr(ax: *const u64, bx: *const u64, n: usize, dx: *mut u64, prod: *mut u64);
         pub fn bbref_chord1_fq(ax: *const u64, bx: *const u64, n: usize, dx: *mut u64, prod: *mut u64);
         pub fn bbref_chord2_fr(
@@ -111,6 +112,10 @@ pub mod bbk {
             dst: *const u32,
             points: *mut u64,
         );
+        pub fn bbref_chord1p_fr(ax: *const u64, ay: *const u64, bx: *const u64, by: *const u64, n: usize, scratch: *mut u64, lane_tot: *mut u64);
+        pub fn bbref_chord1p_fq(ax: *const u64, ay: *const u64, bx: *const u64, by: *const u64, n: usize, scratch: *mut u64, lane_tot: *mut u64);
+        pub fn bbref_chord2p_fr(n: usize, scratch: *mut u64, lane_inv: *const u64, dst: *const u32, points: *mut u64);
+        pub fn bbref_chord2p_fq(n: usize, scratch: *mut u64, lane_inv: *const u64, dst: *const u32, points: *mut u64);
         pub fn bbref_dbl1_fr(y: *const u64, n: usize, den: *mut u64, prod: *mut u64);
         pub fn bbref_dbl1_fq(y: *const u64, n: usize, den: *mut u64, prod: *mut u64);
         pub fn bbref_dbl2_fr(

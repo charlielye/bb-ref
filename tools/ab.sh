@@ -6,6 +6,7 @@
 #   tools/ab.sh l0          field kernels: scalar/packed mul-add-sub, pack, wrapper overhead
 #   tools/ab.sh msm [log_n] Pippenger at 2^log_n (default 16), 8 threads
 #   tools/ab.sh relations   relation-set accumulate per edge (bb relations_bench vs relbench)
+#   tools/ab.sh drain [log_n] MSM chord-drain kernel alone (chordbench), 1 thread
 #   tools/ab.sh bb <bench> [gbench args]   any bb bench binary, e.g. add_scaled_bench
 #   tools/ab.sh ours <example> [args]      any bb-ref example
 #
@@ -18,7 +19,7 @@ BBBIN=../aztec-packages2/barretenberg/cpp/build-wasm-threads/bin
 export RUSTFLAGS="-C target-feature=+simd128 -C link-arg=--max-memory=4294967296"
 
 build_ours() { # example name
-    if ! cargo build --release --target wasm32-wasip1-threads --example "$1" >/tmp/ab-build.log 2>&1; then
+    if ! cargo build --release --target wasm32-wasip1-threads --features bbkernel --example "$1" >/tmp/ab-build.log 2>&1; then
         grep -E "^error" -A5 /tmp/ab-build.log >&2
         exit 1
     fi
@@ -62,6 +63,11 @@ relations)
     run 1 relbench.wasm
     echo "=== bb relations_bench ==="
     run 1 relations_bench.wasm --benchmark_min_time=0.1s
+    ;;
+drain)
+    build_ours chordbench
+    echo "=== ours (chordbench, 1t) ==="
+    run 1 chordbench.wasm "${2:-14}"
     ;;
 bb)
     push_bb "$2"
