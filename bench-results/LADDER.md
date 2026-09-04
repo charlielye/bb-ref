@@ -166,3 +166,17 @@ bookkeeping, run structure, Vec pushes), and copying the pair out was already a 
 Remaining MSM ladder gap @8t: 2^17 1.12x, 2^18 1.16x, 2^19 1.25x; 1t 2^17 1.31x. Field kernels at
 parity; drain at streaming rate; what is left is walk/bookkeeping + bucket_reduce (scalar) +
 stages 1-3, each ~4-20% of the 1t tree — no single dominant item.
+
+Update 9 — full V8 suite on 167a935 (packed drain + gather 2^13): TOTAL 1.09x (bb 85.66 / ours
+93.09 s; was 1.15x this morning, 1.34x at session start). Every flow 1.15-1.24x; storage_proof
+0.81x (we win). Canonical 5.85 s (1.15x).
+DIRECTION CHANGE (user): stop tuning our MSM; REPLICATE bb's scalar_multiplication_fast.cpp
+(3164 lines vs our 1168) stage by stage. Confirmed structural differences, not guesses:
+ 1. Stage 6b bucket reduce: bb recursive_affine_bucket_reduce_strided (batched affine, VF
+    gather/scatter); ours scalar pass_add running sums (14% of MSM @2^16 8t).
+ 2. Adaptive rounds: bb records an MSB histogram per scalar (record_msb,
+    window_bits_tuning_oversub_factor) and sizes rounds to actual bit-lengths; ours always runs
+    129 GLV bits. Flow commits have many <=32/<=128-bit scalars.
+ 3. Dedup of duplicate scalars (pippenger_dedup.hpp, 586 lines).
+ 4. Per-worker arena with a fixed layout (pippenger_arena_layout.hpp) vs Vec growth.
+ 5. Seam-overflow merge across thread chunks (merge_overflow) vs our run-structure bookkeeping.
