@@ -69,3 +69,27 @@ WE BEAT BB there (18.5 vs 22.1s): fixed per-flow costs amortize and our thread s
 wins dominate at size. Canonical flow (transfer_0_sponsored) 1.24x is a small-flow worst case.
 Journey: morning 1.34x total -> 1.15x. Memory still 1.2-1.4x bb (dlmalloc grow-only vs bb's
 allocator; talc swap attempted, deferred — needs the sync/atomics arena config for wasm-threads).
+
+Update 4 (ladder extended to commit_bench — MAJOR NARRATIVE CORRECTION, commit 57fe19c):
+The "MSM 1.34x slower" was measured against bb PippengerUnsafe — bb's SYNTHETIC best-case raw
+path (preprocessed points, no commit overhead) that real proving never uses. The RIGHT rung is
+bb commit_bench bench_commit_random (the realistic commit path). Matched, 8t:
+  size   ours    bb commit   verdict
+  2^16   70.7ms  89.5ms      ours FASTER
+  2^17   138ms   101ms       bb fixed-cost amortizes (bb 2^16==2^17 ~= flat => ~78ms fixed)
+  2^18   285ms   192ms       1.48x at scale
+Flow commits are 2^16-2^17 => MSM is at/near parity there. NOT the gap.
+
+THE REAL GAP (measured, both flows profiled same box):
+- Compute CPU: ours 28.4s vs bb 26.8s = 1.06x — kernels at near-parity (commit+sumcheck rungs
+  confirm per-component).
+- WAIT: ours 24.8s (47% idle) vs bb 17.2s (39% idle) => ~1s wall of EXCESS THREAD IDLE ~= the
+  entire flow gap (5.87 vs 5.04).
+- Our MAIN thread idle 3.8s while bb main is a full 9th worker (0.4s idle, 5.1s compute). We
+  block the driver thread in rayon::scope regions (batch_commit et al) instead of participating.
+  => The last real lever is PARALLEL EFFICIENCY (load balancing / main-thread participation),
+  not kernel speed. rayon-count sweep confounded by box noise + core count; needs the driver to
+  participate in parallel regions rather than block.
+
+So: the ladder is NOT exhausted (commit rung just corrected the whole MSM story), and the honest
+remaining work is parallelism, not more kernels.
