@@ -252,7 +252,14 @@ where
     // Points are gathered in bounded blocks and each block tree-reduced before the next is
     // touched, so a job's live scratch is one block plus its (bucket-count-bounded) survivors —
     // gathering a whole 2^20-entry slice as 80-byte pairs costs GBs across concurrent MSMs.
-    const GATHER_BLOCK: usize = 1 << 16;
+    // Entries gathered per tree-reduce block. 2^13 keeps eight threads' gathered points and
+    // staging inside the shared cache: at 8t it is neutral through 2^17 and 5-8% faster at
+    // 2^18-2^19 than 2^16 (a 1-thread sweep could not see this). BBREF_GATHER_LOG2 overrides.
+    static GATHER_LOG2: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    let gather_block: usize = 1usize
+        << *GATHER_LOG2.get_or_init(|| {
+            std::env::var("BBREF_GATHER_LOG2").ok().and_then(|v| v.parse().ok()).unwrap_or(13)
+        });
     let beta = <P::BaseField as crate::base::endo::EndoField>::cube_root();
     let survivors: Vec<(Vec<u32>, Vec<Affine<P>>)> = jobs
         .par_iter()
@@ -262,7 +269,7 @@ where
             // below) was most of the prover's large-allocation churn, which is what glibc pays
             // page refaults for.
             || {
-                let g = GATHER_BLOCK.min(chunk_len);
+                let g = gather_block.min(chunk_len);
                 (
                     Vec::with_capacity(g),
                     Vec::with_capacity(g),
@@ -280,12 +287,12 @@ where
                 let mut b = starts.partition_point(|&s| s as usize <= job_start) - 1;
                 // Survivors per gather block are bounded by the bucket count; one exact
                 // allocation instead of doubling growth.
-                let cap = (job_end - job_start).min(2 * half * (job_end - job_start).div_ceil(GATHER_BLOCK).max(1));
+                let cap = (job_end - job_start).min(2 * half * (job_end - job_start).div_ceil(gather_block).max(1));
                 let (mut work_b, mut work_p): (Vec<u32>, Vec<Affine<P>>) =
                     (Vec::with_capacity(cap), Vec::with_capacity(cap));
                 for (block_start, chunk) in (job_start..job_end)
-                    .step_by(GATHER_BLOCK)
-                    .zip(sched[job_start..job_end].chunks(GATHER_BLOCK))
+                    .step_by(gather_block)
+                    .zip(sched[job_start..job_end].chunks(gather_block))
                 {
                     block_p.clear();
                     run_id.clear();

@@ -135,3 +135,20 @@ statics, print from main): 30.7k drain calls; >1000-chord drains carry 30.8M of 
 RESULTS (8t, bb commit_random 103/195/365): 2^17 138->114 ms (1.34x->1.11x), 2^18 285->249
 (1.46x->1.28x), 2^19 547->458 (1.50x->1.25x). Flow, paired back-to-back x3: 5.89/5.92/5.89 ->
 5.85/5.83/5.85 (-0.06 s), byte-exact. sizeof(VectorField)=192 B (5-wide: scalar lane + 4 SIMD).
+
+Update 7 — post-drain-fix ladder, and two more measured verdicts:
+- Gather block locality: at 8 THREADS smaller gather blocks help where a 1t sweep could not see
+  it (shared cache): 2^18 244->227 ms (-9%), 2^19 464->441..458 (noise band +-4%), 2^16/2^17
+  neutral, flow neutral (+0.02 on 5.88, inside noise). Default GATHER_BLOCK 2^16 -> 2^13
+  (BBREF_GATHER_LOG2 overrides).
+- Classify walk "128 B per-pair copies": NO-OP (tree 762 vs 755) — LLVM already elided them.
+  Reverted. The walk's ~180 ms @2^17 1t is bookkeeping + the AoS staging write, not the copy.
+CURRENT MSM RUNG (8t, bb commit_random 91/103/195/365): 2^16 61 (0.67x, bb fixed cost),
+2^17 116 (1.12x), 2^18 227 (1.16x), 2^19 458 (1.25x). 1t all-in 2^17: 866 vs bb 663 (1.31x,
+was 1.56x this morning). Drain kernel itself is at the streaming mul rate (34 vs 35 ns/mul).
+WHERE THE REST IS (1t 2^17, 203 ms excess over bb): classify+staging ~180 (bb: u32 bucket
+compares + push_point that PACKS directly into VF spans — no AoS intermediate; we write 128 B/pair
+of AoS staging that chord1p re-reads and packs = a 256 B/pair memory round trip bb does not do,
+est. 60-100 ms), bucket_reduce 38 (scalar pass_add), stages 1-3 34. Next structural item if
+pursuing 2^19 parity: pack-on-push (C `pack5` called per 5 pairs from the classify loop writing
+packed VFs straight into the drain scratch; chord1p then starts from packed operands).
