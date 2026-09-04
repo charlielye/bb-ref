@@ -1,0 +1,14 @@
+runtime: v8, threads: 8 (both provers), seed: 12345, flows: 11
+flow                                                                 bb   bb-ref   ratio   bb rss  ref rss     mem
+deploy_ecdsar1+sponsored_fpc                                       7.33    16.04   2.19x    0.68G    1.05G   1.54x
+deploy_schnorr+sponsored_fpc                                       7.03    15.45   2.20x    0.67G    1.01G   1.52x
+ecdsar1+amm_add_liquidity_1_recursions+sponsored_fpc              11.57    21.81   1.89x    0.70G    1.15G   1.64x
+ecdsar1+deploy_tokenContract_with_registration+sponsored_fpc       8.66    17.31   2.00x    0.70G    1.03G   1.46x
+ecdsar1+storage_proof_7_layers+sponsored_fpc                      29.20    34.57   1.18x    1.20G    1.83G   1.53x
+ecdsar1+token_bridge_claim_private+sponsored_fpc                   7.35    19.01   2.59x    0.68G    1.06G   1.55x
+ecdsar1+transfer_0_recursions+private_fpc                          9.97    20.32   2.04x    0.72G    1.04G   1.44x
+ecdsar1+transfer_0_recursions+sponsored_fpc                       11.79    16.26   1.38x    0.62G    0.89G   1.43x
+ecdsar1+transfer_1_recursions+private_fpc                         10.45    26.26   2.51x    0.72G    1.13G   1.56x
+ecdsar1+transfer_1_recursions+sponsored_fpc                        8.88    18.83   2.12x    0.66G    1.04G   1.57x
+schnorr+deploy_tokenContract_with_registration+sponsored_fpc      12.32    18.10   1.47x    0.69G    1.04G   1.52x
+TOTAL                                                            124.55   223.96   1.80x
