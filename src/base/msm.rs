@@ -16,10 +16,10 @@ use rayon::prelude::*;
 const MIN_CHUNK: usize = 384;
 
 /// Points per thread below which arkworks' MSM wins: the batched-affine advantage needs enough
-/// points per bucket, and the schedule machinery has fixed costs. Once the nested parallel batch
-/// inversions were removed the crossover collapsed — msmbench sweeps at 8 threads now favor this
-/// pippenger down to 2^10 total points at every scalar width.
-const MIN_PTS_PER_THREAD: usize = 128;
+/// points per bucket, and the schedule machinery has fixed costs. Swept on the canonical wasm
+/// flow (BBREF_MSM_MIN_PTS 128/32/8/4/2/1 -> 6.05/6.02/5.94/5.97/5.97/5.94 s): the packed
+/// pippenger wins down to tiny sizes, plateauing at 8.
+const MIN_PTS_PER_THREAD: usize = 8;
 
 /// In-place batched inversion of nonzero elements (Montgomery's trick), with the prefix-product
 /// scratch reused across calls. ark's `serial_batch_inversion_and_mul` allocates its scratch and

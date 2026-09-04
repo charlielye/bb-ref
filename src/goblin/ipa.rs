@@ -116,8 +116,11 @@ pub fn inner_product_prove(ck: &GrumpkinKey, witness: &P, mut b: Vec<Fq>, t: &mu
         let t0 = std::time::Instant::now();
         let (inner_l, inner_r) = inner(&a, &b, half);
         let t1 = std::time::Instant::now();
-        let l = msm(&g[half..2 * half], &a[..half]) + aux_generator * inner_l;
-        let r = msm(&g[..half], &a[half..2 * half]) + aux_generator * inner_r;
+        // The two side MSMs are independent; at these sizes each scales poorly alone, so run
+        // them concurrently.
+        let (l_msm, r_msm) = rayon::join(|| msm(&g[half..2 * half], &a[..half]), || msm(&g[..half], &a[half..2 * half]));
+        let l = l_msm + aux_generator * inner_l;
+        let r = r_msm + aux_generator * inner_r;
         let t2 = std::time::Instant::now();
         if stage_timing {
             t_inner += t1 - t0;
@@ -140,10 +143,12 @@ pub fn inner_product_prove(ck: &GrumpkinKey, witness: &P, mut b: Vec<Fq>, t: &mu
         // One MSM per side: the two quarter-slices concatenate so the size stays at `half`.
         let cat_pts = |x: &[GrumpkinAffine], y: &[GrumpkinAffine]| [x, y].concat();
         let cat_sc = |x: &[Fq], y: &[Fq]| [x, y].concat();
-        let l = msm(&cat_pts(&g[q..2 * q], &g[3 * q..4 * q]), &cat_sc(&a_scaled[..q], &a[..q]))
-            + aux_generator * inner_l;
-        let r = msm(&cat_pts(&g[..q], &g[2 * q..3 * q]), &cat_sc(&a_scaled[q..2 * q], &a[q..2 * q]))
-            + aux_generator * inner_r;
+        let (l_msm, r_msm) = rayon::join(
+            || msm(&cat_pts(&g[q..2 * q], &g[3 * q..4 * q]), &cat_sc(&a_scaled[..q], &a[..q])),
+            || msm(&cat_pts(&g[..q], &g[2 * q..3 * q]), &cat_sc(&a_scaled[q..2 * q], &a[q..2 * q])),
+        );
+        let l = l_msm + aux_generator * inner_l;
+        let r = r_msm + aux_generator * inner_r;
         let t2 = std::time::Instant::now();
         if stage_timing {
             t_inner += t1 - t0;
