@@ -13,7 +13,6 @@ use ark_ff::{AdditiveGroup, Field, PrimeField, Zero};
 use rayon::prelude::*;
 
 /// Minimum chunk size for the stage-4 tree jobs.
-const MIN_CHUNK: usize = 384;
 
 /// Points per thread below which arkworks' MSM wins: the batched-affine advantage needs enough
 /// points per bucket, and the schedule machinery has fixed costs. Swept on the canonical wasm
@@ -263,142 +262,263 @@ where
         let entries: usize = schedules.iter().map(|s| s.len()).sum();
         eprintln!("[msm-stats] n={n} active={n_active} bits={effective_bits} c={c} windows={num_windows} entries={entries}");
     }
-    // Stage 4: tree-reduce, parallel over (window, schedule chunk): a chunk of a bucket-sorted
-    // schedule is itself bucket-sorted, so chunks reduce independently; the survivors concatenate
-    // in order and a few more levels merge the buckets that straddled chunk boundaries.
-    // A chunk must span several points per bucket or the local trees find no pairs and all the
-    // reduction work lands on the sequential per-window merge.
-    // bb Stage 5: each window is cut into `num_threads` chunks by schedule index (a bucket run
-    // that straddles a cut yields two partials that the survivor merge absorbs), so every window
-    // fans out to the whole pool regardless of window size. A bucket-count-based chunk size
-    // starved the pool once wide windows (large c, few windows) made chunks 2^16 entries.
-    let chunk_len = schedules
-        .iter()
-        .map(|sch| sch.len())
-        .max()
-        .unwrap_or(0)
-        .div_ceil(rayon::current_num_threads().max(1))
-        .max(MIN_CHUNK);
-    let jobs: Vec<(usize, usize)> = (0..num_windows)
-        .flat_map(|w| (0..(schedules[w].len().div_ceil(chunk_len)).max(1)).map(move |k| (w, k)))
-        .collect();
-    // Points are gathered in bounded blocks and each block tree-reduced before the next is
-    // touched, so a job's live scratch is one block plus its (bucket-count-bounded) survivors —
-    // gathering a whole 2^20-entry slice as 80-byte pairs costs GBs across concurrent MSMs.
-    // Entries gathered per tree-reduce block. 2^13 keeps eight threads' gathered points and
-    // staging inside the shared cache: at 8t it is neutral through 2^17 and 5-8% faster at
-    // 2^18-2^19 than 2^16 (a 1-thread sweep could not see this). BBREF_GATHER_LOG2 overrides.
-    static GATHER_LOG2: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-    let gather_block: usize = 1usize
-        << *GATHER_LOG2.get_or_init(|| {
-            std::env::var("BBREF_GATHER_LOG2").ok().and_then(|v| v.parse().ok()).unwrap_or(13)
-        });
-    let beta = <P::BaseField as crate::base::endo::EndoField>::cube_root();
-    let survivors: Vec<(Vec<u32>, Vec<Affine<P>>)> = jobs
-        .par_iter()
-        .map_init(
-            // Per-rayon-split scratch, reused across jobs and tree levels, at full capacity up
-            // front: growth reallocation of these buffers (and the per-job survivor vectors
-            // below) was most of the prover's large-allocation churn, which is what glibc pays
-            // page refaults for.
-            || {
-                let g = gather_block.min(chunk_len);
-                (
-                    Vec::with_capacity(g),
-                    Vec::with_capacity(g),
-                    Vec::with_capacity(g),
-                    TreeScratch::<P>::with_capacity(g),
-                )
-            },
-            |(block_p, run_id, run_len, scratch), &(w, k)| {
-                let sched = &schedules[w];
-                let job_start = (k * chunk_len).min(sched.len());
-                let job_end = ((k + 1) * chunk_len).min(sched.len());
-                // The entry's bucket is its rank's position in the per-window bucket offsets, tracked
-                // incrementally since the schedule is sorted.
-                let starts = &bucket_starts[w];
-                let mut b = starts.partition_point(|&s| s as usize <= job_start) - 1;
-                // Survivors per gather block are bounded by the bucket count; one exact
-                // allocation instead of doubling growth.
-                let cap = (job_end - job_start).min(2 * half * (job_end - job_start).div_ceil(gather_block).max(1));
-                let (mut work_b, mut work_p): (Vec<u32>, Vec<Affine<P>>) =
-                    (Vec::with_capacity(cap), Vec::with_capacity(cap));
-                for (block_start, chunk) in (job_start..job_end)
-                    .step_by(gather_block)
-                    .zip(sched[job_start..job_end].chunks(gather_block))
-                {
-                    block_p.clear();
-                    run_id.clear();
-                    run_len.clear();
-                    let (mut cur, mut cnt) = (u32::MAX, 0u32);
-                    for (j, &e) in chunk.iter().enumerate() {
-                        while starts[b + 1] as usize <= block_start + j {
-                            b += 1;
-                        }
-                        let i = (e & 0x3fff_ffff) as usize;
-                        if b as u32 != cur {
-                            if cnt > 0 {
-                                run_id.push(cur);
-                                run_len.push(cnt);
-                            }
-                            cur = b as u32;
-                            cnt = 1;
-                        } else {
-                            cnt += 1;
-                        }
-                        let mut pt = points[i];
-                        if e & PHI != 0 {
-                            pt = match phi_table {
-                                Some(t) => t[i],
-                                None => Affine::<P>::new_unchecked(beta * pt.x, -pt.y),
-                            };
-                        }
-                        block_p.push(if e >> 31 == 1 { -pt } else { pt });
-                    }
-                    if cnt > 0 {
-                        run_id.push(cur);
-                        run_len.push(cnt);
-                    }
-                    tree_reduce(run_id, run_len, block_p, scratch);
-                    work_b.extend_from_slice(run_id);
-                    work_p.extend_from_slice(block_p);
+    // bb Stage 5: each window's schedule is cut into `threads` chunks by schedule index and every
+    // chunk's bucket range [lo, hi] is recorded (a bucket run straddling a cut yields one partial on
+    // each side; Stage 6b merges them). Entry `pos` belongs to digit `partition_point(start <= pos)`
+    // over the per-window bucket offsets, digits numbered 1..=half.
+    let threads = rayon::current_num_threads().max(1);
+    let digit_of = |w: usize, pos: usize| -> usize { bucket_starts[w].partition_point(|&st| st as usize <= pos) };
+    struct WinChunks {
+        start: Vec<usize>,
+        lo: Vec<usize>,
+        hi: Vec<usize>,
+    }
+    let chunks: Vec<WinChunks> = (0..num_windows)
+        .map(|w| {
+            let m = window_len(w);
+            let mut start = vec![0usize; threads + 1];
+            let (mut lo, mut hi) = (vec![half + 1; threads], vec![0usize; threads]);
+            for t in 0..threads {
+                start[t] = t * m / threads;
+            }
+            start[threads] = m;
+            for t in 0..threads {
+                if start[t] < start[t + 1] {
+                    lo[t] = digit_of(w, start[t]);
+                    hi[t] = digit_of(w, start[t + 1] - 1);
                 }
-                // Block-boundary buckets appear in two blocks' survivors; one more reduction over
-                // the (still bucket-sorted) concatenation settles them.
-                runs_from_ids(&work_b, run_id, run_len);
-                tree_reduce(run_id, run_len, &mut work_p, scratch);
-                work_b.clear();
-                work_b.extend_from_slice(run_id);
-                (work_b, work_p)
-            },
-        )
+            }
+            WinChunks { start, lo, hi }
+        })
+        .collect();
+
+    // bb Stage 6a: per thread and window, walk the chunk in sub-chunks, tree-reduce each (pairs
+    // same-digit neighbours), and densify the survivors into a slot array indexed by digit − lo.
+    // A slot already populated by an earlier sub-chunk (the digit's run was split) goes to an
+    // overflow list that one tree reduce per window folds back in. Output: per-(thread, window)
+    // dense partials with a presence bitmap — no second survivor tree per job or per window.
+    const SUBCHUNK: usize = 2048;
+    struct Partial<P: SWCurveConfig> {
+        lo: usize,
+        dense: Vec<Affine<P>>,
+        present: Vec<u8>,
+    }
+    let beta = <P::BaseField as crate::base::endo::EndoField>::cube_root();
+    let partials: Vec<Vec<Partial<P>>> = (0..threads)
+        .into_par_iter()
+        .map(|t| {
+            let mut block_p: Vec<Affine<P>> = Vec::with_capacity(SUBCHUNK);
+            let mut run_id: Vec<u32> = Vec::with_capacity(SUBCHUNK);
+            let mut run_len: Vec<u32> = Vec::with_capacity(SUBCHUNK);
+            let mut scratch = TreeScratch::<P>::with_capacity(SUBCHUNK);
+            (0..num_windows)
+                .map(|w| {
+                    let ch = &chunks[w];
+                    let (cs_lo, cs_hi) = (ch.start[t], ch.start[t + 1]);
+                    if cs_lo == cs_hi {
+                        return Partial { lo: 0, dense: Vec::new(), present: Vec::new() };
+                    }
+                    let (my_lo, my_hi) = (ch.lo[t], ch.hi[t]);
+                    let width = my_hi - my_lo + 1;
+                    let mut dense = vec![Affine::<P>::zero(); width];
+                    let mut present = vec![0u8; width];
+                    let mut overflow: Vec<(u32, Affine<P>)> = Vec::new();
+                    let sched = &schedules[w];
+                    let bs = &bucket_starts[w];
+                    // 0-based bucket cursor: bs[b] <= pos < bs[b + 1]; the digit is b + 1.
+                    let mut b = bs.partition_point(|&st| st as usize <= cs_lo) - 1;
+                    let mut pos = cs_lo;
+                    while pos < cs_hi {
+                        let end = (pos + SUBCHUNK).min(cs_hi);
+                        block_p.clear();
+                        run_id.clear();
+                        run_len.clear();
+                        let (mut cur, mut cnt) = (u32::MAX, 0u32);
+                        for j in pos..end {
+                            while bs[b + 1] as usize <= j {
+                                b += 1;
+                            }
+                            let e = sched[j];
+                            let i = (e & 0x3fff_ffff) as usize;
+                            if b as u32 != cur {
+                                if cnt > 0 {
+                                    run_id.push(cur);
+                                    run_len.push(cnt);
+                                }
+                                cur = b as u32;
+                                cnt = 1;
+                            } else {
+                                cnt += 1;
+                            }
+                            let mut pt = points[i];
+                            if e & PHI != 0 {
+                                pt = match phi_table {
+                                    Some(tbl) => tbl[i],
+                                    None => Affine::<P>::new_unchecked(beta * pt.x, -pt.y),
+                                };
+                            }
+                            block_p.push(if e >> 31 == 1 { -pt } else { pt });
+                        }
+                        if cnt > 0 {
+                            run_id.push(cur);
+                            run_len.push(cnt);
+                        }
+                        tree_reduce(&mut run_id, &mut run_len, &mut block_p, &mut scratch);
+                        let mut idx = 0;
+                        for r in 0..run_id.len() {
+                            for _ in 0..run_len[r] {
+                                let slot = run_id[r] as usize + 1 - my_lo;
+                                if present[slot] != 0 {
+                                    overflow.push((slot as u32, block_p[idx]));
+                                } else {
+                                    dense[slot] = block_p[idx];
+                                    present[slot] = 1;
+                                }
+                                idx += 1;
+                            }
+                        }
+                        pos = end;
+                    }
+                    // Overflow entries arrive slot-sorted (sub-chunks walk digits in order), so each
+                    // slot's head + partials are consecutive: one tree reduce settles them all.
+                    if !overflow.is_empty() {
+                        block_p.clear();
+                        run_id.clear();
+                        run_len.clear();
+                        let mut k = 0;
+                        while k < overflow.len() {
+                            let slot = overflow[k].0;
+                            block_p.push(dense[slot as usize]);
+                            let mut c = 1u32;
+                            while k < overflow.len() && overflow[k].0 == slot {
+                                block_p.push(overflow[k].1);
+                                c += 1;
+                                k += 1;
+                            }
+                            run_id.push(slot);
+                            run_len.push(c);
+                        }
+                        tree_reduce(&mut run_id, &mut run_len, &mut block_p, &mut scratch);
+                        let mut idx = 0;
+                        for r in 0..run_id.len() {
+                            for _ in 0..run_len[r] {
+                                dense[run_id[r] as usize] = block_p[idx];
+                                idx += 1;
+                            }
+                        }
+                        // A slot whose entries cancelled to infinity has no survivor.
+                        let mut seen = vec![false; width];
+                        for &id in run_id.iter() {
+                            seen[id as usize] = true;
+                        }
+                        for (slot, _) in overflow.iter() {
+                            if !seen[*slot as usize] {
+                                present[*slot as usize] = 0;
+                            }
+                        }
+                    }
+                    Partial { lo: my_lo, dense, present }
+                })
+                .collect()
+        })
         .collect();
 
     mark("4 tree");
-    // Stage 5: per window, concatenate chunk survivors (still bucket-sorted), merge boundary
-    // buckets, and reduce buckets to the window sum.
-    let mut per_window: Vec<Vec<(Vec<u32>, Vec<Affine<P>>)>> = (0..num_windows).map(|_| Vec::new()).collect();
-    for (&(w, _), s) in jobs.iter().zip(survivors) {
-        per_window[w].push(s);
-    }
-    let window_sums: Vec<Projective<P>> = per_window
+    // bb Stage 6b: rebalanced tasks own uniform digit ranges [lo_d, hi_d] over 1..=half. Each task
+    // gathers the contributing threads' partials for every window into a column (SoA) layout with a
+    // power-of-two stride (a seam digit shared by two threads is merged projectively), then runs
+    // the recursive affine bucket reduction across all windows at once, giving each window's
+    // (R = Σ B_d, L = Σ (d − lo + 1) B_d); the window's weighted sum is L + (lo − 1) R.
+    let active_digits = half;
+    let lo_part: Vec<usize> = (0..=threads).map(|t| 1 + t * active_digits / threads).collect();
+    let max_per_task = (0..threads).map(|t| lo_part[t + 1].saturating_sub(lo_part[t])).max().unwrap_or(1);
+    let stride = max_per_task.max(2).next_power_of_two();
+    let per_task: Vec<Vec<Projective<P>>> = (0..threads)
         .into_par_iter()
-        .map(|parts| {
-            let mut work_b: Vec<u32> = Vec::with_capacity(parts.iter().map(|(b, _)| b.len()).sum());
-            let mut work_p: Vec<Affine<P>> = Vec::with_capacity(work_b.capacity());
-            for (b, p) in parts {
-                work_b.extend_from_slice(&b);
-                work_p.extend_from_slice(&p);
+        .map(|tp| {
+            let (lo_d, hi_d) = (lo_part[tp], lo_part[tp + 1] - 1);
+            let mut sums = vec![Projective::<P>::zero(); num_windows];
+            if lo_d > hi_d {
+                return sums;
             }
-            if work_b.is_empty() {
-                return Projective::<P>::zero();
+            let mut dx = vec![P::BaseField::zero(); num_windows * stride];
+            let mut dy = vec![P::BaseField::zero(); num_windows * stride];
+            let mut present = vec![0u8; num_windows * stride];
+            let mut infos: Vec<BucketChunkInfo> = vec![BucketChunkInfo::default(); num_windows];
+            for w in 0..num_windows {
+                let base = w * stride;
+                let mut has = false;
+                for t in 0..threads {
+                    let pt = &partials[t][w];
+                    if pt.present.is_empty() {
+                        continue;
+                    }
+                    let (cl, ch) = (pt.lo, pt.lo + pt.dense.len() - 1);
+                    let (dlo, dhi) = (lo_d.max(cl), hi_d.min(ch));
+                    if dlo > dhi {
+                        continue;
+                    }
+                    for d in dlo..=dhi {
+                        let ss = d - cl;
+                        if pt.present[ss] == 0 {
+                            continue;
+                        }
+                        let ds = base + (d - lo_d);
+                        if present[ds] == 0 {
+                            dx[ds] = pt.dense[ss].x;
+                            dy[ds] = pt.dense[ss].y;
+                            present[ds] = 1;
+                        } else {
+                            let merged =
+                                (Affine::<P>::new_unchecked(dx[ds], dy[ds]).into_group() + pt.dense[ss]).into_affine();
+                            if merged.is_zero() {
+                                present[ds] = 0;
+                            } else {
+                                dx[ds] = merged.x;
+                                dy[ds] = merged.y;
+                            }
+                        }
+                        has = true;
+                    }
+                }
+                if has {
+                    let m = hi_d - lo_d + 1;
+                    infos[w] = BucketChunkInfo {
+                        empty: false,
+                        lo: lo_d as u32,
+                        buckets_padded: m.max(1).next_power_of_two(),
+                    };
+                }
             }
-            let (mut run_id, mut run_len) = (Vec::new(), Vec::new());
-            let mut scratch = TreeScratch::<P>::with_capacity(work_b.len().min(4096));
-            runs_from_ids(&work_b, &mut run_id, &mut run_len);
-            tree_reduce(&mut run_id, &mut run_len, &mut work_p, &mut scratch);
-            bucket_reduce::<P>(&run_id, &work_p, half)
+            if infos.iter().all(|i| i.empty) {
+                return sums;
+            }
+            let (rs, ls) = recursive_affine_bucket_reduce::<P>(&mut dx, &mut dy, &mut present, stride, &infos);
+            for w in 0..num_windows {
+                if infos[w].empty {
+                    continue;
+                }
+                // chunk_contribution: L + (lo − 1)·R by double-and-add on the small factor.
+                let mut acc = ls[w];
+                let mut k = infos[w].lo - 1;
+                let mut pw = rs[w];
+                while k != 0 {
+                    if k & 1 != 0 {
+                        acc += pw;
+                    }
+                    k >>= 1;
+                    if k != 0 {
+                        pw.double_in_place();
+                    }
+                }
+                sums[w] = acc;
+            }
+            sums
         })
+        .collect();
+    // bb Stage 7: per-window sum of the task partials.
+    let window_sums: Vec<Projective<P>> = (0..num_windows)
+        .map(|w| per_task.iter().fold(Projective::<P>::zero(), |a, s| a + s[w]))
         .collect();
 
     mark("5 bucketreduce");
@@ -415,6 +535,277 @@ where
         acc += window_sums[w];
     }
     acc
+}
+
+/// Per-window metadata for `recursive_affine_bucket_reduce` (bb `AffineBucketChunkInfo`).
+#[derive(Clone, Copy)]
+struct BucketChunkInfo {
+    empty: bool,
+    lo: u32,
+    buckets_padded: usize,
+}
+impl Default for BucketChunkInfo {
+    fn default() -> Self {
+        BucketChunkInfo { empty: true, lo: 0, buckets_padded: 0 }
+    }
+}
+
+/// bb `try_filter_pair`: queue `dst += src` as a batched affine add unless it is an identity or
+/// coincidence case, which are settled inline (copy / doubling / cancel to infinity).
+#[inline(always)]
+fn try_filter_pair<P: SWCurveConfig>(
+    dx: &mut [P::BaseField],
+    dy: &mut [P::BaseField],
+    present: &mut [u8],
+    dst: usize,
+    src: usize,
+    reals: &mut Vec<(u32, u32)>,
+) {
+    if present[src] == 0 {
+        return;
+    }
+    if present[dst] == 0 {
+        dx[dst] = dx[src];
+        dy[dst] = dy[src];
+        present[dst] = 1;
+        return;
+    }
+    if dx[dst] == dx[src] {
+        if dy[dst] == dy[src] {
+            let d = Affine::<P>::new_unchecked(dx[dst], dy[dst]).into_group().double().into_affine();
+            dx[dst] = d.x;
+            dy[dst] = d.y;
+        } else {
+            present[dst] = 0;
+        }
+        return;
+    }
+    reals.push((dst as u32, src as u32));
+}
+
+/// bb `batch_affine_add_indexed_scalar`: `buckets[dst] += buckets[src]` over the column view for
+/// every pair, one field inversion for the batch (Montgomery's trick). Pairs are pre-filtered:
+/// distinct x, distinct dsts disjoint from srcs.
+fn batch_affine_add_indexed<P: SWCurveConfig>(
+    dx: &mut [P::BaseField],
+    dy: &mut [P::BaseField],
+    pairs: &[(u32, u32)],
+    scratch: &mut Vec<P::BaseField>,
+) {
+    if pairs.is_empty() {
+        return;
+    }
+    scratch.clear();
+    scratch.resize(pairs.len(), P::BaseField::zero());
+    let mut acc = <P::BaseField as ark_ff::One>::one();
+    for (i, &(d, sidx)) in pairs.iter().enumerate() {
+        let (d, sidx) = (d as usize, sidx as usize);
+        scratch[i] = dx[sidx] + dx[d];
+        dx[d] -= dx[sidx];
+        dy[d] -= dy[sidx];
+        dy[d] *= acc;
+        acc *= dx[d];
+    }
+    acc = acc.inverse().expect("batch_affine_add_indexed: zero denominator");
+    for (i, &(d, sidx)) in pairs.iter().enumerate().rev() {
+        let (d, sidx) = (d as usize, sidx as usize);
+        dy[d] *= acc;
+        acc *= dx[d];
+        dx[d] = dy[d].square() - scratch[i];
+        let tmp = (dx[sidx] - dx[d]) * dy[d];
+        dy[d] = tmp - dy[sidx];
+    }
+}
+
+/// bb `batch_affine_double_indexed_scalar`: `buckets[i] = 2 buckets[i]` for every index, one
+/// inversion for the batch. Indices are pre-filtered (present, distinct).
+fn batch_affine_double_indexed<P: SWCurveConfig>(
+    dx: &mut [P::BaseField],
+    dy: &mut [P::BaseField],
+    idx: &[u32],
+    scratch: &mut Vec<P::BaseField>,
+) {
+    if idx.is_empty() {
+        return;
+    }
+    scratch.clear();
+    scratch.resize(idx.len(), P::BaseField::zero());
+    let mut acc = <P::BaseField as ark_ff::One>::one();
+    for (i, &k) in idx.iter().enumerate() {
+        let k = k as usize;
+        let xx = dx[k].square();
+        scratch[i] = (xx + xx + xx) * acc;
+        acc *= dy[k].double();
+    }
+    acc = acc.inverse().expect("batch_affine_double_indexed: zero denominator");
+    for (i, &k) in idx.iter().enumerate().rev() {
+        let k = k as usize;
+        scratch[i] *= acc;
+        acc *= dy[k].double();
+        let tx = dx[k];
+        dx[k] = scratch[i].square() - dx[k].double();
+        dy[k] = scratch[i] * (tx - dx[k]) - dy[k];
+    }
+}
+
+/// bb `recursive_affine_bucket_reduce_strided` (Mitschabaude, ZPrize 2022): for every window's
+/// dense slot row `[w*stride, w*stride + buckets_padded)` compute `R = Σ_d B_d` and
+/// `L = Σ_d (d − lo + 1) B_d` with batched affine adds/doublings shared across all windows at
+/// each step. Phase A: suffix sums within sub-partitions of length L0; B: log-recombine the
+/// sub-partition sums into slot 0 (= R); C: doublings priming D; D: flat tree-add to slot 0 (= L),
+/// finishing in Jacobian once a level's batch would be smaller than the inversion is worth.
+fn recursive_affine_bucket_reduce<P: SWCurveConfig>(
+    dx: &mut [P::BaseField],
+    dy: &mut [P::BaseField],
+    present: &mut [u8],
+    stride: usize,
+    infos: &[BucketChunkInfo],
+) -> (Vec<Projective<P>>, Vec<Projective<P>>) {
+    let nw = infos.len();
+    let mut rs = vec![Projective::<P>::zero(); nw];
+    let mut ls = vec![Projective::<P>::zero(); nw];
+    let pt = |dx: &[P::BaseField], dy: &[P::BaseField], i: usize| Affine::<P>::new_unchecked(dx[i], dy[i]).into_group();
+    if stride <= 2 {
+        for w in 0..nw {
+            if infos[w].empty {
+                continue;
+            }
+            let base = w * stride;
+            for i in 0..infos[w].buckets_padded {
+                if present[base + i] == 0 {
+                    continue;
+                }
+                let p = pt(dx, dy, base + i);
+                rs[w] += p;
+                ls[w] += p;
+                if i == 1 {
+                    ls[w] += p;
+                }
+            }
+        }
+        return (rs, ls);
+    }
+    let c_log = stride.trailing_zeros() as usize;
+    let c0 = (c_log / 2).clamp(1, c_log - 1);
+    let l0 = 1usize << c0;
+    let mut reals: Vec<(u32, u32)> = Vec::new();
+    let mut dbls: Vec<u32> = Vec::new();
+    let mut scratch: Vec<P::BaseField> = Vec::new();
+    // Phase A: per-sub-partition suffix sums.
+    for l in (1..l0).rev() {
+        reals.clear();
+        for w in 0..nw {
+            if infos[w].empty {
+                continue;
+            }
+            let (m, base) = (infos[w].buckets_padded, w * stride);
+            if m < l0 {
+                if l < m {
+                    try_filter_pair::<P>(dx, dy, present, base + l - 1, base + l, &mut reals);
+                }
+            } else {
+                for d in 0..(m >> c0) {
+                    try_filter_pair::<P>(dx, dy, present, base + d * l0 + l - 1, base + d * l0 + l, &mut reals);
+                }
+            }
+        }
+        batch_affine_add_indexed::<P>(dx, dy, &reals, &mut scratch);
+    }
+    // Phase B: log-recombine sub-partition sums into slot 0.
+    let mut l1 = l0;
+    while l1 < stride {
+        reals.clear();
+        let step = 2 * l1;
+        for w in 0..nw {
+            if infos[w].empty || step > infos[w].buckets_padded {
+                continue;
+            }
+            let base = w * stride;
+            for d in 0..(infos[w].buckets_padded / step) {
+                try_filter_pair::<P>(dx, dy, present, base + 2 * d * l1, base + (2 * d + 1) * l1, &mut reals);
+            }
+        }
+        batch_affine_add_indexed::<P>(dx, dy, &reals, &mut scratch);
+        l1 *= 2;
+    }
+    for w in 0..nw {
+        if !infos[w].empty && present[w * stride] != 0 {
+            rs[w] = pt(dx, dy, w * stride);
+        }
+    }
+    // Phase C: doublings — c0 chained on every slot d*l0 (d >= 1), then one per hierarchy level.
+    dbls.clear();
+    for w in 0..nw {
+        if infos[w].empty {
+            continue;
+        }
+        let (m, base) = (infos[w].buckets_padded, w * stride);
+        let my_d = if m >= l0 { m >> c0 } else { 0 };
+        for d in 1..my_d {
+            if present[base + d * l0] != 0 {
+                dbls.push((base + d * l0) as u32);
+            }
+        }
+    }
+    if !dbls.is_empty() {
+        for _ in 0..c0 {
+            batch_affine_double_indexed::<P>(dx, dy, &dbls, &mut scratch);
+        }
+    }
+    let mut l1 = 2 * l0;
+    while l1 < stride {
+        dbls.clear();
+        for w in 0..nw {
+            if infos[w].empty || l1 >= infos[w].buckets_padded {
+                continue;
+            }
+            let base = w * stride;
+            for d in 1..(infos[w].buckets_padded / l1) {
+                if present[base + d * l1] != 0 {
+                    dbls.push((base + d * l1) as u32);
+                }
+            }
+        }
+        batch_affine_double_indexed::<P>(dx, dy, &dbls, &mut scratch);
+        l1 *= 2;
+    }
+    // Phase D: flat tree-add; bail to Jacobian when a level's batch drops below the breakeven.
+    const BATCH_AFFINE_BREAKEVEN: usize = 32;
+    let mut m = 1usize;
+    while m < stride {
+        if nw * (stride / (2 * m)) < BATCH_AFFINE_BREAKEVEN {
+            break;
+        }
+        reals.clear();
+        let step = 2 * m;
+        for w in 0..nw {
+            if infos[w].empty || m >= infos[w].buckets_padded {
+                continue;
+            }
+            let base = w * stride;
+            let mut pos = 0;
+            while pos + m < infos[w].buckets_padded {
+                try_filter_pair::<P>(dx, dy, present, base + pos, base + pos + m, &mut reals);
+                pos += step;
+            }
+        }
+        batch_affine_add_indexed::<P>(dx, dy, &reals, &mut scratch);
+        m *= 2;
+    }
+    for w in 0..nw {
+        if infos[w].empty {
+            continue;
+        }
+        let base = w * stride;
+        let mut pos = 0;
+        while pos < infos[w].buckets_padded {
+            if present[base + pos] != 0 {
+                ls[w] += pt(dx, dy, base + pos);
+            }
+            pos += m;
+        }
+    }
+    (rs, ls)
 }
 
 /// bb `choose_window_bits`: minimize `rounds * (4 * n_active + 12 * buckets)` with
@@ -926,134 +1317,12 @@ mod packed_tree {
     }
 }
 
-/// Adds each pair sharing one field inversion across the batch. `None` = point at infinity.
-fn batch_affine_add<P: SWCurveConfig>(pairs: Vec<(Affine<P>, Affine<P>)>) -> Vec<Option<Affine<P>>> {
-    #[derive(Clone, Copy)]
-    enum Kind {
-        Add,
-        Double,
-        Inf,
-        Lhs,
-        Rhs,
-    }
-    let mut kinds = Vec::with_capacity(pairs.len());
-    let mut dens: Vec<P::BaseField> = Vec::with_capacity(pairs.len());
-    for (a, b) in &pairs {
-        let kind = if a.is_zero() {
-            Kind::Rhs
-        } else if b.is_zero() {
-            Kind::Lhs
-        } else if a.x == b.x {
-            if a.y == b.y {
-                dens.push(a.y.double());
-                Kind::Double
-            } else {
-                Kind::Inf
-            }
-        } else {
-            dens.push(b.x - a.x);
-            Kind::Add
-        };
-        kinds.push(kind);
-    }
-    ark_ff::serial_batch_inversion_and_mul(&mut dens, &<P::BaseField as ark_ff::One>::one());
-    let mut inv = dens.into_iter();
-    pairs
-        .iter()
-        .zip(kinds)
-        .map(|(&(a, b), kind)| {
-            let lambda = match kind {
-                Kind::Rhs => return Some(b),
-                Kind::Lhs => return Some(a),
-                Kind::Inf => return None,
-                Kind::Add => (b.y - a.y) * inv.next().unwrap(),
-                Kind::Double => {
-                    let xx = a.x.square();
-                    (xx.double() + xx) * inv.next().unwrap()
-                }
-            };
-            let x3 = lambda.square() - a.x - b.x;
-            let y3 = lambda * (a.x - x3) - a.y;
-            Some(Affine::<P>::new_unchecked(x3, y3))
-        })
-        .collect()
-}
 
 /// `sum_b (b+1) * B_b` over singleton buckets: segmented double running sums, the affine chain
 /// steps batched across segments, segment totals recombined in projective.
 
-/// Rebuild `run_id`/`run_len` from a bucket-sorted id array (used where per-block survivors are
-/// concatenated: block-boundary buckets become one run again).
-fn runs_from_ids(ids: &[u32], run_id: &mut Vec<u32>, run_len: &mut Vec<u32>) {
-    run_id.clear();
-    run_len.clear();
-    let (mut cur, mut cnt) = (u32::MAX, 0u32);
-    for &b in ids {
-        if b != cur {
-            if cnt > 0 {
-                run_id.push(cur);
-                run_len.push(cnt);
-            }
-            cur = b;
-            cnt = 1;
-        } else {
-            cnt += 1;
-        }
-    }
-    if cnt > 0 {
-        run_id.push(cur);
-        run_len.push(cnt);
-    }
-}
 
-fn bucket_reduce<P: SWCurveConfig>(bs: &[u32], ps: &[Affine<P>], num_buckets: usize) -> Projective<P> {
-    // Wider = bigger inversion batches and fewer chain steps; the projective recombine at the end
-    // costs ~2 ops per segment, so segments stay well below the bucket count.
-    let segments = (num_buckets / 16).clamp(1, 1024).next_power_of_two();
-    let seg_len = num_buckets.div_ceil(segments);
-    let mut bucket_of: Vec<Option<Affine<P>>> = vec![None; seg_len * segments];
-    for (b, p) in bs.iter().zip(ps) {
-        bucket_of[*b as usize] = Some(*p);
-    }
-    let mut running: Vec<Option<Affine<P>>> = vec![None; segments];
-    let mut acc: Vec<Option<Affine<P>>> = vec![None; segments];
-    let (mut dens, mut kinds) = (Vec::with_capacity(segments), Vec::with_capacity(segments));
-    for t in (0..seg_len).rev() {
-        super::fold::pass_add(&mut running, |j| bucket_of[j * seg_len + t], &mut dens, &mut kinds);
-        super::fold::pass_add(&mut acc, |j| running[j], &mut dens, &mut kinds);
-    }
-    // window = sum_j acc_j + seg_len * sum_j j * running_j, both cheap in projective.
-    let mut total: Projective<P> = acc.iter().flatten().map(|p| p.into_group()).sum();
-    let mut j_weighted = Projective::<P>::zero();
-    let mut suffix = Projective::<P>::zero();
-    for j in (1..segments).rev() {
-        suffix += running[j].map_or(Projective::<P>::zero(), |p| p.into_group());
-        j_weighted += suffix;
-    }
-    // num_buckets and segments are both powers of two, so seg_len is too.
-    assert!(seg_len.is_power_of_two());
-    for _ in 0..seg_len.trailing_zeros() {
-        j_weighted.double_in_place();
-    }
-    total += j_weighted;
-    total
-}
 
-/// `lhs[i] += rhs[i]` with the affine additions batched through one inversion.
-fn batch_add_assign<P: SWCurveConfig>(lhs: &mut [Option<Affine<P>>], rhs: &[Option<Affine<P>>]) {
-    let idx: Vec<usize> = (0..lhs.len())
-        .filter(|&i| rhs[i].is_some() && lhs[i].is_some())
-        .collect();
-    let sums = batch_affine_add::<P>(idx.iter().map(|&i| (lhs[i].unwrap(), rhs[i].unwrap())).collect());
-    for (k, &i) in idx.iter().enumerate() {
-        lhs[i] = sums[k];
-    }
-    for i in 0..lhs.len() {
-        if lhs[i].is_none() && rhs[i].is_some() {
-            lhs[i] = rhs[i];
-        }
-    }
-}
 
 /// Small-input fallback. NOT arkworks' `msm_unchecked`: ark's parallel MSM builds a brand-new
 /// rayon thread pool per chunk per call (`msm_chunks` in ark-ec) — 1,526 thread spawns per chonk

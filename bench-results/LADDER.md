@@ -197,3 +197,27 @@ Update 10 — bb MSM replication, stages ported so far (commit below):
  Remaining bb stages not yet replicated: 6b recursive_affine_bucket_reduce_strided (ours =
    scalar running sums, ~14% of MSM @2^16 8t), BATCH_CAPACITY 256 (ours 4095), Constantine
    SIMD x4 digit recoder (ours scalar carry-Booth), dedup Phase A, arena.
+
+Update 11 — bb Stages 5/6a/6b/7 replicated (commit below); ours-vs-bb structure now matches:
+ Stage 5: per-window chunk bucket ranges [lo,hi] via partition_point on the bucket offsets.
+ Stage 6a: per (thread, window): 2048-entry sub-chunks -> gather -> tree_reduce (ours, packed
+   drain, handles equal/inverse pairs) -> densify survivors into slot[digit - lo] with a presence
+   bitmap; slot collisions -> overflow list; one tree reduce per window folds overflow back (bb
+   merge_overflow). No per-job / per-window survivor re-trees any more.
+ Stage 6b: rebalanced tasks own uniform digit ranges; gather contributing threads' partials into
+   SoA columns (stride = next_pow2), projective-merge seam digits, then
+   recursive_affine_bucket_reduce (phases A-D, bb's scalar indexed Montgomery-trick kernels —
+   bb also runs the scalar variants on multi-threaded wasm) -> (R, L) per window ->
+   L + (lo-1)*R. Stage 7: sum task partials per window. Removed bucket_reduce/pass_add path,
+   runs_from_ids, batch_affine_add, batch_add_assign (dead).
+ msmbench 8t (bb 91/103/195/365): 2^16 58, 2^17 115, 2^18 217, 2^19 457 (neutral at full
+ width, within +-4%); short scalars 2^17: 32-bit 20->18, 64-bit 35->29, 128-bit 76->73.
+ Flow neutral; byte-exact; suites green.
+ FINDING: the "survivor-merge tail" theory was wrong — 6a is still 418 ms of 476 at 2^19 (bb
+ whole MSM 365). The add count is identical to bb's; the remaining ~25% at 2^19 (~10% at
+ 2^17-18) is per-entry constant factor inside the 6a inner loop: gather (random 64 B point +
+ phi reads, DRAM-bound at 8t), classify/run bookkeeping, overflow copies, versus bb's single
+ tight clang-compiled tree_reduce_in_place + reduce_chunk. Next replication step if pursued:
+ copy bb's reduce_chunk/tree_reduce_in_place/drain_batch (anonymous-namespace templates, ~120
+ lines, public-header deps only) into csrc and compile with bb's flags — bb's 6a bytes — with
+ an equal-x guard for our general-point callers.
