@@ -54,3 +54,11 @@ Standing worklist:
    if bb's active-block iteration is the difference, port block structure into RoundProver).
 3. Relation-body outliers (Permutation 2.17x, Lookup 1.36x, poseidon-internals ~1.3x) — real but
    secondary; flow sumcheck is already rung-faster dense.
+
+Update 2: bbkernel route landed (40c18a5). With `--features bbkernel`, build.rs compiles bb's
+vector_field_wasm.cpp + csrc/bb_kernel.cpp with the wasi-sdk (bb's barriers survive — its bytes
+by construction) and links them in: axpy 42.8 -> 33.7 ns/elt same-binary; MSM chord drain in two
+phases (single inversion Rust-side). The drain loses its isolated 1t rung (+15%/pair vs the
+QuadFp chain) but wins the flow at 8t — rung/flow disagreement cuts both ways; flow verdicts
+rule. **Canonical flow 6.26 -> 6.12 s (1.215x), byte-exact.** Next: extend the surface (folds),
+sumcheck flow-vs-rung discrepancy, then hand-.wat grinding on the mul to go below bb.
