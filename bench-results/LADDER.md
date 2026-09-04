@@ -80,19 +80,20 @@ bb commit_bench bench_commit_random (the realistic commit path). Matched, 8t:
   2^18   285ms   192ms       1.48x at scale
 Flow commits are 2^16-2^17 => MSM is at/near parity there. NOT the gap.
 
-THE REAL GAP (measured, both flows profiled same box):
-- Compute CPU: ours 28.4s vs bb 26.8s = 1.06x — kernels at near-parity (commit+sumcheck rungs
-  confirm per-component).
-- WAIT: ours 24.8s (47% idle) vs bb 17.2s (39% idle) => ~1s wall of EXCESS THREAD IDLE ~= the
-  entire flow gap (5.87 vs 5.04).
-- Our MAIN thread idle 3.8s while bb main is a full 9th worker (0.4s idle, 5.1s compute). We
-  block the driver thread in rayon::scope regions (batch_commit et al) instead of participating.
-  => The last real lever is PARALLEL EFFICIENCY (load balancing / main-thread participation),
-  not kernel speed. rayon-count sweep confounded by box noise + core count; needs the driver to
-  participate in parallel regions rather than block.
+THE REAL GAP (RE-READ CORRECTLY): both provers run 8 streams of work. Ours = 8 rayon workers
+(main blocks), bb = 7 workers + main. During parallel regions both have 8 busy streams; during
+serial both have 1. An idle 9th thread costs ZERO wall. Wall ~= serial + parallel_work/8 either
+way. RETRACTED: the earlier "excess thread idle ~= the gap / main-thread participation is the
+lever" claim — that read aggregate wait CPU (which includes the free 9th thread) as wall time.
+use_current_thread() changing nothing is the confirmation. Per-thread re-read:
+  serial (main compute)          ours ~2.1s   bb ~2.0s   (bb main 5.1 total - 3.1 parallel share)
+  per-stream parallel compute    ours ~3.4s   bb ~3.1s   <- the gap, ~10%, = kernel/loop constants
+  per-worker wait                ours ~2.6s   bb ~2.5s   (parity; both idle during serial)
+The ~10% per-stream compute is exactly what the rungs measure (MSM 1.23-1.4x at scale, sumcheck
+faster, relations mixed). There is no separate parallelism gap; the ladder was complete.
 
-So: the ladder is NOT exhausted (commit rung just corrected the whole MSM story), and the honest
-remaining work is parallelism, not more kernels.
+So: the ladder is NOT exhausted (commit rung corrected the MSM story), and the remaining work is
+per-stream compute constant factors — kernels and loops — not parallelism.
 
 Update 5 (exact MSM port attempted — bb's full tree structure): implemented the fused single-call
 chord kernel (pack operands once, keep dx/dy/xsum/ax/ay as packed VFs in scratch, W Bernstein-Yang
