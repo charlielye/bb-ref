@@ -1,5 +1,6 @@
 //! Foundations: field/curve traits over arkworks, serialization, Poseidon2, transcript, SRS.
 pub mod codec;
+pub mod endo;
 pub mod field;
 pub mod fold;
 pub mod generators;

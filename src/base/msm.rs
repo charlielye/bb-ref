@@ -63,7 +63,8 @@ fn min_pts_per_thread() -> usize {
 
 pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -> Projective<P>
 where
-    P::BaseField: crate::honk::quadf::QuadConsts,
+    P::BaseField: crate::honk::quadf::QuadConsts + crate::base::endo::EndoField,
+    P::ScalarField: crate::base::endo::EndoField,
 {
     let n = points.len().min(scalars.len());
     // Mostly-zero inputs (masking polys, sorted range columns, sparse selectors) compact to their
@@ -88,9 +89,15 @@ where
         }
         return small_msm(&points[..n], &scalars[..n]);
     }
-    let c = window_bits(n);
+    // GLV: each scalar splits as k = k1 - k2*lambda with 128-bit halves (bb's Babai path), so
+    // the MSM runs 2n virtual points — P_i under k1 and (beta*x, -y) under k2 — over 129-bit
+    // sub-scalars: half the windows, half the schedule entries. Entry bit 30 marks the
+    // endomorphism half, bit 31 the Booth digit sign.
+    const PHI: u32 = 1 << 30;
+    let subs: Vec<([u64; 2], [u64; 2])> = scalars[..n].par_iter().map(crate::base::endo::glv_split).collect();
+    let c = window_bits(2 * n);
     let half = 1usize << (c - 1);
-    let num_windows = 256usize.div_ceil(c);
+    let num_windows = 129usize.div_ceil(c);
 
     // bb's stage layout: every O(n) pass is parallel across scalar-range tasks, windows together.
     // Digits are decoded twice (count pass, scatter pass) instead of materialized — cheaper than
@@ -100,11 +107,13 @@ where
         .map(|t| t * n.div_ceil(tasks)..((t + 1) * n.div_ceil(tasks)).min(n))
         .collect();
     let stride = half + 1; // per-window histogram row: bucket magnitudes 1..=half
-    fn decode<F: PrimeField>(s: &F, c: usize, half: usize, num_windows: usize, mut f: impl FnMut(usize, i32)) {
-        let limbs = s.into_bigint();
+    fn decode(limbs: &[u64; 2], c: usize, half: usize, num_windows: usize, mut f: impl FnMut(usize, i32)) {
+        if limbs[0] == 0 && limbs[1] == 0 {
+            return;
+        }
         let mut carry = 0u64;
         for w in 0..num_windows {
-            let raw = extract_bits(limbs.as_ref(), w * c, c) + carry;
+            let raw = extract_bits(limbs, w * c, c) + carry;
             let d = if raw > half as u64 {
                 carry = 1;
                 raw as i32 - (1i32 << c)
@@ -137,9 +146,11 @@ where
             let ptr = &ptr;
             for i in r.clone() {
                 if !points[i].is_zero() {
-                    decode(&scalars[i], c, half, num_windows, |w, d| unsafe {
+                    let bump = |w: usize, d: i32| unsafe {
                         *ptr.0.add(cell(t, w, d.unsigned_abs() as usize)) += 1;
-                    });
+                    };
+                    decode(&subs[i].0, c, half, num_windows, bump);
+                    decode(&subs[i].1, c, half, num_windows, bump);
                 }
             }
         });
@@ -192,12 +203,16 @@ where
             let cur = &cur;
             for i in r.clone() {
                 if !points[i].is_zero() {
-                    decode(&scalars[i], c, half, num_windows, |w, d| unsafe {
-                        let slot = cur.0.add(cell(t, w, d.unsigned_abs() as usize));
-                        let entry = i as u32 | if d < 0 { 1u32 << 31 } else { 0 };
-                        *ptrs[w].0.add(*slot as usize) = entry;
-                        *slot += 1;
-                    });
+                    let scatter = |phi: u32| {
+                        move |w: usize, d: i32| unsafe {
+                            let slot = cur.0.add(cell(t, w, d.unsigned_abs() as usize));
+                            let entry = i as u32 | phi | if d < 0 { 1u32 << 31 } else { 0 };
+                            *ptrs[w].0.add(*slot as usize) = entry;
+                            *slot += 1;
+                        }
+                    };
+                    decode(&subs[i].0, c, half, num_windows, scatter(0));
+                    decode(&subs[i].1, c, half, num_windows, scatter(PHI));
                 }
             }
         });
@@ -223,6 +238,7 @@ where
     // touched, so a job's live scratch is one block plus its (bucket-count-bounded) survivors —
     // gathering a whole 2^20-entry slice as 80-byte pairs costs GBs across concurrent MSMs.
     const GATHER_BLOCK: usize = 1 << 16;
+    let beta = <P::BaseField as crate::base::endo::EndoField>::cube_root();
     let survivors: Vec<(Vec<u32>, Vec<Affine<P>>)> = jobs
         .par_iter()
         .map_init(
@@ -264,7 +280,7 @@ where
                         while starts[b + 1] as usize <= block_start + j {
                             b += 1;
                         }
-                        let i = (e & 0x7fff_ffff) as usize;
+                        let i = (e & 0x3fff_ffff) as usize;
                         if b as u32 != cur {
                             if cnt > 0 {
                                 run_id.push(cur);
@@ -275,7 +291,11 @@ where
                         } else {
                             cnt += 1;
                         }
-                        block_p.push(if e >> 31 == 1 { -points[i] } else { points[i] });
+                        let mut pt = points[i];
+                        if e & PHI != 0 {
+                            pt = Affine::<P>::new_unchecked(beta * pt.x, -pt.y);
+                        }
+                        block_p.push(if e >> 31 == 1 { -pt } else { pt });
                     }
                     if cnt > 0 {
                         run_id.push(cur);
@@ -339,10 +359,11 @@ where
     acc
 }
 
-/// bb `choose_window_bits`: minimize rounds * (4n + 12 * buckets).
+/// bb `choose_window_bits` over the GLV-doubled 129-bit problem: minimize
+/// rounds * (4n + 12 * buckets), n already doubled by the caller.
 fn window_bits(n: usize) -> usize {
     (4..=16)
-        .min_by_key(|&c| 256usize.div_ceil(c) * (4 * n + 12 * (1usize << (c - 1))))
+        .min_by_key(|&c| 129usize.div_ceil(c) * (4 * n + 12 * (1usize << (c - 1))))
         .unwrap()
 }
 
@@ -615,8 +636,9 @@ mod packed_tree {
             // Everything runs on plain 2^256-stored values (no domain-entry multiplies): each
             // quad261 multiply drifts the power-of-two exponent by -5, tracked so it cancels.
             // With m = groups, prod_i sits at exponent -5(i-1); seeding the backward unwind at
-            // +5(m-1)+10 makes every emitted inverse land at a constant +10 (d10 below), and
-            // the seed's exponent is folded into the one scalar inversion (x 2^10).
+            // +5(m-1)+5 makes every emitted inverse land at a constant +5, so lambda comes out
+            // at exponent 0 in one multiply; the seed's exponent is folded into the one scalar
+            // inversion (x 2^5).
             let kc = <P::BaseField as QuadConsts>::kc();
             #[inline(always)]
             fn pack4<F>(v: &[F], g: usize) -> QuadFp {
@@ -651,8 +673,8 @@ mod packed_tree {
                     acc *= lanes[l];
                     pref[l] = acc;
                 }
-                let mut inv = acc.inverse().expect("zero denominator in packed tree inversion")
-                    * P::BaseField::from(1024u64);
+                let mut inv =
+                    acc.inverse().expect("zero denominator in packed tree inversion") * P::BaseField::from(32u64);
                 for l in (1..4).rev() {
                     let prev = lanes[l];
                     lanes[l] = inv * pref[l - 1];
@@ -673,10 +695,9 @@ mod packed_tree {
                 let (qay, qby) = (pack4(&p.ay, g), pack4(&p.by, g));
                 let (qax, qbx) = (p.qax[g], p.qbx[g]);
                 let dy = quad261::sub(&qby, &qay, &kc.c);
-                // d10 -> d5 (x 2^-5 via the plain 2^256 constant), lambda at exponent 0, its
-                // 2^5 twin via the plain 2^266 constant; each product then lands at exponent 0.
-                let d5 = quad261::mont_mul(&p.qden[g], &kc.c256, &kc.c);
-                let l0 = quad261::mont_mul(&dy, &d5, &kc.c);
+                // lambda at exponent 0 straight from the +5 inverse; its 2^5 twin via the plain
+                // 2^266 constant; each product then lands at exponent 0.
+                let l0 = quad261::mont_mul(&dy, &p.qden[g], &kc.c);
                 let l5 = quad261::mont_mul(&l0, &kc.c266, &kc.c);
                 let x3 = quad261::sub(
                     &quad261::sub(&quad261::mont_mul(&l0, &l5, &kc.c), &qax, &kc.c),
@@ -924,7 +945,8 @@ mod tests {
 
     fn check<P: SWCurveConfig>(n: usize, tweak: impl Fn(&mut Vec<Affine<P>>, &mut Vec<P::ScalarField>))
     where
-        P::BaseField: crate::honk::quadf::QuadConsts,
+        P::BaseField: crate::honk::quadf::QuadConsts + crate::base::endo::EndoField,
+        P::ScalarField: crate::base::endo::EndoField,
     {
         let mut rng = ark_std::test_rng();
         let mut points =
@@ -979,7 +1001,8 @@ pub trait BatchMsm: AffineRepr {
 
 impl<P: SWCurveConfig> BatchMsm for Affine<P>
 where
-    P::BaseField: crate::honk::quadf::QuadConsts,
+    P::BaseField: crate::honk::quadf::QuadConsts + crate::base::endo::EndoField,
+    P::ScalarField: crate::base::endo::EndoField,
 {
     fn batch_msm(points: &[Self], scalars: &[Self::ScalarField]) -> Projective<P> {
         msm(points, scalars)

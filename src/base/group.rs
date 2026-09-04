@@ -37,8 +37,8 @@ pub trait GroupLike<F: FieldLike>: Clone + Debug + PartialEq {
 
 impl<P: SWCurveConfig> GroupLike<P::ScalarField> for Affine<P>
 where
-    P::ScalarField: super::field::NativeField,
-    P::BaseField: crate::honk::quadf::QuadConsts,
+    P::ScalarField: super::field::NativeField + super::endo::EndoField,
+    P::BaseField: crate::honk::quadf::QuadConsts + super::endo::EndoField,
 {
     type Native = Affine<P>;
     fn one(_: &()) -> Self {
