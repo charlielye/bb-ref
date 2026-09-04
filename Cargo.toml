@@ -32,6 +32,9 @@ getrandom = { version = "0.2", features = ["js"] }
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 mimalloc = { version = "0.1", optional = true }
 
+[profile.release]
+opt-level = 2
+
 [profile.lto]
 inherits = "release"
 lto = "fat"
