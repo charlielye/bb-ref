@@ -569,8 +569,62 @@ fn batch_add_assign<P: SWCurveConfig>(lhs: &mut [Option<Affine<P>>], rhs: &[Opti
     }
 }
 
+/// Small-input fallback. NOT arkworks' `msm_unchecked`: ark's parallel MSM builds a brand-new
+/// rayon thread pool per chunk per call (`msm_chunks` in ark-ec) — 1,526 thread spawns per chonk
+/// proof, which costs ~0.75s of clone() natively and multiplies under wasm-on-workers runtimes
+/// where a thread is a web worker. A plain serial Pippenger per chunk on the global pool does
+/// the same math with zero pool churn.
 fn small_msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -> Projective<P> {
-    Projective::<P>::msm_unchecked(points, scalars)
+    let n = points.len().min(scalars.len());
+    if n == 0 {
+        return Projective::<P>::zero();
+    }
+    let threads = rayon::current_num_threads().clamp(1, n.div_ceil(64));
+    if threads == 1 {
+        return serial_pippenger(&points[..n], &scalars[..n]);
+    }
+    let chunk = n.div_ceil(threads);
+    points[..n]
+        .par_chunks(chunk)
+        .zip(scalars[..n].par_chunks(chunk))
+        .map(|(p, s)| serial_pippenger(p, s))
+        .sum()
+}
+
+/// Textbook unsigned-window Pippenger, single-threaded, Jacobian buckets.
+fn serial_pippenger<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -> Projective<P> {
+    let n = points.len();
+    let c = if n < 32 { 3 } else { (n.ilog2() as usize * 69 / 100) + 2 };
+    let num_windows = 256usize.div_ceil(c);
+    let mut window_sums = Vec::with_capacity(num_windows);
+    let mut buckets: Vec<Projective<P>> = vec![Projective::<P>::zero(); (1 << c) - 1];
+    for w in 0..num_windows {
+        for b in buckets.iter_mut() {
+            *b = Projective::<P>::zero();
+        }
+        for (p, s) in points.iter().zip(scalars) {
+            let limbs = s.into_bigint();
+            let d = extract_bits(limbs.as_ref(), w * c, c) as usize;
+            if d != 0 {
+                buckets[d - 1] += p;
+            }
+        }
+        let mut running = Projective::<P>::zero();
+        let mut acc = Projective::<P>::zero();
+        for b in buckets.iter().rev() {
+            running += b;
+            acc += &running;
+        }
+        window_sums.push(acc);
+    }
+    let mut total = Projective::<P>::zero();
+    for w in (0..num_windows).rev() {
+        for _ in 0..c {
+            total.double_in_place();
+        }
+        total += &window_sums[w];
+    }
+    total
 }
 
 #[cfg(test)]
