@@ -62,3 +62,10 @@ phases (single inversion Rust-side). The drain loses its isolated 1t rung (+15%/
 QuadFp chain) but wins the flow at 8t — rung/flow disagreement cuts both ways; flow verdicts
 rule. **Canonical flow 6.26 -> 6.12 s (1.215x), byte-exact.** Next: extend the surface (folds),
 sumcheck flow-vs-rung discrepancy, then hand-.wat grinding on the mul to go below bb.
+
+Update 3 (full V8 suite, bbkernel, 8t, commit 3b20f45): TOTAL 1.15x across 11 flows (bb 85.1 /
+ours 98.0). Per-flow typical 1.23-1.30x; the biggest flow (storage_proof_7_layers) is 0.84x —
+WE BEAT BB there (18.5 vs 22.1s): fixed per-flow costs amortize and our thread scaling + IPA/MSM
+wins dominate at size. Canonical flow (transfer_0_sponsored) 1.24x is a small-flow worst case.
+Journey: morning 1.34x total -> 1.15x. Memory still 1.2-1.4x bb (dlmalloc grow-only vs bb's
+allocator; talc swap attempted, deferred — needs the sync/atomics arena config for wasm-threads).
