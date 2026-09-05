@@ -301,15 +301,16 @@ GLV where it loses. bb uses 2^13 native, but MEASURED FOR OUR CODE the native cr
 cheaper so its crossover sits lower. Set 2^16 wasm / 2^15 native rather than copying bb's number.
 Gather block (2^13, wasm-tuned) checked native: insensitive (35.23 vs 35.21 @2^16), left alone.
 
-KNOWN ISSUE (found 2026-09-05 while collecting tables) — bb-ref.wasm intermittently DEADLOCKS
-under wasmtime. Symptom: the process sits in futex_do_wait at 0% CPU with the box idle; roughly
-one flow in three. Evidence it is ours and not the harness: bb.wasm never hangs in the same
-script and on the same flows; the identical flow (token_bridge_claim_private) completes
-standalone under wasmtime in <120 s (exit 0, proof written); V8 runs all 11 flows clean.
-So it is a latent race in our threading (rayon over wasi-threads) that wasmtime's scheduler
-exposes and V8's does not — not a wasmtime bug per se, and not visible in the V8 numbers we
-report. Worth chasing separately: suspect a lost wakeup around a rayon join/latch under
-wasi-threads. Operational note: killing a bench run leaves ORPHAN wasmtime processes behind
-(kill the children, not just the script) — accumulated orphans make later runs hang far more
-often, and a killed wrapper can fall through to its final `echo DONE`, writing a FALSE
-completion marker over an incomplete table.
+RETRACTED "wasmtime deadlock" (2026-09-05): there is NO bb-ref deadlock. The apparent hangs were
+SELF-INFLICTED: `pkill -f <pattern>` run over ssh matches its OWN remote command line, so it
+killed the shell executing it before reaching the target (the tell was ssh exit 255). Every
+"cleanup" therefore left the previous bench runner alive, and two 8-thread wasmtime processes
+then contended on a 16-core box. Once the stale runner was killed BY PID, all 11 flows completed
+with zero retries. Operational rules: kill by PID (or a bracket pattern that cannot self-match),
+reap wasmtime CHILDREN not just the script, and note a killed wrapper can fall through to its
+final `echo DONE` and write a FALSE completion marker over an incomplete table.
+
+Update 16 — full wasmtime table on 84aa016 (per-flow, 3-attempt runner, zero retries needed):
+TOTAL 1.10x (bb 99.08 / ours 109.14 s). Per flow 1.21-1.30x; storage_proof_7_layers 0.76x (we
+win by 24%). MEMORY: 0.82-1.05x of bb — we use LESS memory than bb on 10 of 11 flows.
+Both runtimes now: V8 TOTAL 1.07x, wasmtime TOTAL 1.10x.
