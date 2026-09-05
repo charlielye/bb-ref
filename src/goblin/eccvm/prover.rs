@@ -89,7 +89,9 @@ fn msm(points: &[GrumpkinAffine], scalars: &[Fq]) -> GrumpkinAffine {
 
 /// bb `ECCVMProver::construct_proof` on `t`; the TripleIPA proof is returned separately.
 pub fn eccvm_prove(q: &EccOpQueue, ck: &GrumpkinKey, t: &mut NativeTranscript, rng: &mut dyn Rng) -> EccvmProverOutput {
+    let _ge0 = crate::base::bench::Scope::new("ECCVMProver(CircuitBuilder&)");
     let mut polys = EccvmPolys::from_op_queue(q);
+    drop(_ge0);
     crate::base::timing::phase(&format!(
         "  eccvm: trace polys ({} of {} rows)",
         polys.num_rows,
@@ -98,6 +100,7 @@ pub fn eccvm_prove(q: &EccOpQueue, ck: &GrumpkinKey, t: &mut NativeTranscript, r
     polys.add_masking(rng);
     let n = FIXED_SIZE;
 
+    let _ge1 = crate::base::bench::Scope::new("ECCVMProver::execute_wire_commitments_round");
     t.add_to_hash_buffer("vk_hash", &fixed_vk_hash());
     polys.cols[Ent::gemini_masking_poly as usize] =
         Polynomial::from_coeffs((0..n).map(|_| random_field(rng)).collect());
@@ -115,18 +118,24 @@ pub fn eccvm_prove(q: &EccOpQueue, ck: &GrumpkinKey, t: &mut NativeTranscript, r
 
     let [beta, gamma]: [Fq; 2] = t.challenges(&["beta", "gamma"]).try_into().unwrap();
     let params = eccvm_relation_params(beta, gamma);
+    drop(_ge1);
     crate::base::timing::phase("    eccvm: wire commits");
+    let _ge2 = crate::base::bench::Scope::new("ECCVMProver::execute_grand_product_computation_round");
     polys.compute_derived(&params);
+    drop(_ge2);
     crate::base::timing::phase("    eccvm: derived");
+    let _ge3 = crate::base::bench::Scope::new("ECCVMProver::execute_log_derivative_commitments_round");
     for e in [Ent::lookup_inverses, Ent::z_perm] {
         commitments[e as usize] = ck.commit(polys.col(e));
         t.send(&label(e), &commitments[e as usize]);
     }
 
+    drop(_ge3);
     let alpha: Fq = t.challenge("Sumcheck:alpha");
     let gate_challenges: Vec<Fq> = t.dyadic_powers("Sumcheck:gate_challenge", CONST_ECCVM_LOG_N);
     let mut zk = ZkData::<Grumpkin>::new(CONST_ECCVM_LOG_N, t, ck, rng);
     crate::base::timing::phase("  eccvm: oink commits + derived polys");
+    let _ge4 = crate::base::bench::Scope::new("ECCVMProver::execute_relation_check_rounds");
     let mut spec = sumcheck_spec();
     spec.active_prefix_end = Some(polys.num_rows);
     let sc = prove_sumcheck::<Grumpkin>(
@@ -141,8 +150,10 @@ pub fn eccvm_prove(q: &EccOpQueue, ck: &GrumpkinKey, t: &mut NativeTranscript, r
         Some(&mut zk),
         Some(ck),
     );
+    drop(_ge4);
     crate::base::timing::phase("  eccvm: sumcheck");
 
+    let _ge6 = crate::base::bench::Scope::new("ECCVM::pcs_and_claims");
     // Every univariate opening claim, paired with the commitment the verifier holds for it.
     let mut claims: Vec<ProverClaim<Fq>> = Vec::new();
     let mut claim_commitments: Vec<GrumpkinAffine> = Vec::new();
@@ -309,8 +320,11 @@ pub fn eccvm_prove(q: &EccOpQueue, ck: &GrumpkinKey, t: &mut NativeTranscript, r
         univariate_poly: shplonk.claim.poly,
     };
     let mut ipa_transcript = NativeTranscript::new();
+    drop(_ge6);
     crate::base::timing::phase("  eccvm: shplemini + translation claims");
+    let _ge5 = crate::base::bench::Scope::new("ECCVM::TripleIPA");
     triple_ipa_prove(ck, &input, &mut ipa_transcript);
+    drop(_ge5);
     crate::base::timing::phase("  eccvm: triple ipa");
     let _ = subgroup_domain::<Grumpkin>;
     EccvmProverOutput {

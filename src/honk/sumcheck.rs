@@ -1357,7 +1357,7 @@ where
         let round = self.round;
         if round < self.log_n {
             let round_size = 1 << (self.log_n - round);
-            if round == 0 && relation_stats_enabled() {
+            if relation_stats_enabled() {
                 RELATION_STATS.lock().unwrap().clear();
                 *EXTENSION_NS.lock().unwrap() = 0;
             }
@@ -1374,7 +1374,7 @@ where
                 })
                 .reduce(Accumulators::add)
                 .unwrap_or_else(|| Accumulators::new(rels, d));
-            if round == 0 && relation_stats_enabled() {
+            if relation_stats_enabled() {
                 print_relation_stats::<F>(rels, round_size / 2);
             }
             let mut univariate =
@@ -1620,7 +1620,11 @@ where
     for round in 0..spec.virtual_log_n {
         let round_start = relation_stats_enabled().then(std::time::Instant::now);
         let t0 = std::time::Instant::now();
+        // Split round 0 from the rest: they behave differently (round 0 reads borrowed and
+        // shifted columns; later rounds an owned contiguous table) and bb reports the same split.
+        let _gu = crate::base::bench::Scope::new(if round == 0 { "sumcheck loop 0" } else { "sumcheck loop" });
         let mut univariate = state.univariate(rels, params, betas, &partial_eval, &alphas, d);
+        drop(_gu);
         t_uni += t0.elapsed();
         if let Some(zk) = zk.as_deref_mut() {
             for (k, v) in zk.round_univariate(round, d).into_iter().enumerate() {
@@ -1639,7 +1643,9 @@ where
         }
         let u: F<C> = t.challenge(&format!("Sumcheck:u_{round}"));
         let t0 = std::time::Instant::now();
+        let _gf = crate::base::bench::Scope::new("Sumcheck::partially_evaluate");
         state.partially_evaluate(&u);
+        drop(_gf);
         t_fold += t0.elapsed();
         if let Some(t0) = round_start {
             eprintln!("[round {round}] {:.1} ms", t0.elapsed().as_secs_f64() * 1e3);

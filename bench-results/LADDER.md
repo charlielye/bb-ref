@@ -518,3 +518,44 @@ both slightly and leaves the ratio unchanged.
 Commit and MSM are genuinely ahead and stay ahead under real conditions. The addressable gap is
 ECCVM, the circuit builder, and the folding sumcheck, together ~0.80s of the 1.22s deficit.
 Work order: ECCVM first (largest), then create_circuit, then sumcheck.
+
+## Update 24: full wasm standing, and four sumcheck hypotheses ruled out
+
+**Full 11-flow wasm standing** (bbbench idle, 8t, plain `node`, pinned uninstrumented bb):
+
+| | bb | bb-ref | ratio |
+|---|---|---|---|
+| TOTAL | 84.92s | 90.96s | 1.07x |
+| typical flow | 5.1-8.3s | 5.7-9.8s | **1.12-1.23x** |
+| `storage_proof_7_layers` | 21.88s | 17.50s | 0.80x |
+
+The TOTAL is flattered by `storage_proof`, where we win by 20%. The target is the typical flows.
+
+**Where the gap is** (transfer_1+sponsored_fpc, proving-only 1.25x, +1.217s):
+
+| item | gap | note |
+|---|---|---|
+| ECCVM | +0.369s | its own sumcheck +0.139, PCS/IPA tail +0.12, trace polys +0.052 |
+| folding sumcheck rounds 1+ | +0.254s | round 0 is *ahead* (-0.028s), the fold is ahead (-0.060s) |
+| create_circuit | +0.238s | unexplored |
+| joint proof | +0.083s | |
+| commit + MSM | -0.433s | we are ahead and stay ahead |
+
+**Sumcheck: the deficit is entirely rounds 1+.** Our round 0 beats bb (0.275 vs 0.303) and our
+fold beats bb (0.089 vs 0.149). bb's later rounds cost 0.60x its round 0; ours cost ~1.6x. Per
+edge, bb's later rounds are ~3.3x cheaper than its own round 0 while ours stay flat — and bb
+processes *more* edges after round 0, since `compute_effective_round_size` returns the full
+round size once the multivariates are partially evaluated.
+
+**Four hypotheses tested and rejected** (each measured on the real flow, not argued):
+1. Serial fold for small rounds (`PAR_FOLD_MIN_ELEMS`): no change (6.30s), fold was already ahead.
+2. Raising the edge-chunk floor 16 -> 256: **worse**, 6.71s. We are throughput-bound, not
+   dispatch-bound, so removing parallelism hurts.
+3. 4-wide quad path enabled from round 1/2/3 (`BBREF_QUAD_MIN_ROUND`): worse at every setting
+   (6.42/6.38/6.34 vs 6.30). Earlier rejection on round 0 was not the reason it loses.
+4. Sweeping chunk floor and divisor (4/8/16 x 16/32/64): all within noise (6.32-6.46).
+
+Also note the native/wasm split: natively our rounds 1+ decay correctly (~0.98x round 0); only on
+wasm do they stay flat. Our wasm round 0 is much faster than native (45.8ms vs 71.5ms per
+instance) while later rounds are identical, so the wasm field advantage is not reaching the
+later-round path. That is the thread to pull next, along with the untouched create_circuit.
