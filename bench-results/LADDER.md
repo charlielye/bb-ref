@@ -858,3 +858,34 @@ threads than at 1, and the graded relation ops 1.51x. That is per-call slowdown,
 allocation or scheduling. The table is 46 separate column allocations and each edge touches one
 cache line in each of them, so eight workers run ~368 concurrent streams. bb backs its
 partially-evaluated multivariates with a single buffer. That is the next thing to try.
+
+## Update 33: the residual is L3-domain locality, and bb is insensitive to it
+
+The bench box is an AMD EPYC 9R14: 16 real cores, no SMT, and **64MB L3 in 2 instances** — two
+8-core L3 domains. Pinning the whole run to one domain (`taskset -c 0-7`), 2^15 / 65% / fragmented
+/ 8 threads:
+
+| | free | pinned |
+|---|---|---|
+| bb-ref | 117.5 / 118.3 / 117.5 ms | **107.6 / 109.1 / 109.8 ms** |
+| bb | 103 / 103 ms | 104 / 106 ms |
+
+**We gain 8% from pinning; bb gains nothing.** Our workers straddle the two L3 domains and pay
+cross-domain traffic for the shared table; bb's access pattern does not care. This is the uniform
+per-call slowdown the differential profile showed (`accumulate_edge` 1.63x CPU at 8 threads), and
+it closes roughly half the remaining 117 -> 103 gap.
+
+**Ruled out on the way here, each measured rather than argued:**
+- *Memory bandwidth.* Parallel speedup *improves* with table size (2.67x at 2^11, 4.19x at 2^13,
+  5.52x at 2^15). A bandwidth-bound loop degrades as the table grows, so it is not bandwidth.
+- *Dispatch cost.* A bare rayon dispatch measured directly (`examples/dispatchbench.rs`) is ~25us
+  at 8 threads with real work. The round loop pays three per round, so ~75us/round against the
+  ~2.5ms/round the round timings imply. Dispatch is 3% of the overhead, not the cause.
+- *SMT.* The box has one thread per core, so there is no sibling contention.
+
+**What this means.** The remaining gap is data movement, not scheduling, not the pool, not the
+arithmetic (single-threaded we are 15% faster than bb). We keep 46 separate column allocations and
+each edge touches one cache line in each; eight workers drive ~368 concurrent streams over a table
+that is 48MB at 2^15, larger than one domain's 32MB L3. bb backs its partially-evaluated
+multivariates with a single buffer. Reducing our footprint and stream count is the lever, and
+affinity is not controllable from inside the module in production, so the fix has to be the layout.
