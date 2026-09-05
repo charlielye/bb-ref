@@ -883,11 +883,29 @@ fn flush_graded<F: NativeField>(s: &Scratch<F>, acc: &mut Accumulators<F>) {
 
 /// The accumulators over a range of edges, split across threads (exact arithmetic: any split
 /// gives the same sums).
+/// Groups probed, and groups whose four edges shared a skip pattern (BBREF_QUAD_PROBE_STATS=1).
+static QUAD_PROBE: (std::sync::atomic::AtomicU64, std::sync::atomic::AtomicU64) =
+    (std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0));
+
+fn quad_probe_stats_enabled() -> bool {
+    static V: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| std::env::var_os("BBREF_QUAD_PROBE_STATS").is_some());
+    *V
+}
+
+/// Total probed groups and the homogeneous share, for deciding whether compaction would pay.
+pub fn quad_probe_report() -> (u64, u64) {
+    (
+        QUAD_PROBE.0.load(std::sync::atomic::Ordering::Relaxed),
+        QUAD_PROBE.1.load(std::sync::atomic::Ordering::Relaxed),
+    )
+}
+
 /// Whether the quad (4-edges-per-evaluation) sumcheck path is enabled for a relation set of
 /// `nrel` relations. BBREF_QUAD_SUMCHECK=1/0 forces it globally; BBREF_QUAD_NREL=<n> enables it
 /// on wasm for sets with at most n relations (sweeping which sumchecks benefit). Bit-identical
 /// to the scalar path (field addition is exact).
-fn quad_sumcheck_enabled(nrel: usize) -> bool {
+fn quad_sumcheck_enabled(nrel: usize, round: usize) -> bool {
     static V: std::sync::LazyLock<Option<bool>> = std::sync::LazyLock::new(|| {
         std::env::var("BBREF_QUAD_SUMCHECK").ok().map(|v| v != "0")
     });
@@ -897,7 +915,16 @@ fn quad_sumcheck_enabled(nrel: usize) -> bool {
             .and_then(|s| s.parse().ok())
             .unwrap_or(0)
     });
-    V.unwrap_or(cfg!(target_family = "wasm") && nrel <= *NREL_MAX)
+    static MIN_ROUND: std::sync::LazyLock<Option<usize>> = std::sync::LazyLock::new(|| {
+        std::env::var("BBREF_QUAD_MIN_ROUND").ok().and_then(|s| s.parse().ok())
+    });
+    if let Some(v) = *V {
+        return v;
+    }
+    if let Some(min_round) = *MIN_ROUND {
+        return round >= min_round;
+    }
+    cfg!(target_family = "wasm") && nrel <= *NREL_MAX
 }
 
 /// `accumulate_edges`, four edges per relation evaluation where the edges' skip patterns agree
@@ -966,6 +993,16 @@ where
                     }
                     if !ok {
                         break;
+                    }
+                }
+                if quad_probe_stats_enabled() {
+                    QUAD_PROBE
+                        .0
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if ok {
+                        QUAD_PROBE
+                            .1
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }
                 }
                 if !ok {
@@ -1366,7 +1403,7 @@ where
                 .edge_ranges(round_size)
                 .into_iter()
                 .map(|edges| {
-                    if quad_sumcheck_enabled(RelationSet::<F>::num_relations(rels)) {
+                    if quad_sumcheck_enabled(RelationSet::<F>::num_relations(rels), round) {
                         accumulate_edges_quad(rels, &self.used, &self.table, edges, params, &pows, d)
                     } else {
                         accumulate_edges(rels, &self.used, &self.table, edges, params, &pows, d)

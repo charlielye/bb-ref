@@ -559,3 +559,42 @@ Also note the native/wasm split: natively our rounds 1+ decay correctly (~0.98x 
 wasm do they stay flat. Our wasm round 0 is much faster than native (45.8ms vs 71.5ms per
 instance) while later rounds are identical, so the wasm field advantage is not reaching the
 later-round path. That is the thread to pull next, along with the untouched create_circuit.
+
+## Update 25: why our later sumcheck rounds cannot use SIMD (the real cause)
+
+Two more hypotheses tested and rejected, and between them they identify the actual cause.
+
+**5. Per-round transcript cost — rejected.** 0.037s over 144 rounds (0.26ms/round). Not the fixed
+cost that makes small instances' later rounds expensive.
+
+**6. "Later rounds are dense, so drop the skip probe" — rejected, and instructive.** Forcing all
+relations active from round 1 (correct, since a skipped row contributes zero, and the test suite
+passes with it on) cost **33%**: 8.36s vs 6.29s. So skipping is *still highly effective* after
+folding — large zero blocks fold to zero and stay zero. The rows are not dense.
+
+**Measured probe hit rate: 65.7%** (37448/56962 groups in rounds 1+). So four consecutive edges do
+usually share a skip pattern and the 4-wide path does engage — and it is *still* a net loss
+(6.42s with it on vs 6.30s off).
+
+**Therefore the cause is data layout, not skipping and not scheduling.** Our table stores scalar
+columns, so every group of four edges must be transposed into SIMD lanes: per column, four strided
+`column_value` reads into `QuadF::lanes`, plus the `row0q`/`deltaq` writes. The raw kernels are
+genuinely faster (`QuadF mul` 34.71 vs scalar 52.88 ns/elt; packed add 4.32 vs 10.48), but the
+gather overhead exceeds that 1.5x. bb pays none of it: its `PartiallyEvaluatedMultivariates` are
+stored as `VectorField` already, so its 5-wide path reads lanes directly.
+
+**The fix is to hold the folded table in packed layout from round 1 on**, so the quad path reads
+lanes with no transpose and the fold writes them in place. That is the same structural choice bb
+makes and it is the only route to the +0.25s. It is a real change, not a tuning knob.
+
+Per-round data behind this (wasm, 8t, all 7 sumcheck invocations of the flow):
+
+| | round 0 | rounds 1+ | ratio | tail (r>=8) |
+|---|---|---|---|---|
+| all invocations | 852.8ms | 1203.6ms | 1.41x | 147.7ms |
+
+The tail is only 12% of rounds 1+, so this is mid-round throughput, not small-round overhead.
+Every invocation shows the same shape (1.10x to 2.15x) against bb's 0.60x.
+
+Hypotheses rejected so far: serial fold threshold, chunk floor (both directions), chunk divisor,
+round-aware quad gating, per-round transcript cost, dropping the skip probe.
