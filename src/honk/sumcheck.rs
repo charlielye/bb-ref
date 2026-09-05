@@ -1519,6 +1519,7 @@ where
             };
             let pows_us = t_pows.elapsed().as_micros();
             let t_edges = std::time::Instant::now();
+            let _ge = crate::base::bench::Scope::new("sumcheck/accumulate_edge_chunks");
             let head_range = self.row_disabling.then(|| 0..self.excluded_head / 2);
             let mut head_acc: Option<Accumulators<F>> = None;
             let acc = self
@@ -1553,9 +1554,11 @@ where
             if relation_stats_enabled() {
                 print_relation_stats::<F>(rels, round_size / 2);
             }
+            drop(_ge);
             let edges_us = t_edges.elapsed().as_micros();
             let slot_busy: Vec<u64> = if detail { SLOT_BUSY_NS.lock().unwrap().clone() } else { vec![] };
             let t_rest = std::time::Instant::now();
+            let _gb = crate::base::bench::Scope::new("sumcheck/extend_and_batch_univariates");
             let mut univariate =
                 batch_over_relations(rels, &self.ext, &acc, alphas, &betas[round], partial_eval, None, d);
             if let Some(head) = head_acc {
@@ -1573,6 +1576,7 @@ where
                     univariate[k] += v;
                 }
             }
+            drop(_gb);
             if detail {
                 let rest_us = t_rest.elapsed().as_micros();
                 let (mn, mx, sum) = slot_busy.iter().fold((u64::MAX, 0u64, 0u64), |(a, b, c), &v| {
