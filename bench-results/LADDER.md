@@ -956,3 +956,31 @@ The published flow benchmarks stay unpinned; pinning stays a diagnostic, quoted 
 
 Why bb's threads land domain-local unpinned is still unexplained. Both provers spawn their threads
 through the same wasi-threads harness, and thread count is ruled out.
+
+## Update 36: thread placement measured — the OS is NOT treating the two processes differently
+
+Sampled `/proc/<pid>/task/*/stat` (field `processor`, weighted by the CPU each thread actually
+burned) while each prover ran the 2^15 sparse rung unpinned:
+
+| | cores 0-7 | cores 8-15 | distinct CPUs used |
+|---|---|---|---|
+| bb-ref | 49.0% | 51.0% | 13 |
+| bb | 53.3% | 46.7% | 13 |
+
+**Both are split ~50/50 across the two L3 domains and both float over 13 CPUs.** Update 35's
+suggestion that bb's threads land domain-local while ours do not is wrong, and so is the thread
+count explanation: matching bb's 8-OS-thread shape was measured worse (121.2ms vs 116.1ms).
+
+So the asymmetry is not *where* the threads run — it is that our round loop loses more from running
+there. bb free equals bb pinned (103/103); we lose 9% free vs pinned (117.6/107.4). Same placement,
+different sensitivity.
+
+**Persistent per-worker state: neutral.** Following the sensitivity to its obvious cause — a fresh
+~30KB `Scratch`/`Accumulators` set per worker *per round*, which a migrating thread must fault back
+in — the buffers were hoisted onto the prover and reused across all rounds, with `reset()` in place
+of reallocation. 3/8 paired wins, median 1.0ms *against*. The zeroing costs about what the
+allocation did. Reverted. Twelfth dead end.
+
+**Benchmarking policy: do not pin.** Pinning moves only our number, by ~8%, so it would report a
+gain no user sees and hide the behaviour under investigation. Unpinned stays the basis; pinning is
+a diagnostic only.
