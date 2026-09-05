@@ -105,7 +105,8 @@ fn main() {
                 round0_ms = rms;
             }
             if it > 0 && std::env::var_os("BBREF_PER_ROUND").is_some() {
-                println!("    round {round:2}: {rms:7.2} ms");
+                let f_ms = t_f.elapsed().as_secs_f64() * 1e3;
+                println!("    round {round:2}: {rms:7.2} ms   (fold {f_ms:6.2} ms)");
             }
         }
         let ms = t.elapsed().as_secs_f64() * 1e3;

@@ -984,3 +984,35 @@ allocation did. Reverted. Twelfth dead end.
 **Benchmarking policy: do not pin.** Pinning moves only our number, by ~8%, so it would report a
 gain no user sees and hide the behaviour under investigation. Unpinned stays the basis; pinning is
 a diagnostic only.
+
+## Update 37: hardware counters + per-round decomposition find it — the barrier idle is our own serial tail
+
+**Clean `perf stat` (startup <5%), 2^15 sparse:**
+
+| | IPC | instr/pass | cycles/pass |
+|---|---|---|---|
+| bb-ref 1t / 8t | 3.24 / 3.10 | 8.69G / 8.73G | 2.69G / 2.81G |
+| bb 1t / 8t | 3.15 / 3.33 | 9.65G / 9.80G | 3.06G / 2.94G |
+
+We execute *fewer* instructions and cycles than bb; neither prover does extra work at 8 threads
+(instructions/pass flat) — the sampling profiler's "1.32x CPU tax" was an artefact. Cycles to wall
+at 8 cores: ours ~95ms busy of 118 measured, bb ~99 of 103. **We idle ~23ms/pass, bb ~4.** Not IPC,
+not contention, not work: threads waiting at round barriers.
+
+**Per-round detail (`BBREF_ROUND_DETAIL`, per-worker busy spread) located the idle:**
+- Rounds 7-11 ran on one worker (busy min 0, max = wall) because the chunk floor of 16 left 1-4
+  chunks. Floor -> 1 now that per-worker scratch makes small chunks cheap: balance is perfect (r8
+  busy 526-590us). Neutral on its own, because of the next item.
+- **A constant ~800us per round above the slowest worker**, every round, inside the edges phase.
+  That was `flush_graded` run serially over the 8 worker slots on the caller (~2600 Horner muls per
+  slot) — the serial tail my per-worker-slots change created. 15 rounds x 0.8ms = 12ms/pass.
+
+**Landed:** parallel flush over the slots. Rung **117.8 -> 113.4ms, 7/7 paired wins, 4.2%**; the
+overhead above the slowest worker fell to ~340us/round. Also: chunk floor 1, serial 2-edge head,
+serial fold for tiny tables, parallel `pows` doubling (the last neutral, dispatch-bound). Flow:
+6.28 -> 6.21s, 4/4; folding sumcheck 0.812 -> 0.769s. 23 suites green, proofs identical.
+
+**Remaining per pass at 8t (bb gap now 10.4ms):** residual dispatch above slowest worker ~340us x
+15 = 5ms; `rest` (2-edge head incl. its own flush) ~250us x 15 = 4ms; `pows` ~2ms serial;
+big-round per-worker busy inflation (r0 42.5ms vs 35.9 ideal) ~10ms — the only item that is not
+a serial section, and the one matching the 4% IPC drop.
