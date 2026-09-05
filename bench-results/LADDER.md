@@ -632,3 +632,38 @@ not changing where the table is stored.
 
 Dead ends now total eight: serial fold threshold, chunk floor up and down, chunk divisor,
 round-aware quad gating, per-round transcript cost, dropping the skip probe, and the transpose.
+
+## Update 27: ported bb's edge-loop shape — neutral. And a correction to the framing.
+
+**Ported and measured.** bb's `compute_univariate` extends one fixed column set for every edge and
+lets each relation's own `skip` gate only accumulation (`sumcheck_round.hpp:1098`); we rebuild the
+active column set per edge (push/mark/unmark, per-column branch). Ported bb's shape behind
+`BBREF_BB_SHAPED_EDGE`:
+
+| | folding sumcheck | wall |
+|---|---|---|
+| ours | 0.816s | 6.41-6.43s |
+| bb-shaped edge loop | 0.841s | 6.35-6.38s |
+
+Slightly *worse* on the phase, wall difference is noise. Reverted. Ninth dead end.
+
+**Correction to Update 25/26's framing.** I have been reporting "our later rounds are 2.4x bb's",
+which invited a mechanism hunt round-by-round. The honest number is the total: folding sumcheck
+**bb 0.619s vs ours 0.816s, 1.32x**. bb spends more of its total in round 0 (0.303 vs our 0.275)
+and less afterwards (0.182 vs our 0.436); that is a different *distribution* of cost, and treating
+the distribution as the defect sent me chasing later-round mechanisms three times.
+
+**Also corrected:** bb is not doing range-based skipping instead of per-edge predicates. It does
+both — ranges for the outer iteration *and* `Relation::skip` per edge, exactly as we do. Update 26's
+"fundamental difference" claim was wrong too.
+
+**What the numbers actually say now.** Relation evaluation is ~93% of our sumcheck CPU (round 0:
+relations ~384ms vs extension ~29ms, thread-summed), dominated by relation 0 at 53%. But on the
+matched dense rung our relation evaluation **beats** bb's (roundbench 2^17 MegaZK round 0: 285ms
+vs 349ms, both plain `node`). So we are faster on the dense rung and 1.32x slower in the flow. The
+deficit is configuration-dependent, not a raw arithmetic deficit, and nothing tried so far has
+located what in the flow's configuration causes it.
+
+Dead ends now nine: serial fold threshold, chunk floor up and down, chunk divisor, round-aware quad
+gating, per-round transcript cost, dropping the skip probe, the per-group transpose, and bb's
+edge-loop shape.
