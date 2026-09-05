@@ -598,3 +598,37 @@ Every invocation shows the same shape (1.10x to 2.15x) against bb's 0.60x.
 
 Hypotheses rejected so far: serial fold threshold, chunk floor (both directions), chunk divisor,
 round-aware quad gating, per-round transcript cost, dropping the skip probe.
+
+## Update 26: CORRECTION to Update 25 — the gather is not the cause either
+
+Update 25 concluded the later-round sumcheck gap was the per-group transpose (data layout). That
+conclusion was wrong and is retracted.
+
+**The experiment that refutes it.** Keeping the skip probe but forcing the scalar path afterwards
+separates the probe's cost from the quad arithmetic's:
+
+| variant | wall |
+|---|---|
+| scalar baseline | 6.331s |
+| quad from round 1, full | 6.374s |
+| quad from round 1, probe only (always falls back) | 6.393s |
+
+All three are within noise. The probe costs ~0.06s and the 4-wide arithmetic is **neutral**, so
+the transpose cannot be what makes our later rounds 2.4x bb's. The earlier 6.42-vs-6.30 reading
+that suggested the quad path "loses" was also noise.
+
+**A false measurement worth recording.** Stubbing the gather (`QuadF::splat` of one load instead
+of four strided loads) appeared to give 6.32s -> 1.72s, a 4.6x speedup. It was a **crashed run**:
+the degenerate values panicked the prover, which exited early. Sumcheck is only ~0.8s of this
+flow, so no sumcheck change can save 4.6s — the number was impossible on its face and checking the
+log confirmed a panic. Always confirm a suspiciously large win completed.
+
+**What is actually established.** Our 4-wide path gives no width benefit in relation evaluation,
+even though the raw kernels are faster in isolation (`QuadF mul` 34.71 vs scalar 52.88 ns/elt).
+The gain is lost inside the relation bodies, most likely to 192-byte `QuadF` temporaries and the
+accumulator machinery spilling. bb gets its later-round speed from `VectorField` relation
+evaluation that is SIMD-efficient end to end; matching it means restructuring relation evaluation,
+not changing where the table is stored.
+
+Dead ends now total eight: serial fold threshold, chunk floor up and down, chunk divisor,
+round-aware quad gating, per-round transcript cost, dropping the skip probe, and the transpose.
