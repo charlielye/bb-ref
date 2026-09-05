@@ -920,3 +920,39 @@ sections (univariate and fold scale identically at ~5.5x), per-round transcript,
 and is not controllable from inside the module in production, so it has to be attacked by doing
 less cross-thread work per round: fewer, larger parallel regions per round (currently three), or a
 reduce that does not touch every worker's accumulator at the round boundary.
+
+## Update 35: the pinning result, separated — both provers are L3-sensitive
+
+Pinning to cores 0-7 confounds two things: it makes threads domain-local *and* halves available L3
+(64MB -> 32MB). Pinning to 8 cores split across both domains separates them. 2^15 / 65% /
+fragmented / 8 threads, best-of-3:
+
+| | free | one domain (0-7) | split (0-3,8-11) |
+|---|---|---|---|
+| bb-ref | 117.6ms | **107.4ms** | 118.6ms |
+| bb | 103ms | 103ms | 108ms |
+
+**bb is not insensitive.** Split across domains costs bb ~5% too. The actual asymmetry is that
+*unpinned*, bb performs like its one-domain number and we perform like our split number. So the
+question is not "why does only bb-ref benefit" but "why do bb's threads end up domain-local when
+ours do not".
+
+**Thread count is not the answer**, though it looked like it. bb runs `cpus - 1` workers plus a
+working main (8 OS threads for an 8-wide run); rayon blocks the caller, so we run 9. Matching bb's
+shape made things *worse*, not better:
+
+| configuration (unpinned) | time |
+|---|---|
+| 8 rayon workers + blocked main (9 threads, 8 working) | 116.1ms |
+| 7 rayon workers + working main (8 threads, 8 working) | 121.2ms |
+| 8 rayon workers + working main (9 threads, 9 working) | 111.8ms |
+
+The last row is genuinely faster but uses nine workers against bb's eight, so it is not a parity
+result — it is just more cores.
+
+**Consequence for benchmarking: do not pin.** Pinning moves only our number, by ~8%, and would
+report an improvement no user sees while hiding the very cross-domain behaviour we need to fix.
+The published flow benchmarks stay unpinned; pinning stays a diagnostic, quoted as such.
+
+Why bb's threads land domain-local unpinned is still unexplained. Both provers spawn their threads
+through the same wasi-threads harness, and thread count is ruled out.
