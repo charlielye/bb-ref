@@ -314,3 +314,27 @@ Update 16 — full wasmtime table on 84aa016 (per-flow, 3-attempt runner, zero r
 TOTAL 1.10x (bb 99.08 / ours 109.14 s). Per flow 1.21-1.30x; storage_proof_7_layers 0.76x (we
 win by 24%). MEMORY: 0.82-1.05x of bb — we use LESS memory than bb on 10 of 11 flows.
 Both runtimes now: V8 TOTAL 1.07x, wasmtime TOTAL 1.10x.
+
+Update 17 — WHERE THE REMAINING PER-FLOW GAP IS (typical flow, not the average).
+The 1.07x suite total is carried by storage_proof (22 of bb's 85 s, where we win 0.80x); the
+TYPICAL flow is 1.13-1.23x. Profiled both provers on transfer_0+sponsored (ours 5.79 / bb 5.04)
+and bucketed CPU:
+  field arith  21.55 vs 21.59  (PARITY)      MSM 3.47 vs 3.15 (+0.33)
+  alloc/memcpy  0.57 vs  0.25  (2.3x)        other 1.48 vs 0.95 (+0.53)
+  compute      27.85 vs 26.82  (+3.8%)       WAIT 23.79 vs 16.98
+Scaling 1->8 threads: ours 4.14x vs bb 3.92x — OUR SCALING IS BETTER, so the gap is work, not
+parallelism (the ratio is flat 1.10-1.16x at every thread count). Per-phase: 171 timed regions,
+no dominant one (sumcheck 1.43 s, commits ~1.0, builder ~0.6, pcs ~0.8).
+THE ACTUAL DIFFERENCE, from top-self-time on both sides:
+  bb:  VectorField<Fr> mul 2.97s + VF<Fr> += 0.32 + store_from_array 0.25 + add_scaled_batch 1.09
+       + fold_stride2 0.37   -> bb runs its Fr polynomial AND sumcheck work 5-wide SIMD.
+  us:  scalar ark mont_mul_261 across 4 instantiations = 3.63+1.43+1.26+0.58 = 6.90s, of which
+       ~5.15s is inlined inside relation/sumcheck bodies (graded 1.19s + accumulate_edge 0.53s
+       appear separately as their own self-time).
+So the residual ~10% is the PACKED SUMCHECK PLANE: bb evaluates relations on VectorField (5-wide),
+we evaluate them scalar. This is the same item flagged at the very start of the session as the
+reason for 1.1x rather than 1.0x. Our earlier attempt (QuadF, 4-wide, edge-batched) lost at every
+threshold; bb wins with 5-wide VectorField over its ExtendedEdges layout. Retrying it should
+reuse the LINKED bb kernels (as the MSM now does) rather than a hand-rolled Rust 4-wide path.
+Secondary, smaller: alloc/memcpy at 2.3x bb, and MSM +0.33s (flow MSMs are small/sparse — a
+different regime from the msmbench sizes where we now match).
