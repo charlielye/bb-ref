@@ -667,3 +667,40 @@ located what in the flow's configuration causes it.
 Dead ends now nine: serial fold threshold, chunk floor up and down, chunk divisor, round-aware quad
 gating, per-round transcript cost, dropping the skip probe, the per-group transpose, and bb's
 edge-loop shape.
+
+## Update 28: the flow's sumcheck deficit REPRODUCED in a 122ms rung
+
+Built `examples/loopbench.rs`: the whole sumcheck round loop (not round 0 alone), with the two
+knobs by which the flow differs from the old dense single-round rung — `active_pct` and bb's
+fragmented block shape (`BBREF_FRAG=1` reproduces `make_active_blocks(fragmented=true)`: 18 active
+blocks with gaps, 65% active). Matched against bb's `MegaZK/loop_static_blocks`, plain `node`, 8t.
+
+| config | bb | bb-ref | ratio |
+|---|---|---|---|
+| 2^17 dense | 617ms | 586ms | 0.95x |
+| 2^15 dense | 157ms | 158ms | 1.01x |
+| 2^17 sparse (65%, 18 blocks) | 400ms | 412ms | 1.03x |
+| **2^15 sparse** | **104ms** | **122ms** | **1.18x** |
+
+**The deficit needs small size AND sparsity together.** At 2^17 we are at or ahead of bb in both
+dense and sparse; at 2^15 dense we are level; only 2^15 sparse loses. The flow's instances are
+2^13-2^16 (bb reports 16, 13, 15, 15 rounds) and its traces are fragmented, so the flow sits
+squarely in the losing corner. The rung's rounds1+/round0 ratio there is 1.42, matching the flow's
+1.4-1.6, so it reproduces the shape as well as the number.
+
+**Ruled out along the way:**
+- *Round count.* Every instance in a Chonk group runs the group's round count (24 for us) while bb
+  runs each instance's own (13-16). Our extra rounds past `log_n` are free: 2^17 with
+  virtual_log_n 17 / 20 / 24 costs 587 / 594 / 585ms.
+- *Prover construction.* `RoundProver::new`, which does a trailing-zero scan over every column and
+  which the rung excludes, is 0.004s in the whole flow.
+- *Sparsity alone.* Sweeping `active_pct` at 2^17 (100/50/25/10% -> 586/318/185/107ms) scales
+  cleanly with the active fraction.
+
+**Why this matters more than the number.** Every previous hypothesis was tested against a 6.3s
+flow where a 0.05s effect is noise; nine were rejected partly for that reason. The deficit now
+reproduces in 122ms, so the next round of hypotheses can be tested properly.
+
+To get bb's sparse MegaZK numbers, `register_flavor_benches<MegaZKFlavor>("MegaZKFrag",
+fragmented=true, ...)` was added to bb's `sumcheck_iteration.bench.cpp`, built in the scratch
+`build-wasm-bench` dir, and the bb source restored afterwards.
