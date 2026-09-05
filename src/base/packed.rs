@@ -75,10 +75,48 @@ pub mod bbk {
         pub fn bbref_chord_width() -> usize;
         pub fn bbref_batch_capacity() -> usize;
         pub fn bbref_pack_cap() -> usize;
-        pub fn bbref_reduce_chunk_fq(points: *const u64, phi: *const u64, beta: *const u64, sched: *const u32, lo: usize, hi: usize, bstarts: *const u32, b_cursor: *mut usize, pts: *mut u64, buckets: *mut u32, packed: *mut u64, pair_dest: *mut u32) -> usize;
-        pub fn bbref_reduce_chunk_fr(points: *const u64, phi: *const u64, beta: *const u64, sched: *const u32, lo: usize, hi: usize, bstarts: *const u32, b_cursor: *mut usize, pts: *mut u64, buckets: *mut u32, packed: *mut u64, pair_dest: *mut u32) -> usize;
-        pub fn bbref_tree_reduce_fq(pts: *mut u64, buckets: *mut u32, len: usize, packed: *mut u64, pair_dest: *mut u32) -> usize;
-        pub fn bbref_tree_reduce_fr(pts: *mut u64, buckets: *mut u32, len: usize, packed: *mut u64, pair_dest: *mut u32) -> usize;
+        pub fn bbref_reduce_chunk_fq(
+            points: *const u64,
+            phi: *const u64,
+            beta: *const u64,
+            sched: *const u32,
+            lo: usize,
+            hi: usize,
+            bstarts: *const u32,
+            b_cursor: *mut usize,
+            pts: *mut u64,
+            buckets: *mut u32,
+            packed: *mut u64,
+            pair_dest: *mut u32,
+        ) -> usize;
+        pub fn bbref_reduce_chunk_fr(
+            points: *const u64,
+            phi: *const u64,
+            beta: *const u64,
+            sched: *const u32,
+            lo: usize,
+            hi: usize,
+            bstarts: *const u32,
+            b_cursor: *mut usize,
+            pts: *mut u64,
+            buckets: *mut u32,
+            packed: *mut u64,
+            pair_dest: *mut u32,
+        ) -> usize;
+        pub fn bbref_tree_reduce_fq(
+            pts: *mut u64,
+            buckets: *mut u32,
+            len: usize,
+            packed: *mut u64,
+            pair_dest: *mut u32,
+        ) -> usize;
+        pub fn bbref_tree_reduce_fr(
+            pts: *mut u64,
+            buckets: *mut u32,
+            len: usize,
+            packed: *mut u64,
+            pair_dest: *mut u32,
+        ) -> usize;
         pub fn bbref_vf_size() -> usize;
         pub fn bbref_chord1_fr(ax: *const u64, bx: *const u64, n: usize, dx: *mut u64, prod: *mut u64);
         pub fn bbref_chord1_fq(ax: *const u64, bx: *const u64, n: usize, dx: *mut u64, prod: *mut u64);
@@ -118,8 +156,24 @@ pub mod bbk {
             dst: *const u32,
             points: *mut u64,
         );
-        pub fn bbref_chord1p_fr(ax: *const u64, ay: *const u64, bx: *const u64, by: *const u64, n: usize, scratch: *mut u64, lane_tot: *mut u64);
-        pub fn bbref_chord1p_fq(ax: *const u64, ay: *const u64, bx: *const u64, by: *const u64, n: usize, scratch: *mut u64, lane_tot: *mut u64);
+        pub fn bbref_chord1p_fr(
+            ax: *const u64,
+            ay: *const u64,
+            bx: *const u64,
+            by: *const u64,
+            n: usize,
+            scratch: *mut u64,
+            lane_tot: *mut u64,
+        );
+        pub fn bbref_chord1p_fq(
+            ax: *const u64,
+            ay: *const u64,
+            bx: *const u64,
+            by: *const u64,
+            n: usize,
+            scratch: *mut u64,
+            lane_tot: *mut u64,
+        );
         pub fn bbref_chord2p_fr(n: usize, scratch: *mut u64, lane_inv: *const u64, dst: *const u32, points: *mut u64);
         pub fn bbref_chord2p_fq(n: usize, scratch: *mut u64, lane_inv: *const u64, dst: *const u32, points: *mut u64);
         pub fn bbref_dbl1_fr(y: *const u64, n: usize, den: *mut u64, prod: *mut u64);
@@ -166,11 +220,25 @@ pub fn try_axpy<F: 'static>(dst: &mut [F], src: &[F], s: &F) -> bool {
     {
         let n = dst.len().min(src.len());
         if TypeId::of::<F>() == TypeId::of::<Fr>() {
-            unsafe { bbk::bbref_axpy_fr(dst.as_mut_ptr() as *mut u64, src.as_ptr() as *const u64, s as *const F as *const u64, n) };
+            unsafe {
+                bbk::bbref_axpy_fr(
+                    dst.as_mut_ptr() as *mut u64,
+                    src.as_ptr() as *const u64,
+                    s as *const F as *const u64,
+                    n,
+                )
+            };
             return true;
         }
         if TypeId::of::<F>() == TypeId::of::<Fq>() {
-            unsafe { bbk::bbref_axpy_fq(dst.as_mut_ptr() as *mut u64, src.as_ptr() as *const u64, s as *const F as *const u64, n) };
+            unsafe {
+                bbk::bbref_axpy_fq(
+                    dst.as_mut_ptr() as *mut u64,
+                    src.as_ptr() as *const u64,
+                    s as *const F as *const u64,
+                    n,
+                )
+            };
             return true;
         }
         return false;

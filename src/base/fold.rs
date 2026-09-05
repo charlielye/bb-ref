@@ -233,8 +233,8 @@ fn pass_add_bbk<P: SWCurveConfig>(
 where
     P::BaseField: 'static,
 {
-    use core::any::TypeId;
     use crate::base::packed::bbk;
+    use core::any::TypeId;
     type C1 = unsafe extern "C" fn(*const u64, *const u64, usize, *mut u64, *mut u64);
     type C2 = unsafe extern "C" fn(
         *const u64,
@@ -344,8 +344,8 @@ fn pass_dbl_bbk<P: SWCurveConfig>(
 where
     P::BaseField: 'static,
 {
-    use core::any::TypeId;
     use crate::base::packed::bbk;
+    use core::any::TypeId;
     type D1 = unsafe extern "C" fn(*const u64, usize, *mut u64, *mut u64);
     type D2 = unsafe extern "C" fn(*const u64, *const u64, usize, *mut u64, *const u64, *const u64, *mut u64, *mut u64);
     let (d1, d2): (D1, D2) = if TypeId::of::<P::BaseField>() == TypeId::of::<crate::base::Fr>() {

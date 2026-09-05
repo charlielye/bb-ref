@@ -221,6 +221,7 @@ impl Chonk {
 
     /// bb `Chonk::prove`: hiding kernel Oink, merge, ECCVM, then the joint MegaZK + Translator proof.
     pub fn prove(&mut self, rng: &mut dyn Rng) -> ChonkProof {
+        crate::scope!("ChonkProve");
         let (mut inst, vk) = self.hiding.take().expect("hiding kernel not accumulated");
         let mut t = NativeTranscript::new();
         let _g = crate::base::bench::Scope::new("HidingKernel::oink");
@@ -229,7 +230,9 @@ impl Chonk {
         let hiding_oink_proof = t.export_proof();
         timing::phase("hiding oink");
         let mut q = self.op_queue.borrow_mut();
+        let _gmg = crate::base::bench::Scope::new("Goblin::prove_merge");
         merge_prove(&mut q, &self.ck, &mut t);
+        drop(_gmg);
         let merge_proof = t.export_proof();
         timing::phase("merge");
         let _ge = crate::base::bench::Scope::new("ECCVMProver::construct_proof");
@@ -238,9 +241,13 @@ impl Chonk {
         let eccvm_proof = t.export_proof();
         timing::phase("eccvm");
         let (v, x) = (eccvm.batching_challenge_v, eccvm.evaluation_challenge_x);
+        let _gtc = crate::base::bench::Scope::new("TranslatorCircuitBuilder::constructor");
         let circuit = TranslatorCircuit::new(v, x, &q);
+        drop(_gtc);
         timing::phase("translator circuit");
+        let _gtp = crate::base::bench::Scope::new("TranslatorProvingKey");
         let mut polys = TranslatorPolys::from_circuit(&circuit, &TranslatorPolys::random_masking(rng));
+        drop(_gtp);
         drop(circuit);
         timing::phase("translator polys");
         let _gj = crate::base::bench::Scope::new("BatchedHonkTranslatorProver::construct_proof");

@@ -315,7 +315,6 @@ pub fn to_u64x4(a: &[u32; 9]) -> [u64; 4] {
     out
 }
 
-
 /// Four elements per call, bb's layout: `limbs[k]` is a u32x4 whose lane L is element L's limb
 /// k. `i64x2.extmul_low/high_i32x4_u` then yields all four 58-bit products of a limb pair in two
 /// instructions with no shuffles — the entire schoolbook runs at half a multiply instruction per

@@ -103,6 +103,7 @@ pub fn prove_steps(
     for step in steps {
         let step = &step;
         crate::base::timing::phase(&format!("== {} ({:?})", step.name, step.kind));
+        let _gc = crate::base::bench::Scope::new("create_circuit");
         let witness = step.decode_witness(rng);
         let mut circuit = build_circuit_mega(&step.circuit, Some(&witness), Some(&mut ivc), rng);
         assert!(
@@ -112,8 +113,11 @@ pub fn prove_steps(
             circuit.failed
         );
         drop(witness);
+        drop(_gc);
         crate::base::timing::phase("circuit built");
+        let _ga = crate::base::bench::Scope::new("Chonk::accumulate");
         ivc.accumulate(circuit, (!check_vks).then(|| step.vk.clone()), rng);
+        drop(_ga);
         if check_vks {
             let computed = match step.kind {
                 CircuitKind::HidingKernel => ivc.hiding_vk(),

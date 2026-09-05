@@ -449,3 +449,30 @@ unaffected because both sides ran under identical flags.
 bb-ref's chonk CLI does not perform. The flow harness runs the same `prove` subcommand on both, so
 that verify sits inside bb's wall in every published flow table. Worth resolving before the next
 wall comparison.
+
+## Update 22: the phase columns reconciled (they do not sum as first presented)
+
+The Update 21 table nests: `commit` and the MSM stages sit inside fold/ECCVM/joint, so adding that
+column double-counts. Added the missing top-level scopes (`create_circuit`, `Chonk::accumulate`,
+`ChonkProve`, merge, translator construction) so a non-overlapping total exists.
+
+Two nesting facts, read off bb's tree rather than assumed:
+- `create_circuit` is a **sibling** of `Chonk::accumulate`, not nested in it
+  (2.055 + 3.247 = 5.301 vs `ChonkAccumulate` 5.363, so the decomposition closes).
+- `ChonkVerifier::verify` is nested **inside** `ChonkProve`. bb's prove figure therefore carries a
+  1.776s self-verify that bb-ref's chonk CLI never performs.
+
+wasm, bbbench, 8t, `--no-liftoff` both sides, median of 3:
+
+| phase (non-overlapping) | bb | bb-ref | ratio |
+|---|---|---|---|
+| create_circuit (ACIR + builder) | 2.055s | 1.821s | 0.89x |
+| Chonk::accumulate (fold loop) | 3.247s | 3.371s | 1.04x |
+| ChonkProve, excl. bb self-verify | 3.501s | 3.415s | 0.98x |
+| **SUM (proving-only)** | **8.802s** | **8.607s** | **0.98x** |
+
+**This contradicts the published flow tables** (`chonk-v8.txt`: TOTAL 1.07x, typical flow 1.1-1.2x
+against us). Both cannot be right. The candidate differences are (a) the published harness runs
+plain `node`, so V8 uses Liftoff and tiers up, while these runs force full optimization on both
+sides with `--no-liftoff`, and (b) bb's self-verify sits inside bb's published wall. Resolving this
+is the next step; no parity claim is made from either number until it is.
