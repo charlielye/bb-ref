@@ -104,8 +104,12 @@ pub fn prove_steps(
         let step = &step;
         crate::base::timing::phase(&format!("== {} ({:?})", step.name, step.kind));
         let _gc = crate::base::bench::Scope::new("create_circuit");
+        let _gw = crate::base::bench::Scope::new("create_circuit/decode_witness");
         let witness = step.decode_witness(rng);
+        drop(_gw);
+        let _gb = crate::base::bench::Scope::new("create_circuit/build_circuit");
         let mut circuit = build_circuit_mega(&step.circuit, Some(&witness), Some(&mut ivc), rng);
+        drop(_gb);
         assert!(
             circuit.failed.is_none(),
             "{}: circuit not satisfied: {:?}",
