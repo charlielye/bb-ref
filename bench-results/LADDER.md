@@ -704,3 +704,41 @@ reproduces in 122ms, so the next round of hypotheses can be tested properly.
 To get bb's sparse MegaZK numbers, `register_flavor_benches<MegaZKFlavor>("MegaZKFrag",
 fragmented=true, ...)` was added to bb's `sumcheck_iteration.bench.cpp`, built in the scratch
 `build-wasm-bench` dir, and the bb source restored afterwards.
+
+## Update 29: root cause of the sumcheck deficit — parallel efficiency, not arithmetic
+
+Using the Update 28 rung (2^15, 65% active, fragmented — the flow's regime), thread sweep against
+bb's `MegaZKFrag/loop_static_blocks/15`:
+
+| threads | bb | bb-ref | bb speedup | our speedup |
+|---|---|---|---|---|
+| 1 | 789ms | 674ms | 1.00x | 1.00x |
+| 2 | 405ms | 384ms | 1.95x | 1.76x |
+| 4 | 203ms | 211ms | 3.88x | 3.20x |
+| 8 | 103ms | 122ms | **7.67x** | **5.51x** |
+
+**Single-threaded we are 15% faster than bb.** The entire deficit is parallel efficiency: bb scales
+7.67x where we scale 5.51x. That is why the deficit needs small size — at 2^17 there is enough work
+per round to hide it, at 2^15 there is not, and the flow's instances are 2^13-2^16.
+
+**Confirmed by profile:** 26.7% of thread time in the rung is workers blocked on a condvar
+(1.42s idle against 3.90s busy). Effective parallelism 8 x 0.733 = 5.86x, matching the measured
+5.51x. The remaining busy time is ordinary field arithmetic (`mont_mul_261` 30%, graded relation
+evaluation 20%, `accumulate_edge` 6.5%); the allocator is 5%.
+
+**Fixes tried on the rung, all rejected:**
+- Chunk floor 16 -> 8/4/2/1: 121.5 / 124.2 / 126.1 / 135.7 vs 124.4 baseline. Noise, then worse.
+- Chunks per thread 16 -> 8/4/2/1: 124.2 / 128.8 / 117.8 / 119.5. `div=2` is ~4% better, the only
+  positive result, and too small to be worth the knob.
+- Running small rounds serially to dodge the pool wake-up: strictly worse at every threshold
+  (64/256/1024/4096 edges -> 126.7 / 135.7 / 162.7 / 254.9 vs 123.2). Even a 1-2ms round repays
+  the dispatch, so the idle is not avoidable wake-up latency.
+
+**Also measured:** fragmentation itself costs ~10-12% at *both* 1 and 8 threads (2^15, 65%:
+fragmented 673/123.6ms vs contiguous 613/110.2ms), so it is extra work — the last active block
+reaches the end of the table, so the trimmed column spans everything — and not load imbalance.
+
+**Where this leaves the sumcheck gap.** It is a round-barrier efficiency problem: 15 rounds, each a
+separate parallel region, with shrinking work and a hard join between them. bb's schedulers
+(`STATIC_BLOCKS`, `CHUNK_STEALING`) hold 7.67x through the same shape. Closing it means changing
+how a round is scheduled, not what it computes — and the rung makes that measurable in 122ms.
