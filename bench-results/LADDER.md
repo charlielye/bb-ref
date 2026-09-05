@@ -260,3 +260,24 @@ CAVEAT: msmbench uses msm()/None -> on-the-fly phi = a field mul per endo entry 
 `gather`; the real flow commits carry a precomputed phi table (no mul), so flow MSM is relatively
 better than msmbench's 1.23x. Next replication targets, ranked: fix the linked-6a bug (recovers
 ~38 ms), then port bb's Constantine SIMDx4 digit recoder (stages 1/4, ~the 46 ms residual).
+
+Update 14 — MSM AT PARITY. Two fixes, both found by instrumenting rather than reasoning:
+(a) Linked-6a correctness (see commit 9891833): the gather ignored the endomorphism with no phi
+    table, and wrote bb's coarse [0,2p) into bb-ref's canonical storage (a single-entry bucket
+    returns its gathered point unreduced). Canonicalising per entry cost 24% — the ark-boundary
+    tax. bb's operator== reduces both sides, so the tree now runs coarse end to end like bb's and
+    survivors are reduced once each on the way out. With both correct, linked-C 6a == Rust 6a at
+    every size, so the earlier "C is 38 ms faster" was the incorrect version doing less work.
+(b) THE ACTUAL GAP: bb's GLV_SMALL_N_THRESHOLD. bb runs GLV only for n <= 2^16 on wasm — above
+    that the doubled point count (2n gathers, 2n schedule entries) outweighs halving the windows.
+    We always used GLV. That is exactly the shape of the gap (it GREW with n: 2^16 0.64x,
+    2^17 1.11x, 2^18 1.14x, 2^19 1.21x). Ported with a full-width non-GLV path (4-limb decode,
+    no phi entries); BBREF_GLV_LOG2 overrides. Entries at 2^19: 9.44M -> 8.39M, matching bb's
+    c=16 / 16 rounds.
+  msmbench 8t vs bb commit_random 91/103/195/365:
+    2^16  60 ms (0.66x, we win)   2^17 103 (1.00x)   2^18 200 (1.02x)   2^19 376 (1.03x)
+  (always-GLV for comparison: 60 / 117 / 226 / 472.) Flow 5.74-5.82 s, byte-exact, suites green.
+ANSWER to "is ark forcing extra work": in the MSM, no longer — the only ark-imposed cost was
+canonical storage at the kernel boundary, now paid once per surviving bucket instead of per
+entry, and the field ops themselves already benchmark at bb's rate (L0 rung). No reason to
+replace ark; the vendored parts already let us match bb's representation choices where it counts.

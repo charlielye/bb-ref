@@ -108,27 +108,54 @@ where
     // sub-scalars: half the windows, half the schedule entries. Entry bit 30 marks the
     // endomorphism half, bit 31 the Booth digit sign.
     const PHI: u32 = 1 << 30;
-    let subs: Vec<([u64; 2], [u64; 2])> = scalars[..n].par_iter().map(crate::base::endo::glv_split).collect();
-    // bb Phase 1 scalar profile: the window count tracks the largest *actual* working scalar
-    // (not the 128-bit GLV bound) and the window size is chosen for the *nonzero* working
-    // scalar count. Commit polynomials are full of short scalars (selectors, small witness
-    // values), for which this cuts the rounds — and every per-round pass — several-fold.
-    let bit_len = |l: &[u64; 2]| -> usize {
-        if l[1] != 0 {
-            128 - l[1].leading_zeros() as usize
-        } else if l[0] != 0 {
-            64 - l[0].leading_zeros() as usize
-        } else {
-            0
-        }
+    // bb `GLV_SMALL_N_THRESHOLD`: above this the doubled point count (2n gathers, 2n schedule
+    // entries) outweighs halving the windows, so the MSM runs on full-width scalars instead.
+    // bb sets it at 2^16 for wasm; BBREF_GLV_LOG2 overrides for sweeps.
+    static GLV_LOG2: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    let glv_threshold = 1usize
+        << *GLV_LOG2.get_or_init(|| {
+            std::env::var("BBREF_GLV_LOG2").ok().and_then(|v| v.parse().ok()).unwrap_or(16)
+        });
+    let use_glv = n <= glv_threshold;
+    // Working sub-scalars: GLV gives two 128-bit halves per point (k1 against P, k2 against the
+    // endomorphism image), otherwise one full-width scalar per point.
+    let subs: Vec<([u64; 2], [u64; 2])> = if use_glv {
+        scalars[..n].par_iter().map(crate::base::endo::glv_split).collect()
+    } else {
+        Vec::new()
     };
-    let (effective_bits, n_active) = subs
-        .par_iter()
-        .map(|(k1, k2)| {
-            let (b1, b2) = (bit_len(k1), bit_len(k2));
-            (b1.max(b2), (b1 != 0) as usize + (b2 != 0) as usize)
-        })
-        .reduce(|| (0usize, 0usize), |a, b| (a.0.max(b.0), a.1 + b.1));
+    let full: Vec<[u64; 4]> = if use_glv {
+        Vec::new()
+    } else {
+        scalars[..n].par_iter().map(|s| s.into_bigint().0).collect()
+    };
+    // bb Phase 1 scalar profile: the window count tracks the largest *actual* working scalar
+    // (not the nominal bound) and the window size is chosen for the *nonzero* working scalar
+    // count. Commit polynomials are full of short scalars (selectors, small witness values),
+    // for which this cuts the rounds — and every per-round pass — several-fold.
+    let bit_len = |l: &[u64]| -> usize {
+        for (k, limb) in l.iter().enumerate().rev() {
+            if *limb != 0 {
+                return 64 * k + (64 - limb.leading_zeros() as usize);
+            }
+        }
+        0
+    };
+    let (effective_bits, n_active) = if use_glv {
+        subs.par_iter()
+            .map(|(k1, k2)| {
+                let (b1, b2) = (bit_len(k1), bit_len(k2));
+                (b1.max(b2), (b1 != 0) as usize + (b2 != 0) as usize)
+            })
+            .reduce(|| (0usize, 0usize), |a, b| (a.0.max(b.0), a.1 + b.1))
+    } else {
+        full.par_iter()
+            .map(|k| {
+                let b = bit_len(k);
+                (b, (b != 0) as usize)
+            })
+            .reduce(|| (0usize, 0usize), |a, b| (a.0.max(b.0), a.1 + b.1))
+    };
     if n_active == 0 {
         return Projective::<P>::zero();
     }
@@ -146,8 +173,8 @@ where
         .map(|t| t * n.div_ceil(tasks)..((t + 1) * n.div_ceil(tasks)).min(n))
         .collect();
     let stride = half + 1; // per-window histogram row: bucket magnitudes 1..=half
-    fn decode(limbs: &[u64; 2], c: usize, half: usize, num_windows: usize, mut f: impl FnMut(usize, i32)) {
-        if limbs[0] == 0 && limbs[1] == 0 {
+    fn decode(limbs: &[u64], c: usize, half: usize, num_windows: usize, mut f: impl FnMut(usize, i32)) {
+        if limbs.iter().all(|&l| l == 0) {
             return;
         }
         let mut carry = 0u64;
@@ -185,11 +212,15 @@ where
             let ptr = &ptr;
             for i in r.clone() {
                 if !points[i].is_zero() {
-                    let bump = |w: usize, d: i32| unsafe {
+                    let mut bump = |w: usize, d: i32| unsafe {
                         *ptr.0.add(cell(t, w, d.unsigned_abs() as usize)) += 1;
                     };
-                    decode(&subs[i].0, c, half, num_windows, bump);
-                    decode(&subs[i].1, c, half, num_windows, bump);
+                    if use_glv {
+                        decode(&subs[i].0, c, half, num_windows, &mut bump);
+                        decode(&subs[i].1, c, half, num_windows, &mut bump);
+                    } else {
+                        decode(&full[i], c, half, num_windows, &mut bump);
+                    }
                 }
             }
         });
@@ -250,8 +281,12 @@ where
                             *slot += 1;
                         }
                     };
-                    decode(&subs[i].0, c, half, num_windows, scatter(0));
-                    decode(&subs[i].1, c, half, num_windows, scatter(PHI));
+                    if use_glv {
+                        decode(&subs[i].0, c, half, num_windows, scatter(0));
+                        decode(&subs[i].1, c, half, num_windows, scatter(PHI));
+                    } else {
+                        decode(&full[i], c, half, num_windows, scatter(0));
+                    }
                 }
             }
         });
