@@ -90,11 +90,16 @@ fn main() {
         let mut state = RoundProver::new(n, &polys, &shifted, true, MEGA_ZK.trace_offset, n, None);
         let t = Instant::now();
         let mut round0_ms = 0.0;
+        let (mut uni_ms, mut fold_ms) = (0.0f64, 0.0f64);
         for round in 0..virtual_log_n {
             let t_round = Instant::now();
+            let t_u = Instant::now();
             let uni = state.univariate(&rels, &params, &betas, &Fr::from(1u64), &alphas, d);
             std::hint::black_box(&uni);
+            uni_ms += t_u.elapsed().as_secs_f64() * 1e3;
+            let t_f = Instant::now();
             state.partially_evaluate(&u);
+            fold_ms += t_f.elapsed().as_secs_f64() * 1e3;
             let rms = t_round.elapsed().as_secs_f64() * 1e3;
             if round == 0 {
                 round0_ms = rms;
@@ -106,8 +111,9 @@ fn main() {
         let ms = t.elapsed().as_secs_f64() * 1e3;
         if it > 0 {
             println!(
-                "  loop: {ms:8.1} ms   (round0 {round0_ms:6.1} ms, rest {:6.1} ms)",
-                ms - round0_ms
+                "  loop: {ms:8.1} ms   (round0 {round0_ms:6.1} ms, rest {:6.1} ms)  [univariate {uni_ms:6.1}, fold {fold_ms:6.1}, other {:5.1}]",
+                ms - round0_ms,
+                ms - uni_ms - fold_ms
             );
         }
     }

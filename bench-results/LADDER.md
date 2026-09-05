@@ -812,3 +812,49 @@ plus `dlfree` were 5% of busy time, wasm's allocator is globally locked, and we 
 
 Dead ends now eleven. The `bbpool.rs` port was removed after measuring; it is recoverable from
 this commit's parent if the pool question is ever reopened.
+
+## Update 32: the real mechanism — we pay a 39% parallel CPU tax, bb pays 10%
+
+Differential profiling (same rung, 1 thread vs 8, summed busy CPU across all threads) finally
+isolates it:
+
+| | busy CPU 1t | busy CPU 8t | parallel tax |
+|---|---|---|---|
+| bb | 3.54s | 3.88s | **1.10x** |
+| bb-ref | 2.21s | 3.07s | **1.39x** |
+
+We do 39% *more total work* when we go parallel; bb does 10% more. That is the whole scaling gap,
+and it is not idling — the extra shows up as busy time. At bb's tax our 8-thread number would be
+~97ms against bb's 103ms.
+
+**Landed fix: per-worker scratch instead of per-chunk.** `Accumulators` + `Scratch` are ~30KB
+together and were built fresh for each of the ~16 chunks a worker handles, so every chunk started
+cache-cold and went through the allocator (`dlmalloc`/`dlfree` went from 0.00s at 1 thread to
+0.14s at 8). One set per worker, reused across its chunks:
+
+| | median | range |
+|---|---|---|
+| per-chunk | 121.9ms | 120.2-130.9 |
+| per-worker | 119.3ms | 117.8-120.9 |
+
+**8/8 paired wins, 2.4%**, and the spread tightens. Parallel tax 1.39x -> 1.32x.
+
+Also fixed: `relation_stats_enabled()` called `std::env::var_os` **per edge**. Cached in a
+`LazyLock` — 7/8 wins, 0.5%. Small here because wasm's env access is not the contended lock it is
+on native, but a per-edge environment lookup is wrong regardless.
+
+**Rejected, each on 8 paired runs:**
+- rayon `fold` instead of per-thread slots: *worse*, per-thread slots wins 8/8 by 2.5ms. The
+  false-sharing theory about the slot mutexes was wrong; `fold` builds one accumulator per split
+  job rather than per thread.
+- Serial path for the row-disabling head (`trace_offset/2` = 2 edges): neutral, 3/8. rayon already
+  runs a single-chunk dispatch inline.
+
+**Flow effect is below noise, as expected:** the sumcheck loop is ~9% of the flow, so 2.4% of it is
+~0.2% of the wall (6 paired runs: 2/6, inside noise). The rung is where this is measurable.
+
+**Where the remaining tax is.** After the fix, `accumulate_edge` still costs 1.63x more CPU at 8
+threads than at 1, and the graded relation ops 1.51x. That is per-call slowdown, i.e. memory, not
+allocation or scheduling. The table is 46 separate column allocations and each edge touches one
+cache line in each of them, so eight workers run ~368 concurrent streams. bb backs its
+partially-evaluated multivariates with a single buffer. That is the next thing to try.

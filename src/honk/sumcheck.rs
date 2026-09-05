@@ -662,7 +662,11 @@ fn gate_separator_products<F: FieldLike + Copy>(betas: &[F], round: usize, num_e
 static RELATION_STATS: std::sync::Mutex<Vec<(u128, u64)>> = std::sync::Mutex::new(Vec::new());
 static EXTENSION_NS: std::sync::Mutex<u128> = std::sync::Mutex::new(0);
 pub fn relation_stats_enabled() -> bool {
-    std::env::var_os("BBREF_TIMING_RELATIONS").is_some()
+    // Read once. This is called per edge, and `std::env::var_os` takes a process-wide lock, so a
+    // per-call lookup serializes every worker against every other one.
+    static V: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| std::env::var_os("BBREF_TIMING_RELATIONS").is_some());
+    *V
 }
 fn print_relation_stats<F: FieldLike>(rels: &impl RelationSet<F>, num_edges: usize) {
     let mut stats = RELATION_STATS.lock().unwrap();
@@ -1090,30 +1094,33 @@ where
     // leave threads idle behind stragglers at the round barrier.
     let chunk = (edges.len() / (16 * rayon::current_num_threads())).max(16);
     let starts: Vec<usize> = edges.clone().step_by(chunk).collect();
-    starts
-        .into_par_iter()
-        .map(|start| {
-            let mut acc = Accumulators::new(rels, d);
-            let mut scratch = Scratch::new(rels, table.len(), d);
-            for e in start..(start + chunk).min(edges.end) {
-                accumulate_edge(
-                    rels,
-                    used,
-                    table,
-                    e,
-                    params,
-                    params_uni,
-                    &pows[e],
-                    &mut acc,
-                    &mut scratch,
-                );
-            }
+    // Accumulators and scratch are ~30KB together. Building them per chunk meant every one of the
+    // ~16 chunks a worker handles started cache-cold and went through the allocator. One set per
+    // worker, reused across that worker's chunks, measured better than rayon's `fold` (which
+    // builds one per split job rather than per thread). Summing is associative, so accumulating a
+    // worker's chunks into a single set gives the same result.
+    let nthreads = rayon::current_num_threads().max(1);
+    let slots: Vec<std::sync::Mutex<Option<(Accumulators<F>, Scratch<F>)>>> =
+        (0..nthreads).map(|_| std::sync::Mutex::new(None)).collect();
+    starts.into_par_iter().for_each(|start| {
+        let idx = rayon::current_thread_index().unwrap_or(0).min(nthreads - 1);
+        let mut guard = slots[idx].lock().unwrap();
+        let (acc, scratch) = guard
+            .get_or_insert_with(|| (Accumulators::new(rels, d), Scratch::new(rels, table.len(), d)));
+        for e in start..(start + chunk).min(edges.end) {
+            accumulate_edge(rels, used, table, e, params, params_uni, &pows[e], acc, scratch);
+        }
+    });
+    let mut out = Accumulators::new(rels, d);
+    for slot in &slots {
+        if let Some((mut acc, scratch)) = slot.lock().unwrap().take() {
             if scratch.graded {
                 flush_graded(&scratch, &mut acc);
             }
-            acc
-        })
-        .reduce(|| Accumulators::new(rels, d), Accumulators::add)
+            out = Accumulators::add(out, acc);
+        }
+    }
+    out
 }
 
 /// Add the contributions of the edge `(table[·][2e], table[·][2e+1])` at every `k`, skipping the
