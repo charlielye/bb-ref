@@ -87,7 +87,14 @@ fn main() {
     // One warm-up pass, then timed passes. Each pass is a fresh prover so round 0 reads borrowed
     // columns exactly as the flow does.
     for it in 0..iters + 1 {
-        let mut state = RoundProver::new(n, &polys, &shifted, true, MEGA_ZK.trace_offset, n, None);
+        // BBREF_WITNESS_END_ACTIVE: cap the round at the active prefix (only meaningful without
+        // BBREF_FRAG), so gap rows are never visited — what bb's active-range iteration does.
+        let witness_end = if std::env::var_os("BBREF_WITNESS_END_ACTIVE").is_some() && !frag {
+            n * active_pct / 100
+        } else {
+            n
+        };
+        let mut state = RoundProver::new(n, &polys, &shifted, true, MEGA_ZK.trace_offset, witness_end, None);
         let t = Instant::now();
         let mut round0_ms = 0.0;
         let (mut uni_ms, mut fold_ms) = (0.0f64, 0.0f64);

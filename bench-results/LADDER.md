@@ -1016,3 +1016,32 @@ serial fold for tiny tables, parallel `pows` doubling (the last neutral, dispatc
 15 = 5ms; `rest` (2-edge head incl. its own flush) ~250us x 15 = 4ms; `pows` ~2ms serial;
 big-round per-worker busy inflation (r0 42.5ms vs 35.9 ideal) ~10ms — the only item that is not
 a serial section, and the one matching the 4% IPC drop.
+
+## Update 38: sumcheck round rung 122 -> 108ms; residual characterised
+
+**Landed this pass** (all 8-pair interleaved, proofs identical, 23 suites green):
+| change | rung | wins |
+|---|---|---|
+| per-worker scratch (per-chunk before) | 121.9 -> 119.3 | 8/8 |
+| parallel graded flush | 117.8 -> 113.4 | 7/7 |
+| one dispatch/round: head + flush fused, chunk floor 1, stride-reused `pows` | 112.4 -> 108.6 | 8/8 |
+| 32 chunks/thread over 16 | 109.1 -> 107.2 | 6/6 |
+
+bb: 103ms. Rung now **~1.05x**; pinned to one L3 domain **100.6ms, faster than bb**.
+
+**Rejected on 8 pairs:** static round-robin striping (0/8 — mean busy improves 2% from L2 reuse, but
+fragmented traces make stripes uneven, r0 spread 9ms); boxed slots against false sharing (3/7);
+chunked parallel `pows` build (dispatch-bound); persistent cross-round scratch (3/8).
+
+**Killed by static analysis before building:** row-parallel fold for cross-round row affinity — bb's
+`partially_evaluate` is `parallel_for` over polynomials, i.e. column-parallel like ours. Active-range
+iteration to skip gap rows — bb's static row manifest is ECCVM-only (`row_skip_active_prefix_end`),
+Mega flavors scan rows with `skip_entire_row` like us; and measured gap-visit cost is 0.6-0.8%.
+
+**The residual, with counters.** Clean `perf stat`: ours 1t IPC 3.46 / 8t 3.13; bb 3.15 / 3.33.
+Instructions/pass flat for both (no extra work at 8t). We run a denser instruction stream than bb
+(fewer instructions, higher IPC single-threaded) and it degrades ~10% at 8 threads where bb's
+improves; pinning to one L3 domain recovers most of it (105.6 -> 100.6). Both provers read the
+table identically, so this is the price of the denser stream paying proportionally more for the
+same added cross-domain latency — not a scheduling defect, and not fixable from inside the module
+short of a row-major table layout.
