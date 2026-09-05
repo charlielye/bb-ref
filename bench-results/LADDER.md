@@ -359,3 +359,50 @@ bb's wasm module is 122 MB; ours is 10.9 MB. So on the typical flow bb spends ~0
 ~4.6 s of module-compile in its 85.08 s total. Our real proving-work gap is therefore ~1.2x and
 the headline totals understate it. Any future parity claim should be made on proving-only time,
 or at least state this handicap.
+
+## Update 20: matched phase instrumentation, bb `--print_bench` vs bb-ref `BBREF_BENCH`
+
+Replaces the two synthetic rungs (folding sumcheck, sparse commit) with instrumentation on the
+*real* flow, so no rung has to be argued to match flow conditions.
+
+- bb already has this: `BB_BENCH` scopes plus `--print_bench` / `--bench_out`. The earlier claim
+  that it "can't print under wasm because static destructors are disabled" was wrong. The gate is
+  `#if !defined(__wasm__) || defined(ENABLE_WASM_BENCH)` in `bb/cli.cpp`; native prints today, and
+  wasm needs the supported `-DENABLE_WASM_BENCH=ON` option (OFF in the wasm preset by design).
+  Built into a separate `build-wasm-bench` so the pinned bench wasm is untouched.
+- bb-ref side: `src/base/bench.rs`, a hierarchical per-thread scope timer matched to bb's, with
+  scope names copied from bb's so the tables diff line-for-line. `BBREF_BENCH=1`.
+
+**Reading bb's table correctly.** bb's reported `time` is `time_max` — the largest single thread's
+total (`time += entry.time_max`, bb_bench.cpp:311) — not a cross-thread sum. Comparing our
+cross-thread sum against it inflated our numbers ~2.5x and produced a phantom "MSM is 2.6x" result.
+Our table now prints both `time_max` and `time_sum`; only `time_max` is comparable to bb.
+
+Native, 8 threads, `ecdsar1+transfer_1_recursions+sponsored_fpc`, median of 3, bb's `time_max`:
+
+| phase | bb | bb-ref | ratio |
+|---|---|---|---|
+| fold: instance->accumulator | 1.138s | 1.307s | 1.15x |
+| fold: Oink | 0.845s | 0.796s | 0.94x |
+| fold: sumcheck | 0.358s | 0.452s | **1.26x** |
+| joint proof (MegaZK+Translator) | 0.761s | 0.767s | 1.01x |
+| ECCVM | 0.493s | 0.724s | **1.47x** |
+| commit (`CommitmentKey::commit`) | 0.690s | 0.958s | **1.39x** |
+| MSM stages 1-4 (schedule) | 0.233s | 0.173s | 0.74x |
+| MSM stage 6a (bucket partials) | 1.154s | 0.689s | 0.60x |
+| MSM stage 6b+7 (reduce/combine) | 0.179s | 0.142s | 0.79x |
+
+Native wall for the same flow: bb 3.43/3.73s, bb-ref 3.63/3.94s. Instrumentation overhead is
+within run-to-run noise.
+
+**What this overturns.**
+- *MSM is not the gap.* Every replicated Pippenger stage is faster than bb's on the real flow
+  (0.60-0.79x). The MSM rung parity holds and then some.
+- *But `commit` is 1.39x* while its MSM stages are 0.6-0.8x, so the cost is in `commit` **outside**
+  the Pippenger stages: sparse compaction, the small-MSM path, allocation and setup. That is a
+  newly localized, unexplored lever.
+- *Sumcheck is not at parity in the flow.* Ours is 1.26x bb's folding sumcheck, even though we beat
+  bb 285ms vs 341ms on the synthetic dense round-0 rung (Update 18). The dense single-round rung
+  does not predict the flow's skip-heavy all-rounds behaviour, which is exactly the mismatch these
+  rungs were built to remove. Update 18's "our sumcheck is faster" holds only for that rung.
+- *ECCVM at 1.47x is the largest single ratio* and had no rung at all before now.

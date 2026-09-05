@@ -80,6 +80,7 @@ where
     P::BaseField: crate::honk::quadf::QuadConsts + crate::base::endo::EndoField,
     P::ScalarField: crate::base::endo::EndoField,
 {
+    crate::scope!("MSM::batch_multi_scalar_mul");
     let n = points.len().min(scalars.len());
     // Mostly-zero inputs (masking polys, sorted range columns, sparse selectors) compact to their
     // support first, so the cost is per-nonzero, not per-length, and the window size fits the real
@@ -118,7 +119,10 @@ where
     let glv_threshold = 1usize
         << *GLV_LOG2.get_or_init(|| {
             let default_log2 = if cfg!(target_family = "wasm") { 16 } else { 15 };
-            std::env::var("BBREF_GLV_LOG2").ok().and_then(|v| v.parse().ok()).unwrap_or(default_log2)
+            std::env::var("BBREF_GLV_LOG2")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default_log2)
         });
     let use_glv = n <= glv_threshold;
     // Working sub-scalars: GLV gives two 128-bit halves per point (k1 against P, k2 against the
@@ -196,6 +200,9 @@ where
             }
         }
     }
+
+    // Scope names mirror bb's `MSM::*` BB_BENCH scopes so the two phase tables line up.
+    let sched_scope = crate::base::bench::Scope::new("MSM::build_point_schedule");
 
     let timing = std::env::var("BBREF_MSM_TIMING").is_ok();
     let mut t0 = std::time::Instant::now();
@@ -297,6 +304,8 @@ where
     }
 
     mark("3 scatter");
+    drop(sched_scope);
+    let bucket_scope = crate::base::bench::Scope::new("MSM::batch_accumulate_into_buckets");
     if std::env::var_os("BBREF_MSM_STATS").is_some() {
         let entries: usize = schedules.iter().map(|s| s.len()).sum();
         eprintln!(
@@ -641,6 +650,8 @@ where
         eprintln!("[msm 4a] {}", s6a_timing::report());
     }
     mark("4 tree");
+    drop(bucket_scope);
+    let reduce_scope = crate::base::bench::Scope::new("MSM::accumulate_buckets");
     // bb Stage 6b: rebalanced tasks own uniform digit ranges [lo_d, hi_d] over 1..=half. Each task
     // gathers the contributing threads' partials for every window into a column (SoA) layout with a
     // power-of-two stride (a seam digit shared by two threads is merged projectively), then runs
@@ -742,6 +753,7 @@ where
         .collect();
 
     mark("5 bucketreduce");
+    drop(reduce_scope);
     // Horner walk, high window to low: acc = acc * 2^c + W_w.
     let mut acc = Projective::<P>::zero();
     for w in (0..num_windows).rev() {

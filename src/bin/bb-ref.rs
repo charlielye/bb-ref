@@ -210,6 +210,7 @@ fn apply_hugepage_tunable() {
 }
 
 fn main() {
+    bb_ref::base::bench::init();
     #[cfg(all(target_os = "linux", not(feature = "heap-profile")))]
     apply_hugepage_tunable();
 
@@ -270,6 +271,7 @@ fn main() {
 
     if scheme == "chonk" {
         chonk(cmd, &flags);
+        bb_ref::base::bench::print();
         return;
     }
     let flavor: &'static FlavorDesc = match bb_ref::msgpack::handler::select_flavor(&settings) {

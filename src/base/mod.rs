@@ -1,16 +1,17 @@
 //! Foundations: field/curve traits over arkworks, serialization, Poseidon2, transcript, SRS.
+pub mod bench;
 pub mod codec;
 pub mod endo;
-#[cfg(all(target_family = "wasm", target_feature = "simd128"))]
-pub mod packed;
 pub mod field;
 pub mod fold;
 pub mod generators;
 pub mod group;
 pub mod io;
 pub mod keccak;
-pub mod msm;
 pub mod mont29;
+pub mod msm;
+#[cfg(all(target_family = "wasm", target_feature = "simd128"))]
+pub mod packed;
 pub mod poly;
 pub mod poseidon2;
 pub mod poseidon2_params;
@@ -47,7 +48,11 @@ pub fn grumpkin_endo() -> &'static fold::Endo<ark_grumpkin::GrumpkinConfig> {
         assert!(beta.sqr() * beta == Fr::one() && beta != Fr::one(), "bad β");
         let g = GrumpkinAffine::generator();
         let lg = (g * lambda).into_affine();
-        assert_eq!(lg, GrumpkinAffine::new_unchecked(g.x * beta, g.y), "λ and β do not pair");
+        assert_eq!(
+            lg,
+            GrumpkinAffine::new_unchecked(g.x * beta, g.y),
+            "λ and β do not pair"
+        );
         fold::Endo {
             lambda,
             beta,

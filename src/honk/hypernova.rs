@@ -152,9 +152,12 @@ pub fn instance_to_accumulator(
     rng: &mut dyn Rng,
 ) -> ProverClaim {
     let flavor = inst.flavor;
+    let _go = crate::base::bench::Scope::new("OinkProver::prove");
     let oink = prove_oink(inst, vk, ck, t, rng, true);
+    drop(_go);
     crate::base::timing::phase("  fold: oink");
     let betas: Vec<Fr> = t.dyadic_powers("HypernovaFoldingProver:gate_challenge", flavor.virtual_log_n);
+    let _gs = crate::base::bench::Scope::new("HypernovaFoldingProver::sumcheck");
     let sc = prove_sumcheck::<Bn254>(
         inst.dyadic_size,
         &HonkRelations {
@@ -170,6 +173,7 @@ pub fn instance_to_accumulator(
         None,
         None,
     );
+    drop(_gs);
     crate::base::timing::phase("  fold: sumcheck");
 
     let layout = &inst.layout;

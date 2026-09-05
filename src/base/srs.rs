@@ -261,6 +261,7 @@ where
 
     /// `sum_i coeffs[i] * [tau^i]`.
     pub fn commit(&self, p: &Polynomial<G::ScalarField>) -> G {
+        crate::scope!("CommitmentKey::commit");
         let k = p.end_index();
         assert!(
             k <= self.points.len(),

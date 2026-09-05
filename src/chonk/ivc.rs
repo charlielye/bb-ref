@@ -183,21 +183,27 @@ impl Chonk {
             assert!(self.folding_prover.is_none());
             self.folding_prover = Some(FoldingProver::new());
         }
+        let _gi = crate::base::bench::Scope::new("ProverInstance::from_builder");
         let mut inst = ProverInstance::from_builder(kind.flavor(), &mut circuit, rng);
+        drop(_gi);
         // The builder is dead weight through the fold that follows (bb frees it here too).
         drop(circuit);
         timing::phase("prover instance");
         let vk = vk.unwrap_or_else(|| inst.compute_vk(&self.ck));
         timing::phase("vk");
+        let _g = crate::base::bench::Scope::new("FoldingProver::accumulate_instance");
         let proof = self
             .folding_prover
             .as_mut()
             .unwrap()
             .accumulate_instance(&mut inst, &vk, &self.ck, rng);
+        drop(_g);
         timing::phase("instance to accumulator (oink + sumcheck)");
         self.verification_queue.push(VerifierInputs { proof, vk, kind });
         if matches!(next, Some(CircuitKind::Kernel) | Some(CircuitKind::HidingKernel)) {
+            let _gm = crate::base::bench::Scope::new("Chonk::prove_multilinear_batching");
             self.prove_multilinear_batching();
+            drop(_gm);
             timing::phase("multilinear batching");
         }
         self.op_queue.borrow_mut().merge();
@@ -217,14 +223,18 @@ impl Chonk {
     pub fn prove(&mut self, rng: &mut dyn Rng) -> ChonkProof {
         let (mut inst, vk) = self.hiding.take().expect("hiding kernel not accumulated");
         let mut t = NativeTranscript::new();
+        let _g = crate::base::bench::Scope::new("HidingKernel::oink");
         let oink = prove_oink(&mut inst, &vk, &self.ck, &mut t, rng, false);
+        drop(_g);
         let hiding_oink_proof = t.export_proof();
         timing::phase("hiding oink");
         let mut q = self.op_queue.borrow_mut();
         merge_prove(&mut q, &self.ck, &mut t);
         let merge_proof = t.export_proof();
         timing::phase("merge");
+        let _ge = crate::base::bench::Scope::new("ECCVMProver::construct_proof");
         let eccvm = eccvm_prove(&q, &GrumpkinKey::new(ECCVM_FIXED_SIZE), &mut t, rng);
+        drop(_ge);
         let eccvm_proof = t.export_proof();
         timing::phase("eccvm");
         let (v, x) = (eccvm.batching_challenge_v, eccvm.evaluation_challenge_x);
@@ -233,7 +243,9 @@ impl Chonk {
         let mut polys = TranslatorPolys::from_circuit(&circuit, &TranslatorPolys::random_masking(rng));
         drop(circuit);
         timing::phase("translator polys");
+        let _gj = crate::base::bench::Scope::new("BatchedHonkTranslatorProver::construct_proof");
         joint_prove(&inst, &oink.params, &mut polys, &v, &x, &self.ck, &mut t, rng);
+        drop(_gj);
         let joint_proof = t.export_proof();
         timing::phase("joint proof");
         self.hiding = Some((inst, vk));
