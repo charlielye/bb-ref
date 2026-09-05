@@ -406,3 +406,46 @@ within run-to-run noise.
   does not predict the flow's skip-heavy all-rounds behaviour, which is exactly the mismatch these
   rungs were built to remove. Update 18's "our sumcheck is faster" holds only for that rung.
 - *ECCVM at 1.47x is the largest single ratio* and had no rung at all before now.
+
+## Update 21: wasm phase table (bbbench, the parity-relevant one)
+
+Same instrumentation as Update 20, now on wasm, which is the target. bbbench (16 cores, idle,
+load 0.00), 8 threads, V8 via `runwasi_threads.mjs` with `--no-liftoff` on both sides, median of 3,
+flow `ecdsar1+transfer_1_recursions+sponsored_fpc`. Comparing bb's `time_max`.
+
+Instrumentation overhead measured, not assumed: pinned wasm bb 11.63/11.68/11.67s vs instrumented
+wasm bb 11.66/11.70/11.70s = **0.3%**. Every ratio below is safe from it.
+
+| phase | bb | bb-ref | ratio |
+|---|---|---|---|
+| fold: instance->accumulator | 2.300s | 2.291s | 1.00x |
+| &nbsp;&nbsp;fold: Oink | 1.400s | 1.144s | 0.82x |
+| &nbsp;&nbsp;fold: sumcheck | 0.957s | 1.030s | 1.08x |
+| joint proof (MegaZK+Translator) | 1.389s | 1.273s | 0.92x |
+| ECCVM | 1.483s | 1.792s | **1.21x** |
+| commit (all commit scopes) | 2.023s | 1.289s | 0.64x |
+| MSM stages 1-4 (schedule) | 0.219s | 0.213s | 0.97x |
+| MSM stage 6a (bucket partials) | 1.232s | 0.821s | 0.67x |
+| MSM stage 6b+7 (reduce/combine) | 0.309s | 0.225s | 0.73x |
+
+**Trap: bb splits its commits across two scopes**, `CommitmentKey::commit` (0.832s) and
+`CommitmentKey::batch_commit` (1.191s), while every bb-ref commit lands in one. Comparing the
+single scope reads 1.55x against us; counting both, the commit path is 0.64x and we win it. The
+native Update 20 "commit 1.39x" row has the same defect and is retracted.
+
+**Where wasm actually stands.** Every phase is at or better than parity except ECCVM at 1.21x,
+with sumcheck at 1.08x. Folding is 1.00x and MSM is faster at every stage. ECCVM is now the
+largest single lever and still has no dedicated rung.
+
+**Sumcheck, finally answered for wasm: 1.08x, effectively parity.** Not the 0.84x the synthetic
+dense round-0 rung claimed, and not the 1.26x the native flow showed. It is not the lever.
+
+**No wall claim from these runs.** `--no-liftoff` forces full optimizing compilation of bb's
+122MB module up front against our 10.9MB, which inflates bb's wall by seconds; the committed
+`bench-results/chonk-v8.txt` tables (plain `node`) remain the wall reference. The phase ratios are
+unaffected because both sides ran under identical flags.
+
+**Also noted:** bb's `ChonkAPI::prove` includes a full `ChonkVerifier::verify` (1.776s) that
+bb-ref's chonk CLI does not perform. The flow harness runs the same `prove` subcommand on both, so
+that verify sits inside bb's wall in every published flow table. Worth resolving before the next
+wall comparison.
