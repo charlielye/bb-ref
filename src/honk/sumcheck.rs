@@ -643,26 +643,14 @@ impl<F: FieldLike + Copy> Accumulators<F> {
 
 /// `prod_{bits j of e} betas[round + 1 + j]` for every edge `e` of the round (bb `beta_products`):
 /// one multiplication per entry.
-fn gate_separator_products<F: FieldLike + Copy + Send + Sync>(betas: &[F], round: usize, num_edges: usize) -> Vec<F> {
+fn gate_separator_products<F: FieldLike + Copy>(betas: &[F], round: usize, num_edges: usize) -> Vec<F> {
     let mut p = vec![F::one(); num_edges.max(1)];
     let mut j = 0;
     while (1 << j) < num_edges {
         let b = betas[round + 1 + j];
         let (lo, hi) = p.split_at_mut(1 << j);
-        // Each doubling step is an independent scaled copy of the prefix; the last few steps
-        // are the bulk of the array and were a serial ~1ms per round at 2^15.
-        if hi.len() >= 4096 {
-            hi.par_chunks_mut(1024)
-                .zip(lo.par_chunks(1024))
-                .for_each(|(h, l)| {
-                    for (x, y) in h.iter_mut().zip(l.iter()) {
-                        *x = *y * b;
-                    }
-                });
-        } else {
-            for (x, y) in hi.iter_mut().zip(lo.iter()) {
-                *x = *y * b;
-            }
+        for (x, y) in hi.iter_mut().zip(lo.iter()) {
+            *x = *y * b;
         }
         j += 1;
     }
@@ -1122,70 +1110,112 @@ where
     acc
 }
 
+#[allow(clippy::too_many_arguments)]
 fn accumulate_edges<F: NativeField>(
     rels: &(impl RelationSet<F> + Sync),
     used: &[Vec<usize>],
     table: &[Column<F>],
     edges: std::ops::Range<usize>,
+    head: Option<std::ops::Range<usize>>,
     params: &RelationParams<F>,
     pows: &[F],
     d: usize,
-) -> Accumulators<F>
+) -> (Accumulators<F>, Option<Accumulators<F>>)
 where
     RelationParams<F>: Sync,
 {
     let params_uni = lift_params(params);
     let params_uni = &params_uni;
-    // Several chunks per thread, each with its own accumulators and scratch: active-edge cost is
-    // skewed (a poseidon2 block's edges cost multiples of an arithmetic block's), so coarse chunks
-    // leave threads idle behind stragglers at the round barrier.
-    let chunk = (edges.len() / (16 * rayon::current_num_threads())).max(1);
-    let starts: Vec<usize> = edges.clone().step_by(chunk).collect();
-    // Accumulators and scratch are ~30KB together. Building them per chunk meant every one of the
-    // ~16 chunks a worker handles started cache-cold and went through the allocator. One set per
-    // worker, reused across that worker's chunks, measured better than rayon's `fold` (which
-    // builds one per split job rather than per thread). Summing is associative, so accumulating a
-    // worker's chunks into a single set gives the same result.
+    // Several chunks per thread: active-edge cost is skewed (a poseidon2 block's edges cost
+    // multiples of an arithmetic block's), so coarse chunks leave threads idle behind stragglers.
+    // Floor 1: with per-worker scratch a chunk is cheap, and a floor of 16 left the 8-128-edge
+    // rounds on one worker.
     let nthreads = rayon::current_num_threads().max(1);
+    // 32 chunks per thread measured better than 16 (6/6 pairs): the straggler spread in the big
+    // rounds shrinks faster than the per-chunk claim cost grows.
+    let chunk = (edges.len() / (32 * nthreads)).max(1);
+    let starts: Vec<usize> = edges.clone().step_by(chunk).collect();
+    let nchunks = starts.len();
+    // Work items: the main chunks, plus (when present) the row-disabling head as one more item
+    // that accumulates into its own slot. Everything in this round — chunks, head, and the graded
+    // flush of each slot — happens inside one dispatch; a second dispatch for the flush, or a
+    // serial head, was ~0.6ms per round of workers waiting at the barrier.
+    let nitems = nchunks + usize::from(head.is_some());
+    let next = std::sync::atomic::AtomicUsize::new(0);
     let slots: Vec<std::sync::Mutex<Option<(Accumulators<F>, Scratch<F>)>>> =
         (0..nthreads).map(|_| std::sync::Mutex::new(None)).collect();
+    let head_slot: std::sync::Mutex<Option<(Accumulators<F>, Scratch<F>)>> = std::sync::Mutex::new(None);
     let detail = round_detail();
     let busy: Vec<std::sync::atomic::AtomicU64> =
         (0..nthreads).map(|_| std::sync::atomic::AtomicU64::new(0)).collect();
-    starts.into_par_iter().for_each(|start| {
-        let idx = rayon::current_thread_index().unwrap_or(0).min(nthreads - 1);
+    let work = |w: usize| {
         let t0 = detail.then(std::time::Instant::now);
-        let mut guard = slots[idx].lock().unwrap();
+        let mut guard = slots[w].lock().unwrap();
         let (acc, scratch) = guard
             .get_or_insert_with(|| (Accumulators::new(rels, d), Scratch::new(rels, table.len(), d)));
-        for e in start..(start + chunk).min(edges.end) {
-            accumulate_edge(rels, used, table, e, params, params_uni, &pows[e], acc, scratch);
+        let mut did_head = false;
+        loop {
+            let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if i >= nitems {
+                break;
+            }
+            if i == nchunks {
+                let h = head.clone().unwrap();
+                let mut hg = head_slot.lock().unwrap();
+                let (hacc, hscratch) =
+                    hg.get_or_insert_with(|| (Accumulators::new(rels, d), Scratch::new(rels, table.len(), d)));
+                for e in h {
+                    accumulate_edge(rels, used, table, e, params, params_uni, &pows[e], hacc, hscratch);
+                }
+                did_head = true;
+                continue;
+            }
+            let start = starts[i];
+            for e in start..(start + chunk).min(edges.end) {
+                accumulate_edge(rels, used, table, e, params, params_uni, &pows[e], acc, scratch);
+            }
+        }
+        if scratch.graded {
+            flush_graded(scratch, acc);
+        }
+        if did_head {
+            if let Some((hacc, hscratch)) = head_slot.lock().unwrap().as_mut() {
+                if hscratch.graded {
+                    flush_graded(hscratch, hacc);
+                }
+            }
         }
         if let Some(t0) = t0 {
-            busy[idx].fetch_add(t0.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+            busy[w].fetch_add(t0.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
         }
+    };
+    rayon::in_place_scope(|scope| {
+        for w in 1..nthreads {
+            let work = &work;
+            scope.spawn(move |_| work(w));
+        }
+        work(0);
     });
     if detail {
         let mut g = SLOT_BUSY_NS.lock().unwrap();
         g.clear();
         g.extend(busy.iter().map(|b| b.load(std::sync::atomic::Ordering::Relaxed)));
     }
-    // `flush_graded` Horner-evaluates every graded subrelation at every point (~2600 field muls per
-    // slot); done serially over eight slots it was ~1.3ms per round on the calling thread while the
-    // workers sat at the barrier. Flush each slot on the pool, then sum the small results.
-    let flushed: Vec<Accumulators<F>> = slots
-        .par_iter()
-        .filter_map(|slot| {
-            let (mut acc, scratch) = slot.lock().unwrap().take()?;
-            if scratch.graded {
-                flush_graded(&scratch, &mut acc);
-            }
-            Some(acc)
-        })
-        .collect();
-    flushed
-        .into_iter()
-        .fold(Accumulators::new(rels, d), Accumulators::add)
+    let mut out = Accumulators::new(rels, d);
+    for slot in &slots {
+        if let Some((acc, _)) = slot.lock().unwrap().take() {
+            out = Accumulators::add(out, acc);
+        }
+    }
+    let head_acc = head.map(|_| {
+        head_slot
+            .lock()
+            .unwrap()
+            .take()
+            .map(|(a, _)| a)
+            .unwrap_or_else(|| Accumulators::new(rels, d))
+    });
+    (out, head_acc)
 }
 
 /// Add the contributions of the edge `(table[·][2e], table[·][2e+1])` at every `k`, skipping the
@@ -1370,6 +1400,8 @@ pub struct RoundProver<'a, F> {
     ext: ExtensionWeights<F>,
     /// Columns read by each relation (`used_columns`), found on the first round.
     used: Vec<Vec<usize>>,
+    /// Round-0 gate separators; round r's are the stride-2^r subsequence, so they are built once.
+    pows0: Vec<F>,
 }
 
 impl<'a, F: NativeField + QuadConsts> RoundProver<'a, F>
@@ -1413,6 +1445,7 @@ where
             active_prefix_end,
             ext: ExtensionWeights { weights: vec![] },
             used: vec![],
+            pows0: vec![],
         }
     }
     /// Extension weights for this relation set and univariate length (built once, on the first round).
@@ -1472,21 +1505,51 @@ where
             }
             let detail = round_detail();
             let t_pows = std::time::Instant::now();
-            let pows = gate_separator_products(betas, round, round_size / 2);
+            if self.pows0.is_empty() {
+                self.pows0 = gate_separator_products(betas, 0, 1 << (self.log_n - 1));
+            }
+            // Round r's separators are the stride-2^r subsequence of round 0's.
+            let strided: Vec<F>;
+            let pows: &[F] = if round == 0 {
+                &self.pows0
+            } else {
+                let step = 1usize << round;
+                strided = (0..round_size / 2).map(|e| self.pows0[e * step]).collect();
+                &strided
+            };
             let pows_us = t_pows.elapsed().as_micros();
             let t_edges = std::time::Instant::now();
+            let head_range = self.row_disabling.then(|| 0..self.excluded_head / 2);
+            let mut head_acc: Option<Accumulators<F>> = None;
             let acc = self
                 .edge_ranges(round_size)
                 .into_iter()
-                .map(|edges| {
+                .enumerate()
+                .map(|(ri, edges)| {
                     if quad_sumcheck_enabled(RelationSet::<F>::num_relations(rels), round) {
-                        accumulate_edges_quad(rels, &self.used, &self.table, edges, params, &pows, d)
+                        accumulate_edges_quad(rels, &self.used, &self.table, edges, params, pows, d)
                     } else {
-                        accumulate_edges(rels, &self.used, &self.table, edges, params, &pows, d)
+                        let head = if ri == 0 { head_range.clone() } else { None };
+                        let (a, h) = accumulate_edges(rels, &self.used, &self.table, edges, head, params, pows, d);
+                        if h.is_some() {
+                            head_acc = h;
+                        }
+                        a
                     }
                 })
                 .reduce(Accumulators::add)
                 .unwrap_or_else(|| Accumulators::new(rels, d));
+            if self.row_disabling && head_acc.is_none() {
+                head_acc = Some(accumulate_edges_serial(
+                    rels,
+                    &self.used,
+                    &self.table,
+                    head_range.clone().unwrap(),
+                    params,
+                    pows,
+                    d,
+                ));
+            }
             if relation_stats_enabled() {
                 print_relation_stats::<F>(rels, round_size / 2);
             }
@@ -1495,16 +1558,7 @@ where
             let t_rest = std::time::Instant::now();
             let mut univariate =
                 batch_over_relations(rels, &self.ext, &acc, alphas, &betas[round], partial_eval, None, d);
-            if self.row_disabling {
-                let head = accumulate_edges_serial(
-                    rels,
-                    &self.used,
-                    &self.table,
-                    0..self.excluded_head / 2,
-                    params,
-                    &pows,
-                    d,
-                );
+            if let Some(head) = head_acc {
                 let head_uni = batch_over_relations(
                     rels,
                     &self.ext,
