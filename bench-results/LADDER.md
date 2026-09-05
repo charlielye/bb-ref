@@ -889,3 +889,34 @@ each edge touches one cache line in each; eight workers drive ~368 concurrent st
 that is 48MB at 2^15, larger than one domain's 32MB L3. bb backs its partially-evaluated
 multivariates with a single buffer. Reducing our footprint and stream count is the lever, and
 affinity is not controllable from inside the module in production, so the fix has to be the layout.
+
+## Update 34: where the sumcheck round stands, and what is left
+
+Pinning gain is ~5-9% at every size (6MB, 12MB and 46MB tables alike), so the cross-domain cost is
+**per-round synchronization traffic**, not the shared table exceeding a domain's L3. Reducing the
+pool to match bb's thread count is not the answer either: best-of-3 at 2^15 sparse is 147.8ms at 6
+threads, 131.8 at 7, 118.3 at 8 — we genuinely use all eight.
+
+**State of the sumcheck round rung** (2^15, 65% active, fragmented, 8 threads):
+
+| | value |
+|---|---|
+| bb | 103ms |
+| bb-ref, start of session | 122-124ms |
+| bb-ref, now | 118-119ms |
+| bb-ref, pinned to one L3 domain | 107-109ms |
+| bb-ref, single-threaded | 15% *faster* than bb |
+
+**Landed this session**, both verified on 8 paired interleaved runs:
+- Per-worker scratch instead of per-chunk: 2.4%, 8/8 wins, parallel CPU tax 1.39x -> 1.32x.
+- `relation_stats_enabled()` no longer calls `std::env::var_os` per edge: 0.5%, 7/8 wins.
+
+**Excluded as causes, each by measurement:** rayon's pool policy (a full port of bb's own pool is
+neutral), work distribution shape, chunk count and floor, dispatch cost (~25us against ~2.5ms/round
+implied), memory bandwidth (speedup improves with size), SMT (one thread per core), serial
+sections (univariate and fold scale identically at ~5.5x), per-round transcript, and thread count.
+
+**The one lead left** is the per-round synchronization traffic that pinning avoids. It is worth ~8%
+and is not controllable from inside the module in production, so it has to be attacked by doing
+less cross-thread work per round: fewer, larger parallel regions per round (currently three), or a
+reduce that does not touch every worker's accumulator at the round boundary.
