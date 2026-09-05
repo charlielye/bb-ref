@@ -1134,3 +1134,24 @@ only). Like for like — our `inner_product_prove` 0.305s vs 0.279s — the flow
 **Rejected:** building the GLV phi table once per MSM when the caller supplies none (the IPA's
 folded generators) instead of multiplying by beta per schedule entry: neutral, 0.351 -> 0.349s
 TripleIPA, 3/3. Reverted.
+
+## Update 42: commit profile — a ~1ms floor on tiny MSMs; wNAF path halves it
+
+`BBREF_COMMIT_TIMING` on the flow (100 BN254 commits captured): 73 have <= 1024 nonzeros and cost
+122ms of 643; a **9-point MSM with 7 nonzeros took 1.0ms**, the same as a 685-point one. Cause:
+`serial_pippenger` uses c = 3 below 32 points, so it runs 86 windows of bucket reset, scan,
+reduction and 3 doublings — ~2000 Jacobian ops for 7 points.
+
+**Landed:** `tiny_msm_wnaf` for n <= 128 — width-5 wNAF per point over one shared doubling chain
+(~254 doublings + ~59 ops per point). Means: 1-16 nnz 1.16 -> 0.58ms, 17-256 nnz 1.85 -> 1.47ms.
+Proofs identical. Small in the flow (~23ms captured), kept because it is strictly better and the
+tiny-commit count grows with circuit count.
+
+**Oink wire round is not the tiny commits.** Our `batch_commit` (up to 8 concurrent independent
+MSMs) versus sequential on a rung: K=10 at 2^13, 99 vs 119ms; at 2^15, 282 vs 289ms — concurrency
+buys almost nothing at the flow's sizes, and the 2^17 hiding-kernel wires (78ms each) already beat
+bb's `commit_random/17` (88ms). bb's tree shows where its batching pays:
+`pippenger_round_parallel_batched/small_members` groups the small/sparse members into one pass
+(12.6ms x 12) while large members run concurrently as ours do. Closing the wire round (+0.10s) and
+the z_perm round (+0.10s) needs that batched pass — a real MSM implementation item, the largest
+well-defined one left.

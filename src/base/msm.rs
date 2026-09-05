@@ -1595,6 +1595,12 @@ fn small_msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField])
     if n == 0 {
         return Projective::<P>::zero();
     }
+    // Pippenger's per-window cost (bucket reset, reduction, c doublings) is paid 86 times at c = 3,
+    // which is ~1ms even for a handful of points; the flow commits hundreds of such polynomials.
+    // A shared doubling chain with a per-point wNAF table is O(254 + n*~50) group ops instead.
+    if n <= tiny_msm_max() {
+        return tiny_msm_wnaf(&points[..n], &scalars[..n]);
+    }
     let threads = rayon::current_num_threads().clamp(1, n.div_ceil(64));
     if threads == 1 {
         return serial_pippenger(&points[..n], &scalars[..n]);
@@ -1605,6 +1611,102 @@ fn small_msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField])
         .zip(scalars[..n].par_chunks(chunk))
         .map(|(p, s)| serial_pippenger(p, s))
         .sum()
+}
+
+fn tiny_msm_max() -> usize {
+    static V: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
+        std::env::var("BBREF_TINY_MSM_MAX").ok().and_then(|s| s.parse().ok()).unwrap_or(128)
+    });
+    *V
+}
+
+/// Width-5 wNAF over every point with one shared doubling chain: 254 doublings plus, per point,
+/// 8 odd multiples and ~51 signed additions. Exact for scalars up to 256 bits.
+fn tiny_msm_wnaf<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -> Projective<P> {
+    const W: usize = 5;
+    let n = points.len();
+    // Odd multiples 1P, 3P, ..., 15P per point.
+    let tables: Vec<[Projective<P>; 8]> = points
+        .iter()
+        .map(|p| {
+            let p1: Projective<P> = (*p).into();
+            let p2 = p1.double();
+            let mut t = [p1; 8];
+            for i in 1..8 {
+                t[i] = t[i - 1] + p2;
+            }
+            t
+        })
+        .collect();
+    // wNAF digits, most significant first, as (position, signed digit) lists per point.
+    let mut digits: Vec<Vec<i8>> = Vec::with_capacity(n);
+    let mut max_len = 0usize;
+    for s in scalars {
+        let mut limbs: Vec<u64> = s.into_bigint().as_ref().to_vec();
+        let mut out: Vec<i8> = Vec::with_capacity(260);
+        let is_zero = |l: &[u64]| l.iter().all(|&x| x == 0);
+        let shr1 = |l: &mut [u64]| {
+            for i in 0..l.len() {
+                let hi = if i + 1 < l.len() { l[i + 1] << 63 } else { 0 };
+                l[i] = (l[i] >> 1) | hi;
+            }
+        };
+        let sub_small = |l: &mut [u64], v: u64| {
+            let (r, b) = l[0].overflowing_sub(v);
+            l[0] = r;
+            let mut borrow = b;
+            let mut i = 1;
+            while borrow && i < l.len() {
+                let (r, b) = l[i].overflowing_sub(1);
+                l[i] = r;
+                borrow = b;
+                i += 1;
+            }
+        };
+        let add_small = |l: &mut [u64], v: u64| {
+            let (r, c) = l[0].overflowing_add(v);
+            l[0] = r;
+            let mut carry = c;
+            let mut i = 1;
+            while carry && i < l.len() {
+                let (r, c) = l[i].overflowing_add(1);
+                l[i] = r;
+                carry = c;
+                i += 1;
+            }
+        };
+        while !is_zero(&limbs) {
+            if limbs[0] & 1 == 1 {
+                let m = (limbs[0] & ((1 << W) - 1)) as i64;
+                let d = if m >= (1 << (W - 1)) { m - (1 << W) } else { m };
+                if d > 0 {
+                    sub_small(&mut limbs, d as u64);
+                } else {
+                    add_small(&mut limbs, (-d) as u64);
+                }
+                out.push(d as i8);
+            } else {
+                out.push(0);
+            }
+            shr1(&mut limbs);
+        }
+        max_len = max_len.max(out.len());
+        digits.push(out);
+    }
+    let mut acc = Projective::<P>::zero();
+    for pos in (0..max_len).rev() {
+        acc.double_in_place();
+        for (i, ds) in digits.iter().enumerate() {
+            if let Some(&d) = ds.get(pos) {
+                if d > 0 {
+                    acc += &tables[i][(d as usize) / 2];
+                } else if d < 0 {
+                    acc -= &tables[i][((-d) as usize) / 2];
+                }
+            }
+        }
+    }
+    acc
 }
 
 /// Textbook unsigned-window Pippenger, single-threaded, Jacobian buckets.
