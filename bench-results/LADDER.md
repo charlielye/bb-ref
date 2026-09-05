@@ -476,3 +476,45 @@ against us). Both cannot be right. The candidate differences are (a) the publish
 plain `node`, so V8 uses Liftoff and tiers up, while these runs force full optimization on both
 sides with `--no-liftoff`, and (b) bb's self-verify sits inside bb's published wall. Resolving this
 is the next step; no parity claim is made from either number until it is.
+
+## Update 23: RETRACTION of Updates 21-22 numbers; the real wasm standing is 1.25x
+
+Updates 21 and 22 measured with `--no-liftoff` on both sides. That was wrong, and the resulting
+"0.98x proving-only / sumcheck 1.08x / ECCVM 1.21x" table is retracted.
+
+Why it was wrong: `--no-liftoff` makes V8 TurboFan-compile each wasm function on first call, so the
+compile cost is charged to whichever phase first calls it. bb's module is 122MB and ours is 10.9MB,
+so bb absorbed roughly 6s of compilation inside its phase timings against our 3s. The table was
+substantially measuring compile time, and it favoured the smaller module.
+
+Walls make it obvious:
+
+| condition | bb | bb-ref | ratio |
+|---|---|---|---|
+| plain `node` (published harness) | 5.51s | 6.32s | 1.15x |
+| `--no-liftoff` | 11.67s | 9.27s | 0.79x |
+
+Tier-up *selection* was tested as an explanation and rejected: `--no-wasm-dynamic-tiering` slows
+both slightly and leaves the ratio unchanged.
+
+**Authoritative table — published conditions (plain `node`), wasm, bbbench, 8t, median of 3:**
+
+| phase (non-overlapping) | bb | bb-ref | ratio | gap |
+|---|---|---|---|---|
+| create_circuit (ACIR + builder) | 0.451s | 0.689s | 1.53x | +0.238s |
+| Chonk::accumulate (fold loop) | 2.227s | 2.793s | 1.25x | +0.566s |
+| ChonkProve, excl. bb self-verify | 2.141s | 2.554s | 1.19x | +0.413s |
+| **SUM (proving-only)** | **4.819s** | **6.036s** | **1.25x** | **+1.217s** |
+
+| sub-phase | bb | bb-ref | ratio | gap |
+|---|---|---|---|---|
+| ECCVM | 0.791s | 1.160s | 1.47x | +0.369s |
+| fold: sumcheck | 0.619s | 0.810s | 1.31x | +0.191s |
+| joint proof | 1.004s | 1.087s | 1.08x | +0.083s |
+| fold: Oink | 0.966s | 0.961s | 0.99x | -0.005s |
+| commit (all scopes) | 1.661s | 1.228s | 0.74x | -0.433s |
+| MSM stage 6a | 1.100s | 0.761s | 0.69x | -0.339s |
+
+Commit and MSM are genuinely ahead and stay ahead under real conditions. The addressable gap is
+ECCVM, the circuit builder, and the folding sumcheck, together ~0.80s of the 1.22s deficit.
+Work order: ECCVM first (largest), then create_circuit, then sumcheck.
