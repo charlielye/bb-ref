@@ -1045,3 +1045,37 @@ improves; pinning to one L3 domain recovers most of it (105.6 -> 100.6). Both pr
 table identically, so this is the price of the denser stream paying proportionally more for the
 same added cross-domain latency — not a scheduling defect, and not fixable from inside the module
 short of a row-major table layout.
+
+## Update 39: Oink and builder instrumented with bb's scope names; ECCVM anomalies located
+
+Refreshed phase table (current build, 8t, median of 3): proving-only **1.22x (+1.067s)**, from 1.25x.
+Folding sumcheck gap 0.254 -> 0.130s. Full 11-flow standing: TOTAL 1.05x, typical 1.10-1.21x.
+
+**Oink was not at parity — a scoping artefact hid +0.175s.** bb's `OinkProver::prove` (0.972s)
+includes the hiding kernel's oink (0.154s); ours reports that separately. Round by round (bb's
+`commit_to_*` scopes wrap compute + commit):
+
+| Oink round | bb | bb-ref | gap |
+|---|---|---|---|
+| wire commits | 0.346s | 0.449s | **+0.103** |
+| lookup counts / w4 | 0.122s | 0.145s | +0.023 |
+| logderiv inverses | 0.159s | 0.115s | -0.044 |
+| z_perm (grand product + commit) | 0.308s | 0.404s | **+0.096** |
+
+Both losses are commit-heavy while single MSMs beat bb. **Structural cause found by static
+comparison:** bb's `batch_commit` is one `batch_multi_scalar_mul` over all polynomials (one pass over
+the SRS points shared by K scalar streams); ours runs up to 8 *independent* MSMs concurrently, each
+internally parallel. Concurrency count is not the lever (conc 1/2/4/8 -> wires 0.478/0.468/0.443/
+0.447), so the fix is a genuinely batched Pippenger, as bb has. Parked as the next MSM item.
+
+**Builder (+0.17s excl. witness decode, which bb counts elsewhere):** `acir::sha256_compression`
+is **3x bb** (0.108 vs 0.036s) with identical gates (proof byte-equality), so it is construction
+overhead in `stdlib/sha256`. `range_constraints` +0.022. `ecdsa_r1`, `poseidon2`, `msm` at parity.
+~0.26s of ours is still unscoped (quads, blocks, recursion; bb's recursion is 0.123s).
+
+**ECCVM (+0.337s): field ruled out, two anomalies found.** Fq throughput equals Fr on wasm
+(52.1 vs 51.9 ns mul), so nothing ECCVM-wide is the field. Per-round detail on the ECCVM sumcheck:
+`rest` (batch_over_relations + assembly) is **3.1-3.8ms per round**, serial, against 0.24ms for
+MegaZK — ~48ms of the 289ms. And ECCVM's degree-21 set relation exceeds `GRADED_MAX_LEN = 8`, so it
+falls to the pointwise path (every point evaluated separately) where bb's `ECCVMShortMonomialFlavor`
+keeps all relations in coefficient form.

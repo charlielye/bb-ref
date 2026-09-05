@@ -93,7 +93,10 @@ where
     for b in inst.layout.buses() {
         first.extend([BUS_SPECS[b].value, BUS_SPECS[b].read_counts]);
     }
-    commit_and_send::<C>(inst, ck, t, &first, &mut comms);
+    {
+        crate::scope!("OinkProver::commit_to_wires");
+        commit_and_send::<C>(inst, ck, t, &first, &mut comms);
+    }
     crate::base::timing::phase("    oink: wire commits");
 
     let mut params = RelationParams::<Fr>::default();
@@ -104,15 +107,21 @@ where
         params.eta_three = params.eta_two * c[0];
         params.rom_logup_gamma = c[1];
     }
-    add_ram_rom_memory_records_to_wire_4(inst, &params);
-    add_rom_logup_inverses_to_wire_4(inst, &params);
+    {
+        crate::scope!("OinkProver::add_ram_rom_memory_records_to_wire_4");
+        add_ram_rom_memory_records_to_wire_4(inst, &params);
+        add_rom_logup_inverses_to_wire_4(inst, &params);
+    }
     crate::base::timing::phase("    oink: memory records");
     let mut second: Vec<Ent> = vec![];
     if flavor.has(Rel::LogDerivLookup) {
         second.extend([Ent::lookup_read_counts, Ent::lookup_read_tags]);
     }
     second.push(Ent::w_4);
-    commit_and_send::<C>(inst, ck, t, &second, &mut comms);
+    {
+        crate::scope!("OinkProver::commit_to_lookup_counts_and_w4");
+        commit_and_send::<C>(inst, ck, t, &second, &mut comms);
+    }
     crate::base::timing::phase("    oink: w_4/lookup commits");
 
     let c: Vec<Fr> = t.challenges(&["beta", "gamma"]);
@@ -122,15 +131,20 @@ where
     if flavor.has(Rel::LogDerivLookup) {
         params.beta_sqr = c[0] * c[0];
         params.beta_cube = params.beta_sqr * c[0];
+        crate::scope!("compute_logderivative_inverses");
         compute_logderivative_inverses(inst, &params);
         third.push(Ent::lookup_inverses);
     }
     for b in inst.layout.buses() {
+        crate::scope!("Databus::compute_logderivative_inverse");
         compute_databus_inverses(inst, b, &params);
         third.push(BUS_SPECS[b].inverses);
     }
     crate::base::timing::phase("    oink: inverses");
-    commit_and_send::<C>(inst, ck, t, &third, &mut comms);
+    {
+        crate::scope!("OinkProver::commit_to_logderiv_inverses");
+        commit_and_send::<C>(inst, ck, t, &third, &mut comms);
+    }
     crate::base::timing::phase("    oink: inverse commits");
 
     params.public_input_delta = compute_public_input_delta(
@@ -139,9 +153,15 @@ where
         &params.gamma,
         &Fr::from(inst.pub_inputs_offset as u64),
     );
-    compute_grand_product(inst, &params);
+    {
+        crate::scope!("compute_grand_product");
+        compute_grand_product(inst, &params);
+    }
     crate::base::timing::phase("    oink: grand product");
-    commit_and_send::<C>(inst, ck, t, &[Ent::z_perm], &mut comms);
+    {
+        crate::scope!("OinkProver::commit_to_z_perm");
+        commit_and_send::<C>(inst, ck, t, &[Ent::z_perm], &mut comms);
+    }
 
     let alpha: Fr = if emit_alpha {
         t.challenge("alpha")

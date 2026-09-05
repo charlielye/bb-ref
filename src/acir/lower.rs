@@ -1213,55 +1213,91 @@ fn lower(builder: Builder, c: Constraints) -> Ctx {
             b.create_bilinear_batched_eq_gate(&g);
         }
     }
-    for l in &c.logic {
-        create_logic_gate(&ctx, l);
-    }
-    for (w, num_bits) in c.range {
-        ctx.borrow_mut().create_dyadic_range_constraint(w, num_bits as u64);
-    }
-    for a in &c.aes128 {
-        create_aes128_constraints(&ctx, a);
-    }
-    for s in &c.sha256 {
-        let inputs: [FieldT; 16] = std::array::from_fn(|i| to_field_ct(&ctx, &s.inputs[i]));
-        let hash_values: [FieldT; 8] = std::array::from_fn(|i| to_field_ct(&ctx, &s.hash_values[i]));
-        let output = sha256::sha256_block(&hash_values, &inputs);
-        for (out, result) in output.iter().zip(&s.outputs) {
-            out.assert_equal(&FieldT::from_witness_index(&ctx, *result));
+    {
+        crate::scope!("acir::logic_constraints");
+        for l in &c.logic {
+            create_logic_gate(&ctx, l);
         }
     }
-    for e in &c.ecdsa_k1 {
-        create_ecdsa_verify_constraints_k1(&ctx, e);
-    }
-    for e in &c.ecdsa_r1 {
-        create_ecdsa_verify_constraints(&ctx, e);
-    }
-    for b in &c.blake2s {
-        create_blake_constraints(&ctx, b, false);
-    }
-    for b in &c.blake3 {
-        create_blake_constraints(&ctx, b, true);
-    }
-    for k in &c.keccak {
-        let state: [FieldT; 25] = std::array::from_fn(|i| to_field_ct(&ctx, &k.state[i]));
-        let output = keccak::permutation_opcode(&ctx, &state);
-        for (out, result) in output.iter().zip(&k.result) {
-            out.assert_equal(&FieldT::from_witness_index(&ctx, *result));
+    {
+        crate::scope!("acir::range_constraints");
+        for (w, num_bits) in c.range {
+            ctx.borrow_mut().create_dyadic_range_constraint(w, num_bits as u64);
         }
     }
-    for p in &c.poseidon2 {
-        assert!(p.state.len() == 4 && p.result.len() == 4);
-        let state: [FieldT; 4] = std::array::from_fn(|i| FieldT::from_witness_index(&ctx, p.state[i]));
-        let out = poseidon2::permutation(&ctx, &state);
-        for i in 0..4 {
-            out[i].assert_equal(&FieldT::from_witness_index(&ctx, p.result[i]));
+    {
+        crate::scope!("acir::aes128_constraints");
+        for a in &c.aes128 {
+            create_aes128_constraints(&ctx, a);
         }
     }
-    for m in &c.msm {
-        create_multi_scalar_mul_constraint(&ctx, m);
+    {
+        crate::scope!("acir::sha256_compression");
+        for s in &c.sha256 {
+            let inputs: [FieldT; 16] = std::array::from_fn(|i| to_field_ct(&ctx, &s.inputs[i]));
+            let hash_values: [FieldT; 8] = std::array::from_fn(|i| to_field_ct(&ctx, &s.hash_values[i]));
+            let output = sha256::sha256_block(&hash_values, &inputs);
+            for (out, result) in output.iter().zip(&s.outputs) {
+                out.assert_equal(&FieldT::from_witness_index(&ctx, *result));
+            }
+        }
     }
-    for e in &c.ec_add {
-        create_ec_add_constraint(&ctx, e);
+    {
+        crate::scope!("acir::ecdsa_k1_constraints");
+        for e in &c.ecdsa_k1 {
+            create_ecdsa_verify_constraints_k1(&ctx, e);
+        }
+    }
+    {
+        crate::scope!("acir::ecdsa_r1_constraints");
+        for e in &c.ecdsa_r1 {
+            create_ecdsa_verify_constraints(&ctx, e);
+        }
+    }
+    {
+        crate::scope!("acir::blake2s_constraints");
+        for b in &c.blake2s {
+            create_blake_constraints(&ctx, b, false);
+        }
+    }
+    {
+        crate::scope!("acir::blake3_constraints");
+        for b in &c.blake3 {
+            create_blake_constraints(&ctx, b, true);
+        }
+    }
+    {
+        crate::scope!("acir::keccak_permutations");
+        for k in &c.keccak {
+            let state: [FieldT; 25] = std::array::from_fn(|i| to_field_ct(&ctx, &k.state[i]));
+            let output = keccak::permutation_opcode(&ctx, &state);
+            for (out, result) in output.iter().zip(&k.result) {
+                out.assert_equal(&FieldT::from_witness_index(&ctx, *result));
+            }
+        }
+    }
+    {
+        crate::scope!("acir::poseidon2_constraints");
+        for p in &c.poseidon2 {
+            assert!(p.state.len() == 4 && p.result.len() == 4);
+            let state: [FieldT; 4] = std::array::from_fn(|i| FieldT::from_witness_index(&ctx, p.state[i]));
+            let out = poseidon2::permutation(&ctx, &state);
+            for i in 0..4 {
+                out[i].assert_equal(&FieldT::from_witness_index(&ctx, p.result[i]));
+            }
+        }
+    }
+    {
+        crate::scope!("acir::multi_scalar_mul_constraints");
+        for m in &c.msm {
+            create_multi_scalar_mul_constraint(&ctx, m);
+        }
+    }
+    {
+        crate::scope!("acir::ec_add_constraints");
+        for e in &c.ec_add {
+            create_ec_add_constraint(&ctx, e);
+        }
     }
     for block in c.blocks.values() {
         create_block_constraints(&ctx, block);
