@@ -347,10 +347,10 @@ where
             // densify + overflow bookkeeping stays in Rust (bb keeps that in the same function; the
             // split is the linkage boundary, not an algorithmic change).
             #[cfg(all(feature = "bbkernel", target_family = "wasm", target_feature = "simd128"))]
-            if let Some((rc, tr)) = if std::env::var_os("BBREF_C6A").is_some() {
-                bbk6a
-            } else {
+            if let Some((rc, tr)) = if std::env::var_os("BBREF_NO_C6A").is_some() {
                 None
+            } else {
+                bbk6a
             } {
                 use crate::base::packed::bbk;
                 let cap = SUBCHUNK.max(2 * (max_chunk_len / SUBCHUNK + 2));
@@ -1620,6 +1620,158 @@ mod tests {
         for n in [1, 100, 1000, 5000, 70000] {
             check::<ark_bn254::g1::Config>(n, |_, _| ());
             check::<ark_grumpkin::GrumpkinConfig>(n, |_, _| ());
+        }
+    }
+
+    /// Isolates bb's linked Stage-6a tree (`bbref_tree_reduce_*`) from the gather: build a
+    /// bucket-sorted block of distinct points, reduce it with the C kernel, and compare each
+    /// bucket's survivor against an ark sum.
+    #[cfg(all(feature = "bbkernel", target_family = "wasm", target_feature = "simd128"))]
+    #[test]
+    fn c_tree_reduce_matches_ark() {
+        use crate::base::packed::bbk;
+        use ark_ec::CurveGroup;
+        use ark_std::UniformRand;
+        type P = ark_bn254::g1::Config;
+        let mut rng = ark_std::test_rng();
+        for &(nbuckets, per) in &[(1usize, 2usize), (1, 3), (3, 1), (5, 4), (7, 9), (13, 37), (2, 600)] {
+            let mut pts: Vec<Affine<P>> = Vec::new();
+            let mut bks: Vec<u32> = Vec::new();
+            let mut expect: Vec<Projective<P>> = Vec::new();
+            for b in 0..nbuckets {
+                let mut acc = Projective::<P>::zero();
+                for _ in 0..per {
+                    let p = ark_bn254::G1Projective::rand(&mut rng).into_affine();
+                    pts.push(p);
+                    bks.push(b as u32);
+                    acc += p;
+                }
+                expect.push(acc);
+            }
+            let n = pts.len();
+            let (vf, pack_cap, bcap) =
+                unsafe { (bbk::bbref_vf_size(), bbk::bbref_pack_cap(), bbk::bbref_batch_capacity()) };
+            let mut packed: Vec<core::mem::MaybeUninit<u64>> =
+                vec![core::mem::MaybeUninit::uninit(); (8 * pack_cap * vf).div_ceil(8) + 32];
+            let mut pair_dest: Vec<u32> = vec![0u32; bcap];
+            let len = unsafe {
+                bbk::bbref_tree_reduce_fq(
+                    pts.as_mut_ptr() as *mut u64,
+                    bks.as_mut_ptr(),
+                    n,
+                    packed.as_mut_ptr() as *mut u64,
+                    pair_dest.as_mut_ptr(),
+                )
+            };
+            assert_eq!(len, nbuckets, "survivor count (nbuckets={nbuckets}, per={per})");
+            for k in 0..len {
+                assert_eq!(bks[k] as usize, k, "survivor bucket order");
+                assert_eq!(
+                    pts[k].into_group(),
+                    expect[k],
+                    "bucket {k} sum (nbuckets={nbuckets}, per={per})"
+                );
+            }
+        }
+    }
+
+    /// Isolates bb's linked `bbref_reduce_chunk_*` gather: a hand-built bucket-sorted schedule
+    /// over known points, with and without a phi table, compared against an ark reference that
+    /// decodes the same entries.
+    #[cfg(all(feature = "bbkernel", target_family = "wasm", target_feature = "simd128"))]
+    #[test]
+    fn c_reduce_chunk_gather_matches_ark() {
+        use crate::base::endo::EndoField;
+        use crate::base::packed::bbk;
+        use ark_ec::CurveGroup;
+        use ark_std::UniformRand;
+        type P = ark_bn254::g1::Config;
+        const PHI_BIT: u32 = 1 << 30;
+        let mut rng = ark_std::test_rng();
+        let npts = 64usize;
+        let points: Vec<Affine<P>> = (0..npts)
+            .map(|_| ark_bn254::G1Projective::rand(&mut rng).into_affine())
+            .collect();
+        let beta = <ark_bn254::Fq as EndoField>::cube_root();
+        let phi: Vec<Affine<P>> = points
+            .iter()
+            .map(|p| Affine::<P>::new_unchecked(beta * p.x, -p.y))
+            .collect();
+
+        // Three buckets with 3, 5 and 2 entries, each entry exercising a phi/sign combination.
+        let per = [3usize, 5, 2];
+        let mut sched: Vec<u32> = Vec::new();
+        let mut bstarts: Vec<u32> = vec![0];
+        let mut idx = 0usize;
+        for &c in per.iter() {
+            for j in 0..c {
+                let pi = (idx % npts) as u32;
+                let f = (j % 4) as u32;
+                sched.push(pi | if f & 1 != 0 { PHI_BIT } else { 0 } | if f & 2 != 0 { 1 << 31 } else { 0 });
+                idx += 1;
+            }
+            bstarts.push(sched.len() as u32);
+        }
+        let decode = |e: u32, table: bool| -> Affine<P> {
+            let i = (e & 0x3fff_ffff) as usize;
+            let mut pt = points[i];
+            if e & PHI_BIT != 0 {
+                pt = if table {
+                    phi[i]
+                } else {
+                    Affine::<P>::new_unchecked(beta * pt.x, -pt.y)
+                };
+            }
+            if e >> 31 == 1 {
+                -pt
+            } else {
+                pt
+            }
+        };
+
+        for table in [false, true] {
+            let mut expect: Vec<Projective<P>> = Vec::new();
+            for b in 0..per.len() {
+                let mut acc = Projective::<P>::zero();
+                for e in &sched[bstarts[b] as usize..bstarts[b + 1] as usize] {
+                    acc += decode(*e, table);
+                }
+                expect.push(acc);
+            }
+            let (vf, pack_cap, bcap) =
+                unsafe { (bbk::bbref_vf_size(), bbk::bbref_pack_cap(), bbk::bbref_batch_capacity()) };
+            let mut packed: Vec<core::mem::MaybeUninit<u64>> =
+                vec![core::mem::MaybeUninit::uninit(); (8 * pack_cap * vf).div_ceil(8) + 32];
+            let mut pair_dest: Vec<u32> = vec![0u32; bcap];
+            let mut cpts: Vec<Affine<P>> = vec![Affine::<P>::zero(); sched.len()];
+            let mut cbk: Vec<u32> = vec![0u32; sched.len()];
+            let mut b_cursor: usize = 0;
+            let phi_ptr: *const u64 = if table {
+                phi.as_ptr() as *const u64
+            } else {
+                core::ptr::null()
+            };
+            let len = unsafe {
+                bbk::bbref_reduce_chunk_fq(
+                    points.as_ptr() as *const u64,
+                    phi_ptr,
+                    &beta as *const ark_bn254::Fq as *const u64,
+                    sched.as_ptr(),
+                    0,
+                    sched.len(),
+                    bstarts.as_ptr(),
+                    &mut b_cursor,
+                    cpts.as_mut_ptr() as *mut u64,
+                    cbk.as_mut_ptr(),
+                    packed.as_mut_ptr() as *mut u64,
+                    pair_dest.as_mut_ptr(),
+                )
+            };
+            assert_eq!(len, per.len(), "survivor count (table={table})");
+            for k in 0..len {
+                assert_eq!(cbk[k] as usize, k, "survivor bucket (table={table})");
+                assert_eq!(cpts[k].into_group(), expect[k], "bucket {k} (table={table})");
+            }
         }
     }
 

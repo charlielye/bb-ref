@@ -415,15 +415,15 @@ template <typename Params, typename Field> struct Reduce6a {
       const auto xs = out.x[g].to_array();
       const auto ys = out.y[g].to_array();
       for (size_t l = 0; l < W; ++l, ++k) {
-        pts[2 * pair_dest[k]] = xs[l].reduce_once();
-        pts[2 * pair_dest[k] + 1] = ys[l].reduce_once();
+        pts[2 * pair_dest[k]] = xs[l];
+        pts[2 * pair_dest[k] + 1] = ys[l];
       }
     }
     const auto *xt = out.x.tail_data();
     const auto *yt = out.y.tail_data();
     for (size_t t = 0; t < out.tail(); ++t, ++k) {
-      pts[2 * pair_dest[k]] = xt[t].reduce_once();
-      pts[2 * pair_dest[k] + 1] = yt[t].reduce_once();
+      pts[2 * pair_dest[k]] = xt[t];
+      pts[2 * pair_dest[k] + 1] = yt[t];
     }
     lhs.reset();
     rhs.reset();
@@ -497,6 +497,13 @@ template <typename Params, typename Field> struct Reduce6a {
       }
       curr_len = next_len;
     }
+    // Single canonicalisation at the boundary: bb-ref stores canonical [0, p) and compares
+    // coordinates bytewise, so every survivor handed back is reduced here — once per surviving
+    // bucket rather than per gathered entry.
+    for (size_t k = 0; k < curr_len; ++k) {
+      pts[2 * k].self_reduce_once();
+      pts[2 * k + 1].self_reduce_once();
+    }
     return curr_len;
   }
 
@@ -511,11 +518,25 @@ template <typename Params, typename Field> struct Reduce6a {
       }
       const uint32_t e = sched[i];
       const size_t idx = e & 0x3fffffffu;
-      const Field *src =
-          ((e & (1u << 30)) != 0 && phi != nullptr) ? phi : points;
-      pts[2 * valid] = src[2 * idx];
-      pts[2 * valid + 1] =
-          ((e >> 31) != 0) ? -src[2 * idx + 1] : src[2 * idx + 1];
+      const bool is_phi = (e & (1u << 30)) != 0;
+      Field x, y;
+      if (is_phi && phi != nullptr) {
+        x = phi[2 * idx];
+        y = phi[2 * idx + 1];
+      } else if (is_phi) {
+        // No precomputed table: form the endomorphism image phi(P) = (beta * x,
+        // -y) here.
+        x = points[2 * idx] * (*beta);
+        y = -points[2 * idx + 1];
+      } else {
+        x = points[2 * idx];
+        y = points[2 * idx + 1];
+      }
+      // Coarse [0, 2p) throughout, as bb does: the tree's == reduces internally and the
+      // batched add accepts coarse. Survivors are canonicalised once at the end of
+      // tree_reduce_in_place, where they cross back into bb-ref's canonical storage.
+      pts[2 * valid] = x;
+      pts[2 * valid + 1] = (e >> 31) != 0 ? -y : y;
       buckets[valid] = static_cast<uint32_t>(b);
       ++valid;
     }
@@ -531,22 +552,22 @@ size_t bbref_batch_capacity() { return BB_BATCH_CAPACITY; }
 size_t bbref_pack_cap() {
   return Reduce6a<bb::Bn254FqParams, bb::fq>::PACK_CAP;
 }
-size_t bbref_reduce_chunk_fq(const uint64_t *points, const uint64_t *phi, const uint64_t *beta,
-                             const uint32_t *sched, size_t lo, size_t hi,
-                             const uint32_t *bstarts, size_t *b_cursor,
-                             uint64_t *pts, uint32_t *buckets, uint64_t *packed,
-                             uint32_t *pair_dest) {
+size_t bbref_reduce_chunk_fq(const uint64_t *points, const uint64_t *phi,
+                             const uint64_t *beta, const uint32_t *sched,
+                             size_t lo, size_t hi, const uint32_t *bstarts,
+                             size_t *b_cursor, uint64_t *pts, uint32_t *buckets,
+                             uint64_t *packed, uint32_t *pair_dest) {
   Reduce6a<bb::Bn254FqParams, bb::fq> r(pts, buckets, packed, pair_dest);
   return r.reduce_chunk(reinterpret_cast<const bb::fq *>(points),
                         reinterpret_cast<const bb::fq *>(phi),
                         reinterpret_cast<const bb::fq *>(beta), sched, lo, hi,
                         bstarts, b_cursor);
 }
-size_t bbref_reduce_chunk_fr(const uint64_t *points, const uint64_t *phi, const uint64_t *beta,
-                             const uint32_t *sched, size_t lo, size_t hi,
-                             const uint32_t *bstarts, size_t *b_cursor,
-                             uint64_t *pts, uint32_t *buckets, uint64_t *packed,
-                             uint32_t *pair_dest) {
+size_t bbref_reduce_chunk_fr(const uint64_t *points, const uint64_t *phi,
+                             const uint64_t *beta, const uint32_t *sched,
+                             size_t lo, size_t hi, const uint32_t *bstarts,
+                             size_t *b_cursor, uint64_t *pts, uint32_t *buckets,
+                             uint64_t *packed, uint32_t *pair_dest) {
   Reduce6a<bb::Bn254FrParams, bb::fr> r(pts, buckets, packed, pair_dest);
   return r.reduce_chunk(reinterpret_cast<const bb::fr *>(points),
                         reinterpret_cast<const bb::fr *>(phi),
