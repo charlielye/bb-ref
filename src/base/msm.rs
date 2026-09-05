@@ -110,11 +110,15 @@ where
     const PHI: u32 = 1 << 30;
     // bb `GLV_SMALL_N_THRESHOLD`: above this the doubled point count (2n gathers, 2n schedule
     // entries) outweighs halving the windows, so the MSM runs on full-width scalars instead.
-    // bb sets it at 2^16 for wasm; BBREF_GLV_LOG2 overrides for sweeps.
+    // The crossover is platform-specific: measured here at 2^16 on wasm and 2^15 native (8t and
+    // 1t agree; GLV wins at 2^14, ties at 2^15, loses 5% at 2^16). bb's own constants are 2^16 /
+    // 2^13 — its native decode is cheaper, so its crossover sits lower than ours.
+    // BBREF_GLV_LOG2 overrides.
     static GLV_LOG2: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     let glv_threshold = 1usize
         << *GLV_LOG2.get_or_init(|| {
-            std::env::var("BBREF_GLV_LOG2").ok().and_then(|v| v.parse().ok()).unwrap_or(16)
+            let default_log2 = if cfg!(target_family = "wasm") { 16 } else { 15 };
+            std::env::var("BBREF_GLV_LOG2").ok().and_then(|v| v.parse().ok()).unwrap_or(default_log2)
         });
     let use_glv = n <= glv_threshold;
     // Working sub-scalars: GLV gives two 128-bit halves per point (k1 against P, k2 against the

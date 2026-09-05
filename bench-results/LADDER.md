@@ -281,3 +281,22 @@ ANSWER to "is ark forcing extra work": in the MSM, no longer — the only ark-im
 canonical storage at the kernel boundary, now paid once per surviving bucket instead of per
 entry, and the field ops themselves already benchmark at bb's rate (L0 rung). No reason to
 replace ark; the vendored parts already let us match bb's representation choices where it counts.
+
+Update 15 — 11-flow V8 suite on the parity build: TOTAL 1.07x (bb 85.08 / ours 91.42 s; was 1.34x
+at session start, 1.15x this morning). Every flow 1.13-1.23x, storage_proof 0.80x. MEMORY also
+collapsed to 0.97-1.14x of bb (was 1.2-1.44x): dropping GLV above the threshold removes the
+doubled point buffer and the phi table.
+
+NATIVE IMPACT of the wasm work (asked: better or worse?). Measured on the idle box with a
+natively-built msmbench, session-start (eb4c163) vs now, 8 threads:
+    2^14  11.63 -> 10.84 ms (-7%)     2^16  36.22 -> 35.28 (-3%)
+    2^18 162.61 -> 131.27 ms (-19%)   2^20 666.76 -> 512.89 (-23%)
+Better everywhere, because the big wins are algorithmic and platform-neutral: bb's Phase 1 scalar
+profile + choose_window_bits, Stages 5/6a/6b (dense partials, overflow merge, recursive affine
+bucket reduce), and the GLV threshold. The wasm-only pieces (2^261 domain, linked C kernels,
+coarse tree) are cfg/feature-gated and do not touch native.
+ONE REAL RISK FOUND AND FIXED: the GLV threshold was hardcoded 2^16, which on native would keep
+GLV where it loses. bb uses 2^13 native, but MEASURED FOR OUR CODE the native crossover is 2^15
+(GLV wins at 2^14, ties at 2^15, loses 5% at 2^16; 1t and 8t agree) — bb's native decode is
+cheaper so its crossover sits lower. Set 2^16 wasm / 2^15 native rather than copying bb's number.
+Gather block (2^13, wasm-tuned) checked native: insensitive (35.23 vs 35.21 @2^16), left alone.
