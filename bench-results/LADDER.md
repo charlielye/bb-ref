@@ -338,3 +338,24 @@ threshold; bb wins with 5-wide VectorField over its ExtendedEdges layout. Retryi
 reuse the LINKED bb kernels (as the MSM now does) rather than a hand-rolled Rust 4-wide path.
 Secondary, smaller: alloc/memcpy at 2.3x bb, and MSM +0.33s (flow MSMs are small/sparse — a
 different regime from the msmbench sizes where we now match).
+
+Update 18 — PACKED SUMCHECK DISPROVEN AS THE LEVER (settled with bb's own switch, before building).
+bb ships `-DBB_FORCE_SCALAR_LANE=1`, which forces its sumcheck off the VectorField path. Rebuilt
+bb's wasm with it and A/B'd the typical flow:
+    bb SIMD sumcheck 5.06 / 5.07 / 5.12 s     bb scalar-lane 5.22 / 5.20 / 5.20 s
+So bb's 5-wide sumcheck is worth 0.14 s (2.7%) on a real flow, while our gap is ~0.6 s. A perfect
+packed sumcheck would recover under a quarter of it. Consistent with our own dense round-0 rung
+already BEATING bb (285 vs 341 ms) while scalar, and with bb gating SIMD off whenever the row
+manifest is in use (`!USES_ROW_MANIFEST`) — i.e. off for skip-heavy real traces anyway. Our
+existing 4-wide QuadF path measures 507 vs 285 ms (1.8x SLOWER) and is not worth reviving.
+DO NOT spend more on packed sumcheck; the earlier "storage domain + packed sumcheck plane"
+explanation for 1.1x is now falsified on the second half.
+
+Update 19 — the benchmark flatters us: bb carries a startup handicap we do not.
+Fixed cost on a trivial invocation (module compile + instantiate): bb 0.41-0.42 s, bb-ref 0.08 s.
+bb's wasm module is 122 MB; ours is 10.9 MB. So on the typical flow bb spends ~0.42 s of its
+5.06 s before proving starts, and we spend ~0.08 s of our 5.72 s. PROVING-ONLY that is
+5.64 vs 4.64 s = 1.21x, not the 1.13x the wall shows. Across the 11-flow V8 suite bb carries
+~4.6 s of module-compile in its 85.08 s total. Our real proving-work gap is therefore ~1.2x and
+the headline totals understate it. Any future parity claim should be made on proving-only time,
+or at least state this handicap.
