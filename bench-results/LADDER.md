@@ -1110,3 +1110,27 @@ ones, consistent with the parallel-efficiency finding. `extend_and_batch` is 2x 
 0.478/0.468/0.443/0.447). bb's advantage there is a single batched MSM pass; parked.
 
 **Fq == Fr throughput on wasm** (52.1 vs 51.9 ns mul), so nothing ECCVM-wide is the field.
+
+## Update 41: IPA rung — at parity; scope mismatch had overstated the gap
+
+`examples/ipabench.rs` (classical IPA opening of a random 2^15 polynomial over Grumpkin) matched
+to bb's `ipa_open/15`:
+
+| | 1 thread | 8 threads |
+|---|---|---|
+| bb | 1691ms | 285ms |
+| bb-ref | 1383ms | 290-297ms |
+
+Single-threaded we are 18% faster; at 8 threads 1.03x. The same shape as sumcheck: our fold-G
+scales 4.3x and the L/R MSMs 5.4x against bb's overall 5.9x. Split at 8t: L/R MSMs ~130ms,
+fold-G ~156ms, inner products ~3ms. bb's `batch_two_round_fold` is 0.140s in the flow, so fold-G is
+within ~16ms of bb; our fold already exploits the 127-bit short challenges (asserted) with a GLV
+joint chain, as bb's does.
+
+**Scope correction:** the earlier "+0.07s IPA" compared our `ECCVM::TripleIPA` (0.349s, which
+includes claim assembly) with bb's `IPA::compute_opening_proof` (0.279s, the inner-product proof
+only). Like for like — our `inner_product_prove` 0.305s vs 0.279s — the flow gap is **~+0.026s**.
+
+**Rejected:** building the GLV phi table once per MSM when the caller supplies none (the IPA's
+folded generators) instead of multiplying by beta per schedule entry: neutral, 0.351 -> 0.349s
+TripleIPA, 3/3. Reverted.
