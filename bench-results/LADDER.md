@@ -1079,3 +1079,34 @@ overhead in `stdlib/sha256`. `range_constraints` +0.022. `ecdsa_r1`, `poseidon2`
 MegaZK — ~48ms of the 289ms. And ECCVM's degree-21 set relation exceeds `GRADED_MAX_LEN = 8`, so it
 falls to the pointwise path (every point evaluated separately) where bb's `ECCVMShortMonomialFlavor`
 keeps all relations in coefficient form.
+
+## Update 40: sha256 lowering 5.7x faster; bb's sumcheck internals instrumented and compared
+
+**Landed: `map_into_sparse_form` precomputes base powers.** It recomputed `power *= base` — 32 field
+multiplications — on every call, for every sparse table row and every lookup; the wasm profile put
+66% of sha256 lowering in `mont_mul`. Powers are constants of the base (16/28 sha256, 11 keccak), so
+they are built once and the map is at most 32 additions. `acir::sha256_compression` **0.108 ->
+0.019s** (bb 0.036), `create_circuit` 0.690 -> 0.605s. Proofs identical, 23 suites green.
+
+**bb's own sumcheck round instrumented** (`sumcheck/accumulate_edge_chunks`,
+`sumcheck/extend_and_batch_univariates` added to `sumcheck_round.hpp` in the scratch build, source
+restored) and compared scope-for-scope, all sumchecks summed, `time_max`:
+
+| scope | bb | bb-ref | ratio |
+|---|---|---|---|
+| accumulate_edge_chunks | 0.933s | 1.008s | 1.08x |
+| extend_and_batch_univariates | 0.036s | 0.072s | 2.02x |
+| partially_evaluate (fold) | 0.172s | 0.096s | 0.56x |
+| folding sumcheck | 0.632s | 0.744s | 1.18x |
+| ECCVM relation-check rounds | 0.176s | 0.293s | 1.66x |
+
+In aggregate our edge loop is within 8% of bb's and our fold is faster; the per-sumcheck skew is
+distributional — we win the dense 2^17 joint sumcheck and lose the small/sparse folding and ECCVM
+ones, consistent with the parallel-efficiency finding. `extend_and_batch` is 2x but small
+(ECCVM's d = 22 makes it ~3ms/round there); parallelizing it over points was measured *worse*
+(0.291 -> 0.335s ECCVM sumcheck, 3/3) and reverted.
+
+**Oink concurrency:** independent-MSM concurrency count is not the lever (1/2/4/8 -> wire round
+0.478/0.468/0.443/0.447). bb's advantage there is a single batched MSM pass; parked.
+
+**Fq == Fr throughput on wasm** (52.1 vs 51.9 ns mul), so nothing ECCVM-wide is the field.

@@ -439,17 +439,44 @@ fn rotate32(value: u32, rotation: u32) -> u32 {
 }
 
 /// Every set bit `i` of `input` becomes `base^i`.
+///
+/// The powers are constants of the base, so they are built once per base and the map is at most
+/// 32 additions. Computing `power *= base` on every call made this 32 field multiplications per
+/// table row and per lookup, and it was two thirds of the sha256 constraint lowering.
 pub fn map_into_sparse_form(base: u64, input: u64) -> Fr {
-    let base = Fr::from(base);
+    let powers = sparse_powers(base);
     let mut out = Fr::zero();
-    let mut power = Fr::one();
     for i in 0..32 {
         if (input >> i) & 1 == 1 {
-            out += power;
+            out += powers[i];
         }
-        power *= base;
     }
     out
+}
+
+/// `base^0 ..= base^31`, cached for the bases the tables use (sha256: 16 and 28; keccak: 11).
+fn sparse_powers(base: u64) -> &'static [Fr; 32] {
+    use std::sync::OnceLock;
+    static CACHE: [OnceLock<[Fr; 32]>; 3] = [OnceLock::new(), OnceLock::new(), OnceLock::new()];
+    static OTHER: OnceLock<std::sync::Mutex<std::collections::HashMap<u64, &'static [Fr; 32]>>> = OnceLock::new();
+    let build = |base: u64| -> [Fr; 32] {
+        let b = Fr::from(base);
+        let mut p = [Fr::one(); 32];
+        for i in 1..32 {
+            p[i] = p[i - 1] * b;
+        }
+        p
+    };
+    match base {
+        16 => CACHE[0].get_or_init(|| build(16)),
+        28 => CACHE[1].get_or_init(|| build(28)),
+        11 => CACHE[2].get_or_init(|| build(11)),
+        _ => {
+            let m = OTHER.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+            let mut g = m.lock().unwrap();
+            *g.entry(base).or_insert_with(|| Box::leak(Box::new(build(base))))
+        }
+    }
 }
 
 fn sparse_table_with_rotation(
