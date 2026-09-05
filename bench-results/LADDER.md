@@ -778,3 +778,37 @@ never swapped out. It therefore refutes "the distribution shape is the problem" 
 pool policy is the problem" untested. The distinguishing experiment is a scheduler that bypasses
 rayon entirely (`std::thread::scope`, workers spinning rather than parking between rounds), which
 is what bb effectively gets from its own pool.
+
+## Update 31: bypassing rayon entirely — does NOT reach parity. It is not a rayon issue.
+
+Ported bb's `parallel_for_mutex_pool` in full: a persistent pool of `threads - 1` std threads, the
+calling thread working alongside them, iterations claimed one at a time from a counter under a
+mutex, and a nested call falling back to serial. Not rayon's pool, not rayon's sleep/wake, not
+rayon's split-and-steal. Proofs verified identical.
+
+Eight paired interleaved runs, 2^15 / 65% active / fragmented / 8 threads:
+
+| | median | mean | range |
+|---|---|---|---|
+| rayon `par_iter` | 123.0ms | 123.2ms | 122.1-124.8 |
+| bb pool port | 122.5ms | 122.6ms | 122.2-123.2 |
+| **bb itself** | **103ms** | | |
+
+0.5%, wins 6/8 — neutral. The port is more *stable* (range 1.0ms vs 2.7ms) but no faster. **The
+thread pool is not what separates us from bb.**
+
+Also retested, properly this time: chunk count (128 vs 16 chunks) is neutral too — median 123.0 vs
+123.2, wins 5/8. The "4% win from `div=2`" in Update 29 was noise, like the "7% win" in Update 30.
+Both were single-sample readings inside a ~6% band.
+
+**Where that leaves the scaling gap.** Confirmed real by repetition (1 thread: ours 680ms vs bb
+796ms, we are 15% faster; 8 threads: ours 122.6ms vs bb 103ms, we are 19% slower; scaling 5.55x vs
+7.73x). Amdahl on 5.55x implies ~5.6% serial per round against bb's ~0.4%. Now ruled out as the
+serial part: pool policy, work distribution, chunk count, and the sequential combine of per-chunk
+accumulators. The remaining candidate the profile points at is allocator contention — `dlmalloc`
+plus `dlfree` were 5% of busy time, wasm's allocator is globally locked, and we allocate fresh
+`Scratch` and `Accumulators` per chunk — but chunk count being neutral argues against allocation
+*count* being the driver, so this is a hypothesis and not a finding.
+
+Dead ends now eleven. The `bbpool.rs` port was removed after measuring; it is recoverable from
+this commit's parent if the pool question is ever reopened.
