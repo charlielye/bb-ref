@@ -742,3 +742,39 @@ reaches the end of the table, so the trimmed column spans everything — and not
 separate parallel region, with shrinking work and a hard join between them. bb's schedulers
 (`STATIC_BLOCKS`, `CHUNK_STEALING`) hold 7.67x through the same shape. Closing it means changing
 how a round is scheduled, not what it computes — and the rung makes that measurable in 122ms.
+
+## Update 30: bb's scheduler shape ported — no effect. Scaling gap confirmed by repetition.
+
+**Retraction.** Update 29's follow-up claimed bb's `parallel_for_mutex_pool` shape was worth 7% on
+the rung (122.9 -> 114.4ms) from two samples. Eight *paired interleaved* runs say otherwise:
+
+| | median | mean | range |
+|---|---|---|---|
+| rayon `par_iter` | 122.2ms | 123.4ms | 120.9-127.8 |
+| bb pool shape | 124.5ms | 124.8ms | 121.1-130.1 |
+
+bb-pool wins 2 of 8 pairs; the paired median is 2.4ms *against* it. Reverted. Tenth dead end.
+
+**The rung's noise band is ~6%, not the ~1.5% I assumed** from a few early runs. Nothing under
+about 10% can be judged from single or paired samples here; it needs n>=8 interleaved.
+
+**What was ported.** bb keeps one persistent pool of `get_num_cpus() - 1` workers and has the
+calling thread work alongside them; iterations are claimed one at a time from a shared counter
+under a mutex, so uneven per-chunk cost self-balances. We use rayon's split-and-steal over a fixed
+list of 16*threads chunk starts with the caller blocked. Replicating bb's claiming changed nothing.
+
+**Confirmed by repetition — the scaling gap is real** (2^15, 65% active, fragmented):
+
+| | 1 thread | 8 threads | scaling |
+|---|---|---|---|
+| bb | 796ms (791-797) | 103ms (103/103/103) | 7.73x |
+| bb-ref | 680ms (672-718) | 122.6ms (121-124) | 5.55x |
+
+Single-threaded we are 15% faster than bb; at 8 threads we are 19% slower. That stands.
+
+**What the failed port does and does not rule out.** It replaced the *work distribution* while
+still running on rayon's pool, through `rayon::in_place_scope`, so rayon's sleep/wake policy was
+never swapped out. It therefore refutes "the distribution shape is the problem" and leaves "rayon's
+pool policy is the problem" untested. The distinguishing experiment is a scheduler that bypasses
+rayon entirely (`std::thread::scope`, workers spinning rather than parking between rounds), which
+is what bb effectively gets from its own pool.

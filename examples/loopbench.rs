@@ -95,8 +95,12 @@ fn main() {
             let uni = state.univariate(&rels, &params, &betas, &Fr::from(1u64), &alphas, d);
             std::hint::black_box(&uni);
             state.partially_evaluate(&u);
+            let rms = t_round.elapsed().as_secs_f64() * 1e3;
             if round == 0 {
-                round0_ms = t_round.elapsed().as_secs_f64() * 1e3;
+                round0_ms = rms;
+            }
+            if it > 0 && std::env::var_os("BBREF_PER_ROUND").is_some() {
+                println!("    round {round:2}: {rms:7.2} ms");
             }
         }
         let ms = t.elapsed().as_secs_f64() * 1e3;
