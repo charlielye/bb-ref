@@ -308,7 +308,9 @@ plus ≈12,800 vendored (ark-ff, whose own change is a handful of attributes).
 38. **Batched-affine cluster merge in the dedup** (#37's merge was projective): clusters are reduced
     level by level with affine additions sharing one Montgomery-trick inversion per level; equal-x
     pairs take the projective formula, exactly. `commit_to_wires` 0.39 → 0.37s. H C N W.
-    *LoC +70/−20; shape: general within the dedup branch (no new condition).*
+    *LoC +70/−20; shape: general within the dedup branch (no new condition). Weak gain-for-complexity:
+    ~50 net lines of pair-tree bookkeeping for 0.4% of proving; the 15-line projective merge already
+    captured 0.05 of the dedup's 0.07. Revert candidate.*
 
 ### Circuit builder and ACIR lowering
 
@@ -369,6 +371,7 @@ inside the noise band on the paired test described above.
 | R19 | Forcing all later rounds dense / "drop the skip probe" | neutral; the probe costs ~0.06s and 4-wide arithmetic on the later rounds is neutral | | — |
 | R20 | **`wasm-opt -O3`** on our module (binaryen 116, all relevant features enabled) | module 11.4 → 8.7 MB but **+11% slower** on the flow (6.33 vs 5.68s), proofs identical | binaryen's rewrites hurt V8's tiering/codegen on this module; bb's toolchain applies it to a different code shape | a newer binaryen/V8 pair, or `-O2`/`-Os` if size ever matters |
 | R22 | Single-threaded small MSMs inside `batch_commit` (bb small-member pool shape); tiny-MSM threshold 128→4096 | both neutral on the ECCVM and Oink wire rounds (0.220 → 0.220; 0.44 → 0.44) | rayon already absorbs the nesting; the wire rounds' excess is not the small-MSM algorithm | — |
+| R24 | In-place `MulAssign` (downward convolution) + `*=`-chained Permutation body | neutral: Permutation 6029 → 6181 ns/edge, flow unchanged | temporaries are not the cost either; bb's coefficient-basis products use cheaper short-product formulas | with exact-size univariates / Karatsuba-style short products |
 | R23 | Slice-iterating the `Graded` inner loops (remove per-coefficient bounds checks) | neutral: Permutation 6029 → 6167 ns/edge, flow unchanged | LLVM had already elided the checks; the Permutation excess (1.42× bb, the folding outlier) is the fixed `[F; 8]` move per temporary | with exact-size (degree-typed) univariates, which is the fix for that traffic |
 | R21 | `opt-level = 3` for the default release profile (wasm and native) | neutral both targets (5.675 vs 5.678 wasm; 2.94 → 2.98 native); the 2026-09-04 opt-level-2 choice stands | the win is in LTO + single codegen unit (#34), not the per-function pass level | — |
 

@@ -1446,3 +1446,11 @@ tree level): `commit_to_wires` 0.39 -> 0.37 s (3/3), byte-identical.
 (same-hour), 1.055x vs 4.837.** Remaining named items are each <= 0.03 s: Permutation copy traffic,
 Oink wire remainder, mlb setup, hiding oink (2^17 MSM 1.06x), IPA, decider, from_builder, ECCVM
 PCS/claims. The next real step is exact-size (degree-typed) univariates for the relation bodies.
+
+**Update 53 addendum — neutral (reverted):** in-place `MulAssign` (downward convolution, no
+temporary) plus a `*=`-chained Permutation body: Permutation 6029 -> 6181 ns/edge, flow unchanged.
+The Permutation excess (1.46x bb) is therefore neither bounds checks nor temporaries; bb's
+coefficient-basis products are algebraically cheaper (short-product formulas), which is the same
+exact-size-univariate item. **Complexity note on the affine merge (#38):** +70/−20 lines of
+tree-reduction bookkeeping for 0.02 s (0.4% of proving) — a weak ratio; the 15-line projective merge
+already gave 0.05 of the dedup's 0.07. Candidate for reverting on the gain-for-complexity rule.
