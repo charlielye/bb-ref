@@ -1411,3 +1411,16 @@ rest/pows ~0.045), fold 0.088 (bb 0.172 for all folds), challenge 0.014, new 0.0
 Remaining named items: Oink wires ~+0.07 (merge is projective; bb's is batched-affine), folding
 univariate ~+0.09, ECCVM wires +0.043 (86 polys of <= 3141 rows, below the dedup gate), IPA +0.026,
 mlb +0.038, hiding oink +0.028, from_builder +0.021, decider ~+0.03.
+
+## Update 52: definitive standing on df6b253 — wall parity; proving 1.061x
+
+bbbench, 8t, `--profile lto` module, bb re-measured the same hour:
+| | |
+|---|---|
+| proving-only, transfer_1 (5 reps: 5.106-5.120) | **5.114 s vs bb 4.821 = 1.061x** (target 1.05 = 5.06 s) |
+| wall vs stripped bb, 11 flows best-of-3 | **median 1.000x**, TOTAL 0.917x, mean 0.974x; sorted 0.670 0.978 0.993 0.996 0.999 1.000 1.004 1.004 1.036 1.037 |
+
+Landed since Update 51: dedup gate 512 (ECCVM wires 0.207 -> 0.190), strided `pows` view (neutral).
+Remaining named proving items (~+0.29 s): folding univariate ~+0.09, Oink wires ~+0.07 (projective
+merge), ECCVM IPA +0.026 / PCS ~+0.05, mlb +0.038, hiding oink +0.028, from_builder +0.021,
+decider ~+0.03.

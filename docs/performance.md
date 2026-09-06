@@ -22,8 +22,8 @@ test suite: none of it changes an output bit.
 | chonk client flows, **native**, 11 pinned transactions, 8t (bbbench) | 44.7s | **42.7s** | **0.954×** (median 0.993×, range 0.81–1.02) |
 | chonk client flows, **wasm** (V8, `node`), 8t, unstripped bb module | 85.1s | 80.3s | 0.944× total, **median 1.023×** |
 | — same, against a *stripped* bb module (**the fair wall basis**) | 83.8s | 80.1s | 0.956× total, **median 1.048×** (range 0.69–1.09) |
-| — same, stripped bb, **`--profile lto` build, current HEAD** | 83.7s | **77.0s** | **0.920× total, median 1.002×** (range 0.67–1.05) — wall parity |
-| — **proving-only**, typical flow (`transfer_1`), wasm, current HEAD (LTO) | 4.84s | 5.13s | **1.06×** (the number that compares the provers; target 1.05) |
+| — same, stripped bb, **`--profile lto` build, current HEAD** | 83.8s | **76.8s** | **0.917× total, median 1.000×** (range 0.67–1.04) — wall parity |
+| — **proving-only**, typical flow (`transfer_1`), wasm, current HEAD (LTO), bb re-measured same hour | 4.82s | 5.11s | **1.061×** (the number that compares the provers; target 1.05) |
 | rollup PrivateTxBaseRollup frame, native 8t (before 14.82s) | 15.19s | **13.73s** | 0.90× |
 | rollup RootRollup frame, native 8t (before 45.4s) | 49.5s | **42.6s** | 0.86× |
 | rollup corpus (62 recorded server ops), 32t c7a, 2026-09-03 | 237.7s | 221.1s | 0.93× |
