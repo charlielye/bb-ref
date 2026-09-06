@@ -126,8 +126,14 @@ fn permutation<T: FieldLike>(acc: &mut [T], r: &Row<T>, p: &RelationParams<T>, s
     t7 += &w3pg;
     let mut t8 = r.e(sigma_4).clone() * &p.beta;
     t8 += &w4pg;
-    let numerator = t1 * &t2 * &t3 * &t4;
-    let denominator = t5 * &t6 * &t7 * &t8;
+    // bb `UltraPermutationRelationImpl::accumulate`: the prover pairs the factors, (t1·t2)·(t3·t4),
+    // so its short-product formulas apply (3 + 3 + 6 multiplications instead of the chain's
+    // 4 + 6 + 8); the verifier circuit keeps the left-to-right chain, which fixes its gates.
+    let (numerator, denominator) = if T::IS_PROVER {
+        ((t1 * &t2) * &(t3 * &t4), (t5 * &t6) * &(t7 * &t8))
+    } else {
+        (t1 * &t2 * &t3 * &t4, t5 * &t6 * &t7 * &t8)
+    };
 
     let mut public_input_term = r.e(lagrange_last).clone() * &p.public_input_delta;
     public_input_term += r.s(z_perm);

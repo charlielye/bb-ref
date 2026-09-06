@@ -59,6 +59,11 @@ pub trait FieldLike:
 {
     /// The underlying prime field of the values.
     type Native: NativeField;
+    /// True for prover-side representations (native fields, coefficient-basis univariates, SIMD
+    /// lanes), false for circuit witnesses. Relation bodies may re-associate products on the
+    /// prover side (bb's `IsProverAccumulator` branches); the circuit side must keep bb's gate
+    /// order or the verification keys change.
+    const IS_PROVER: bool = true;
     /// Builder context: `()` natively, a builder handle in-circuit.
     type Ctx: Clone;
 

@@ -837,6 +837,7 @@ impl PartialEq for FieldT {
 }
 
 impl FieldLike for FieldT {
+    const IS_PROVER: bool = false;
     type Native = Fr;
     type Ctx = Ctx;
     fn ctx(&self) -> Option<Ctx> {
