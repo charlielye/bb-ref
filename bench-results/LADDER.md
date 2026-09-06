@@ -1325,3 +1325,50 @@ Per flow after/bb: 0.81 (storage_proof) .. 1.02 (amm); the deploy_tokenContract 
 Last native standing before this push was 1.16x (2026-09-03, 62c865b). The optimizations were all
 serial-work removal or serial->parallel (sumcheck round loop, mlb, sigma/id, grand product, ECCVM
 rows, range/classify arithmetic, coefficient-form batching), none wasm-specific, so they transfer.
+
+## Update 49: the target is proving speed — reconciled to 1.10x; fair wall basis; flags; binaries
+
+**Correction of the headline.** The 1.05x goal was for *proving* speed. Wall (median 1.023x
+against the unstripped bb module) nets bb's self-verify and module load against us. Re-measured
+on the fair bases:
+
+| basis (bbbench, 8t, best-of-3) | median | TOTAL |
+|---|---|---|
+| wall, unstripped 123 MB bb module, opt-level-2 build | 1.023x | 0.944x |
+| wall, **stripped** 18 MB bb module (fair), opt-level-2 build | **1.048x** | 0.956x |
+| wall, stripped bb, `--profile lto` build (opt3 + fat LTO + cgu1) | **1.035x** | 0.945x |
+| **proving-only**, transfer_1, current build | | **1.102x** (5.33 vs 4.84s, +0.49s) |
+
+**Binary sizes, precisely.** bb.wasm 122.9 MB on disk = 17.15 MB code + 100 MB `name` section +
+5 MB DWARF; stripping it makes bb 0.10-0.13 s/flow faster (2%), which is the 1.023 -> 1.048
+difference. Ours 11.4 MB / 9.3 MB code. The native reference is **bb-avm** (`--help`: AVM enabled;
+206 MB executable sections, 270 MB on disk) vs our 18.5 MB text; startup 5 ms both, so native
+comparisons are unaffected. The wasm reference is vanilla bb (no AVM).
+
+**Flags A/B (transfer_1, interleaved x4, proofs identical):** opt-level 3 alone neutral (5.675 vs
+5.678); **opt3 + fat LTO + codegen-units=1: -1.3%, 4/4** (5.603) — adopted as `[profile.lto]`
+for release wasm builds; **`wasm-opt -O3`: +11% slower** (6.33) — rejected; native opt-level 3
+neutral-to-worse (2.94 -> 2.98). No "dumb flag" explains the gap.
+
+**Rollup corpus, bbbench 16t, serial replay:** bb 298.6s, before this pass 291.9s, **after
+258.3s** — after/before **0.885x**, after/bb **0.865x**; every circuit over a second 0.79-0.99x;
+the sub-second ops remain 1.08-1.24x. Native frames 8t: PTBR 15.19/14.82/**13.73**, RootRollup
+49.5/45.4/**42.6** (bb/before/after).
+
+**Landed:** Lagrange basis cached for committed round univariates (`eccvm-sc/commit` 0.030 ->
+0.020; ECCVM sumcheck 0.235 -> 0.222).
+
+**Reconciled proving gap, transfer_1 (+0.49s), children summed against parents on both sides:**
+| item | gap | note |
+|---|---|---|
+| Oink `commit_to_wires` | +0.117 | high-duplicate witness scalars (bb Phase-A dedup) |
+| folding `prove_sumcheck` (6 instances) | +0.101 | our scope pairs with bb `sumcheck` 0.628 alone |
+| ECCVM like-for-like | +0.169 | sumcheck +0.047 (edge loop 166 ms — pointwise Set/Lookup), wires +0.043, IPA +0.026, PCS/claims ~+0.05 |
+| decider (Shplemini/KZG on the accumulator) | +0.05-0.07 | ours 0.346-0.370 vs 0.302 |
+| multilinear batching | +0.038 | pairs with bb `finalize` 0.125 (construct_proof is its child) |
+| hiding oink / from_builder / create_circuit / joint | +0.028 / +0.021 / +0.014 / +0.012 | |
+| wins | | output_to_accumulator -0.055, logderiv -0.088, z_perm -0.030, partially_evaluate -0.075 |
+
+Two attribution errors caught this pass: the "ECCVM edge loop is 34 ms" row was one of two other
+15-round 2^15 sumchecks (the ECCVM's is 166 ms), and pairing our folding scope against bb's
+`sumcheck + sumcheck_output_to_accumulator` briefly made the folding gap look like a win.
