@@ -34,6 +34,9 @@ impl<T: FieldLike<Native = Fq>> RelationSet<T> for EccvmRelations {
     fn supports_graded(&self) -> bool {
         true
     }
+    fn supports_wide_graded(&self) -> bool {
+        true
+    }
     fn accumulate_graded(
         &self,
         r: usize,
@@ -41,6 +44,16 @@ impl<T: FieldLike<Native = Fq>> RelationSet<T> for EccvmRelations {
         row: &[crate::honk::graded::Graded<Fq>],
         p: &RelationParams<crate::honk::graded::Graded<Fq>>,
         scaling: &crate::honk::graded::Graded<Fq>,
+    ) {
+        ECCVM_RELATIONS[r].accumulate(acc, row, p, scaling)
+    }
+    fn accumulate_graded_wide(
+        &self,
+        r: usize,
+        acc: &mut [crate::honk::graded::GradedWide<Fq>],
+        row: &[crate::honk::graded::GradedWide<Fq>],
+        p: &RelationParams<crate::honk::graded::GradedWide<Fq>>,
+        scaling: &crate::honk::graded::GradedWide<Fq>,
     ) {
         ECCVM_RELATIONS[r].accumulate(acc, row, p, scaling)
     }

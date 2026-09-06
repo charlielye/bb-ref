@@ -13,18 +13,21 @@ use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 /// Coefficient capacity: covers every Ultra/Mega/Translator subrelation degree (the edge loop
 /// falls back to pointwise evaluation for relation sets that exceed it, e.g. the ECCVM's).
 pub const MAX_LEN: usize = 8;
+/// Capacity of the wide variant used for the ECCVM's degree-21/8 relations (`Set`, `Lookup`).
+pub const WIDE_LEN: usize = 24;
+pub type GradedWide<F> = Graded<F, WIDE_LEN>;
 
 #[derive(Clone, Copy, Debug)]
-pub struct Graded<F> {
+pub struct Graded<F, const N: usize = MAX_LEN> {
     /// Coefficients in the round variable; entries at `len..` are unspecified (every operation
     /// reads and writes only within the operands' lengths).
-    c: [F; MAX_LEN],
+    c: [F; N],
     len: u8,
 }
 
-impl<F: NativeField> Graded<F> {
+impl<F: NativeField, const N: usize> Graded<F, N> {
     pub fn constant(v: F) -> Self {
-        let mut c = [F::ZERO; MAX_LEN];
+        let mut c = [F::ZERO; N];
         c[0] = v;
         Self { c, len: 1 }
     }
@@ -32,7 +35,7 @@ impl<F: NativeField> Graded<F> {
     /// The edge entry `row0 + X·delta`; a constant edge (Δ = 0) stays degree 0, which is what
     /// makes products against locally-constant selectors cheap.
     pub fn linear(row0: F, delta: F) -> Self {
-        let mut c = [F::ZERO; MAX_LEN];
+        let mut c = [F::ZERO; N];
         c[0] = row0;
         c[1] = delta;
         Self {
@@ -63,47 +66,47 @@ impl<F: NativeField> Graded<F> {
     }
 }
 
-impl<F: NativeField> PartialEq for Graded<F> {
+impl<F: NativeField, const N: usize> PartialEq for Graded<F, N> {
     fn eq(&self, other: &Self) -> bool {
         let at = |g: &Self, i: usize| if i < g.len as usize { g.c[i] } else { F::ZERO };
-        (0..MAX_LEN.max(1)).all(|i| at(self, i) == at(other, i))
+        (0..N.max(1)).all(|i| at(self, i) == at(other, i))
     }
 }
 
-impl<F: NativeField> Add<&Graded<F>> for Graded<F> {
-    type Output = Graded<F>;
-    fn add(mut self, rhs: &Graded<F>) -> Graded<F> {
+impl<F: NativeField, const N: usize> Add<&Graded<F, N>> for Graded<F, N> {
+    type Output = Graded<F, N>;
+    fn add(mut self, rhs: &Graded<F, N>) -> Graded<F, N> {
         self += rhs;
         self
     }
 }
-impl<F: NativeField> Add for Graded<F> {
-    type Output = Graded<F>;
-    fn add(mut self, rhs: Graded<F>) -> Graded<F> {
+impl<F: NativeField, const N: usize> Add for Graded<F, N> {
+    type Output = Graded<F, N>;
+    fn add(mut self, rhs: Graded<F, N>) -> Graded<F, N> {
         self += &rhs;
         self
     }
 }
-impl<F: NativeField> Sub<&Graded<F>> for Graded<F> {
-    type Output = Graded<F>;
-    fn sub(mut self, rhs: &Graded<F>) -> Graded<F> {
+impl<F: NativeField, const N: usize> Sub<&Graded<F, N>> for Graded<F, N> {
+    type Output = Graded<F, N>;
+    fn sub(mut self, rhs: &Graded<F, N>) -> Graded<F, N> {
         self -= rhs;
         self
     }
 }
-impl<F: NativeField> Sub for Graded<F> {
-    type Output = Graded<F>;
-    fn sub(mut self, rhs: Graded<F>) -> Graded<F> {
+impl<F: NativeField, const N: usize> Sub for Graded<F, N> {
+    type Output = Graded<F, N>;
+    fn sub(mut self, rhs: Graded<F, N>) -> Graded<F, N> {
         self -= &rhs;
         self
     }
 }
-impl<F: NativeField> Mul<&Graded<F>> for Graded<F> {
-    type Output = Graded<F>;
-    fn mul(self, rhs: &Graded<F>) -> Graded<F> {
+impl<F: NativeField, const N: usize> Mul<&Graded<F, N>> for Graded<F, N> {
+    type Output = Graded<F, N>;
+    fn mul(self, rhs: &Graded<F, N>) -> Graded<F, N> {
         let (l1, l2) = (self.len as usize, rhs.len as usize);
         let out_len = l1 + l2 - 1;
-        assert!(out_len <= MAX_LEN, "graded univariate degree overflow");
+        assert!(out_len <= N, "graded univariate degree overflow");
         let mut c = self.c;
         for k in 0..out_len {
             c[k] = F::ZERO;
@@ -120,23 +123,23 @@ impl<F: NativeField> Mul<&Graded<F>> for Graded<F> {
         Graded { c, len: out_len as u8 }
     }
 }
-impl<F: NativeField> Mul for Graded<F> {
-    type Output = Graded<F>;
-    fn mul(self, rhs: Graded<F>) -> Graded<F> {
+impl<F: NativeField, const N: usize> Mul for Graded<F, N> {
+    type Output = Graded<F, N>;
+    fn mul(self, rhs: Graded<F, N>) -> Graded<F, N> {
         self * &rhs
     }
 }
-impl<F: NativeField> Neg for Graded<F> {
-    type Output = Graded<F>;
-    fn neg(mut self) -> Graded<F> {
+impl<F: NativeField, const N: usize> Neg for Graded<F, N> {
+    type Output = Graded<F, N>;
+    fn neg(mut self) -> Graded<F, N> {
         for i in 0..self.len as usize {
             self.c[i] = -self.c[i];
         }
         self
     }
 }
-impl<F: NativeField> AddAssign<&Graded<F>> for Graded<F> {
-    fn add_assign(&mut self, rhs: &Graded<F>) {
+impl<F: NativeField, const N: usize> AddAssign<&Graded<F, N>> for Graded<F, N> {
+    fn add_assign(&mut self, rhs: &Graded<F, N>) {
         let common = (self.len as usize).min(rhs.len as usize);
         for i in 0..common {
             self.c[i] += rhs.c[i];
@@ -147,13 +150,13 @@ impl<F: NativeField> AddAssign<&Graded<F>> for Graded<F> {
         self.len = self.len.max(rhs.len);
     }
 }
-impl<F: NativeField> AddAssign for Graded<F> {
-    fn add_assign(&mut self, rhs: Graded<F>) {
+impl<F: NativeField, const N: usize> AddAssign for Graded<F, N> {
+    fn add_assign(&mut self, rhs: Graded<F, N>) {
         *self += &rhs;
     }
 }
-impl<F: NativeField> SubAssign<&Graded<F>> for Graded<F> {
-    fn sub_assign(&mut self, rhs: &Graded<F>) {
+impl<F: NativeField, const N: usize> SubAssign<&Graded<F, N>> for Graded<F, N> {
+    fn sub_assign(&mut self, rhs: &Graded<F, N>) {
         let common = (self.len as usize).min(rhs.len as usize);
         for i in 0..common {
             self.c[i] -= rhs.c[i];
@@ -164,23 +167,23 @@ impl<F: NativeField> SubAssign<&Graded<F>> for Graded<F> {
         self.len = self.len.max(rhs.len);
     }
 }
-impl<F: NativeField> SubAssign for Graded<F> {
-    fn sub_assign(&mut self, rhs: Graded<F>) {
+impl<F: NativeField, const N: usize> SubAssign for Graded<F, N> {
+    fn sub_assign(&mut self, rhs: Graded<F, N>) {
         *self -= &rhs;
     }
 }
-impl<F: NativeField> MulAssign<&Graded<F>> for Graded<F> {
-    fn mul_assign(&mut self, rhs: &Graded<F>) {
+impl<F: NativeField, const N: usize> MulAssign<&Graded<F, N>> for Graded<F, N> {
+    fn mul_assign(&mut self, rhs: &Graded<F, N>) {
         *self = *self * rhs;
     }
 }
-impl<F: NativeField> MulAssign for Graded<F> {
-    fn mul_assign(&mut self, rhs: Graded<F>) {
+impl<F: NativeField, const N: usize> MulAssign for Graded<F, N> {
+    fn mul_assign(&mut self, rhs: Graded<F, N>) {
         *self = *self * &rhs;
     }
 }
 
-impl<F: NativeField> FieldLike for Graded<F> {
+impl<F: NativeField, const N: usize> FieldLike for Graded<F, N> {
     type Native = F;
     type Ctx = ();
 
@@ -205,8 +208,8 @@ impl<F: NativeField> FieldLike for Graded<F> {
 }
 
 /// The relation parameters lifted to constants in the round variable.
-pub fn lift_params<F: NativeField>(p: &RelationParams<F>) -> RelationParams<Graded<F>> {
-    let c = |v: &F| Graded::constant(*v);
+pub fn lift_params_n<F: NativeField, const N: usize>(p: &RelationParams<F>) -> RelationParams<Graded<F, N>> {
+    let c = |v: &F| Graded::<F, N>::constant(*v);
     RelationParams {
         eta: c(&p.eta),
         eta_two: c(&p.eta_two),
@@ -223,4 +226,11 @@ pub fn lift_params<F: NativeField>(p: &RelationParams<F>) -> RelationParams<Grad
         batching_challenge_v: std::array::from_fn(|i| std::array::from_fn(|j| c(&p.batching_challenge_v[i][j]))),
         accumulated_result: std::array::from_fn(|i| c(&p.accumulated_result[i])),
     }
+}
+
+pub fn lift_params<F: NativeField>(p: &RelationParams<F>) -> RelationParams<Graded<F>> {
+    lift_params_n::<F, MAX_LEN>(p)
+}
+pub fn lift_params_wide<F: NativeField>(p: &RelationParams<F>) -> RelationParams<GradedWide<F>> {
+    lift_params_n::<F, WIDE_LEN>(p)
 }

@@ -7,7 +7,7 @@
 //! values at 0 and 1 instead of the univariate itself.
 
 use super::flavor::{FlavorDesc, Layout};
-use super::graded::{lift_params, Graded, MAX_LEN as GRADED_MAX_LEN};
+use super::graded::{lift_params, lift_params_wide, Graded, GradedWide, MAX_LEN as GRADED_MAX_LEN, WIDE_LEN as GRADED_WIDE_LEN};
 use super::quadf::{lift_params_quad, QuadConsts, QuadF};
 use super::relations::{RelationParams, Row};
 use crate::base::field::NativeField;
@@ -57,6 +57,12 @@ pub trait RelationSet<F: FieldLike> {
     fn supports_graded(&self) -> bool {
         false
     }
+    /// Whether relations over the narrow coefficient capacity should run on `GradedWide` rather
+    /// than pointwise. Opt-in: the Translator's high-degree add-heavy relations measured slower in
+    /// coefficient form and stay pointwise.
+    fn supports_wide_graded(&self) -> bool {
+        false
+    }
     /// `accumulate` over degree-tracked coefficient-basis univariates: the same relation bodies,
     /// with each ring operation costing its true degree. Only called when `supports_graded` is
     /// true and every partial length fits `GRADED_MAX_LEN`.
@@ -69,6 +75,18 @@ pub trait RelationSet<F: FieldLike> {
         _scaling: &Graded<F::Native>,
     ) {
         unreachable!("no graded evaluation for this relation set")
+    }
+    /// `accumulate_graded` on the wide coefficient capacity, for relations whose partial length
+    /// exceeds `GRADED_MAX_LEN` but fits `GRADED_WIDE_LEN` (the ECCVM's set and lookup relations).
+    fn accumulate_graded_wide(
+        &self,
+        _r: usize,
+        _acc: &mut [GradedWide<F::Native>],
+        _row: &[GradedWide<F::Native>],
+        _p: &RelationParams<GradedWide<F::Native>>,
+        _scaling: &GradedWide<F::Native>,
+    ) {
+        unreachable!("no wide graded evaluation for this relation set")
     }
     fn total_subrelations(&self) -> usize {
         (0..self.num_relations()).map(|r| self.num_subrelations(r)).sum()
@@ -124,6 +142,24 @@ impl<F: FieldLike> RelationSet<F> for HonkRelations<'_> {
         row: &[Graded<F::Native>],
         p: &RelationParams<Graded<F::Native>>,
         scaling: &Graded<F::Native>,
+    ) {
+        self.flavor.relations[r].accumulate(
+            acc,
+            &Row {
+                vals: row,
+                layout: self.layout,
+            },
+            p,
+            scaling,
+        )
+    }
+    fn accumulate_graded_wide(
+        &self,
+        r: usize,
+        acc: &mut [GradedWide<F::Native>],
+        row: &[GradedWide<F::Native>],
+        p: &RelationParams<GradedWide<F::Native>>,
+        scaling: &GradedWide<F::Native>,
     ) {
         self.flavor.relations[r].accumulate(
             acc,
@@ -714,6 +750,14 @@ struct Scratch<F: NativeField> {
     graded_rel: Vec<bool>,
     row_uni: Vec<Graded<F>>,
     acc_uni: Vec<Vec<Graded<F>>>,
+    /// Wide coefficient-basis path for relations over the narrow capacity (ECCVM set/lookup):
+    /// rows filled only for the columns those relations read, parameters lifted on first use.
+    wide: bool,
+    wide_rel: Vec<bool>,
+    row_wide: Vec<GradedWide<F>>,
+    acc_wide: Vec<Vec<GradedWide<F>>>,
+    cols_wide: Vec<usize>,
+    params_wide: Option<RelationParams<GradedWide<F>>>,
 }
 
 impl<F: NativeField> Scratch<F> {
@@ -739,23 +783,35 @@ impl<F: NativeField> Scratch<F> {
             graded_rel: Vec::new(),
             row_uni: Vec::new(),
             acc_uni: Vec::new(),
+            wide: false,
+            wide_rel: Vec::new(),
+            row_wide: Vec::new(),
+            acc_wide: Vec::new(),
+            cols_wide: Vec::new(),
+            params_wide: None,
         }
         .init_in_skip(num_columns)
         .init_graded(rels, num_columns, d)
     }
     fn init_graded(mut self, rels: &impl RelationSet<F>, num_columns: usize, d: usize) -> Self {
-        let zero = Graded::<F>::constant(<F as ark_ff::AdditiveGroup>::ZERO);
-        self.graded_rel = (0..rels.num_relations())
-            .map(|r| {
-                graded_relation(rels, r, d)
-            })
-            .collect();
+        let zero = Graded::<F, GRADED_MAX_LEN>::constant(<F as ark_ff::AdditiveGroup>::ZERO);
+        self.graded_rel = (0..rels.num_relations()).map(|r| graded_relation(rels, r, d)).collect();
         self.graded = self.graded_rel.iter().any(|&g| g);
         if self.graded {
             self.row_uni = vec![zero; num_columns];
             self.acc_uni = (0..rels.num_relations())
                 .map(|r| vec![zero; rels.num_subrelations(r)])
                 .collect();
+        }
+        let zero_wide = GradedWide::<F>::constant(<F as ark_ff::AdditiveGroup>::ZERO);
+        self.wide_rel = (0..rels.num_relations()).map(|r| wide_relation(rels, r, d)).collect();
+        self.wide = self.wide_rel.iter().any(|&w| w);
+        if self.wide {
+            self.row_wide = vec![zero_wide; num_columns];
+            self.acc_wide = (0..rels.num_relations())
+                .map(|r| if self.wide_rel[r] { vec![zero_wide; rels.num_subrelations(r)] } else { Vec::new() })
+                .collect();
+            self.cols_wide = Vec::with_capacity(num_columns);
         }
         self
     }
@@ -873,6 +929,15 @@ impl<F: FieldLike + Copy> ExtensionWeights<F> {
 fn graded_relation<F: FieldLike>(rels: &impl RelationSet<F>, ri: usize, d: usize) -> bool {
     rels.supports_graded() && rels.partial_length(ri).min(d) <= GRADED_MAX_LEN && !relation_stats_enabled()
 }
+/// Relations over the narrow capacity but within the wide one run on `GradedWide`.
+fn wide_relation<F: FieldLike>(rels: &impl RelationSet<F>, ri: usize, d: usize) -> bool {
+    let len = rels.partial_length(ri).min(d);
+    rels.supports_wide_graded() && len > GRADED_MAX_LEN && len <= GRADED_WIDE_LEN && !relation_stats_enabled()
+}
+/// Whether relation `ri`'s accumulators hold coefficients (either graded width) rather than points.
+fn coefficient_form<F: FieldLike>(rels: &impl RelationSet<F>, ri: usize, d: usize) -> bool {
+    graded_relation(rels, ri, d) || wide_relation(rels, ri, d)
+}
 
 /// Add a chunk's coefficient-basis subrelation accumulators into the round accumulators, which for
 /// graded relations hold coefficients (slot `k` = coefficient of X^k) rather than point values.
@@ -884,6 +949,16 @@ fn flush_graded<F: NativeField>(s: &Scratch<F>, acc: &mut Accumulators<F>) {
             continue;
         }
         for (j, g) in s.acc_uni[ri].iter().enumerate() {
+            for (k, c) in g.coeffs().iter().enumerate() {
+                acc.point(ri, k)[j] += *c;
+            }
+        }
+    }
+    for ri in 0..s.acc_wide.len() {
+        if !s.wide_rel[ri] {
+            continue;
+        }
+        for (j, g) in s.acc_wide[ri].iter().enumerate() {
             for (k, c) in g.coeffs().iter().enumerate() {
                 acc.point(ri, k)[j] += *c;
             }
@@ -1250,7 +1325,7 @@ fn accumulate_edge<F: NativeField>(
     for ri in 0..rels.num_relations() {
         s.active[ri] = !rels.skip(ri, &s.row0, &s.row1);
         if s.active[ri] {
-            if !(s.graded && s.graded_rel[ri]) {
+            if !(s.graded && s.graded_rel[ri]) && !(s.wide && s.wide_rel[ri]) {
                 num_points = num_points.max(s.len[ri]);
             }
             for &j in &used[ri] {
@@ -1279,9 +1354,41 @@ fn accumulate_edge<F: NativeField>(
                 rels.accumulate_graded(ri, &mut s.acc_uni[ri], &s.row_uni, params_uni, &scaling_uni);
             }
         }
-        if s.graded_rel.iter().zip(&s.active).all(|(&g, &a)| g || !a) {
-            return;
+    }
+    if s.wide {
+        s.cols_wide.clear();
+        let mut any_wide = false;
+        for ri in 0..rels.num_relations() {
+            if s.active[ri] && s.wide_rel[ri] {
+                any_wide = true;
+                for &j in &used[ri] {
+                    if !s.mark[j] {
+                        s.mark[j] = true;
+                        s.cols_wide.push(j);
+                    }
+                }
+            }
         }
+        if any_wide {
+            if s.params_wide.is_none() {
+                s.params_wide = Some(lift_params_wide(params));
+            }
+            let Scratch { cols_wide, mark, row_wide, row0, delta, acc_wide, active, wide_rel, params_wide, .. } = s;
+            for &j in cols_wide.iter() {
+                mark[j] = false;
+                row_wide[j].set_linear(row0[j], delta[j]);
+            }
+            let pw = params_wide.as_ref().unwrap();
+            let scaling_wide = GradedWide::constant(*scaling);
+            for ri in 0..rels.num_relations() {
+                if active[ri] && wide_rel[ri] {
+                    rels.accumulate_graded_wide(ri, &mut acc_wide[ri], row_wide, pw, &scaling_wide);
+                }
+            }
+        }
+    }
+    if (0..rels.num_relations()).all(|ri| !s.active[ri] || (s.graded && s.graded_rel[ri]) || (s.wide && s.wide_rel[ri])) {
+        return;
     }
     let stats = relation_stats_enabled();
     let mut ext_ns = 0u128;
@@ -1299,7 +1406,7 @@ fn accumulate_edge<F: NativeField>(
             ext_ns += t0.elapsed().as_nanos();
         }
         for ri in 0..rels.num_relations() {
-            if !s.active[ri] || k >= s.len[ri] || (s.graded && s.graded_rel[ri]) {
+            if !s.active[ri] || k >= s.len[ri] || (s.graded && s.graded_rel[ri]) || (s.wide && s.wide_rel[ri]) {
                 continue;
             }
             let t0 = stats.then(std::time::Instant::now);
@@ -1351,7 +1458,7 @@ fn batch_over_relations<F: FieldLike + Copy>(
     for ri in 0..rels.num_relations() {
         let offset_only = rels.offset_only(ri);
         let m = if offset_only { off_lin } else { main_lin };
-        let graded = graded_relation(rels, ri, d);
+        let graded = coefficient_form(rels, ri, d);
         let len = rels.partial_length(ri).min(d);
         for j in 0..rels.num_subrelations(ri) {
             let alpha = if ri == 0 && j == 0 { F::one() } else { alphas[alpha_idx] };
@@ -1586,7 +1693,8 @@ where
                 .into_iter()
                 .enumerate()
                 .map(|(ri, edges)| {
-                    if quad_sumcheck_enabled(RelationSet::<F>::num_relations(rels), round) {
+                    let nrel = RelationSet::<F>::num_relations(rels);
+                    if quad_sumcheck_enabled(nrel, round) && !(0..nrel).any(|r| coefficient_form::<F>(rels, r, d)) {
                         accumulate_edges_quad(rels, &self.used, &self.table, edges, params, pows, d)
                     } else {
                         let head = if ri == 0 { head_range.clone() } else { None };
