@@ -301,7 +301,7 @@ fn compute_grand_product(inst: &mut ProverInstance, p: &RelationParams<Fr>) {
         })
         .collect();
     let (num, den): (Vec<Fr>, Vec<Fr>) = terms.into_iter().unzip();
-    let prefix = grand_product(&num, &den);
+    let prefix = crate::base::field::grand_product_par(&num, &den);
     z.coeffs[gp_start + 1..gp_start + active_size].copy_from_slice(&prefix[1..]);
     *inst.poly_mut(Ent::z_perm) = z;
 }

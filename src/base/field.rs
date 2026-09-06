@@ -207,6 +207,61 @@ pub fn batch_invert<F: PrimeField>(v: &mut [F]) {
 }
 
 /// `z[0] = 1, z[i+1] = z[i] * num[i] / den[i]` with a single batched inversion (bb `compute_grand_product`).
+/// `grand_product` with blocked-parallel prefix products, per-chunk inversion and a parallel
+/// combine (bb `GrandProduct::step1/2a/2b/3`). Bit-identical to the serial version: prefix products
+/// are associative and inversion is element-wise. Falls back to serial below the pool-dispatch cost.
+pub fn grand_product_par<F: PrimeField + Send + Sync>(num: &[F], den: &[F]) -> Vec<F> {
+    use crate::base::msm::SendPtr;
+    use rayon::prelude::*;
+    let n = num.len();
+    if n < 8192 {
+        return grand_product(num, den);
+    }
+    let nthreads = rayon::current_num_threads().max(1);
+    let chunk = n.div_ceil(nthreads);
+    let nb = n.div_ceil(chunk);
+    // Inclusive prefix product of `src` into `out` (len n+1, out[0] = 1): per-block total, an
+    // exclusive scan over the nb block totals, then each block fills its range from its offset.
+    let prefix = |src: &[F]| -> Vec<F> {
+        let totals: Vec<F> = (0..nb)
+            .into_par_iter()
+            .map(|b| {
+                let (lo, hi) = (b * chunk, ((b + 1) * chunk).min(n));
+                let mut p = F::one();
+                for x in &src[lo..hi] {
+                    p *= x;
+                }
+                p
+            })
+            .collect();
+        let mut offs = vec![F::one(); nb];
+        for b in 1..nb {
+            offs[b] = offs[b - 1] * totals[b - 1];
+        }
+        let mut out = vec![F::one(); n + 1];
+        let ptr = SendPtr(out.as_mut_ptr());
+        (0..nb).into_par_iter().for_each(|b| {
+            let (lo, hi) = (b * chunk, ((b + 1) * chunk).min(n));
+            let mut run = offs[b];
+            let ptr = &ptr;
+            for i in lo..hi {
+                run *= &src[i];
+                unsafe { *ptr.0.add(i + 1) = run };
+            }
+        });
+        out
+    };
+    let num_prefix = prefix(num);
+    let mut den_prefix = prefix(den);
+    // Element-wise inversion, so each chunk runs the Montgomery batch trick independently.
+    den_prefix.par_chunks_mut(chunk).for_each(|c| ark_ff::batch_inversion(c));
+    num_prefix
+        .par_iter()
+        .zip(den_prefix.par_iter())
+        .map(|(n, d)| *n * d)
+        .collect()
+}
+
 pub fn grand_product<F: PrimeField>(num: &[F], den: &[F]) -> Vec<F> {
     let mut num_prefix = Vec::with_capacity(num.len() + 1);
     let mut den_prefix = Vec::with_capacity(num.len() + 1);
