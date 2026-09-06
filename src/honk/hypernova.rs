@@ -175,6 +175,7 @@ pub fn instance_to_accumulator(
     );
     drop(_gs);
     crate::base::timing::phase("  fold: sumcheck");
+    let _ga = crate::base::bench::Scope::new("HypernovaFoldingProver::sumcheck_output_to_accumulator");
 
     let layout = &inst.layout;
     let (uc, sh) = batching_challenges::<Bn254>(t, layout.num_unshifted(), layout.num_shifted());

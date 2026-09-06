@@ -149,11 +149,13 @@ impl Chonk {
             CircuitKind::App | CircuitKind::Kernel => {
                 self.accumulate_and_fold(circuit, vk, kind, next, rng);
                 if next == Some(CircuitKind::HidingKernel) {
+                    let _gd = crate::base::bench::Scope::new("HypernovaDeciderProver::construct_proof");
                     decider_prove(
                         self.prover_accumulator.as_ref().unwrap(),
                         &self.ck,
                         &mut self.accumulation_transcript,
                     );
+                    drop(_gd);
                     self.decider_proof = self.accumulation_transcript.export_proof();
                     timing::phase("decider");
                     let mut q = self.op_queue.borrow_mut();
