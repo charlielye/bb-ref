@@ -1,14 +1,16 @@
-runtime: v8, threads: 8 (both provers), seed: 12345, flows: 11
-flow                                                                 bb   bb-ref   ratio   bb rss  ref rss     mem
-deploy_ecdsar1+sponsored_fpc                                       5.59     6.50   1.16x    0.36G    0.37G   1.02x
-deploy_schnorr+sponsored_fpc                                       5.22     5.91   1.13x    0.33G    0.37G   1.11x
-ecdsar1+amm_add_liquidity_1_recursions+sponsored_fpc               8.36     9.88   1.18x    0.38G    0.37G   0.97x
-ecdsar1+deploy_tokenContract_with_registration+sponsored_fpc       6.45     7.90   1.22x    0.35G    0.39G   1.11x
-ecdsar1+storage_proof_7_layers+sponsored_fpc                      22.07    17.63   0.80x    0.86G    0.98G   1.14x
-ecdsar1+token_bridge_claim_private+sponsored_fpc                   5.81     6.54   1.13x    0.34G    0.37G   1.08x
-ecdsar1+transfer_0_recursions+private_fpc                          7.28     8.48   1.16x    0.38G    0.37G   0.98x
-ecdsar1+transfer_0_recursions+sponsored_fpc                        5.04     5.79   1.15x    0.32G    0.36G   1.14x
-ecdsar1+transfer_1_recursions+private_fpc                          7.68     8.94   1.16x    0.36G    0.37G   1.02x
-ecdsar1+transfer_1_recursions+sponsored_fpc                        5.54     6.45   1.16x    0.33G    0.37G   1.10x
-schnorr+deploy_tokenContract_with_registration+sponsored_fpc       6.04     7.40   1.23x    0.35G    0.39G   1.11x
-TOTAL                                                             85.08    91.42   1.07x
+basis: bb wall from the stripped bb module (custom sections removed; bb's release module carries a 100 MB name section that costs ~2% of wall to load); bb proving-only from the ENABLE_WASM_BENCH module via --bench_out; both proving columns are the reconciled scope sums (see docs/performance.md, benchmarking traps).
+runtime: v8, threads: 8 (both provers), seed: 12345, flows: 11, wall = best of 3, proving = one instrumented run
+date: 2026-09-06, host: ip-172-31-27-76, bb module: bb-stripped.wasm (17997895 bytes), bb bench module: /home/ubuntu/bench-bb.wasm, bb-ref module: bench-ref-lto5.wasm (11757150 bytes), bb-ref: def1d24
+flow                                                                bb  bb-ref  ratio  bb prv ref prv  ratio  bb mem ref mem    mem
+deploy_ecdsar1+sponsored_fpc                                      5.53    5.47  0.99x   4.904    5.20  1.06x   0.36G   0.37G  1.04x
+deploy_schnorr+sponsored_fpc                                      5.10    5.07  0.99x   4.540    4.78  1.05x   0.33G   0.37G  1.12x
+ecdsar1+amm_add_liquidity_1_recursions+sponsored_fpc              8.23    8.22  1.00x   7.330    7.82  1.07x   0.39G   0.38G  0.97x
+ecdsar1+deploy_tokenContract_with_registration+sponsored_fpc      6.34    6.50  1.03x   5.643    6.14  1.09x   0.36G   0.40G  1.12x
+ecdsar1+storage_proof_7_layers+sponsored_fpc                     21.91   14.66  0.67x  21.019   14.14  0.67x   0.87G   0.95G  1.09x
+ecdsar1+token_bridge_claim_private+sponsored_fpc                  5.68    5.53  0.97x   5.058    5.60  1.11x   0.34G   0.38G  1.09x
+ecdsar1+transfer_0_recursions+private_fpc                         7.18    7.11  0.99x   6.396    6.70  1.05x   0.38G   0.38G  1.00x
+ecdsar1+transfer_0_recursions+sponsored_fpc                       4.96    4.91  0.99x   4.427    4.62  1.04x   0.32G   0.37G  1.16x
+ecdsar1+transfer_1_recursions+private_fpc                         7.55    7.53  1.00x   6.718    7.13  1.06x   0.38G   0.38G  0.98x
+ecdsar1+transfer_1_recursions+sponsored_fpc                       5.40    5.40  1.00x   4.832    5.08  1.05x   0.33G   0.37G  1.12x
+schnorr+deploy_tokenContract_with_registration+sponsored_fpc      5.93    6.11  1.03x   5.215    5.83  1.12x   0.35G   0.40G  1.13x
+TOTAL                                                            83.81   76.51  0.91x   76.08   73.04  0.96x

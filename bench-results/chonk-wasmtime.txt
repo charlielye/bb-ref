@@ -1,3 +1,4 @@
+STALE (2026-09-06): not regenerated — the bench box (bbbench) has no wasmtime, and browsers run V8, so chonk-v8.txt is the wasm table of record. Kept for history; numbers below predate the 2026-09-05/06 optimization passes.
 runtime: wasmtime, threads: 8 (both provers), seed: 12345, flows: 11
 flow                                                                 bb   bb-ref   ratio   bb rss  ref rss     mem
 deploy_ecdsar1+sponsored_fpc                                       6.18     7.74   1.25x    0.37G    0.33G   0.88x
