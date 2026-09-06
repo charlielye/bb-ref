@@ -173,6 +173,21 @@ pub struct Builder {
     pub mega: Option<MegaState>,
 }
 
+/// `2^i` for `i` in `0..=256`, built once. The limb decomposition needs six of these per limb
+/// triple; exponentiating each time was most of the builder's range-constraint cost.
+fn pow2_table() -> &'static [Fr] {
+    static T: std::sync::LazyLock<Vec<Fr>> = std::sync::LazyLock::new(|| {
+        let mut v = Vec::with_capacity(257);
+        let mut x = Fr::one();
+        for _ in 0..=256 {
+            v.push(x);
+            x = x + x;
+        }
+        v
+    });
+    &T
+}
+
 impl Builder {
     fn empty(is_write_vk_mode: bool, mega: bool) -> Self {
         Self {
@@ -896,7 +911,7 @@ impl Builder {
                 }
             };
             let shift = |k: u64| target_range_bitnum * (3 * i as u64 + k);
-            let pow2 = |k: u64| Fr::from(2u64).pow_u64(shift(k));
+            let pow2 = |k: u64| pow2_table()[shift(k) as usize];
             let mut new_accumulator = accumulator;
             for k in 0..3 {
                 new_accumulator -= Fr::from(limb_val(k)) * pow2(k as u64);
