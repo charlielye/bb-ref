@@ -1276,3 +1276,34 @@ not grow the polynomial (non-ZK flavors size d = max partial + 1 — bb: BATCHED
 of the 238ms scope — the rest is outside `univariate()`: 15 committed round univariates (tiny MSMs),
 libra/ZK per round, transcript, folds, and round-0 column trimming. The deploy_tokenContract flows
 (1.09-1.10) remain the tail.
+
+## Update 47: the deploy tail was the builder — range 0.133 -> 0.032, classify 0.104 -> 0.042
+
+Phase table on the worst flow (schnorr+deploy_tokenContract, 1.10x) against transfer_1 showed the
+extra gap was **not** the fixed goblin tail (ECCVM was slightly better there) but `create_circuit`
+(+0.207 vs +0.092) plus per-instance Oink/sumcheck scaling. The acir::* split then put it on two
+scopes: `acir::range_constraints` 0.133 vs bb 0.043 (token contract is range-check heavy) and
+`acir::classify` 0.104 (bb's whole `quad_constraints` is 0.029). A main-thread wasm profile made
+both ~75-80% `mont_mul`.
+
+**Causes (static, in code):**
+- `create_limbed_range_constraint` did `Fr::from(2).pow_u64(shift)` six times per limb triple
+  (accumulator update + gate scalings): ~350 muls per u128 check where bb does one conversion per
+  coefficient. Fix: static table of 2^0..2^256. Range 0.133 -> 0.032s (now ahead of bb).
+- `Expression` keeps coefficients as raw bytes and `field()` -> `from_bytes_be` went through ark's
+  `from_be_bytes_mod_order`, whose full-width path reduces in several Montgomery muls. Canonical
+  input (all ACIR coefficients, transcript elements) converts exactly with `from_bigint` (one mul);
+  non-canonical falls back. classify 0.104 -> 0.042 (deploy), 0.065 -> 0.026 (transfer_1).
+
+Both bit-identical (5/5 acir byte-exact, 23 suites). Builder totals: deploy 0.591 -> 0.421 (bb
+0.385); transfer_1 0.541 -> 0.459 (bb 0.449).
+
+**11-flow standing (bbbench, best-of-3, plain node, 8t):** TOTAL **0.944x**, mean **1.000x**,
+**median 1.023x**. Sorted: 0.693 0.997 1.016 1.020 1.020 1.023 1.026 1.036 1.037 1.059 1.072.
+Session arc ~1.24x -> 1.10x -> 1.06x -> 1.04x -> **1.02x**.
+
+**Remaining tail (deploy_tokenContract 1.06-1.07x):** per-instance items that scale with the app
+circuit — Oink wire round +0.15 (bb's Phase-A duplicate-scalar dedup; wire polys are ~50% duplicate
+scalars) and folding sumcheck +0.14 (small-instance parallel efficiency). Fixed goblin tail is at
+or near parity (ECCVM sumcheck's remaining +0.06 is outside the edge loop: per-round commits,
+libra/ZK, transcript, round-0 trimming).
