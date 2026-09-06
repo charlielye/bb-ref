@@ -1778,6 +1778,10 @@ pub struct CommittedRounds<C: Curve> {
     pub univariates: Vec<Polynomial<C::Fr>>,
     pub commitments: Vec<C::G>,
     pub evaluations: Vec<[C::Fr; 3]>,
+    /// Coefficients of the Lagrange basis over the points 0..n-1, built once per sumcheck: the
+    /// round univariates all live on the same domain, and interpolating each from scratch cost
+    /// n inversions and an O(n³) product per round.
+    basis: Vec<Vec<C::Fr>>,
 }
 
 impl<C: Curve> CommittedRounds<C>
@@ -1790,7 +1794,35 @@ where
             univariates: Vec::new(),
             commitments: Vec::new(),
             evaluations: Vec::new(),
+            basis: Vec::new(),
         }
+    }
+    /// `basis[i]` = coefficients of the Lagrange polynomial that is 1 at point `i` and 0 at the
+    /// other points of 0..n-1 (the same products `Polynomial::interpolate` forms, kept).
+    fn lagrange_basis(n: usize) -> Vec<Vec<C::Fr>> {
+        let points: Vec<C::Fr> = (0..n).map(|k| C::Fr::from_u64(k as u64)).collect();
+        (0..n)
+            .map(|i| {
+                let mut num = vec![C::Fr::zero(); n];
+                num[0] = C::Fr::one();
+                let mut deg = 0;
+                let mut denom = C::Fr::one();
+                for j in 0..n {
+                    if j == i {
+                        continue;
+                    }
+                    for k in (0..=deg).rev() {
+                        let v = num[k];
+                        num[k + 1] += &v;
+                        num[k] = v * &(C::Fr::zero() - points[j]);
+                    }
+                    deg += 1;
+                    denom *= &(points[i] - points[j]);
+                }
+                let inv = denom.invert();
+                num.iter().map(|c| *c * inv).collect()
+            })
+            .collect()
     }
     /// Commit to the round univariate and send its values at 0 and 1.
     pub fn process(
@@ -1800,8 +1832,17 @@ where
         ck: &Ck<C::G>,
         t: &mut crate::base::transcript::Transcript<C::TF, C::Hash>,
     ) {
-        let domain: Vec<C::Fr> = (0..univariate.len()).map(|k| C::Fr::from_u64(k as u64)).collect();
-        let monomial = Polynomial::interpolate(&domain, univariate);
+        let n = univariate.len();
+        if self.basis.len() != n {
+            self.basis = Self::lagrange_basis(n);
+        }
+        let mut coeffs = vec![C::Fr::zero(); n];
+        for (i, e) in univariate.iter().enumerate() {
+            for (c, b) in coeffs.iter_mut().zip(&self.basis[i]) {
+                *c += &(*b * e);
+            }
+        }
+        let monomial = Polynomial { coeffs };
         let commitment = ck.commit(&monomial);
         t.send(&format!("Sumcheck:univariate_comm_{round}"), &commitment);
         self.commitments.push(commitment);
@@ -1863,6 +1904,9 @@ where
     let d = spec.batched_len;
     let alphas = alpha_powers(alpha, RelationSet::<C::Fr>::total_subrelations(rels) - 1);
     let t_setup = std::time::Instant::now();
+    // The committed sumcheck is the ECCVM's alone, so these scopes isolate its per-round work.
+    let tag = spec.committed;
+    let _gn = tag.then(|| crate::base::bench::Scope::new("eccvm-sc/new")).flatten();
     let mut state = RoundProver::new(
         n,
         polys,
@@ -1872,6 +1916,7 @@ where
         spec.witness_end,
         spec.active_prefix_end,
     );
+    drop(_gn);
     let mut committed = CommittedRounds::<C>::new();
     let mut challenge = Vec::with_capacity(spec.virtual_log_n);
     let mut partial_eval = F::<C>::one();
@@ -1884,15 +1929,19 @@ where
         // Split round 0 from the rest: they behave differently (round 0 reads borrowed and
         // shifted columns; later rounds an owned contiguous table) and bb reports the same split.
         let _gu = crate::base::bench::Scope::new(if round == 0 { "sumcheck loop 0" } else { "sumcheck loop" });
+        let _gt = tag.then(|| crate::base::bench::Scope::new("eccvm-sc/univariate")).flatten();
         let mut univariate = state.univariate(rels, params, betas, &partial_eval, &alphas, d);
+        drop(_gt);
         drop(_gu);
         t_uni += t0.elapsed();
         if let Some(zk) = zk.as_deref_mut() {
+            let _g = tag.then(|| crate::base::bench::Scope::new("eccvm-sc/zk_univariate")).flatten();
             for (k, v) in zk.round_univariate(round, d).into_iter().enumerate() {
                 univariate[k] += v;
             }
         }
         if spec.committed {
+            let _g = crate::base::bench::Scope::new("eccvm-sc/commit");
             committed.process(
                 round,
                 &univariate,
@@ -1902,16 +1951,21 @@ where
         } else {
             t.send_vec(&format!("Sumcheck:univariate_{round}"), &univariate);
         }
+        let _gc = tag.then(|| crate::base::bench::Scope::new("eccvm-sc/challenge")).flatten();
         let u: F<C> = t.challenge(&format!("Sumcheck:u_{round}"));
+        drop(_gc);
         let t0 = std::time::Instant::now();
         let _gf = crate::base::bench::Scope::new("Sumcheck::partially_evaluate");
+        let _gf2 = tag.then(|| crate::base::bench::Scope::new("eccvm-sc/fold")).flatten();
         state.partially_evaluate(&u);
+        drop(_gf2);
         drop(_gf);
         t_fold += t0.elapsed();
         if let Some(t0) = round_start {
             eprintln!("[round {round}] {:.1} ms", t0.elapsed().as_secs_f64() * 1e3);
         }
         if let Some(zk) = zk.as_deref_mut() {
+            let _g = tag.then(|| crate::base::bench::Scope::new("eccvm-sc/zk_update")).flatten();
             zk.update(&u, round);
         }
         partial_eval *= gate_separator_factor(&u, &betas[round]);
@@ -1919,6 +1973,7 @@ where
         last_univariate = univariate;
     }
     if spec.committed {
+        let _g = crate::base::bench::Scope::new("eccvm-sc/finalize");
         committed.finalize(&last_univariate, challenge.last().unwrap());
     }
     if split_timing {
@@ -1929,8 +1984,10 @@ where
             t_setup.elapsed().as_secs_f64() - t_uni.as_secs_f64() - t_fold.as_secs_f64()
         );
     }
+    let _ge = tag.then(|| crate::base::bench::Scope::new("eccvm-sc/evals")).flatten();
     let evals = state.evals();
     t.send_vec("Sumcheck:evaluations", &evals);
+    drop(_ge);
     let mut libra_evaluation = F::<C>::zero();
     if let Some(zk) = zk {
         libra_evaluation = zk.claimed_evaluation();

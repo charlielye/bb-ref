@@ -35,8 +35,12 @@ mimalloc = { version = "0.1", optional = true }
 [profile.release]
 opt-level = 2
 
+# Release/benchmark wasm builds: opt-level 3 + fat LTO + one codegen unit measured -1.3% on the
+# chonk flow (4/4 interleaved; opt-level 3 alone and native LTO are neutral). Slow to build; the
+# default release profile stays opt-level 2 for iteration.
 [profile.lto]
 inherits = "release"
+opt-level = 3
 lto = "fat"
 codegen-units = 1
 
