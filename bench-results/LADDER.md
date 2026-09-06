@@ -1454,3 +1454,6 @@ coefficient-basis products are algebraically cheaper (short-product formulas), w
 exact-size-univariate item. **Complexity note on the affine merge (#38):** +70/−20 lines of
 tree-reduction bookkeeping for 0.02 s (0.4% of proving) — a weak ratio; the 15-line projective merge
 already gave 0.05 of the dedup's 0.07. Candidate for reverting on the gain-for-complexity rule.
+
+**Update 53 — affine merge reverted (Charlie's call, gain-for-complexity): `commit_dedup` keeps the
+15-line projective merge; R25 records the 0.02 s / +70 lines trade.**

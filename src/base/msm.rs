@@ -1961,37 +1961,6 @@ pub trait BatchMsm: AffineRepr {
     fn batch_msm_with_phi(points: &[Self], scalars: &[Self::ScalarField], phi: Option<&[Self]>) -> Self::Group;
     /// The GLV companion table `phi[i] = (beta * x_i, -y_i)`.
     fn phi_table(points: &[Self]) -> Vec<Self>;
-    /// Affine `members[a] + members[b]` for every pair, all slopes through one Montgomery-trick
-    /// inversion (the commitment dedup's cluster merge). Exact: equal-x pairs take the projective
-    /// formula.
-    fn add_pairs_affine(members: &[Self], pairs: &[(usize, usize)]) -> Vec<Self>;
-}
-
-fn add_pairs_affine_impl<P: SWCurveConfig>(members: &[Affine<P>], pairs: &[(usize, usize)]) -> Vec<Affine<P>> {
-    use ark_ff::Field;
-    let n = pairs.len();
-    let mut dx: Vec<P::BaseField> = Vec::with_capacity(n);
-    for &(a, b) in pairs {
-        match (members[a].xy(), members[b].xy()) {
-            (Some((xa, _)), Some((xb, _))) if xa != xb => dx.push(xb - xa),
-            _ => dx.push(<P::BaseField as ark_ff::One>::one()),
-        }
-    }
-    ark_ff::batch_inversion(&mut dx);
-    let mut out: Vec<Affine<P>> = Vec::with_capacity(n);
-    for (k, &(a, b)) in pairs.iter().enumerate() {
-        if let (Some((xa, ya)), Some((xb, yb))) = (members[a].xy(), members[b].xy()) {
-            if xa != xb {
-                let lambda = (yb - ya) * dx[k];
-                let x3 = lambda.square() - xa - xb;
-                let y3 = lambda * (xa - x3) - ya;
-                out.push(Affine::<P>::new_unchecked(x3, y3));
-                continue;
-            }
-        }
-        out.push((members[a].into_group() + members[b]).into_affine());
-    }
-    out
 }
 
 impl<P: SWCurveConfig> BatchMsm for Affine<P>
@@ -1999,9 +1968,6 @@ where
     P::BaseField: crate::honk::quadf::QuadConsts + crate::base::endo::EndoField,
     P::ScalarField: crate::base::endo::EndoField,
 {
-    fn add_pairs_affine(members: &[Self], pairs: &[(usize, usize)]) -> Vec<Self> {
-        add_pairs_affine_impl::<P>(members, pairs)
-    }
     fn batch_msm(points: &[Self], scalars: &[Self::ScalarField]) -> Projective<P> {
         msm(points, scalars)
     }
