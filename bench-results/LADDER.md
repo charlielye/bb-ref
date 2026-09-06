@@ -1457,3 +1457,23 @@ already gave 0.05 of the dedup's 0.07. Candidate for reverting on the gain-for-c
 
 **Update 53 — affine merge reverted (Charlie's call, gain-for-complexity): `commit_dedup` keeps the
 15-line projective merge; R25 records the 0.02 s / +70 lines trade.**
+
+## Update 54: Karatsuba short products; the re-association trap
+
+`Graded::mul` uses Karatsuba for 2x2 (3 muls) and 3x3 (6 muls) products — bb's
+`UnivariateCoefficientBasis` exists only at lengths 2 and 3 and does exactly this (`static_assert
+(LENGTH == 2 || LENGTH == 3)`), converting back to evaluation form for higher degrees. Rung: Arithmetic
+4573 -> 3976, DeltaRange 6221 -> 5596, Memory 13824 -> 13080, Pos2External 9051 -> 8613 ns/edge;
+flow folding sumcheck 0.733 -> 0.720, ECCVM 0.170 -> 0.166 (3/3, byte-identical).
+
+**Trap (R26):** re-associating the Permutation body as `(t1·t2)·(t3·t4)` (to hit the 3x3 Karatsuba,
+bb-equivalent 12 muls vs the chain's 17) was byte-identical for the prover but **changed the
+circuit**: the relation bodies are shared with the in-circuit recursive verifier, whose gate sequence
+must match bb's left-to-right chain — the pinned VKs failed (`mock_protocol_vks_match_bb`). Any
+prover-side algebraic restructuring of a relation body must be gated to non-circuit `T`, or the
+verifier path must keep bb's operation order.
+
+Why Permutation stays 1.43x bb: bb's hybrid multiplies the first two linear factors in coefficient
+form and continues in evaluation form at LENGTH points (a degree-4 x linear product costs 6 muls
+there vs our schoolbook 10). Reproducing it means a hybrid univariate type — a design change, not a
+tweak.
