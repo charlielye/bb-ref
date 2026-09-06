@@ -107,6 +107,35 @@ impl<F: NativeField, const N: usize> Mul<&Graded<F, N>> for Graded<F, N> {
         let (l1, l2) = (self.len as usize, rhs.len as usize);
         let out_len = l1 + l2 - 1;
         assert!(out_len <= N, "graded univariate degree overflow");
+        // Karatsuba for the two shapes the relation bodies produce most — a product of two edge
+        // entries and a product of two such products (bb's coefficient-basis univariates exist only
+        // at lengths 2 and 3 and do exactly this): 3 and 6 multiplications instead of 4 and 9.
+        if l1 == 2 && l2 == 2 {
+            let (a0, a1, b0, b1) = (self.c[0], self.c[1], rhs.c[0], rhs.c[1]);
+            let p0 = a0 * b0;
+            let p2 = a1 * b1;
+            let mut c = self.c;
+            c[0] = p0;
+            c[1] = (a0 + a1) * (b0 + b1) - p0 - p2;
+            c[2] = p2;
+            return Graded { c, len: 3 };
+        }
+        if l1 == 3 && l2 == 3 {
+            let (a0, a1, a2, b0, b1, b2) = (self.c[0], self.c[1], self.c[2], rhs.c[0], rhs.c[1], rhs.c[2]);
+            let p0 = a0 * b0;
+            let p1 = a1 * b1;
+            let p2 = a2 * b2;
+            let m01 = (a0 + a1) * (b0 + b1);
+            let m02 = (a0 + a2) * (b0 + b2);
+            let m12 = (a1 + a2) * (b1 + b2);
+            let mut c = self.c;
+            c[0] = p0;
+            c[1] = m01 - p0 - p1;
+            c[2] = m02 - p0 - p2 + p1;
+            c[3] = m12 - p1 - p2;
+            c[4] = p2;
+            return Graded { c, len: 5 };
+        }
         let mut c = self.c;
         for k in 0..out_len {
             c[k] = F::ZERO;
