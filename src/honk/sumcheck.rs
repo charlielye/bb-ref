@@ -747,7 +747,7 @@ impl<F: NativeField> Scratch<F> {
         let zero = Graded::<F>::constant(<F as ark_ff::AdditiveGroup>::ZERO);
         self.graded_rel = (0..rels.num_relations())
             .map(|r| {
-                rels.supports_graded() && rels.partial_length(r).min(d) <= GRADED_MAX_LEN && !relation_stats_enabled()
+                graded_relation(rels, r, d)
             })
             .collect();
         self.graded = self.graded_rel.iter().any(|&g| g);
@@ -868,18 +868,24 @@ impl<F: FieldLike + Copy> ExtensionWeights<F> {
     }
 }
 
-/// Convert a chunk's coefficient-basis subrelation accumulators into the point evaluations the
-/// extension machinery consumes (exact: a polynomial identity over the field).
+/// Whether relation `ri` accumulates in coefficient form (`Graded`) for this round size. Shared by
+/// the per-worker scratch and the batching step so the two agree on each relation's representation.
+fn graded_relation<F: FieldLike>(rels: &impl RelationSet<F>, ri: usize, d: usize) -> bool {
+    rels.supports_graded() && rels.partial_length(ri).min(d) <= GRADED_MAX_LEN && !relation_stats_enabled()
+}
+
+/// Add a chunk's coefficient-basis subrelation accumulators into the round accumulators, which for
+/// graded relations hold coefficients (slot `k` = coefficient of X^k) rather than point values.
+/// Staying in coefficient form makes the per-round batching O(len) per subrelation instead of a
+/// barycentric extension to every one of the d points (bb's short-monomial flavors do the same).
 fn flush_graded<F: NativeField>(s: &Scratch<F>, acc: &mut Accumulators<F>) {
     for ri in 0..s.acc_uni.len() {
         if !s.graded_rel[ri] {
             continue;
         }
-        for k in 0..s.len[ri] {
-            let kf = F::small(k as u64);
-            let point = acc.point(ri, k);
-            for (j, g) in s.acc_uni[ri].iter().enumerate() {
-                point[j] += g.eval_at(kf);
+        for (j, g) in s.acc_uni[ri].iter().enumerate() {
+            for (k, c) in g.coeffs().iter().enumerate() {
+                acc.point(ri, k)[j] += *c;
             }
         }
     }
@@ -1325,34 +1331,87 @@ fn batch_over_relations<F: FieldLike + Copy>(
     row_disabling: Option<(F, F)>,
     d: usize,
 ) -> Vec<F> {
-    let mut result = vec![F::zero(); d];
-    for k in 0..d {
-        let pow_factor = linear_at(&F::one(), beta, k) * *partial_eval;
-        let (main, offset) = match row_disabling {
-            Some((l0, l1)) => {
-                let l = linear_at(&l0, &l1, k);
-                (F::one() - l, l)
+    // Linear factors as coefficient pairs: pow(X) = pe·(1 + (β−1)X); with row disabling,
+    // l(X) = l0 + (l1−l0)X scales offset-only relations and 1 − l(X) the rest. Without row disabling
+    // those factors are the constants 1 and 0, which must not grow the polynomial: non-ZK flavors
+    // size d = max partial length + 1 for the pow factor alone.
+    let pow_lin = [*partial_eval, *partial_eval * (*beta - F::one())];
+    let (main_lin, off_lin): (Option<[F; 2]>, Option<[F; 2]>) = match row_disabling {
+        Some((l0, l1)) => {
+            let dl = l1 - l0;
+            (Some([F::one() - l0, F::zero() - dl]), Some([l0, dl]))
+        }
+        None => (None, None),
+    };
+    // Batched polynomial of the coefficient-form relations, and the point values of the rest.
+    let mut coeffs = vec![F::zero(); d];
+    let mut points = vec![F::zero(); d];
+    let mut tmp: Vec<F> = Vec::with_capacity(d);
+    let mut alpha_idx = 0;
+    for ri in 0..rels.num_relations() {
+        let offset_only = rels.offset_only(ri);
+        let m = if offset_only { off_lin } else { main_lin };
+        let graded = graded_relation(rels, ri, d);
+        let len = rels.partial_length(ri).min(d);
+        for j in 0..rels.num_subrelations(ri) {
+            let alpha = if ri == 0 && j == 0 { F::one() } else { alphas[alpha_idx] };
+            if !(ri == 0 && j == 0) {
+                alpha_idx += 1;
             }
-            None => (F::one(), F::zero()),
-        };
-        let mut alpha_idx = 0;
-        for ri in 0..rels.num_relations() {
-            let mut per_relation = F::zero();
-            for j in 0..rels.num_subrelations(ri) {
-                let alpha = if ri == 0 && j == 0 { F::one() } else { alphas[alpha_idx] };
-                if !(ri == 0 && j == 0) {
-                    alpha_idx += 1;
-                }
-                let mut term = ext.accumulator_at(rels, acc, ri, j, k, d) * alpha;
-                if rels.linearly_independent(ri, j) {
-                    term *= pow_factor;
-                }
-                per_relation += term;
+            // Offset-only relation with no row disabling: factor 0, contributes nothing.
+            if offset_only && m.is_none() {
+                continue;
             }
-            result[k] += per_relation * if rels.offset_only(ri) { offset } else { main };
+            let lin = rels.linearly_independent(ri, j);
+            if graded {
+                tmp.clear();
+                tmp.extend((0..len).map(|k| acc.at(ri, j, k) * alpha));
+                if lin {
+                    mul_linear(&mut tmp, &pow_lin);
+                }
+                if let Some(l) = &m {
+                    mul_linear(&mut tmp, l);
+                }
+                assert!(tmp.len() <= d, "batched univariate degree overflow");
+                for (c, t) in coeffs.iter_mut().zip(&tmp) {
+                    *c += *t;
+                }
+            } else {
+                for k in 0..d {
+                    let mut term = ext.accumulator_at(rels, acc, ri, j, k, d) * alpha;
+                    if lin {
+                        term *= linear_at(&pow_lin[0], &(pow_lin[0] + pow_lin[1]), k);
+                    }
+                    if let Some(l) = &m {
+                        term *= linear_at(&l[0], &(l[0] + l[1]), k);
+                    }
+                    points[k] += term;
+                }
+            }
         }
     }
-    result
+    // Evaluate the batched polynomial at the points 0, 1, ..., d-1 and add the pointwise terms.
+    let mut x = F::zero();
+    for out in points.iter_mut() {
+        let mut v = coeffs[d - 1];
+        for c in coeffs[..d - 1].iter().rev() {
+            v = v * x + *c;
+        }
+        *out += v;
+        x += &F::one();
+    }
+    points
+}
+
+/// `p *= (l[0] + l[1]·X)` in place on a coefficient vector (grows by one).
+fn mul_linear<F: FieldLike + Copy>(p: &mut Vec<F>, l: &[F; 2]) {
+    let n = p.len();
+    p.push(F::zero());
+    for i in (0..n).rev() {
+        let pi = p[i];
+        p[i + 1] += pi * l[1];
+        p[i] = pi * l[0];
+    }
 }
 
 /// `pow_beta` factor of edge pair `e` in `round`: product of `betas[round+1+j]` over the set bits `j` of `e`.

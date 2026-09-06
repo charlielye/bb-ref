@@ -48,6 +48,10 @@ impl<F: NativeField> Graded<F> {
         self.c[1] = delta;
         self.len = if delta.is_zero() { 1 } else { 2 };
     }
+    /// The coefficients in the round variable, low to high (`len` entries).
+    pub fn coeffs(&self) -> &[F] {
+        &self.c[..self.len as usize]
+    }
     /// Evaluation at the point `k` (Horner).
     pub fn eval_at(&self, k: F) -> F {
         let l = self.len as usize;

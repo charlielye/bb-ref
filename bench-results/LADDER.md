@@ -1225,10 +1225,12 @@ the aggregate lever).
 | multilinear batching | -0.066s (we win) |
 
 **The path to median 1.05x (~0.05s off the median flow) is now architectural, not tuning:**
-1. **ECCVM short-monomial sumcheck** (bb `USE_SHORT_MONOMIALS`): the ECCVM sumcheck's later rounds
-   re-extend a d=24 x 159-subrelation table every round (`rest` = fixed ~3.25ms/round x 15). bb's
-   monomial-basis edges make later rounds nearly free (dense ECCVM loop rung: bb 521ms vs ours
-   1065ms; round-0 alone we win 495 vs 520). Worth ~0.10s, uniform across every flow. Major feature.
+1. **ECCVM short-monomial sumcheck** (bb `USE_SHORT_MONOMIALS`, which the production
+   `ECCVMProver` uses): our per-round `rest` is a fixed ~3.25ms x 15 rounds of per-subrelation
+   barycentric extension (d=24 x 159 subrelations) that monomial-form accumulation avoids.
+   CORRECTION (Update 46): bb's `loop_static_blocks/15` = 521ms is **round 0 only** (the bench
+   constructs one `Round(round_size)` and never folds), so the earlier "bb full loop 521 vs ours
+   1065" comparison was invalid; round 0 is 520 vs our 495 and bb has no full-loop rung.
 2. **Oink wire-commit dedup** (bb Phase-A cluster dedup): the folding wire polys are ~50% duplicate
    scalars (61309 nnz / ~25000 distinct); bb pre-sums cluster points so Stage 6a sees ~half. Worth
    ~0.05-0.08s on the Oink round. ~500 lines of MSM code (hash clusters, batched-affine merge,
@@ -1236,3 +1238,41 @@ the aggregate lever).
 
 Both are substantial ports rather than tuning; surfaced for a scope decision rather than started
 unverified. Everything cheap-and-parallel has been taken.
+
+## Update 46: coefficient-form batching (bb short monomials) — median 1.043x, target met
+
+**Correction first:** bb's `ECCVMShort/loop_static_blocks/15` (521ms) is round 0 under a block
+scheduler — the bench builds one `Round(round_size)` and never folds — so Update 45's "bb full loop
+521 vs ours 1065" was invalid. Round 0 is bb 520 vs ours 495; bb has no full-loop rung. Production
+bb does use `ECCVMShortMonomialFlavor` (`eccvm_prover.hpp:25`).
+
+**What short monomials buy bb, located in our pipeline:** `flush_graded` evaluated each
+coefficient-form `Graded` accumulator at `len` points, and `batch_over_relations` then re-extended
+every subrelation to all d points by barycentric dot products — twice per round (main + head). At
+d=24 x 159 subrelations that was a fixed ~3.25ms per round, every round, dominating rounds 7-14.
+
+**Landed:** accumulators stay in coefficient form through `flush_graded` (slot k = coefficient of
+X^k); batching multiplies each subrelation's coefficients by alpha and by the two *linear* factors
+(pow = pe(1+(β−1)X), row-disabling l0+(l1−l0)X) in O(len), sums into one length-d coefficient vector,
+and evaluates it once at 0..d−1. Pointwise relations (ECCVM `Set` 22, `Lookup` 9 > GRADED_MAX_LEN)
+keep the barycentric path. Same polynomial, exact arithmetic: proofs byte-identical (5/5 acir, 23
+suites). One bookkeeping trap: without row disabling the factors are the constants 1 and 0 and must
+not grow the polynomial (non-ZK flavors size d = max partial + 1 — bb: BATCHED = MAX + 2 only for ZK).
+
+| scope | before | after | bb |
+|---|---|---|---|
+| ECCVM rung `rest`/round | ~3250us | ~760us | — |
+| ECCVM loop rung | 1065ms | 967ms | (no bb rung) |
+| flow ECCVM sumcheck | 0.283s | 0.238s | 0.176 |
+| flow folding sumcheck | 0.760s | 0.730s | 0.632 |
+| flow `sumcheck/extend_and_batch` | 0.072s | 0.021s | 0.036 |
+| `Chonk::accumulate` / `ChonkProve` | 2.57 / 2.45 | 2.51 / 2.39 | — |
+
+**11-flow standing (bbbench, best-of-3, plain node, 8t):** TOTAL **0.964x**, mean 1.021x,
+**median 1.043x** (session arc ~1.24x -> 1.10x -> 1.06x -> **1.04x**). Sorted:
+0.708 1.019 1.025 1.039 1.040 1.043 1.045 1.056 1.062 1.094 1.101.
+
+**Where the ECCVM sumcheck's remaining +0.06 lives (flow round detail):** edges 34ms + rest 0.9ms
+of the 238ms scope — the rest is outside `univariate()`: 15 committed round univariates (tiny MSMs),
+libra/ZK per round, transcript, folds, and round-0 column trimming. The deploy_tokenContract flows
+(1.09-1.10) remain the tail.
