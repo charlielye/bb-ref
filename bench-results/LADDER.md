@@ -1193,3 +1193,46 @@ siblings, so our 0.175 covering both is *faster*. Real builder items left: `rang
   interleave MSMs — it runs single MSMs in sequence sharing only the GLV-doubled points — so the
   "batched MSM" item is withdrawn; the Oink wire-round +0.10 is still unexplained per instance.
 - 11-flow standing: TOTAL 0.99x, median **1.07x**, typical 1.04-1.13x.
+
+## Update 45: max-effort pass — median 1.10x -> 1.06x, proving 1.20x -> 1.15x
+
+Landed this pass (all 8-pair or 3x verified, proofs byte-identical, 23 suites green):
+| change | effect |
+|---|---|
+| multilinear batching: borrow round-0 columns, parallel eq_table, element-parallel fold | mlb 0.295 -> 0.163s (now 0.66x bb) |
+| permutation polys (sigma/id) parallel over wires and cycles | from_builder 0.227 -> 0.180s (= bb) |
+| blocked-parallel grand product (z_perm) | compute_grand_product 0.131 -> 0.103s |
+| parallel batch inversion (batch_invert_par) for ECCVM + Oink denominators | neutral, kept for consistency |
+| overlap ECCVM transcript/precompute/msm row construction (rayon::join) | ECCVM trace 0.122 -> 0.102s |
+
+**11-flow standing (bbbench, best-of-3, plain node, 8t):** TOTAL 0.96x, mean 1.02x,
+**median 1.063x** (sorted: 0.724 1.025 1.041 1.059 1.060 **1.063** 1.068 1.075 1.078 1.104 1.122).
+storage_proof 0.72x (we win big); transfer/deploy cluster 1.04-1.12.
+
+**Rejected on measurement:** GRADED_MAX_LEN 8->9 (wider Graded costs more than the ECCVM
+coefficient-form saving); parallel batch_over_relations over subrelations (extra per-round barrier,
+worse even at ECCVM's 159 subrelations); MSM dedup (we already win commit-total 0.71x, so it is not
+the aggregate lever).
+
+**Proving-only phase gaps (transfer_1, current build, +0.725s / 1.15x):**
+| phase | gap |
+|---|---|
+| ECCVM | +0.308s (sumcheck +0.103) |
+| fold: Oink (wire + z_perm commits) | +0.198s |
+| fold: sumcheck | +0.117s |
+| create_circuit | +0.092s |
+| joint proof | +0.022s |
+| multilinear batching | -0.066s (we win) |
+
+**The path to median 1.05x (~0.05s off the median flow) is now architectural, not tuning:**
+1. **ECCVM short-monomial sumcheck** (bb `USE_SHORT_MONOMIALS`): the ECCVM sumcheck's later rounds
+   re-extend a d=24 x 159-subrelation table every round (`rest` = fixed ~3.25ms/round x 15). bb's
+   monomial-basis edges make later rounds nearly free (dense ECCVM loop rung: bb 521ms vs ours
+   1065ms; round-0 alone we win 495 vs 520). Worth ~0.10s, uniform across every flow. Major feature.
+2. **Oink wire-commit dedup** (bb Phase-A cluster dedup): the folding wire polys are ~50% duplicate
+   scalars (61309 nnz / ~25000 distinct); bb pre-sums cluster points so Stage 6a sees ~half. Worth
+   ~0.05-0.08s on the Oink round. ~500 lines of MSM code (hash clusters, batched-affine merge,
+   schedule redirect bits).
+
+Both are substantial ports rather than tuning; surfaced for a scope decision rather than started
+unverified. Everything cheap-and-parallel has been taken.
