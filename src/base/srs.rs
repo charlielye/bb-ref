@@ -382,31 +382,54 @@ where
             counts[id as usize] += 1;
             cluster_of.push((i as u32, id));
         }
-        // Sum the points of every repeated scalar; singletons keep their SRS point.
-        let mut slot: Vec<u32> = vec![u32::MAX; reps.len()];
-        let mut sums: Vec<G::Group> = Vec::new();
+        // Sum the points of every repeated scalar with batched-affine additions: members are
+        // grouped per cluster, then reduced level by level, each level's pair sums sharing one
+        // Montgomery-trick inversion (bb's cluster tree-reduce). Singletons keep their SRS point.
+        let mut start: Vec<u32> = vec![0; reps.len() + 1];
         for (id, &c) in counts.iter().enumerate() {
-            if c > 1 {
-                slot[id] = sums.len() as u32;
-                sums.push(<G::Group as ark_ff::Zero>::zero());
-            }
+            start[id + 1] = start[id] + c;
         }
+        let mut fill = start.clone();
+        let mut members: Vec<G> = vec![G::zero(); cluster_of.len()];
         for &(i, id) in &cluster_of {
-            let sl = slot[id as usize];
-            if sl != u32::MAX {
-                sums[sl as usize] += self.points[i as usize];
+            let slot = fill[id as usize] as usize;
+            fill[id as usize] += 1;
+            members[slot] = self.points[i as usize];
+        }
+        // Per level: pair consecutive members of each cluster; an odd member carries over.
+        let mut len: Vec<u32> = counts.clone();
+        loop {
+            let pairs: Vec<(usize, usize)> = (0..reps.len())
+                .flat_map(|id| {
+                    let (s0, l) = (start[id] as usize, len[id] as usize);
+                    (0..l / 2).map(move |k| (s0 + 2 * k, s0 + 2 * k + 1))
+                })
+                .collect();
+            if pairs.is_empty() {
+                break;
+            }
+            let sums = G::add_pairs_affine(&members, &pairs);
+            // Compact each cluster: pair sums first, then the carried odd member.
+            for id in 0..reps.len() {
+                let (s0, l) = (start[id] as usize, len[id] as usize);
+                let half = l / 2;
+                if l < 2 {
+                    continue;
+                }
+                let base = pairs.partition_point(|&(a, _)| a < s0);
+                for k in 0..half {
+                    members[s0 + k] = sums[base + k];
+                }
+                if l % 2 == 1 {
+                    members[s0 + half] = members[s0 + l - 1];
+                }
+                len[id] = (half + l % 2) as u32;
             }
         }
-        let normalized = G::Group::normalize_batch(&sums);
-        let points: Vec<G> = (0..reps.len())
-            .map(|id| {
-                let sl = slot[id];
-                if sl == u32::MAX { self.points[reps[id] as usize] } else { normalized[sl as usize] }
-            })
-            .collect();
+        let points: Vec<G> = (0..reps.len()).map(|id| members[start[id] as usize]).collect();
         let scalars: Vec<G::ScalarField> = reps.iter().map(|&i| coeffs[i as usize]).collect();
         if std::env::var_os("BBREF_COMMIT_TIMING").is_some() {
-            eprintln!("[dedup] nnz={} distinct={} merged_clusters={}", cluster_of.len(), reps.len(), sums.len());
+            eprintln!("[dedup] nnz={} distinct={}", cluster_of.len(), reps.len());
         }
         let phi = G::phi_table(&points);
         G::batch_msm_with_phi(&points, &scalars, Some(&phi))

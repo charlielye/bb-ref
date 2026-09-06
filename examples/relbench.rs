@@ -49,6 +49,19 @@ fn main() {
         flavor: &MEGA_KERNEL,
         layout: &layout,
     };
+    // Production shape: one coefficient-basis evaluation per edge on degree-1 rows.
+    use bb_ref::honk::graded::{lift_params, Graded};
+    let row1: Vec<Fr> = (0..layout.num_all()).map(|_| Fr::rand(&mut rng)).collect();
+    let row_uni: Vec<Graded<Fr>> = row.iter().zip(&row1).map(|(a, b)| Graded::linear(*a, *b - *a)).collect();
+    let p_uni = lift_params(&p);
+    let s_uni = Graded::constant(s);
+    // bb `relations_bench`, execute_relation_for_univariates, same box, 1t, ns per edge.
+    let bb: &[(&str, f64)] = &[
+        ("Arithmetic", 8718.0), ("DeltaRange", 6406.0), ("Elliptic", 9234.0), ("Memory", 14072.0),
+        ("Permutation", 4233.0), ("EccOpQueue", 3216.0), ("Bus", 4938.0), ("Poseidon2External", 10869.0),
+        ("Poseidon2QuadInternal", 21234.0), ("Poseidon2QuadInternalTerminal", 13258.0),
+    ];
+    println!("{:<34} {:>10} {:>10} {:>10} {:>8}", "kernel relation", "pointwise", "graded", "bb uni", "grd/bb");
     for r in 0..MEGA_KERNEL.relations.len() {
         let mut acc = vec![Fr::from(0u64); RelationSet::<Fr>::num_subrelations(&rels, r)];
         let len = RelationSet::<Fr>::partial_length(&rels, r);
@@ -57,12 +70,21 @@ fn main() {
         for _ in 0..n {
             RelationSet::<Fr>::accumulate(&rels, r, &mut acc, &row, &p, &s);
         }
-        let ns = t.elapsed().as_nanos() as f64 / n as f64;
+        let pw = t.elapsed().as_nanos() as f64 / n as f64 * len as f64;
+        let mut acc_uni = vec![Graded::constant(Fr::from(0u64)); RelationSet::<Fr>::num_subrelations(&rels, r)];
+        let t = Instant::now();
+        for _ in 0..n {
+            RelationSet::<Fr>::accumulate_graded(&rels, r, &mut acc_uni, &row_uni, &p_uni, &s_uni);
+        }
+        let gr = t.elapsed().as_nanos() as f64 / n as f64;
+        let name = format!("{:?}", MEGA_KERNEL.relations[r]);
+        let key = if name.starts_with("Bus(") { "Bus" } else { name.as_str() };
+        let b = bb.iter().find(|(k, _)| *k == key).map(|(_, v)| *v);
         println!(
-            "ours kernel {:?}: {:.1} ns per point x{len} = {:.1} ns per edge",
-            MEGA_KERNEL.relations[r],
-            ns,
-            ns * len as f64
+            "{:<34} {:>8.0}ns {:>8.0}ns {:>8} {:>8}",
+            name, pw, gr,
+            b.map(|v| format!("{v:.0}ns")).unwrap_or("-".into()),
+            b.map(|v| format!("{:.2}x", gr / v)).unwrap_or("-".into())
         );
     }
 }
