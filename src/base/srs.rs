@@ -226,6 +226,52 @@ impl Srs {
     }
 }
 
+/// BBREF_DEDUP=0 disables the duplicate-scalar pre-pass (A/B).
+fn dedup_enabled() -> bool {
+    static V: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| std::env::var("BBREF_DEDUP").map(|v| v != "0").unwrap_or(true));
+    *V
+}
+
+/// Sample the first nonzero coefficients: dedup pays only when a large share repeats.
+fn duplicate_heavy<F: FieldLike>(coeffs: &[F]) -> bool {
+    use std::collections::HashSet;
+    assert_eq!(std::mem::size_of::<F>(), 32);
+    let mut seen: HashSet<[u64; 4], std::hash::BuildHasherDefault<LimbHasher>> = HashSet::default();
+    let mut sample = 0usize;
+    for s in coeffs {
+        if s.is_zero() {
+            continue;
+        }
+        seen.insert(unsafe { std::mem::transmute_copy::<F, [u64; 4]>(s) });
+        sample += 1;
+        if sample == 2048 {
+            break;
+        }
+    }
+    sample >= 512 && seen.len() * 4 < sample * 3
+}
+
+/// Hash of a field element's limbs: the low limb is already well mixed for field elements and
+/// small values, and the map compares full keys on collision.
+#[derive(Default)]
+struct LimbHasher(u64);
+impl std::hash::Hasher for LimbHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let mut b = [0u8; 8];
+            b[..chunk.len()].copy_from_slice(chunk);
+            self.write_u64(u64::from_le_bytes(b));
+        }
+    }
+    fn write_u64(&mut self, x: u64) {
+        self.0 = (self.0.rotate_left(23) ^ x).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+}
+
 impl<G: super::msm::BatchMsm> Ck<G>
 where
     G::ScalarField: FieldLike,
@@ -269,11 +315,15 @@ where
             self.points.len()
         );
         let t0 = std::env::var_os("BBREF_COMMIT_TIMING").map(|_| std::time::Instant::now());
-        #[cfg(target_family = "wasm")]
-        let phi = Some(&self.phi.get_or_init(|| G::phi_table(&self.points))[..k]);
-        #[cfg(not(target_family = "wasm"))]
-        let phi = None;
-        let c = G::batch_msm_with_phi(&self.points[..k], &p.coeffs[..k], phi).into_affine();
+        let c = if dedup_enabled() && k >= 4096 && duplicate_heavy(&p.coeffs[..k]) {
+            self.commit_dedup(&p.coeffs[..k]).into_affine()
+        } else {
+            #[cfg(target_family = "wasm")]
+            let phi = Some(&self.phi.get_or_init(|| G::phi_table(&self.points))[..k]);
+            #[cfg(not(target_family = "wasm"))]
+            let phi = None;
+            G::batch_msm_with_phi(&self.points[..k], &p.coeffs[..k], phi).into_affine()
+        };
         if let Some(t0) = t0 {
             use ark_ff::{BigInteger, PrimeField};
             let ms = t0.elapsed().as_secs_f64() * 1e3;
@@ -296,6 +346,61 @@ where
             eprintln!("[commit] {k} pts nnz={nnz} bits<=32/64/128/192/254: {hist:?}  {ms:.1} ms");
         }
         c
+    }
+
+    /// Commit to a polynomial whose coefficients repeat heavily (witness wires: values 0, 1 and
+    /// small constants recur thousands of times). Equal scalars land in the same bucket of every
+    /// Pippenger window, so their points are summed once up front and the MSM runs over the
+    /// distinct scalars only (bb's dedup pre-pass). Exact: the same group element.
+    fn commit_dedup(&self, coeffs: &[G::ScalarField]) -> G::Group {
+        use std::collections::HashMap;
+        assert_eq!(std::mem::size_of::<G::ScalarField>(), 32);
+        let key = |s: &G::ScalarField| unsafe { std::mem::transmute_copy::<G::ScalarField, [u64; 4]>(s) };
+        let mut map: HashMap<[u64; 4], u32, std::hash::BuildHasherDefault<LimbHasher>> =
+            HashMap::with_capacity_and_hasher(coeffs.len() / 2, Default::default());
+        let mut reps: Vec<u32> = Vec::new();
+        let mut counts: Vec<u32> = Vec::new();
+        let mut cluster_of: Vec<(u32, u32)> = Vec::with_capacity(coeffs.len());
+        for (i, s) in coeffs.iter().enumerate() {
+            if s.is_zero() {
+                continue;
+            }
+            let id = *map.entry(key(s)).or_insert_with(|| {
+                reps.push(i as u32);
+                counts.push(0);
+                (reps.len() - 1) as u32
+            });
+            counts[id as usize] += 1;
+            cluster_of.push((i as u32, id));
+        }
+        // Sum the points of every repeated scalar; singletons keep their SRS point.
+        let mut slot: Vec<u32> = vec![u32::MAX; reps.len()];
+        let mut sums: Vec<G::Group> = Vec::new();
+        for (id, &c) in counts.iter().enumerate() {
+            if c > 1 {
+                slot[id] = sums.len() as u32;
+                sums.push(<G::Group as ark_ff::Zero>::zero());
+            }
+        }
+        for &(i, id) in &cluster_of {
+            let sl = slot[id as usize];
+            if sl != u32::MAX {
+                sums[sl as usize] += self.points[i as usize];
+            }
+        }
+        let normalized = G::Group::normalize_batch(&sums);
+        let points: Vec<G> = (0..reps.len())
+            .map(|id| {
+                let sl = slot[id];
+                if sl == u32::MAX { self.points[reps[id] as usize] } else { normalized[sl as usize] }
+            })
+            .collect();
+        let scalars: Vec<G::ScalarField> = reps.iter().map(|&i| coeffs[i as usize]).collect();
+        if std::env::var_os("BBREF_COMMIT_TIMING").is_some() {
+            eprintln!("[dedup] nnz={} distinct={} merged_clusters={}", cluster_of.len(), reps.len(), sums.len());
+        }
+        let phi = G::phi_table(&points);
+        G::batch_msm_with_phi(&points, &scalars, Some(&phi))
     }
 }
 
