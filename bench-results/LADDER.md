@@ -1178,3 +1178,18 @@ siblings, so our 0.175 covering both is *faster*. Real builder items left: `rang
 
 **11-flow standing (unpinned, 8t):** TOTAL **0.99x**, typical 1.04-1.15x, **median 1.07x**
 (from 1.10x at the start of this pass, 1.10-1.21x typical at session start).
+
+## Update 44: sigma/id parallel (0.106 -> 0.053s); MAX_LEN=9 rejected; MSM stage parity re-confirmed
+
+- `ProverInstance::from_builder` 0.227 -> 0.180s (bb 0.179): identity fill per wire on the pool,
+  cycle links parallel over variables (each (wire,row) is in exactly one cycle). Proofs identical.
+- `GRADED_MAX_LEN` 8 -> 9 to bring the ECCVM `Lookup` relation into coefficient form: ECCVM sumcheck
+  0.287 -> 0.284s but folding sumcheck 0.772 -> 0.799s (3/3). Wider `Graded` costs more everywhere
+  than it saves. Rejected.
+- MSM stages compared on the plain-node flow data: schedule 0.91x, bucket partials 0.62x,
+  reduce 0.99x, commit total 0.71x — we are faster at every stage. Single-MSM rung under plain
+  node: 2^16 57.1 vs bb 57.5ms, 2^17 96.4 vs 90.6ms (bb's own run-to-run spread is 48.8-57.5 at
+  2^16). MSM is not a lever. bb's `pippenger_batched.hpp` header also states its batch does NOT
+  interleave MSMs — it runs single MSMs in sequence sharing only the GLV-doubled points — so the
+  "batched MSM" item is withdrawn; the Oink wire-round +0.10 is still unexplained per instance.
+- 11-flow standing: TOTAL 0.99x, median **1.07x**, typical 1.04-1.13x.
