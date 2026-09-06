@@ -47,7 +47,7 @@ impl EccvmPolys {
                 lookup_terms(row, p).iter().product()
             })
             .collect();
-        batch_invert(&mut denominators);
+        crate::base::field::batch_invert_par(&mut denominators);
         for (i, d) in (TRACE_OFFSET..n).zip(denominators) {
             if !d.is_zero() {
                 self.cols[Ent::lookup_inverses as usize].coeffs[i] = d;
@@ -61,7 +61,7 @@ impl EccvmPolys {
             })
             .collect();
         let (num, den): (Vec<Fq>, Vec<Fq>) = terms.into_iter().unzip();
-        let prefix = grand_product(&num, &den);
+        let prefix = crate::base::field::grand_product_par(&num, &den);
         self.cols[Ent::z_perm as usize].coeffs[TRACE_OFFSET + 1..n].copy_from_slice(&prefix[1..]);
     }
 }

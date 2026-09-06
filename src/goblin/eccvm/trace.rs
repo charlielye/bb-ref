@@ -677,7 +677,7 @@ pub fn compute_msm_rows(msms: &[Vec<ScalarMul>], total_muls: u32, num_rows: usiz
         .zip(&p1)
         .map(|(op, (x1, y1))| if op.is_double { *y1 + *y1 } else { op.p2.0 - *x1 })
         .collect();
-    crate::base::field::batch_invert(&mut inverses);
+    crate::base::field::batch_invert_par(&mut inverses);
     let mut op_idx = 0;
     for (row_index, row) in rows.iter_mut().enumerate().take(num_rows - 1).skip(1) {
         (row.accumulator_x, row.accumulator_y) = acc[row_index - 1];

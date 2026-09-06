@@ -237,7 +237,7 @@ fn compute_logderivative_inverses(inst: &mut ProverInstance, p: &RelationParams<
 /// fresh column sized to the last inverse; `masked` supplies the ZK masking head, which bb
 /// batch-inverts along with the whole inverse polynomial.
 fn write_inverses(masked: &Poly, trace_offset: usize, mut denominators: Vec<Fr>) -> Poly {
-    batch_invert(&mut denominators);
+    crate::base::field::batch_invert_par(&mut denominators);
     let extent = denominators.iter().rposition(|d| !d.is_zero()).map_or(0, |i| i + 1);
     let mut inv = Poly::zero(trace_offset + extent);
     for (i, c) in masked.coeffs.iter().take(trace_offset).enumerate() {

@@ -206,6 +206,18 @@ pub fn batch_invert<F: PrimeField>(v: &mut [F]) {
     }
 }
 
+/// Element-wise inversion, so each chunk runs the Montgomery batch trick independently on the pool
+/// (bb inverts its grand-product denominators in parallel). Bit-identical to `batch_invert`.
+pub fn batch_invert_par<F: PrimeField + Send + Sync>(v: &mut [F]) {
+    use rayon::prelude::*;
+    if v.len() < 8192 {
+        batch_invert(v);
+        return;
+    }
+    let chunk = v.len().div_ceil(rayon::current_num_threads().max(1)).max(4096);
+    v.par_chunks_mut(chunk).for_each(ark_ff::batch_inversion);
+}
+
 /// `z[0] = 1, z[i+1] = z[i] * num[i] / den[i]` with a single batched inversion (bb `compute_grand_product`).
 /// `grand_product` with blocked-parallel prefix products, per-chunk inversion and a parallel
 /// combine (bb `GrandProduct::step1/2a/2b/3`). Bit-identical to the serial version: prefix products
@@ -254,7 +266,7 @@ pub fn grand_product_par<F: PrimeField + Send + Sync>(num: &[F], den: &[F]) -> V
     let num_prefix = prefix(num);
     let mut den_prefix = prefix(den);
     // Element-wise inversion, so each chunk runs the Montgomery batch trick independently.
-    den_prefix.par_chunks_mut(chunk).for_each(|c| ark_ff::batch_inversion(c));
+    den_prefix.par_chunks_mut(chunk).for_each(ark_ff::batch_inversion);
     num_prefix
         .par_iter()
         .zip(den_prefix.par_iter())
