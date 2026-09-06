@@ -251,6 +251,11 @@ it applies: **H** = Honk rollup circuits, **C** = Chonk client flows, **N/W** = 
     on the chonk flow, 4/4 interleaved. The default release profile stays opt-level 2 for
     iteration speed (opt-level 3 alone is neutral on both targets). C W.
 
+35. **Parallel evaluation of the Gemini batched polynomial and folds** (`evaluate_par`: chunk-wise
+    Horner recombined with z^L, exact) and clone-free fold construction. `Gemini::evaluations`
+    0.060 → 0.020s; decider 0.357 → 0.343, joint proof 1.022 → 1.006. Our Gemini is now faster
+    than bb's (0.28 vs 0.30) with Shplonk and KZG at parity. H C N W.
+
 ### Circuit builder and ACIR lowering
 
 28. **sha256 sparse-form powers.** `map_into_sparse_form` recomputed 32 base powers with field
@@ -304,6 +309,7 @@ inside the noise band on the paired test described above.
 | R18 | Thread placement / L3-domain pinning | pinning both provers to one domain gains us ~8% and bb nothing; `/proc/<pid>/task/*/stat` shows both split 50/50 across domains identically; matching bb's thread shape measured worse | not controllable in production; we run a denser instruction stream (higher IPC) and pay proportionally more for the same cross-domain latency | — (attack by doing less cross-thread work per round, which #19–20 did) |
 | R19 | Forcing all later rounds dense / "drop the skip probe" | neutral; the probe costs ~0.06s and 4-wide arithmetic on the later rounds is neutral | | — |
 | R20 | **`wasm-opt -O3`** on our module (binaryen 116, all relevant features enabled) | module 11.4 → 8.7 MB but **+11% slower** on the flow (6.33 vs 5.68s), proofs identical | binaryen's rewrites hurt V8's tiering/codegen on this module; bb's toolchain applies it to a different code shape | a newer binaryen/V8 pair, or `-O2`/`-Os` if size ever matters |
+| R22 | Single-threaded small MSMs inside `batch_commit` (bb small-member pool shape); tiny-MSM threshold 128→4096 | both neutral on the ECCVM and Oink wire rounds (0.220 → 0.220; 0.44 → 0.44) | rayon already absorbs the nesting; the wire rounds' excess is not the small-MSM algorithm | — |
 | R21 | `opt-level = 3` for the default release profile (wasm and native) | neutral both targets (5.675 vs 5.678 wasm; 2.94 → 2.98 native); the 2026-09-04 opt-level-2 choice stands | the win is in LTO + single codegen unit (#34), not the per-function pass level | — |
 
 ## What owns the remaining gap
@@ -316,7 +322,7 @@ parents on both sides so nothing hides in a scope boundary:
 | Oink `commit_to_wires` | +0.117s | per-instance MSMs over witness polynomials that are ~50% duplicate scalars — R11 |
 | folding `prove_sumcheck` (6 instances) | +0.101s | small sparse instances: ~5% cross-domain sensitivity (R18) plus per-round fixed costs; total univariate time across *all* sumchecks is at parity (0.813 vs 0.806) |
 | ECCVM (like-for-like, rows excluded) | +0.169s | sumcheck +0.047 (its edge loop is 166ms; the pointwise `Set`/`Lookup` relations — R7's real fix), wire commits +0.043 (85 sparse Grumpkin polys), IPA +0.026, PCS/claims ~+0.05 |
-| decider proof (Shplemini/KZG on the accumulator) | +0.05–0.07s | ours 0.35–0.37 vs bb 0.302; unscoped internally yet |
+| decider proof (Shplemini/KZG on the accumulator) | ~+0.03s | after #35: Gemini 0.28 vs bb 0.30, Shplonk/KZG parity |
 | multilinear batching | +0.038s | pairs with bb's `finalize` (0.125) |
 | hiding-kernel oink, from_builder, create_circuit, joint | +0.028, +0.021, +0.014, +0.012 | |
 | wins | −0.055 output-to-accumulator, −0.088 logderiv, −0.030 z_perm, −0.075 partially_evaluate | |

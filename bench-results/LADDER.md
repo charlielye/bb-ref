@@ -1372,3 +1372,22 @@ the sub-second ops remain 1.08-1.24x. Native frames 8t: PTBR 15.19/14.82/**13.73
 Two attribution errors caught this pass: the "ECCVM edge loop is 34 ms" row was one of two other
 15-round 2^15 sumchecks (the ECCVM's is 166 ms), and pairing our folding scope against bb's
 `sumcheck + sumcheck_output_to_accumulator` briefly made the folding gap look like a win.
+
+## Update 50: decider split — Gemini evaluation parallel; two neutral probes
+
+Scoped `decider_prove`/`shplemini_prove` with bb's names. Against bb (flow totals):
+Shplonk 0.258 vs 0.258 (parity), KZG parity, Gemini ours 0.32 vs bb 0.299 — the excess was
+`Gemini::evaluations` 0.060 (serial Horner over 2^17 six times per call) and fold clones.
+**Landed:** `Polynomial::evaluate_par` (chunk-wise Horner, recombined with z^L) and clone-free
+folds: evaluations 0.060 -> 0.020, folds 0.015 -> 0.011, decider 0.357 -> 0.343, joint 1.022 ->
+1.006 (3/3, byte-identical). Our Gemini is now 0.28 vs bb 0.30.
+
+**Neutral, reverted/recorded:** (a) single-threaded small MSMs inside `batch_commit` (bb's
+small-member pool shape) — ECCVM wires 0.220 -> 0.220, Oink wires 0.44 -> 0.44; rayon already
+handled the nesting. (b) tiny-MSM wNAF threshold 128/512/2048/4096 — ECCVM wire round flat at
+0.220-0.227; the ECCVM wire round's +0.043 is not the small-MSM algorithm.
+
+**Proving-only now ~1.09x** (transfer_1 ≈ 5.30 vs 4.84 s). Remaining, by size: ECCVM +0.17
+(sumcheck +0.047 with pointwise Set/Lookup, wires +0.043, IPA +0.026, PCS/claims ~+0.05), Oink
+wire round +0.117 (dedup), folding prove_sumcheck +0.10, mlb +0.038, hiding oink +0.028,
+from_builder +0.021, decider ~+0.03.
