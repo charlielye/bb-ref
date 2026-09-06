@@ -679,6 +679,20 @@ impl<F: FieldLike + Copy> Accumulators<F> {
 
 /// `prod_{bits j of e} betas[round + 1 + j]` for every edge `e` of the round (bb `beta_products`):
 /// one multiplication per entry.
+/// Round r's gate-separator products are the stride-2^r subsequence of round 0's: index the
+/// round-0 table instead of materializing a strided copy every round.
+#[derive(Clone, Copy)]
+struct Pows<'a, F> {
+    base: &'a [F],
+    step: usize,
+}
+impl<F: Copy> Pows<'_, F> {
+    #[inline]
+    fn at(&self, e: usize) -> F {
+        self.base[e * self.step]
+    }
+}
+
 fn gate_separator_products<F: FieldLike + Copy>(betas: &[F], round: usize, num_edges: usize) -> Vec<F> {
     let mut p = vec![F::one(); num_edges.max(1)];
     let mut j = 0;
@@ -1031,7 +1045,7 @@ fn accumulate_edges_quad<F, R>(
     table: &[Column<F>],
     edges: std::ops::Range<usize>,
     params: &RelationParams<F>,
-    pows: &[F],
+    pows: Pows<F>,
     d: usize,
 ) -> Accumulators<F>
 where
@@ -1061,7 +1075,7 @@ where
             let mut e = start;
             while e < end {
                 if e + 4 > end {
-                    accumulate_edge(rels, used, table, e, params, params_uni, &pows[e], &mut acc, &mut s);
+                    accumulate_edge(rels, used, table, e, params, params_uni, &pows.at(e), &mut acc, &mut s);
                     e += 1;
                     continue;
                 }
@@ -1101,7 +1115,7 @@ where
                 }
                 if !ok {
                     for ee in e..e + 4 {
-                        accumulate_edge(rels, used, table, ee, params, params_uni, &pows[ee], &mut acc, &mut s);
+                        accumulate_edge(rels, used, table, ee, params, params_uni, &pows.at(ee), &mut acc, &mut s);
                     }
                     e += 4;
                     continue;
@@ -1136,7 +1150,7 @@ where
                     row0q[j] = r0;
                     deltaq[j] = r1 - r0;
                 }
-                let scaling_q = QuadF::lanes(pows[e], pows[e + 1], pows[e + 2], pows[e + 3]);
+                let scaling_q = QuadF::lanes(pows.at(e), pows.at(e + 1), pows.at(e + 2), pows.at(e + 3));
                 for k in 0..num_points {
                     for &j in &s.cols {
                         if k == 0 {
@@ -1173,7 +1187,7 @@ fn accumulate_edges_serial<F: NativeField>(
     table: &[Column<F>],
     edges: std::ops::Range<usize>,
     params: &RelationParams<F>,
-    pows: &[F],
+    pows: Pows<F>,
     d: usize,
 ) -> Accumulators<F>
 where
@@ -1183,7 +1197,7 @@ where
     let mut acc = Accumulators::new(rels, d);
     let mut scratch = Scratch::new(rels, table.len(), d);
     for e in edges {
-        accumulate_edge(rels, used, table, e, params, &params_uni, &pows[e], &mut acc, &mut scratch);
+        accumulate_edge(rels, used, table, e, params, &params_uni, &pows.at(e), &mut acc, &mut scratch);
     }
     if scratch.graded {
         flush_graded(&scratch, &mut acc);
@@ -1199,7 +1213,7 @@ fn accumulate_edges<F: NativeField>(
     edges: std::ops::Range<usize>,
     head: Option<std::ops::Range<usize>>,
     params: &RelationParams<F>,
-    pows: &[F],
+    pows: Pows<F>,
     d: usize,
 ) -> (Accumulators<F>, Option<Accumulators<F>>)
 where
@@ -1246,14 +1260,14 @@ where
                 let (hacc, hscratch) =
                     hg.get_or_insert_with(|| (Accumulators::new(rels, d), Scratch::new(rels, table.len(), d)));
                 for e in h {
-                    accumulate_edge(rels, used, table, e, params, params_uni, &pows[e], hacc, hscratch);
+                    accumulate_edge(rels, used, table, e, params, params_uni, &pows.at(e), hacc, hscratch);
                 }
                 did_head = true;
                 continue;
             }
             let start = starts[i];
             for e in start..(start + chunk).min(edges.end) {
-                accumulate_edge(rels, used, table, e, params, params_uni, &pows[e], acc, scratch);
+                accumulate_edge(rels, used, table, e, params, params_uni, &pows.at(e), acc, scratch);
             }
         }
         if scratch.graded {
@@ -1675,14 +1689,7 @@ where
                 self.pows0 = gate_separator_products(betas, 0, 1 << (self.log_n - 1));
             }
             // Round r's separators are the stride-2^r subsequence of round 0's.
-            let strided: Vec<F>;
-            let pows: &[F] = if round == 0 {
-                &self.pows0
-            } else {
-                let step = 1usize << round;
-                strided = (0..round_size / 2).map(|e| self.pows0[e * step]).collect();
-                &strided
-            };
+            let pows = Pows { base: &self.pows0[..], step: 1usize << round };
             let pows_us = t_pows.elapsed().as_micros();
             let t_edges = std::time::Instant::now();
             let _ge = crate::base::bench::Scope::new("sumcheck/accumulate_edge_chunks");
@@ -2013,8 +2020,9 @@ where
     let alphas = alpha_powers(alpha, RelationSet::<C::Fr>::total_subrelations(rels) - 1);
     let t_setup = std::time::Instant::now();
     // The committed sumcheck is the ECCVM's alone, so these scopes isolate its per-round work.
-    let tag = spec.committed;
-    let _gn = tag.then(|| crate::base::bench::Scope::new("eccvm-sc/new")).flatten();
+    let tag = true;
+    let c = spec.committed;
+    let _gn = tag.then(|| crate::base::bench::Scope::new(if c { "eccvm-sc/new" } else { "sc/new" })).flatten();
     let mut state = RoundProver::new(
         n,
         polys,
@@ -2037,13 +2045,13 @@ where
         // Split round 0 from the rest: they behave differently (round 0 reads borrowed and
         // shifted columns; later rounds an owned contiguous table) and bb reports the same split.
         let _gu = crate::base::bench::Scope::new(if round == 0 { "sumcheck loop 0" } else { "sumcheck loop" });
-        let _gt = tag.then(|| crate::base::bench::Scope::new("eccvm-sc/univariate")).flatten();
+        let _gt = tag.then(|| crate::base::bench::Scope::new(if c { "eccvm-sc/univariate" } else { "sc/univariate" })).flatten();
         let mut univariate = state.univariate(rels, params, betas, &partial_eval, &alphas, d);
         drop(_gt);
         drop(_gu);
         t_uni += t0.elapsed();
         if let Some(zk) = zk.as_deref_mut() {
-            let _g = tag.then(|| crate::base::bench::Scope::new("eccvm-sc/zk_univariate")).flatten();
+            let _g = tag.then(|| crate::base::bench::Scope::new(if c { "eccvm-sc/zk_univariate" } else { "sc/zk_univariate" })).flatten();
             for (k, v) in zk.round_univariate(round, d).into_iter().enumerate() {
                 univariate[k] += v;
             }
@@ -2057,14 +2065,15 @@ where
                 t,
             );
         } else {
+            let _g = crate::base::bench::Scope::new("sc/send");
             t.send_vec(&format!("Sumcheck:univariate_{round}"), &univariate);
         }
-        let _gc = tag.then(|| crate::base::bench::Scope::new("eccvm-sc/challenge")).flatten();
+        let _gc = tag.then(|| crate::base::bench::Scope::new(if c { "eccvm-sc/challenge" } else { "sc/challenge" })).flatten();
         let u: F<C> = t.challenge(&format!("Sumcheck:u_{round}"));
         drop(_gc);
         let t0 = std::time::Instant::now();
         let _gf = crate::base::bench::Scope::new("Sumcheck::partially_evaluate");
-        let _gf2 = tag.then(|| crate::base::bench::Scope::new("eccvm-sc/fold")).flatten();
+        let _gf2 = tag.then(|| crate::base::bench::Scope::new(if c { "eccvm-sc/fold" } else { "sc/fold" })).flatten();
         state.partially_evaluate(&u);
         drop(_gf2);
         drop(_gf);
@@ -2073,7 +2082,7 @@ where
             eprintln!("[round {round}] {:.1} ms", t0.elapsed().as_secs_f64() * 1e3);
         }
         if let Some(zk) = zk.as_deref_mut() {
-            let _g = tag.then(|| crate::base::bench::Scope::new("eccvm-sc/zk_update")).flatten();
+            let _g = tag.then(|| crate::base::bench::Scope::new(if c { "eccvm-sc/zk_update" } else { "sc/zk_update" })).flatten();
             zk.update(&u, round);
         }
         partial_eval *= gate_separator_factor(&u, &betas[round]);
@@ -2092,7 +2101,7 @@ where
             t_setup.elapsed().as_secs_f64() - t_uni.as_secs_f64() - t_fold.as_secs_f64()
         );
     }
-    let _ge = tag.then(|| crate::base::bench::Scope::new("eccvm-sc/evals")).flatten();
+    let _ge = tag.then(|| crate::base::bench::Scope::new(if c { "eccvm-sc/evals" } else { "sc/evals" })).flatten();
     let evals = state.evals();
     t.send_vec("Sumcheck:evaluations", &evals);
     drop(_ge);

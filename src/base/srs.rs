@@ -233,6 +233,15 @@ fn dedup_enabled() -> bool {
     *V
 }
 
+/// Smallest polynomial the dedup pre-pass considers (BBREF_DEDUP_MIN overrides, default 512 — the
+/// ECCVM's ~3,000-row wire polynomials measured 0.207 -> 0.190 s with the gate at or below 1024).
+fn dedup_min_len() -> usize {
+    static V: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
+        std::env::var("BBREF_DEDUP_MIN").ok().and_then(|s| s.parse().ok()).unwrap_or(512)
+    });
+    *V
+}
+
 /// Sample the first nonzero coefficients: dedup pays only when a large share repeats.
 fn duplicate_heavy<F: FieldLike>(coeffs: &[F]) -> bool {
     use std::collections::HashSet;
@@ -315,7 +324,7 @@ where
             self.points.len()
         );
         let t0 = std::env::var_os("BBREF_COMMIT_TIMING").map(|_| std::time::Instant::now());
-        let c = if dedup_enabled() && k >= 4096 && duplicate_heavy(&p.coeffs[..k]) {
+        let c = if dedup_enabled() && k >= dedup_min_len() && duplicate_heavy(&p.coeffs[..k]) {
             self.commit_dedup(&p.coeffs[..k]).into_affine()
         } else {
             #[cfg(target_family = "wasm")]
