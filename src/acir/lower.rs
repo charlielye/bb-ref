@@ -1096,7 +1096,9 @@ pub fn build_circuit(circuit: &Circuit, witness: Option<&[Fr]>) -> Builder {
 /// `--ipa_accumulation` flag): backend circuits recursively verifying UltraRollup proofs
 /// accumulate the nested IPA claims and publish `RollupIO`.
 pub fn build_circuit_opts(circuit: &Circuit, witness: Option<&[Fr]>, has_ipa_claim: bool) -> Builder {
+    let _g_cls = crate::base::bench::Scope::new("acir::classify");
     let (mut c, public_inputs) = classify(circuit, false);
+    drop(_g_cls);
     assert!(c.hn_recursion.is_empty(), "recursion constraints need a Mega circuit");
     let honk_recursion = std::mem::take(&mut c.honk_recursion);
     let chonk_recursion = std::mem::take(&mut c.chonk_recursion);
@@ -1117,7 +1119,10 @@ pub fn build_circuit_opts(circuit: &Circuit, witness: Option<&[Fr]>, has_ipa_cla
         );
         crate::base::timing::phase("build: recursion+io");
     }
-    into_builder(ctx)
+    let _g_ib = crate::base::bench::Scope::new("acir::into_builder");
+    let out = into_builder(ctx);
+    drop(_g_ib);
+    out
 }
 
 /// The Mega circuit of an ACIR program (bb `create_circuit<MegaCircuitBuilder>`): AssertZero
@@ -1148,22 +1153,29 @@ pub fn build_circuit_mega(
     let op_queue = ivc
         .as_ref()
         .map_or_else(|| Rc::new(RefCell::new(EccOpQueue::new())), |ivc| ivc.op_queue.clone());
+    let _g_wit = crate::base::bench::Scope::new("acir::from_acir_mega");
     let builder = Builder::from_acir_mega(
         op_queue,
         &witness_or_zeros(witness, &c),
         public_inputs,
         witness.is_none(),
     );
+    drop(_g_wit);
     crate::base::timing::phase("      build: witness vars");
     let ctx = lower(builder, c);
     crate::base::timing::phase("      build: acir lowering");
     if hn_recursion.is_empty() {
         add_default_pairing_points(&mut ctx.borrow_mut());
     } else {
+        let _g_rec = crate::base::bench::Scope::new("acir::recursion_constraints");
         process_hn_recursion_constraints(&ctx, &hn_recursion, ivc.unwrap(), rng);
+        drop(_g_rec);
     }
     crate::base::timing::phase("      build: recursion/kernel logic");
-    into_builder(ctx)
+    let _g_ib = crate::base::bench::Scope::new("acir::into_builder");
+    let out = into_builder(ctx);
+    drop(_g_ib);
+    out
 }
 
 fn witness_or_zeros(witness: Option<&[Fr]>, c: &Constraints) -> Vec<Fr> {
@@ -1187,6 +1199,7 @@ fn into_builder(ctx: Ctx) -> Builder {
 fn lower(builder: Builder, c: Constraints) -> Ctx {
     let ctx: Ctx = Rc::new(RefCell::new(builder));
     {
+        crate::scope!("acir::quad_constraints");
         let mut b = ctx.borrow_mut();
         for mut q in c.quad {
             resolve_zero(&b, &mut q);
@@ -1299,8 +1312,11 @@ fn lower(builder: Builder, c: Constraints) -> Ctx {
             create_ec_add_constraint(&ctx, e);
         }
     }
-    for block in c.blocks.values() {
-        create_block_constraints(&ctx, block);
+    {
+        crate::scope!("acir::block_constraints");
+        for block in c.blocks.values() {
+            create_block_constraints(&ctx, block);
+        }
     }
     ctx
 }

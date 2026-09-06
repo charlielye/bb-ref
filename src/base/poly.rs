@@ -171,21 +171,34 @@ impl<F: FieldLike> Polynomial<F> {
 
 /// The table of `eq(x, r[..log_n]) · ∏_{j ≥ log_n} (1 - r_j)` over the hypercube, index bit `j` ↔ `r[j]`
 /// (bb `ProverEqPolynomial::construct`).
-pub fn eq_table<F: FieldLike>(r: &[F], log_n: usize) -> Vec<F> {
+pub fn eq_table<F: FieldLike + Send + Sync>(r: &[F], log_n: usize) -> Vec<F> {
     let mut tail = F::one();
     for rj in &r[log_n..] {
         tail *= &(F::one() - rj);
     }
-    let mut table = vec![tail];
-    for rj in r.iter().take(log_n) {
-        let mut next = Vec::with_capacity(table.len() * 2);
-        for t in &table {
-            next.push(t.clone() * &(F::one() - rj));
+    // In place, doubling the live prefix each level: table[2^j + i] = table[i] * r_j and
+    // table[i] *= (1 - r_j). The last levels are the bulk of the work and run on the pool.
+    let mut table = vec![F::zero(); 1 << log_n];
+    table[0] = tail;
+    for (j, rj) in r.iter().take(log_n).enumerate() {
+        let len = 1 << j;
+        let one_minus = F::one() - rj;
+        let (lo, hi) = table.split_at_mut(len);
+        let hi = &mut hi[..len];
+        if len >= 4096 {
+            use rayon::prelude::*;
+            lo.par_chunks_mut(1024).zip(hi.par_chunks_mut(1024)).for_each(|(l, h)| {
+                for (a, b) in l.iter_mut().zip(h.iter_mut()) {
+                    *b = a.clone() * rj;
+                    *a *= &one_minus;
+                }
+            });
+        } else {
+            for (a, b) in lo.iter_mut().zip(hi.iter_mut()) {
+                *b = a.clone() * rj;
+                *a *= &one_minus;
+            }
         }
-        for t in &table {
-            next.push(t.clone() * rj);
-        }
-        table = next;
     }
     table
 }

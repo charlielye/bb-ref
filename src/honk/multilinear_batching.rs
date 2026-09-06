@@ -42,6 +42,7 @@ pub fn eq_eval<F: FieldLike>(r: &[F], u: &[F]) -> F {
 
 /// bb `MultilinearBatchingProver::construct_proof` + `compute_new_claim`; the proof is left in `t`.
 pub fn mlb_prove(claims: Vec<ProverClaim>, t: &mut NativeTranscript) -> ProverClaim {
+    let _g_setup = crate::base::bench::Scope::new("mlb/setup");
     let n = claims.len();
     assert!(n >= 2);
     let circuit_size = claims.iter().map(|c| c.dyadic_size).max().unwrap();
@@ -50,20 +51,37 @@ pub fn mlb_prove(claims: Vec<ProverClaim>, t: &mut NativeTranscript) -> ProverCl
     let gamma_powers = powers(&gamma, n);
     let alpha: Fr = t.challenge("Sumcheck:alpha");
 
-    let pad = |p: &Poly| {
-        let mut c = p.coeffs.clone();
-        c.resize(circuit_size, Fr::zero());
-        c
-    };
-    // Columns: [non_shifted_i, shifted_i, eq_i]; the shifted columns are the shifts of the pre-shift polynomials.
-    let mut non_shifted: Vec<Vec<Fr>> = claims.iter().map(|c| pad(&c.non_shifted_polynomial)).collect();
-    let mut shifted: Vec<Vec<Fr>> = claims.iter().map(|c| pad(&c.shifted_polynomial.shifted())).collect();
-    let mut eq: Vec<Vec<Fr>> = claims.iter().map(|c| eq_table(&c.challenge, log_n)).collect();
+    use std::borrow::Cow;
+    // Columns: [non_shifted_i, shifted_i, eq_i]; the shifted columns are the shifts of the pre-shift
+    // polynomials. Round 0 reads the claims' own coefficient vectors where they already have the
+    // full size (the first fold writes a fresh vector regardless), so no up-front copies.
+    fn pad(p: &Poly, size: usize) -> Cow<'_, [Fr]> {
+        if p.coeffs.len() == size {
+            Cow::Borrowed(&p.coeffs)
+        } else {
+            let mut c = p.coeffs.clone();
+            c.resize(size, Fr::zero());
+            Cow::Owned(c)
+        }
+    }
+    let mut non_shifted: Vec<Cow<[Fr]>> =
+        claims.iter().map(|c| pad(&c.non_shifted_polynomial, circuit_size)).collect();
+    let mut shifted: Vec<Cow<[Fr]>> = claims
+        .iter()
+        .map(|c| {
+            let mut s = c.shifted_polynomial.shifted().coeffs;
+            s.resize(circuit_size, Fr::zero());
+            Cow::Owned(s)
+        })
+        .collect();
+    let mut eq: Vec<Cow<[Fr]>> = claims.iter().map(|c| Cow::Owned(eq_table(&c.challenge, log_n))).collect();
 
     let mut challenge = Vec::with_capacity(VIRTUAL_LOG_N);
     // `Fr::small` is a table lookup; `Fr::from(u64)` is a Montgomery multiplication, and this
     // runs three times per point of every edge.
     let linear = |v0: Fr, v1: Fr, k: usize| v0 + Fr::small(k as u64) * (v1 - v0);
+    drop(_g_setup);
+    let _g_sc = crate::base::bench::Scope::new("mlb/sumcheck");
     for round in 0..VIRTUAL_LOG_N {
         let mut univariate = vec![Fr::zero(); UNIVARIATE_LENGTH];
         if round < log_n {
@@ -108,7 +126,7 @@ pub fn mlb_prove(claims: Vec<ProverClaim>, t: &mut NativeTranscript) -> ProverCl
             point[round] = Fr::one();
             for i in 0..n {
                 let e1 = eq_eval(&claims[i].challenge, &point);
-                eq[i] = vec![eq[i][0], e1];
+                eq[i] = Cow::Owned(vec![eq[i][0], e1]);
             }
             for k in 0..UNIVARIATE_LENGTH {
                 let (mut s0, mut s1) = (Fr::zero(), Fr::zero());
@@ -122,28 +140,45 @@ pub fn mlb_prove(claims: Vec<ProverClaim>, t: &mut NativeTranscript) -> ProverCl
         }
         t.send_vec(&format!("Sumcheck:univariate_{round}"), &univariate);
         let u: Fr = t.challenge(&format!("Sumcheck:u_{round}"));
-        let fold = |col: &mut Vec<Fr>| {
+        // With two or three claims there are only 3n columns, so folding column-by-column left
+        // most of the pool idle for ~2ms per column per round; fold every column's elements in
+        // parallel instead (element k reads 2k and 2k+1 only).
+        let fold = |col: &mut Cow<[Fr]>| {
             let half = col.len() / 2;
-            for k in 0..half {
-                col[k] = col[2 * k] + u * (col[2 * k + 1] - col[2 * k]);
+            if half >= 4096 {
+                let src: &[Fr] = col;
+                let out: Vec<Fr> = (0..half)
+                    .into_par_iter()
+                    .with_min_len(1024)
+                    .map(|k| src[2 * k] + u * (src[2 * k + 1] - src[2 * k]))
+                    .collect();
+                *col = Cow::Owned(out);
+            } else {
+                let v = col.to_mut();
+                for k in 0..half {
+                    v[k] = v[2 * k] + u * (v[2 * k + 1] - v[2 * k]);
+                }
+                v.truncate(half);
             }
-            col.truncate(half);
         };
         if round < log_n {
-            non_shifted.par_iter_mut().for_each(fold);
-            shifted.par_iter_mut().for_each(fold);
-            eq.par_iter_mut().for_each(fold);
+            for col in non_shifted.iter_mut().chain(shifted.iter_mut()).chain(eq.iter_mut()) {
+                fold(col);
+            }
         } else {
             for col in non_shifted.iter_mut().chain(shifted.iter_mut()) {
-                col[0] *= Fr::one() - u;
+                col.to_mut()[0] *= Fr::one() - u;
             }
             for col in eq.iter_mut() {
-                col[0] = col[0] * (Fr::one() - u) + col[1] * u;
-                col[1] = Fr::zero();
+                let v = col.to_mut();
+                v[0] = v[0] * (Fr::one() - u) + v[1] * u;
+                col.to_mut()[1] = Fr::zero();
             }
         }
         challenge.push(u);
     }
+    drop(_g_sc);
+    let _g_post = crate::base::bench::Scope::new("mlb/post");
     let evals: Vec<Fr> = non_shifted.iter().chain(&shifted).chain(&eq).map(|c| c[0]).collect();
     t.send_vec("Sumcheck:evaluations", &evals);
 

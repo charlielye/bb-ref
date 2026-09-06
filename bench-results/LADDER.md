@@ -1155,3 +1155,26 @@ bb's `commit_random/17` (88ms). bb's tree shows where its batching pays:
 (12.6ms x 12) while large members run concurrently as ours do. Closing the wire round (+0.10s) and
 the z_perm round (+0.10s) needs that batched pass — a real MSM implementation item, the largest
 well-defined one left.
+
+## Update 43: multilinear batching 0.295 -> 0.163s; median flow 1.10x -> 1.07x
+
+`mlb_prove` has its own hand-rolled sumcheck and got none of the round-loop work. Scoped it:
+setup 0.106 / sumcheck 0.173 / post 0.015 against bb's ~0.224 total.
+
+**Landed:**
+- Round 0 borrows the claims' own coefficient vectors (`Cow`) instead of padding copies of every
+  polynomial up front; the first fold writes a fresh vector regardless. `eq_table` built in place
+  with the large levels on the pool. Setup 0.106 -> 0.033s.
+- Folds were column-by-column with only 3n columns (n = 2-3 claims), so ~2ms per column per round
+  ran on one thread. Element-parallel fold. Sumcheck 0.173 -> 0.116s.
+
+Proofs identical, 23 suites green. `Chonk::accumulate` 2.75 -> 2.63s.
+
+**Scope corrections from this pass:** ECCVM trace construction is at parity (our
+`ECCVMProver(CircuitBuilder&)` 0.120 includes row generation that bb counts outside its 0.068);
+bb's `acir::recursion_constraints` 0.123 and `Chonk::complete_kernel_circuit_logic` 0.121 are
+siblings, so our 0.175 covering both is *faster*. Real builder items left: `range_constraints`
+0.038 vs 0.016, and ~0.06s unscoped.
+
+**11-flow standing (unpinned, 8t):** TOTAL **0.99x**, typical 1.04-1.15x, **median 1.07x**
+(from 1.10x at the start of this pass, 1.10-1.21x typical at session start).

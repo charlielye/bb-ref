@@ -734,6 +734,7 @@ impl EccvmPolys {
     /// bb `ECCVMFlavor::ProverPolynomials(builder)` without the ZK masking rows: the full witness
     /// of the fixed-size ECCVM for the op queue's ops.
     pub fn from_op_queue(q: &EccOpQueue) -> Self {
+        let _g_rows = crate::base::bench::Scope::new("eccvm/trace_rows");
         let ops = q.get_eccvm_ops();
         let total_muls = total_number_of_muls(&ops);
         let transcript_rows = compute_transcript_rows(&ops, total_muls);
@@ -748,7 +749,11 @@ impl EccvmPolys {
         let num_rows = transcript_rows.len().max(precompute_rows.len()).max(msm_rows.len()) + TRACE_OFFSET;
         assert!(num_rows <= FIXED_SIZE, "ECCVM circuit exceeds its fixed size");
 
+        drop(_g_rows);
+        let _g_zero = crate::base::bench::Scope::new("eccvm/polys_zero");
         let mut polys = EccvmPolys::zero(FIXED_SIZE);
+        drop(_g_zero);
+        let _g_fill = crate::base::bench::Scope::new("eccvm/polys_fill");
         polys.num_rows = num_rows;
         let mut set = |e: Ent, i: usize, v: Fq| polys.cols[e as usize].coeffs[TRACE_OFFSET + i] = v;
         set(lagrange_first, 0, Fq::one());
