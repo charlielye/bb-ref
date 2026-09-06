@@ -1496,3 +1496,22 @@ Remaining per-edge excess (Permutation 1.30x, Poseidon2 internals 1.07-1.21x, EC
 coefficient products) is the representation item: bb evaluates degree > 2 products pointwise at
 LENGTH points (a degree-4 x linear product costs 6 muls, our schoolbook 10). Next: a hybrid
 `Graded` that switches to evaluation form above length 3 (bb's shape), converting back at flush.
+
+## Update 56: the hybrid coefficient/evaluation `Graded` (bb's shape) measured WORSE — reverted (R27)
+
+Implemented bb's representation dynamically: coefficient form to length 3 (Karatsuba 2x2), then
+evaluation form at the relation's partial length (thread-local k set per relation call; forward-
+difference conversion; pointwise products; evaluation-form accumulators interpolated back to
+coefficients at flush with per-sumcheck Lagrange bases). Byte-identical (5/5 acir, 23 suites) and
+slower on every relation: Permutation 5487 -> 5963 ns/edge, Bus 4635 -> 5522 (+19%), Memory
+13080 -> 15061, Poseidon2QuadInternal 22653 -> 26946, ECCVM dense round 0 206 -> 224 ms; flow
+folding sumcheck 0.709 -> 0.764, ECCVM 0.164 -> 0.201 (3/3).
+
+**Why:** the saved multiplications (a degree-4 x linear product at 6 points vs schoolbook 10) are
+outweighed by per-operation mode branches, `to_evals` copies of the full capacity array, k-wide
+additions where coefficient form adds 2-3 entries, and the flush interpolation. bb's hybrid is
+statically typed (`Univariate<FF, LENGTH>` / `UnivariateCoefficientBasis<FF, 2|3>` chosen at compile
+time, no copies, no branches) — not reproducible on stable Rust without `generic_const_exprs`.
+The remaining per-edge excess (Permutation 1.30x, Poseidon2 internals 1.07-1.21x) therefore stays
+unless bodies are hand-specialized for the prover type, which the minimality rule argues against.
+Item #3 of the "beat bb" list is closed as not viable in this form.

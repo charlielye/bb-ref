@@ -6,7 +6,7 @@ Where the rest of the docs describe *what* bb-ref computes (bit-identically to b
 *how fast*, every optimization that landed and why it works, every attempt that did not pay and
 why, and what owns the remaining gap. The raw record — every measurement, retraction and dead end
 in the order it happened — is [`bench-results/LADDER.md`](../bench-results/LADDER.md) (Updates
-1–55); this file is the curated view of it.
+1–56); this file is the curated view of it.
 
 Two machines appear below. **bbbench** is the reference box for everything from 2026-09-05 on: a
 16-core AMD EPYC 9R14 (no SMT, two 8-core L3 domains), bb pinned at the bb-ref pin, both provers
@@ -385,6 +385,7 @@ inside the noise band on the paired test described above.
 | R19 | Forcing all later rounds dense / "drop the skip probe" | neutral; the probe costs ~0.06s and 4-wide arithmetic on the later rounds is neutral | | — |
 | R20 | **`wasm-opt -O3`** on our module (binaryen 116, all relevant features enabled) | module 11.4 → 8.7 MB but **+11% slower** on the flow (6.33 vs 5.68s), proofs identical | binaryen's rewrites hurt V8's tiering/codegen on this module; bb's toolchain applies it to a different code shape | a newer binaryen/V8 pair, or `-O2`/`-Os` if size ever matters |
 | R22 | Single-threaded small MSMs inside `batch_commit` (bb small-member pool shape); tiny-MSM threshold 128→4096 | both neutral on the ECCVM and Oink wire rounds (0.220 → 0.220; 0.44 → 0.44) | rayon already absorbs the nesting; the wire rounds' excess is not the small-MSM algorithm | — |
+| R27 | **Hybrid coefficient/evaluation `Graded`** (bb's representation, dynamically: coefficient form to length 3, then evaluation form at the relation's partial length with per-sumcheck interpolation at flush) | byte-identical but **slower on every relation**: Permutation 5487 → 5963, Bus +19%, Memory +15%, Poseidon2 internals +7–19%, ECCVM round 0 206 → 224ms, folding sumcheck 0.709 → 0.764 | per-op mode branches, full-capacity conversion copies and k-wide additions outweigh the saved multiplications; bb's version is *statically* typed (exact-size `Univariate<FF, LENGTH>`), which stable Rust cannot express | `generic_const_exprs` stabilizing, or hand-specialized prover bodies (against the minimality rule) |
 | R26 | **Re-associating the Permutation relation's products** unconditionally | prover byte-identical, 9% faster on the relation, but **the pinned VKs no longer match**: the bodies are shared with the in-circuit verifier, whose gates must follow bb's chain | **resolved by #40**: bb itself branches on prover-vs-verifier accumulators; gating the pairing on `IS_PROVER` keeps the circuit path unchanged | — |
 | R25 | **Batched-affine cluster merge** in the dedup pre-pass (one Montgomery-trick inversion per tree level) | −0.02s on `commit_to_wires` (0.39 → 0.37), proofs identical | +70/−20 lines of per-cluster offset/carry bookkeeping for 0.4% of proving; reverted by decision | if the Oink wire round becomes the binding item (it is ~+0.05 after the projective dedup) |
 | R24 | In-place `MulAssign` (downward convolution) + `*=`-chained Permutation body | neutral: Permutation 6029 → 6181 ns/edge, flow unchanged | temporaries are not the cost either; bb's coefficient-basis products use cheaper short-product formulas | with exact-size univariates / Karatsuba-style short products |
