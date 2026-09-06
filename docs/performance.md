@@ -23,7 +23,7 @@ test suite: none of it changes an output bit.
 | chonk client flows, **wasm** (V8, `node`), 8t, unstripped bb module | 85.1s | 80.3s | 0.944× total, **median 1.023×** |
 | — same, against a *stripped* bb module (**the fair wall basis**) | 83.8s | 80.1s | 0.956× total, **median 1.048×** (range 0.69–1.09) |
 | — same, stripped bb, **`--profile lto` build, current HEAD** | 83.8s | **76.8s** | **0.917× total, median 1.000×** (range 0.67–1.04) — wall parity |
-| — **proving-only**, typical flow (`transfer_1`), wasm, current HEAD (LTO), bb re-measured same hour | 4.82s | 5.11s | **1.061×** (the number that compares the provers; target 1.05) |
+| — **proving-only**, typical flow (`transfer_1`), wasm, current HEAD (LTO), bb re-measured same hour | 4.82s | 5.11s | **1.059×** (the number that compares the provers; target 1.05) |
 | rollup PrivateTxBaseRollup frame, native 8t (before 14.82s) | 15.19s | **13.73s** | 0.90× |
 | rollup RootRollup frame, native 8t (before 45.4s) | 49.5s | **42.6s** | 0.86× |
 | rollup corpus (62 recorded server ops), 32t c7a, 2026-09-03 | 237.7s | 221.1s | 0.93× |
@@ -305,6 +305,11 @@ plus ≈12,800 vendored (ark-ff, whose own change is a handful of attributes).
     of ≥4,096 coefficients. `OinkProver::commit_to_wires` 0.445 → 0.39s; exact, proofs identical.
     H C N W.
 
+38. **Batched-affine cluster merge in the dedup** (#37's merge was projective): clusters are reduced
+    level by level with affine additions sharing one Montgomery-trick inversion per level; equal-x
+    pairs take the projective formula, exactly. `commit_to_wires` 0.39 → 0.37s. H C N W.
+    *LoC +70/−20; shape: general within the dedup branch (no new condition).*
+
 ### Circuit builder and ACIR lowering
 
 28. **sha256 sparse-form powers.** `map_into_sparse_form` recomputed 32 base powers with field
@@ -364,6 +369,7 @@ inside the noise band on the paired test described above.
 | R19 | Forcing all later rounds dense / "drop the skip probe" | neutral; the probe costs ~0.06s and 4-wide arithmetic on the later rounds is neutral | | — |
 | R20 | **`wasm-opt -O3`** on our module (binaryen 116, all relevant features enabled) | module 11.4 → 8.7 MB but **+11% slower** on the flow (6.33 vs 5.68s), proofs identical | binaryen's rewrites hurt V8's tiering/codegen on this module; bb's toolchain applies it to a different code shape | a newer binaryen/V8 pair, or `-O2`/`-Os` if size ever matters |
 | R22 | Single-threaded small MSMs inside `batch_commit` (bb small-member pool shape); tiny-MSM threshold 128→4096 | both neutral on the ECCVM and Oink wire rounds (0.220 → 0.220; 0.44 → 0.44) | rayon already absorbs the nesting; the wire rounds' excess is not the small-MSM algorithm | — |
+| R23 | Slice-iterating the `Graded` inner loops (remove per-coefficient bounds checks) | neutral: Permutation 6029 → 6167 ns/edge, flow unchanged | LLVM had already elided the checks; the Permutation excess (1.42× bb, the folding outlier) is the fixed `[F; 8]` move per temporary | with exact-size (degree-typed) univariates, which is the fix for that traffic |
 | R21 | `opt-level = 3` for the default release profile (wasm and native) | neutral both targets (5.675 vs 5.678 wasm; 2.94 → 2.98 native); the 2026-09-04 opt-level-2 choice stands | the win is in LTO + single codegen unit (#34), not the per-function pass level | — |
 
 ## What owns the remaining gap
@@ -374,7 +380,7 @@ parents on both sides so nothing hides in a scope boundary:
 | item | gap | mechanism |
 |---|---|---|
 | Oink `commit_to_wires` | ~+0.07s after #37 | the dedup merge is projective (~11 muls per repeated point); bb's is batched-affine |
-| folding `prove_sumcheck` (6 instances) | +0.101s | small sparse instances: ~5% cross-domain sensitivity (R18) plus per-round fixed costs; total univariate time across *all* sumchecks is at parity (0.813 vs 0.806) |
+| folding `prove_sumcheck` (6 instances) | +0.10s | per-edge: the Permutation relation runs 1.42× bb (every row) and the two Poseidon2 internal relations 1.08–1.22×, all other relations at or ahead of bb; the excess is `Graded`'s fixed 264-byte moves vs bb's exact-sized univariates |
 | ECCVM (like-for-like, rows excluded) | ~+0.11s | sumcheck −0.008 after #36 (ahead), wire commits +0.043 (86 Grumpkin polys of ≤3141 rows), IPA +0.026, PCS/claims ~+0.05 |
 | decider proof (Shplemini/KZG on the accumulator) | ~+0.03s | after #35: Gemini 0.28 vs bb 0.30, Shplonk/KZG parity |
 | multilinear batching | +0.038s | pairs with bb's `finalize` (0.125) |

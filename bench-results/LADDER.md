@@ -1424,3 +1424,25 @@ Landed since Update 51: dedup gate 512 (ECCVM wires 0.207 -> 0.190), strided `po
 Remaining named proving items (~+0.29 s): folding univariate ~+0.09, Oink wires ~+0.07 (projective
 merge), ECCVM IPA +0.026 / PCS ~+0.05, mlb +0.038, hiding oink +0.028, from_builder +0.021,
 decider ~+0.03.
+
+## Update 53: per-relation graded rung; affine cluster merge; proving 1.059x
+
+**Graded per-edge rung vs bb's `relations_bench` univariate form (1t, ns/edge):** Arithmetic 4573
+vs 8718 (0.52x), Bus 4640 vs 4938 (0.94x), Memory 13824 vs 14072 (0.98x), DeltaRange 6221 vs
+6406 (0.97x), Elliptic 7599 vs 9234 (0.82x), EccOpQueue 2503 vs 3216 (0.78x), Poseidon2External
+9051 vs 10869 (0.83x); **Permutation 6029 vs 4233 (1.42x)**, Poseidon2QuadInternalTerminal 16147
+vs 13258 (1.22x), Poseidon2QuadInternal 22929 vs 21234 (1.08x). Permutation is active on every
+row: it is the folding sumcheck's per-edge outlier. Its multiplication count matches bb's algebra
+(~90), so the excess is `Graded`'s fixed `[F; 8]` moves (264 B per temporary vs bb's exact-sized
+64-160 B) — the structural item, not a body bug.
+
+**Neutral (reverted):** slice-iterating the `Graded` inner loops to remove per-coefficient bounds
+checks — Permutation 6029 -> 6167, flow unchanged; LLVM had already elided them.
+
+**Landed:** batched-affine cluster merge in the dedup pre-pass (one Montgomery-trick inversion per
+tree level): `commit_to_wires` 0.39 -> 0.37 s (3/3), byte-identical.
+
+**Proving-only, transfer_1, HEAD lto (5 reps 5.061-5.115): median 5.105 s = 1.059x vs bb 4.821
+(same-hour), 1.055x vs 4.837.** Remaining named items are each <= 0.03 s: Permutation copy traffic,
+Oink wire remainder, mlb setup, hiding oink (2^17 MSM 1.06x), IPA, decider, from_builder, ECCVM
+PCS/claims. The next real step is exact-size (degree-typed) univariates for the relation bodies.
