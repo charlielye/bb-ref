@@ -337,7 +337,11 @@ pub fn to_bytes_be<F: PrimeField<BigInt = U256>>(f: &F) -> [u8; 32] {
 
 pub fn from_bytes_be<F: PrimeField<BigInt = U256>>(bytes: &[u8]) -> F {
     assert_eq!(bytes.len(), 32);
-    F::from_be_bytes_mod_order(bytes)
+    // Canonical encodings (every ACIR coefficient, every transcript element) convert with one
+    // Montgomery multiplication; ark's mod-order path reduces a full-width input in several.
+    let limb = |i: usize| u64::from_be_bytes(bytes[8 * i..8 * i + 8].try_into().unwrap());
+    let bi = U256::new([limb(3), limb(2), limb(1), limb(0)]);
+    F::from_bigint(bi).unwrap_or_else(|| F::from_be_bytes_mod_order(bytes))
 }
 
 pub fn from_hex<F: PrimeField<BigInt = U256>>(s: &str) -> F {
