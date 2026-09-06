@@ -7,7 +7,7 @@ use bb_ref::base::Fq;
 use bb_ref::goblin::eccvm::check::eccvm_relation_params;
 use bb_ref::goblin::eccvm::prover::sumcheck_spec;
 use bb_ref::goblin::eccvm::relations::EccvmRelations;
-use bb_ref::goblin::eccvm::trace::EccvmPolys;
+use bb_ref::goblin::eccvm::EccvmPolys;
 use bb_ref::goblin::eccvm::FIXED_SIZE;
 use bb_ref::honk::sumcheck::{alpha_powers, RelationSet, RoundProver};
 use std::time::Instant;
