@@ -1307,3 +1307,21 @@ circuit — Oink wire round +0.15 (bb's Phase-A duplicate-scalar dedup; wire pol
 scalars) and folding sumcheck +0.14 (small-instance parallel efficiency). Fixed goblin tail is at
 or near parity (ECCVM sumcheck's remaining +0.06 is outside the edge loop: per-round commits,
 libra/ZK, transcript, round-0 trimming).
+
+## Update 48: the wasm work carried to native — native median 0.99x bb, 9% faster than before
+
+Native, bbbench (16-core EPYC 9R14), 8 threads, best-of-3, all 11 pinned flows. "before" is
+commit 26a79f0 (parent of the first perf commit of the wasm push), "after" is HEAD (2c49cdb);
+both built here with the repo's default flags (+bmi2,+adx) and copied to the box; bb is the pinned
+native binary (`~/bb-ref/bin/bb`, HARDWARE_CONCURRENCY=8).
+
+| | bb | before | after |
+|---|---|---|---|
+| TOTAL (11 flows) | 44.7s | 47.0s | **42.7s** |
+| after / bb | | | **0.954x** (median 0.993x) |
+| after / before | | | **0.909x** (median 0.909x; every flow 0.895-0.930) |
+
+Per flow after/bb: 0.81 (storage_proof) .. 1.02 (amm); the deploy_tokenContract flows are 1.01.
+Last native standing before this push was 1.16x (2026-09-03, 62c865b). The optimizations were all
+serial-work removal or serial->parallel (sumcheck round loop, mlb, sigma/id, grand product, ECCVM
+rows, range/classify arithmetic, coefficient-form batching), none wasm-specific, so they transfer.
