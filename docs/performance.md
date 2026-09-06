@@ -22,8 +22,8 @@ test suite: none of it changes an output bit.
 | chonk client flows, **native**, 11 pinned transactions, 8t (bbbench) | 44.7s | **42.7s** | **0.954×** (median 0.993×, range 0.81–1.02) |
 | chonk client flows, **wasm** (V8, `node`), 8t, unstripped bb module | 85.1s | 80.3s | 0.944× total, **median 1.023×** |
 | — same, against a *stripped* bb module (**the fair wall basis**) | 83.8s | 80.1s | 0.956× total, **median 1.048×** (range 0.69–1.09) |
-| — same, stripped bb, **`--profile lto` build** | 83.8s | 79.1s | 0.945× total, **median 1.035×** |
-| — **proving-only**, typical flow (`transfer_1`), wasm, current build | 4.84s | 5.33s | **1.10×** (the number that compares the provers) |
+| — same, stripped bb, **`--profile lto` build, current HEAD** | 83.7s | **77.0s** | **0.920× total, median 1.002×** (range 0.67–1.05) — wall parity |
+| — **proving-only**, typical flow (`transfer_1`), wasm, current HEAD (LTO) | 4.84s | 5.13s | **1.06×** (the number that compares the provers; target 1.05) |
 | rollup PrivateTxBaseRollup frame, native 8t (before 14.82s) | 15.19s | **13.73s** | 0.90× |
 | rollup RootRollup frame, native 8t (before 45.4s) | 49.5s | **42.6s** | 0.86× |
 | rollup corpus (62 recorded server ops), 32t c7a, 2026-09-03 | 237.7s | 221.1s | 0.93× |
@@ -109,50 +109,64 @@ at least once.
 ## What was done — every optimization that landed
 
 Grouped by area. Each entry says what changed, why it is not obvious, what it measured, and where
-it applies: **H** = Honk rollup circuits, **C** = Chonk client flows, **N/W** = native/wasm.
+it applies: **H** = Honk rollup circuits, **C** = Chonk client flows, **N/W** = native/wasm. Each
+also carries a **LoC** line (source lines added/removed by its commits, `src/` + `csrc/` + build
+files; docs, benches and tests excluded) and a **shape**: *general* (the code path everyone takes
+changed) or *branch* (a new path taken only under a stated condition — the complexity that has to
+be kept correct twice). Totals over all perf commits: ≈7,400 lines added / 2,300 removed in `src/`,
+plus ≈12,800 vendored (ark-ff, whose own change is a handful of attributes).
 
 ### Field arithmetic and representation
 
 1. **arkworks' x86-64 asm (`ark-ff/asm`, `+bmi2,+adx`).** Native field multiply at bb's
    hand-rolled rate. H C N.
+    *LoC +1/−1; shape: general — build flag.*
 2. **Vendored ark-ff with `#[inline(always)]` on both wrapper layers** (`FpConfig` impl and
    `core::ops`). LTO could not do it (see traps). −31G instructions on a merge op, −3.5% merge
    wall, −5% chonk wall. H C N.
+    *LoC vendored ark-ff +12,375 (the change itself: `#[inline(always)]` on ~6 wrapper fns); shape: general.*
 3. **bb's 29-bit wasm Montgomery multiply** (nine 29-bit limbs so every product fits one
    `i64.mul`; Karatsuba 5+4; 8×2^29 + 1×2^24 rounds dividing by exactly 2^256 so the stored
    representation and every proof byte match native), then straight-lined. V8 mul 121 → 62ns (bb
    57.5); the canonical wasm flow 19.0 → 10.5–12.2s. The wasm prover is mul-bound, so this was
    the whole first tier of wasm work. H C W.
+    *LoC vendored ark-ff ≈+400 (two commits); shape: wasm-only `cfg` path inside the vendored field.*
 4. **`bbkernel`: bb's `VectorField` C++ kernels compiled with the wasi-sdk and linked into the
    module** (`csrc/`; bb's memory barriers survive because they are bb's bytes). `axpy` 42.8 →
    33.7 ns/elt; the MSM drain runs at the streaming multiply rate. The benchmark wasm builds use it.
    H C W.
+    *LoC +423 (build.rs, csrc glue, Rust bindings) + bb's C++ kernel sources; shape: wasm-only, feature-gated (`bbkernel`).*
 5. **Canonical bytes → field element in one Montgomery multiply.** `from_bytes_be` went through
    ark's `from_be_bytes_mod_order`, whose full-width path reduces in several multiplies; every ACIR
    coefficient is canonical, so `from_bigint` is exact (non-canonical input still falls back).
    `acir::classify` 0.104 → 0.042s on the deploy flows, 0.065 → 0.026 on transfer. H C N W.
+    *LoC +5/−1; shape: general.*
 6. **Batched inversion done right twice.** ark's parallel `batch_inversion` splits even a
    32-element batch into one chunk per thread (a real inversion plus a rayon dispatch each) and the
    MSM tree ran it nested inside its own jobs — 14% of all instructions; serial in-place inversion
    with reused scratch: client 4.20 → 3.98s. Later, the *large* denominators (grand product,
    ECCVM lookups) got `batch_invert_par`: element-wise, so chunks are independent. H C N W.
+    *LoC ≈+50/−15 (of +152/−15 across two commits that also carried #21); shape: general.*
 
 ### MSM and commitments (`base/msm.rs`, `base/srs.rs`, `base/fold.rs`)
 
 7. **Batched-affine Pippenger in the shape of bb's `scalar_multiplication_fast`**: signed Booth
    digits, counting-sort schedules, pair-tree reduction through one shared Montgomery inversion per
    level (~6 muls per affine add against ~14 for Jacobian). H C N W.
+    *LoC +477/−17; shape: general — algorithm replacement.*
 8. **bb's Phase 1 and Stages 5–7 replicated stage by stage** (the user's direction, after tuning
    our own structure had stalled at 1.34× on the MSM rung): per-scalar MSB profile with
    `choose_window_bits` (rounds sized to the actual bit length — commit scalars average 6.9 of 16
    nonzero windows), per-window chunk partition, dense per-thread partials with overflow merge, and
    `recursive_affine_bucket_reduce`. Short-scalar MSMs −20–30%; the add count now equals bb's.
    H C N W.
+    *LoC +562/−255 (two commits); shape: general — algorithm structure.*
 9. **GLV only below a size threshold** (bb's `GLV_SMALL_N_THRESHOLD`): above it the doubled point
    count outweighs halving the windows. This was the entire scale-dependent MSM gap (2^16 0.64×,
    2^19 1.21× before). Threshold **measured for our code**, not copied: 2^16 wasm, 2^15 native (bb
    uses 2^13 native because its decode is cheaper). MSM at parity 2^16–2^19; memory dropped to
    0.97–1.14× of bb because the doubled point buffer and phi table disappeared. H C N W.
+    *LoC +60/−25; shape: **branch**: `n > 2^16` (wasm) / `2^15` (native) takes a non-GLV full-width path.*
 10. **Packed drain.** The tree's two phases round-tripped every intermediate through unpacked
     field arrays (9 packs + 5 unpacks around 6 multiplies per 5-chord block); phase 1 now packs the
     four operands once and stores packed intermediates. 270 → 205 ns/chord = the streaming rate;
@@ -160,21 +174,26 @@ it applies: **H** = Honk rollup circuits, **C** = Chonk client flows, **N/W** = 
     scratch grown per rayon split caused page-fault churn (fixed by streaming BATCH-sized chunks),
     and a fixed ~1 MB scratch per tree caused first-touch faults across the flow's thousands of
     small MSMs (fixed by sizing to `min(n, batch)`). C W (drain is the wasm kernel path).
+    *LoC +256/−55 (two commits); shape: wasm-only (rides the `bbkernel` drain).*
 11. **Structure-of-arrays tree** (bucket ids ∥ points; the pairing scan streams dense u32s):
     −0.15s native client wall from cache behaviour alone, instructions unchanged. Run-length
     `tree_reduce` bookkeeping: −5–10% MSM wall. H C N W.
+    *LoC +79/−67 (SoA) and ≈+136/−82 (run-length tree, shared commit with #2); shape: general.*
 12. **Gather block 2^16 → 2^13.** Invisible in a single-thread sweep, −9% at 2^18 with 8 threads
     sharing cache; native insensitive. C W.
+    *LoC +12/−5; shape: tuning constant, env-overridable.*
 13. **Sparse inputs compact to their support** (a 34-nonzero masking polynomial had cost 7ms),
     **small MSMs never touch arkworks' MSM** (it builds a thread pool per call), and **MSMs of
     ≤128 points use width-5 wNAF over one shared doubling chain** — textbook Pippenger at c=3 ran
     86 windows of bucket reset/scan/reduce for 7 points, a ~1ms floor paid on hundreds of tiny
     commits per flow (1.16 → 0.58ms mean). H C N W.
+    *LoC +221/−26 (three commits); shape: **three branches**: sparse compaction when nonzeros ≪ length; a non-arkworks path for small n; wNAF when `n ≤ 128`.*
 14. **Bounded live scratch**: gathers in blocks, at most 8 concurrent MSMs in `batch_commit`
     (shared-index pull loop — pre-chunking serializes big polynomials behind each other); either
     bound alone saves nothing, together −3.5 GB. Montgomery-converted SRS cached on disk
     (`bn254_g1.ark.mont`), SRS loaded once at server start, the GLV φ(SRS) table precomputed per
     commitment key. H C N W.
+    *LoC ≈+130/−47 (four commits); shape: general (resource bounds) plus a disk cache file.*
 15. **IPA consumes reduction rounds in pairs** (bb `batch_two_round_fold`): the second round's
     L/R expand linearly over un-folded quarters and both folds land in one four-term combination,
     with the full-width `u1·u2` GLV-split so four ≤128-bit digit streams share a single doubling
@@ -182,9 +201,11 @@ it applies: **H** = Honk rollup circuits, **C** = Chonk client flows, **N/W** = 
     0.32s, single-tx 3.09 → 2.88, merges −0.2s each), and the rollup verifier's 2^15 G_zero MSM
     moved onto our MSM (33 → 25ms; 1.10–1.16× bb per core, which is what the p2p layer sees).
     H C N W.
+    *LoC +494/−83 (three commits; the two-round fold is +465); shape: general — bb's algorithm; the GLV split is inside it.*
 16. **Parallel fixed-base table precomputation** (2^15 Straus plookup tables and hash-to-curve
     generators for in-circuit IPA verification, 18.6s of the root rollup's 41.5s run serially);
     registration order — gate order — preserved. Root rollup at bb parity. H N.
+    *LoC ≈+50/−8 (shared commit with the SRS cache); shape: general — parallelization.*
 
 ### Sumcheck (`honk/sumcheck.rs`, `honk/graded.rs`)
 
@@ -192,12 +213,14 @@ it applies: **H** = Honk rollup circuits, **C** = Chonk client flows, **N/W** = 
     skipping, partial-length evaluation, precomputed barycentric extension weights, edge
     univariates stepped by addition, hoisted per-call constants, tables borrowing the prover
     polynomials, lazily zeroed columns. H C N W.
+    *LoC +1,153/−452 (eight commits, 2026-08-27); shape: general — the prover's baseline shape.*
 18. **Coefficient-basis relation evaluation** (`Graded<F>`, bb `UnivariateCoefficientBasis`):
     edge rows become degree-tracked univariates `row0 + X·Δ` and the unchanged relation bodies run
     on them, so each ring operation costs its true degree and a locally-constant selector (Δ = 0)
     stays degree 0. Chosen per relation: Mega −26% single-thread; the Translator's add-heavy
     high-degree relations measured *slower* and keep the pointwise path; ECCVM relations over the
     fixed capacity (`Set` 22, `Lookup` 9) fall back automatically. Length-aware operations. H C N W.
+    *LoC +420/−32 (four commits); shape: general representation, chosen **per relation** by partial length (a branch: pointwise fallback above the capacity; Translator opts out).*
 19. **One parallel dispatch per round.** The round used three parallel regions and a serial
     `flush_graded` over eight per-worker slots after the loop — ~0.8ms of barrier idle every round,
     located by per-round worker-busy spread (`BBREF_ROUND_DETAIL=1`) after hardware counters had
@@ -207,6 +230,7 @@ it applies: **H** = Honk rollup circuits, **C** = Chonk client flows, **N/W** = 
     round-0 `pows` computed once and strided for later rounds; the `BBREF_TIMING_RELATIONS` env
     check cached (it was read **per edge**). Round rung 122 → 108ms (bb 103; pinned to one L3
     domain we beat bb, 100.6). H C N W.
+    *LoC +260/−99 (three commits); shape: general restructuring; the 2-edge row-disabling head is a small special case inside it.*
 20. **Coefficient-form batching across relations** (what bb's `USE_SHORT_MONOMIALS` buys it).
     `flush_graded` had evaluated each coefficient-form accumulator at `len` points and
     `batch_over_relations` re-extended every subrelation to all d points by barycentric dot
@@ -218,8 +242,10 @@ it applies: **H** = Honk rollup circuits, **C** = Chonk client flows, **N/W** = 
     0.283 → 0.238, folding 0.76 → 0.73. The trap: without row disabling the factors are the
     constants 1 and 0 and must not grow the polynomial (non-ZK flavors size d = max partial + 1;
     bb's `BATCHED = MAX + 2` is ZK-only). H C N W.
+    *LoC +93/−30; shape: general.*
 21. Lazy edge-row fill (only the rows a live relation reads), in-place folds, parallel column
     trimming, sumcheck tables as borrowed views. H C N W.
+    *LoC ≈+150/−40 (shared commits); shape: general.*
 
 ### Prover phases
 
@@ -229,43 +255,69 @@ it applies: **H** = Honk rollup circuits, **C** = Chonk client flows, **N/W** = 
     allocates anyway), `eq_table` is built in place with the large levels parallel, folds are
     element-parallel, and the edge evaluation steps small constants (18 → 8 muls per claim-edge).
     0.295 → 0.163s (bb 0.224). C N W.
+    *LoC +134/−49 (three commits); shape: general.*
 23. **Permutation polynomials (sigma/id)**: an incremental row-value table (one add instead of a
     Montgomery conversion per row), identity fill parallel per wire, cycle links parallel over
     variables (each (wire,row) is in exactly one cycle, so writes never alias).
     `ProverInstance::from_builder` 0.227 → 0.180s (bb 0.179). H C N W.
+    *LoC ≈+60/−25; shape: general.*
 24. **Grand product** blocked-parallel: per-block prefix products, an exclusive scan over block
     totals, parallel fill, per-chunk inversion (bb's `step1/2a/2b/3`). 0.131 → 0.103s. H C N W.
+    *LoC +56/−1; shape: general.*
 25. **ECCVM**: transcript/precompute/msm row tables are independent and now overlap via
     `rayon::join` (transcript rows are a sequential accumulator and dominate): trace construction
     0.122 → 0.102s; shifted entities as views instead of copies (−55 MB), `TripleIpaInput` borrows
     the 119-column trace (−125 MB). C N W.
+    *LoC +12/−6 for the join (views counted in #26/#32); shape: general.*
 26. **Shplemini adds the shifted batch in place; content-sized columns; lifetimes** (builder and
     witness dropped before proving, each execution step after accumulation). H C N W.
+    *LoC +201/−51 (two commits); shape: general.*
 27. Removed non-arithmetic overheads in the provers and parallelized the remaining serial
     batching loops (2026-08-27). H C N W.
+    *LoC counted in #17; shape: general.*
 
 33. **Lagrange basis cached for committed round univariates** (ECCVM): interpolating each 24-point
     round univariate from scratch cost n inversions and an O(n³) product per round; the basis over
     0..n−1 is built once per sumcheck. `eccvm-sc/commit` 0.030 → 0.020s. C N W.
+    *LoC ≈+40 (of +64/−3 with scopes); shape: **branch**: committed sumcheck only (the ECCVM).*
 34. **`--profile lto` for release wasm builds** (opt-level 3 + fat LTO + one codegen unit): −1.3%
     on the chonk flow, 4/4 interleaved. The default release profile stays opt-level 2 for
     iteration speed (opt-level 3 alone is neutral on both targets). C W.
+    *LoC +7 (Cargo.toml); shape: build profile.*
 
 35. **Parallel evaluation of the Gemini batched polynomial and folds** (`evaluate_par`: chunk-wise
     Horner recombined with z^L, exact) and clone-free fold construction. `Gemini::evaluations`
     0.060 → 0.020s; decider 0.357 → 0.343, joint proof 1.022 → 1.006. Our Gemini is now faster
     than bb's (0.28 vs 0.30) with Shplonk and KZG at parity. H C N W.
+    *LoC +46/−6; shape: general (a size threshold picks serial vs parallel).*
+
+36. **Wide coefficient-basis path for the ECCVM set and lookup relations.** `Graded` gained a width
+    parameter (default 8, unchanged for every other flavor) and the per-worker scratch a wide (24)
+    row/accumulator set used only by relations over the narrow capacity, opt-in per relation set.
+    The degree-21 set relation and degree-8 lookup relation had been evaluated pointwise at 22 and
+    9 points per edge — the last pointwise work in the ECCVM. Dense ECCVM round 0: 495 → 206ms
+    (bb 520); flow ECCVM sumcheck 0.227 → 0.168s (bb 0.176 — ahead). Proofs identical. C N W.
+    *LoC +188/−57; shape: **branch** — a second (wide) coefficient path for relations with `8 < len ≤ 24`, opt-in per relation set (ECCVM only); the R7 retest condition, now resolved.*
+37. **Duplicate-scalar pre-pass for commitments** (bb's dedup): witness wires are ~50% repeated
+    scalars, and equal scalars share a bucket in every window, so their points are summed once
+    (projective, batch-normalized) and the MSM runs over the distinct scalars with a phi table for
+    the merged points. Triggered by a 2,048-coefficient sample showing ≥25% repeats on polynomials
+    of ≥4,096 coefficients. `OinkProver::commit_to_wires` 0.445 → 0.39s; exact, proofs identical.
+    H C N W.
 
 ### Circuit builder and ACIR lowering
 
 28. **sha256 sparse-form powers.** `map_into_sparse_form` recomputed 32 base powers with field
     multiplies per call (66% of sha256 lowering was `mont_mul`); a cached table makes it 32 adds.
     `sha256_compression` 0.108 → 0.019s (bb 0.036). H C N W.
+    *LoC +31/−4; shape: table: cached powers for bases 16/28/11 with a generic fallback (a **branch** on the base).*
 29. **Powers of two for limbed range constraints.** `create_limbed_range_constraint`
     exponentiated `2^shift` six times per limb triple (~350 muls per u128 check where bb does one
     conversion per coefficient); a static 257-entry table. `acir::range_constraints` 0.133 → 0.032s
     on the range-heavy deploy flows (bb 0.043). H C N W.
+    *LoC +16/−1; shape: table (no branch).*
 30. Bulk witness ingestion, reference-based passes, sparse plookup helpers. H C N W.
+    *LoC +55/−22; shape: general.*
 
 ### Memory and the allocator (native server and client)
 
@@ -276,11 +328,13 @@ it applies: **H** = Honk rollup circuits, **C** = Chonk client flows, **N/W** = 
     equal). mimalloc's entire advantage turned out to be that it madvises its segments
     `MADV_HUGEPAGE`; with glibc given the same hint it is equal-or-slower and holds ~1.6× the
     client RSS in arena retention, so it is an opt-in A/B feature. H C N.
+    *LoC +79/−18; shape: native-only; general (one re-exec at startup).*
 32. **Client live peak 0.51 → 0.31 GB at 8 threads**: content-sized columns instead of dyadic
     (a 2^17 kernel 268 → ~60 MB), shifted entities as views, borrowed IPA input, lifetime fixes;
     dyadic sizes passed explicitly wherever they had been inferred from a column length. With THP,
     plain glibc is the best allocator on every axis (3.10s / 338 MB vs mimalloc's 3.15s / 534–605
     MB at 8 threads; 552 MB vs 1.2 GB at 32). C N.
+    *LoC +186/−50 (main commit) + small follow-ups; overlaps #26; shape: general.*
 
 ## Tried and rejected, or not worth the complexity
 
@@ -295,7 +349,7 @@ inside the noise band on the paired test described above.
 | R4 | LTO fat / `codegen-units=1` | flat (wall at 8t, instructions at 32t) | the outlining was the `#[inline]` attribute layers, not link-time visibility | — (the attribute fix is in) |
 | R5 | **bb's `parallel_for_mutex_pool` ported**, and separately **bypassing rayon entirely** | neutral on 8 interleaved pairs (2/8 and 6/8 wins, paired medians inside noise); the port was more *stable* (range 1.0 vs 2.7ms) but no faster | dispatch costs ~25µs against ~2.5ms/round implied; the deficit was our own serial tail (#19), not scheduling | a future profile showing work-stealing spin under saturation (it costs ~40% extra *instructions* at 32t, little wall on an under-subscribed box) |
 | R6 | Sumcheck round-loop shape variants: static round-robin striping, boxed slots, persistent per-worker state, row-parallel fold, gap-row skipping, chunked-parallel `pows`, serial fold threshold, chunk floor up/down, chunk divisor, round-aware quad, dropping the skip probe, bb's 8-OS-thread shape, per-round transcript as the fixed cost | all neutral or worse on 8 pairs (striping 0/8: imbalance > L2 reuse; gap-row skipping 0.7% and bb's manifest is ECCVM-only; bb's fold is column-parallel too; transcript 0.26ms/round) | twelve hypotheses; the mechanism was the serial flush and per-chunk scratch | — |
-| R7 | **`GRADED_MAX_LEN` 8 → 9** to bring the ECCVM `Lookup` relation into coefficient form | ECCVM sumcheck −1%, folding sumcheck **+3.5%** (3/3) | `Graded<F>` is a `Copy` `[F; 8]`+len, so every temporary moves 264 bytes even at degree 1 (bb's `UnivariateCoefficientBasis<F, 2>` moves 64); widening taxes every flavor | with **degree-typed const-generic univariates** — the real fix, which also removes the ~30G instruction copy traffic in the merge ledger |
+| R7 | **`GRADED_MAX_LEN` 8 → 9** to bring the ECCVM `Lookup` relation into coefficient form | ECCVM sumcheck −1%, folding sumcheck **+3.5%** (3/3) | `Graded<F>` is a `Copy` `[F; 8]`+len, so every temporary moves 264 bytes even at degree 1 (bb's `UnivariateCoefficientBasis<F, 2>` moves 64); widening taxes every flavor | **resolved by #36** (width-parameterized `Graded`, wide path only for the ECCVM); the ~30G `[F; 8]` copy traffic in the merge ledger remains a separate item |
 | R8 | **Parallel `batch_over_relations`** — over the d points; then over subrelations with fold-over-chunks | worse both times (ECCVM sumcheck 0.287 → 0.335 and → 0.318) | a second barrier per round on 15–24 small rounds costs more than 3ms of work spread eight ways; per-subrelation `Vec` allocation churned the allocator | never — the coefficient-form batching (#20) removed the work instead |
 | R9 | MSM structure attempts: fused single-call chord kernel (first tree port), pack-on-push (bb's `push_point`/`drain_batch`), classify-walk copy elision, `bucket_reduce` packing, index-pair staging, per-MSM φ table when the caller has none, more/fewer concurrent MSMs | first port flow-**negative** at the flow's small sizes (fixed later as the packed drain, #10); pack-on-push neutral (the 256 B/pair AoS round trip I estimated at 60–100ms was cache-hot and free); copy elision a no-op (LLVM had done it); bucket packing rung-positive/flow-negative; staging unsafe (bb copies into spans for the same reason); φ table neutral; concurrency within 3% of sequential at flow sizes | the tree's cost is the field math both provers pay (61% of a 2^19 MSM, ~1950 CPU-ms floor), gather is memory-bound for both (wasm has no prefetch — `__builtin_prefetch` compiles to nothing, for bb too) | a rung that isolates the walk/bookkeeping and shows a >10% item |
 | R10 | **"Batched MSM" for the Oink wire round** | withdrawn before building: bb's `pippenger_batched.hpp` header states its batch does *not* interleave MSMs — it runs single MSMs in sequence sharing only the GLV-doubled points and a small-member pool | our concurrent independent MSMs are already the more parallel structure | — |
@@ -314,14 +368,14 @@ inside the noise band on the paired test described above.
 
 ## What owns the remaining gap
 
-**Chonk, wasm, typical flow (`transfer_1`), proving-only +0.49s = 1.10×**, children summed against
+**Chonk, wasm, typical flow (`transfer_1`), proving-only +0.29s = 1.06×** (the table below predates #36/#37 for the items they changed; those rows are updated), children summed against
 parents on both sides so nothing hides in a scope boundary:
 
 | item | gap | mechanism |
 |---|---|---|
-| Oink `commit_to_wires` | +0.117s | per-instance MSMs over witness polynomials that are ~50% duplicate scalars — R11 |
+| Oink `commit_to_wires` | ~+0.07s after #37 | the dedup merge is projective (~11 muls per repeated point); bb's is batched-affine |
 | folding `prove_sumcheck` (6 instances) | +0.101s | small sparse instances: ~5% cross-domain sensitivity (R18) plus per-round fixed costs; total univariate time across *all* sumchecks is at parity (0.813 vs 0.806) |
-| ECCVM (like-for-like, rows excluded) | +0.169s | sumcheck +0.047 (its edge loop is 166ms; the pointwise `Set`/`Lookup` relations — R7's real fix), wire commits +0.043 (85 sparse Grumpkin polys), IPA +0.026, PCS/claims ~+0.05 |
+| ECCVM (like-for-like, rows excluded) | ~+0.11s | sumcheck −0.008 after #36 (ahead), wire commits +0.043 (86 Grumpkin polys of ≤3141 rows), IPA +0.026, PCS/claims ~+0.05 |
 | decider proof (Shplemini/KZG on the accumulator) | ~+0.03s | after #35: Gemini 0.28 vs bb 0.30, Shplonk/KZG parity |
 | multilinear batching | +0.038s | pairs with bb's `finalize` (0.125) |
 | hiding-kernel oink, from_builder, create_circuit, joint | +0.028, +0.021, +0.014, +0.012 | |

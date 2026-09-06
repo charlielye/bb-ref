@@ -1391,3 +1391,23 @@ handled the nesting. (b) tiny-MSM wNAF threshold 128/512/2048/4096 — ECCVM wir
 (sumcheck +0.047 with pointwise Set/Lookup, wires +0.043, IPA +0.026, PCS/claims ~+0.05), Oink
 wire round +0.117 (dedup), folding prove_sumcheck +0.10, mlb +0.038, hiding oink +0.028,
 from_builder +0.021, decider ~+0.03.
+
+## Update 51: wide ECCVM path + dedup — wall parity (median 1.002x fair basis), proving 1.060x
+
+**Landed:** (a) `Graded<F, N>` with a wide (24) variant used only by the ECCVM's set (22) and
+lookup (9) relations: dense ECCVM round 0 495 -> 206 ms (bb 520), flow ECCVM sumcheck
+0.227 -> 0.168 (bb 0.176). (b) Duplicate-scalar pre-pass in `commit` (sampling-gated):
+`commit_to_wires` 0.445 -> 0.39. Both byte-identical, 23 suites.
+
+**Standing, HEAD `--profile lto`, bbbench 8t, best-of-3, vs stripped bb:**
+| | |
+|---|---|
+| wall median | **1.002x** (0.669 0.980 0.995 0.996 0.998 **1.002** 1.005 1.011 1.011 1.041 1.045) |
+| wall TOTAL / mean | **0.920x** / 0.978x |
+| proving-only, transfer_1 | **5.126 s vs 4.837 = 1.060x** (target 1.05 = 5.08 s) |
+
+Folding sumcheck split (`sc/*`, 6 instances, 144 rounds): univariate 0.622 (edges ~0.575 + per-round
+rest/pows ~0.045), fold 0.088 (bb 0.172 for all folds), challenge 0.014, new 0.001. bb 0.628 total.
+Remaining named items: Oink wires ~+0.07 (merge is projective; bb's is batched-affine), folding
+univariate ~+0.09, ECCVM wires +0.043 (86 polys of <= 3141 rows, below the dedup gate), IPA +0.026,
+mlb +0.038, hiding oink +0.028, from_builder +0.021, decider ~+0.03.
