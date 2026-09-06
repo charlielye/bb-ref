@@ -19,6 +19,7 @@ pub fn decider_prove(acc: &ProverClaim, ck: &CommitmentKey, t: &mut NativeTransc
         None,
         &[],
     );
+    let _gk = crate::base::bench::Scope::new("KZG::compute_opening_proof");
     kzg_open::<crate::base::Bn254>(claim, &ck, t);
 }
 

@@ -676,23 +676,25 @@ where
         shifted_terms.push((*g, scalar));
         scalar *= rho;
     }
+    let _gb = crate::base::bench::Scope::new("Gemini::batch_polynomials");
     batched_unshifted.add_scaled_batch(&unshifted_terms);
     batched_to_be_shifted.add_scaled_batch(&shifted_terms);
+    drop(_gb);
+    let _gf = crate::base::bench::Scope::new("Gemini::compute_fold_polynomials");
     let mut a_0 = batched_unshifted.clone();
     a_0.add_shifted(&batched_to_be_shifted);
     crate::base::timing::phase("    shplemini: batching");
 
     // folds A_{l+1}[j] = A_l[2j] + u_l (A_l[2j+1] - A_l[2j]), l = 0..log_n-2
     let mut folds: Vec<Poly> = Vec::with_capacity(virtual_log_n - 1);
-    let mut current = a_0.coeffs.clone();
     for l in 0..log_n - 1 {
+        let current: &[Fr] = if l == 0 { &a_0.coeffs } else { &folds[l - 1].coeffs };
         let half = current.len() / 2;
         let next: Vec<Fr> = (0..half)
             .into_par_iter()
             .map(|j| current[2 * j] + u[l] * (current[2 * j + 1] - current[2 * j]))
             .collect();
-        folds.push(Poly::from_coeffs(next.clone()));
-        current = next;
+        folds.push(Poly::from_coeffs(next));
     }
     // constant folds for the virtual rounds
     if log_n < virtual_log_n {
@@ -705,9 +707,13 @@ where
             folds.push(Poly::from_coeffs(vec![final_eval * tail]));
         }
     }
+    drop(_gf);
     crate::base::timing::phase("    shplemini: folds");
+    let _gc = crate::base::bench::Scope::new("Gemini::commit_folds");
     let fold_comms: Vec<_> = ck.batch_commit(&folds.iter().collect::<Vec<_>>());
+    drop(_gc);
     crate::base::timing::phase("    shplemini: fold commits");
+    let _ge = crate::base::bench::Scope::new("Gemini::evaluations");
     for (l, c) in fold_comms.iter().enumerate() {
         t.send(&format!("Gemini:FOLD_{}", l + 1), c);
     }
@@ -726,14 +732,14 @@ where
     a_0_neg.add_scaled(&batched_to_be_shifted, &(-r_inv));
 
     let mut claims = Vec::with_capacity(virtual_log_n + 1);
-    let a_0_pos_eval = a_0_pos.evaluate(&r);
+    let a_0_pos_eval = a_0_pos.evaluate_par(&r);
     claims.push(ProverClaim {
         poly: a_0_pos,
         challenge: r,
         evaluation: a_0_pos_eval,
         gemini_fold: false,
     });
-    let a_0_neg_eval = a_0_neg.evaluate(&(-r));
+    let a_0_neg_eval = a_0_neg.evaluate_par(&(-r));
     claims.push(ProverClaim {
         poly: a_0_neg,
         challenge: -r,
@@ -743,7 +749,7 @@ where
     let mut r_pow = r;
     for f in folds {
         r_pow = r_pow.sqr();
-        let evaluation = f.evaluate(&(-r_pow));
+        let evaluation = f.evaluate_par(&(-r_pow));
         claims.push(ProverClaim {
             poly: f,
             challenge: -r_pow,
@@ -756,7 +762,9 @@ where
     }
 
     // --- Libra opening claims (ZK) ---
+    drop(_ge);
     let libra_claims = libra.map_or(Vec::new(), |polys| small_ipa_prover_claims::<C>(polys, &r, "Libra:", t));
+    let _gs = crate::base::bench::Scope::new("ShplonkProver::prove");
 
     // --- Shplonk ---
     shplonk_prove::<C>(virtual_log_n, &claims, &libra_claims, sumcheck_round_claims, ck, t).claim

@@ -12,6 +12,37 @@ pub struct Polynomial<F: FieldLike> {
 /// Polynomials over bn254 Fr, the field of every Honk flavor but the ECCVM's.
 pub type Poly = Polynomial<Fr>;
 
+impl<F: FieldLike + Send + Sync> Polynomial<F> {
+    /// `evaluate` for large polynomials (the Gemini batched polynomial and its folds are
+    /// 2^16-2^17): chunk-wise Horner on the pool, recombined with z^L. Exact — the same polynomial.
+    pub fn evaluate_par(&self, z: &F) -> F {
+        fn horner<F: FieldLike>(coeffs: &[F], z: &F) -> F {
+            let mut acc = F::zero();
+            for c in coeffs.iter().rev() {
+                acc = acc * z + c;
+            }
+            acc
+        }
+        const CHUNK: usize = 8192;
+        if self.coeffs.len() <= 2 * CHUNK {
+            return horner(&self.coeffs, z);
+        }
+        use rayon::prelude::*;
+        let partials: Vec<F> = self.coeffs.par_chunks(CHUNK).map(|c| horner(c, z)).collect();
+        let mut z_chunk = F::one();
+        let mut base = z.clone();
+        let mut e = CHUNK;
+        while e > 0 {
+            if e & 1 == 1 {
+                z_chunk *= &base;
+            }
+            base = base.clone() * &base;
+            e >>= 1;
+        }
+        horner(&partials, &z_chunk)
+    }
+}
+
 impl<F: FieldLike> Polynomial<F> {
     pub fn zero(size: usize) -> Self {
         Self {
