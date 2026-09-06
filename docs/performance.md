@@ -6,7 +6,7 @@ Where the rest of the docs describe *what* bb-ref computes (bit-identically to b
 *how fast*, every optimization that landed and why it works, every attempt that did not pay and
 why, and what owns the remaining gap. The raw record — every measurement, retraction and dead end
 in the order it happened — is [`bench-results/LADDER.md`](../bench-results/LADDER.md) (Updates
-1–54); this file is the curated view of it.
+1–55); this file is the curated view of it.
 
 Two machines appear below. **bbbench** is the reference box for everything from 2026-09-05 on: a
 16-core AMD EPYC 9R14 (no SMT, two 8-core L3 domains), bb pinned at the bb-ref pin, both provers
@@ -17,20 +17,22 @@ test suite: none of it changes an output bit.
 
 ## Where it stands (2026-09-06)
 
+The tables of record are in [`bench-results/`](../bench-results/) (`chonk.txt` native, `chonk-v8.txt`
+wasm, `corpus.txt` rollup), regenerated 2026-09-06 at `def1d24` with wall and proving-only side by
+side; the wasm tables use the *stripped* bb module for wall and bb's `ENABLE_WASM_BENCH` module for
+proving. Headlines (bbbench, 8 threads, best-of-3 wall, one instrumented run for proving):
+
 | benchmark | bb | bb-ref | ratio |
 |---|---|---|---|
-| chonk client flows, **native**, 11 pinned transactions, 8t (bbbench) | 44.7s | **42.7s** | **0.954×** (median 0.993×, range 0.81–1.02) |
-| chonk client flows, **wasm** (V8, `node`), 8t, unstripped bb module | 85.1s | 80.3s | 0.944× total, **median 1.023×** |
-| — same, against a *stripped* bb module (**the fair wall basis**) | 83.8s | 80.1s | 0.956× total, **median 1.048×** (range 0.69–1.09) |
-| — same, stripped bb, **`--profile lto` build, current HEAD** | 83.8s | **76.8s** | **0.917× total, median 1.000×** (range 0.67–1.04) — wall parity |
-| — **proving-only**, typical flow (`transfer_1`), wasm, current HEAD (LTO), bb re-measured same hour | 4.82s | 5.10s | **1.058×** (the number that compares the provers; target 1.05) |
-| rollup PrivateTxBaseRollup frame, native 8t (before 14.82s) | 15.19s | **13.73s** | 0.90× |
-| rollup RootRollup frame, native 8t (before 45.4s) | 49.5s | **42.6s** | 0.86× |
-| rollup corpus (62 recorded server ops), 32t c7a, 2026-09-03 | 237.7s | 221.1s | 0.93× |
-| — same corpus, **bbbench 16t**, bb / before this pass / after | 298.6s | 291.9s → **258.3s** | **0.865×** vs bb (before: 0.977×); after/before **0.885×** |
-| rollup corpus peak RSS (32t) | 13.0 GB | 17.0 GB | 1.31× |
-| chonk client flow peak RSS, native 8t | 290–340 MB | 320–380 MB | ~1.10× |
-| chonk client flow wasm memory (11 flows) | | | 0.82–1.05× of bb |
+| chonk client flows, **native**, 11 flows — wall | 44.69s | **41.09s** | **0.92×** |
+| — **proving-only** | 41.51s | **39.65s** | **0.96×** (per flow 0.98–1.02×; `storage_proof` 0.80×) |
+| chonk client flows, **wasm/V8**, 11 flows — wall (stripped bb) | 83.81s | **76.51s** | **0.91×** (median 1.00×) |
+| — **proving-only** | 76.08s | 73.04s | **0.96×** total; per flow **1.04–1.12×** (median ~1.06×), `storage_proof` 0.67× |
+| rollup corpus, 62 server ops, **16t** | 298.6s | **255.8s** | **0.86×** (before the 2026-09-05 push: 291.9s → HEAD/before 0.876×) |
+| rollup PrivateTxBaseRollup frame, native 8t | 15.19s | 13.73s | 0.90× |
+| rollup RootRollup frame, native 8t | 49.5s | 42.6s | 0.86× |
+| chonk client flow RSS, native 8t | 0.29–0.34 GB | 0.32–0.38 GB | 1.08–1.19× |
+| chonk client flow wasm memory (V8 linear-memory peak) | | | 0.97–1.16× |
 
 Reading the wall ratios: bb's wall includes a self-verify (~0.14s) that ours does not, and its
 wasm module carries a startup cost ours does not (see the traps below), so **proving-only is the
@@ -316,6 +318,14 @@ plus ≈12,800 vendored (ark-ff, whose own change is a handful of attributes).
     0.166s. H C N W.
     *LoC +25; shape: general (keys on operand degree, which every product has); in bb: yes — its coefficient-basis univariates exist only at lengths 2–3 and do exactly this.*
 
+40. **Prover-side balanced products in the Permutation relation** — `(t1·t2)·(t3·t4)` so both
+    2×2 Karatsuba products and the 3×3 one apply (12 multiplications vs the chain's 17). bb's own
+    body does exactly this under `IsProverAccumulator` and keeps the left-to-right chain for the
+    verifier; `FieldLike::IS_PROVER` (false for circuit witnesses) carries the same split, so the
+    recursive verifier's gates and the VKs are untouched. Permutation 6033 → 5487 ns/edge (1.30×
+    bb, from 1.43×); folding sumcheck 0.720 → 0.710s. H C N W.
+    *LoC +12; shape: compile-time branch on a type constant (prover vs circuit), no runtime branch; in bb: yes — the same `if constexpr (IsProverAccumulator)` split.*
+
 ### Circuit builder and ACIR lowering
 
 28. **sha256 sparse-form powers.** `map_into_sparse_form` recomputed 32 base powers with field
@@ -375,7 +385,7 @@ inside the noise band on the paired test described above.
 | R19 | Forcing all later rounds dense / "drop the skip probe" | neutral; the probe costs ~0.06s and 4-wide arithmetic on the later rounds is neutral | | — |
 | R20 | **`wasm-opt -O3`** on our module (binaryen 116, all relevant features enabled) | module 11.4 → 8.7 MB but **+11% slower** on the flow (6.33 vs 5.68s), proofs identical | binaryen's rewrites hurt V8's tiering/codegen on this module; bb's toolchain applies it to a different code shape | a newer binaryen/V8 pair, or `-O2`/`-Os` if size ever matters |
 | R22 | Single-threaded small MSMs inside `batch_commit` (bb small-member pool shape); tiny-MSM threshold 128→4096 | both neutral on the ECCVM and Oink wire rounds (0.220 → 0.220; 0.44 → 0.44) | rayon already absorbs the nesting; the wire rounds' excess is not the small-MSM algorithm | — |
-| R26 | **Re-associating the Permutation relation's products** `(t1·t2)·(t3·t4)` so Karatsuba hits both 2×2s and a 3×3 (12 muls vs the chain's 17) | prover byte-identical and 9% faster on the relation, but **the pinned VKs no longer match**: the relation bodies are shared with the in-circuit recursive verifier and the new association emits different gates | the bodies are generic over the field type, and the circuit path must keep bb's left-to-right operation order | only as a prover-only path gated on a non-circuit type, or if bb re-associates first |
+| R26 | **Re-associating the Permutation relation's products** unconditionally | prover byte-identical, 9% faster on the relation, but **the pinned VKs no longer match**: the bodies are shared with the in-circuit verifier, whose gates must follow bb's chain | **resolved by #40**: bb itself branches on prover-vs-verifier accumulators; gating the pairing on `IS_PROVER` keeps the circuit path unchanged | — |
 | R25 | **Batched-affine cluster merge** in the dedup pre-pass (one Montgomery-trick inversion per tree level) | −0.02s on `commit_to_wires` (0.39 → 0.37), proofs identical | +70/−20 lines of per-cluster offset/carry bookkeeping for 0.4% of proving; reverted by decision | if the Oink wire round becomes the binding item (it is ~+0.05 after the projective dedup) |
 | R24 | In-place `MulAssign` (downward convolution) + `*=`-chained Permutation body | neutral: Permutation 6029 → 6181 ns/edge, flow unchanged | temporaries are not the cost either; bb's coefficient-basis products use cheaper short-product formulas | with exact-size univariates / Karatsuba-style short products |
 | R23 | Slice-iterating the `Graded` inner loops (remove per-coefficient bounds checks) | neutral: Permutation 6029 → 6167 ns/edge, flow unchanged | LLVM had already elided the checks; the Permutation excess (1.42× bb, the folding outlier) is the fixed `[F; 8]` move per temporary | with exact-size (degree-typed) univariates, which is the fix for that traffic |

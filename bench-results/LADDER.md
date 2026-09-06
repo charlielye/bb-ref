@@ -1477,3 +1477,22 @@ Why Permutation stays 1.43x bb: bb's hybrid multiplies the first two linear fact
 form and continues in evaluation form at LENGTH points (a degree-4 x linear product costs 6 muls
 there vs our schoolbook 10). Reproducing it means a hybrid univariate type — a design change, not a
 tweak.
+
+## Update 55: tables of record regenerated; prover-gated Permutation pairing
+
+`bench-results/{chonk,chonk-v8,corpus}.txt` regenerated at def1d24 with wall and proving-only
+columns (tools/bench_chonk*.sh gained `--reps`, instrumented proving runs and both ratios). bbbench,
+8t: **native wall 0.92x, native proving 0.96x** (per flow 0.98-1.02x); **wasm/V8 wall 0.91x
+(fair stripped-module basis, median 1.00x), proving 0.96x total, per flow 1.04-1.12x (median ~1.06x)**;
+corpus 16t **0.86x** vs bb (0.876x vs the pre-push binary). chonk-wasmtime.txt marked stale (no
+wasmtime on the box).
+
+**R26 resolved, landed as #40:** bb's Permutation body pairs the factors *only for prover
+accumulators* (`if constexpr (IsProverAccumulator)`) and chains them for the verifier. Same split
+here via `FieldLike::IS_PROVER`: Permutation 6033 -> 5487 ns/edge, folding sumcheck 0.720 -> 0.710
+(3/3), VKs and proofs unchanged.
+
+Remaining per-edge excess (Permutation 1.30x, Poseidon2 internals 1.07-1.21x, ECCVM Set's long
+coefficient products) is the representation item: bb evaluates degree > 2 products pointwise at
+LENGTH points (a degree-4 x linear product costs 6 muls, our schoolbook 10). Next: a hybrid
+`Graded` that switches to evaluation form above length 3 (bb's shape), converting back at flush.
