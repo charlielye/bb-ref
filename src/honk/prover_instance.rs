@@ -83,6 +83,7 @@ impl ProverInstance {
     /// `TraceToPolynomials::populate` + `compute_permutation_argument_polynomials`). `rng` supplies
     /// the ZK masking values written to rows 1..=3 of the witness polynomials.
     pub fn from_builder(flavor: &'static FlavorDesc, builder: &mut Builder, rng: &mut dyn Rng) -> Self {
+        let mut _g_inst = crate::base::bench::Scope::new("inst/wires_selectors_cycles");
         let layout = flavor.layout();
         let trace_offset = flavor.trace_offset;
         builder.finalize_circuit();
@@ -211,6 +212,8 @@ impl ProverInstance {
         }
 
         crate::base::timing::phase("      inst: wires+selectors+cycles");
+        drop(_g_inst);
+        _g_inst = crate::base::bench::Scope::new("inst/sigma_id");
         // Permutation polynomials: identity, then cycle links with tags, then the public-input override.
         let sep = Fr::from(PERMUTATION_ARGUMENT_VALUE_SEPARATOR);
         let sigmas = [Ent::sigma_1, Ent::sigma_2, Ent::sigma_3, Ent::sigma_4];
@@ -227,30 +230,46 @@ impl ProverInstance {
             v
         };
         let sep_w: [Fr; NUM_WIRES] = std::array::from_fn(|w| sep * Fr::from(w as u64));
+        // Identity fill, rows in parallel per wire (bb `compute_permutation_argument_polynomials`
+        // runs this on the pool too; serial it was ~0.1s per flow).
         for w in 0..NUM_WIRES {
-            for i in NUM_ZERO_ROWS..active_size {
-                let v = row_val[i] + sep_w[w];
-                polys[idx(sigmas[w])].coeffs[i] = v;
-                polys[idx(ids[w])].coeffs[i] = v;
+            for e in [sigmas[w], ids[w]] {
+                let rv = &row_val;
+                polys[idx(e)].coeffs[NUM_ZERO_ROWS..active_size]
+                    .par_iter_mut()
+                    .enumerate()
+                    .for_each(|(j, x)| *x = rv[NUM_ZERO_ROWS + j] + sep_w[w]);
             }
         }
         let tag_base = sep * Fr::from(NUM_WIRES as u64);
         let ent_of = |e: u32| ((e >> 2) as usize, (e & 3) as usize);
-        for var in 0..builder.num_variables() {
-            let cycle = &cycle_flat[cycle_start[var] as usize..cycle_start[var + 1] as usize];
-            if cycle.is_empty() {
-                continue;
-            }
-            for k in 0..cycle.len() - 1 {
-                let (i, w) = ent_of(cycle[k]);
-                let (ni, nw) = ent_of(cycle[k + 1]);
-                polys[idx(sigmas[w])].coeffs[i] = row_val[ni] + sep_w[nw];
-            }
-            let tag = builder.real_variable_tags[var];
-            let (li, lw) = ent_of(*cycle.last().unwrap());
-            polys[idx(sigmas[lw])].coeffs[li] = tag_base + Fr::from(builder.tau[&tag] as u64);
-            let (fi, fw) = ent_of(cycle[0]);
-            polys[idx(ids[fw])].coeffs[fi] = tag_base + Fr::from(tag as u64);
+        // Cycle links: every (wire, row) belongs to exactly one variable's cycle, so the writes of
+        // different variables never alias and the loop runs over variables in parallel.
+        {
+            let sig_ptrs: [crate::base::msm::SendPtr<Fr>; NUM_WIRES] =
+                std::array::from_fn(|w| crate::base::msm::SendPtr(polys[idx(sigmas[w])].coeffs.as_mut_ptr()));
+            let id_ptrs: [crate::base::msm::SendPtr<Fr>; NUM_WIRES] =
+                std::array::from_fn(|w| crate::base::msm::SendPtr(polys[idx(ids[w])].coeffs.as_mut_ptr()));
+            let (sig_ptrs, id_ptrs) = (&sig_ptrs, &id_ptrs);
+            let (cycle_flat, cycle_start, row_val) = (&cycle_flat, &cycle_start, &row_val);
+            let tags = &builder.real_variable_tags;
+            let tau = &builder.tau;
+            (0..builder.num_variables()).into_par_iter().with_min_len(256).for_each(|var| {
+                let cycle = &cycle_flat[cycle_start[var] as usize..cycle_start[var + 1] as usize];
+                if cycle.is_empty() {
+                    return;
+                }
+                for k in 0..cycle.len() - 1 {
+                    let (i, w) = ent_of(cycle[k]);
+                    let (ni, nw) = ent_of(cycle[k + 1]);
+                    unsafe { *sig_ptrs[w].0.add(i) = row_val[ni] + sep_w[nw] };
+                }
+                let tag = tags[var];
+                let (li, lw) = ent_of(*cycle.last().unwrap());
+                unsafe { *sig_ptrs[lw].0.add(li) = tag_base + Fr::from(tau[&tag] as u64) };
+                let (fi, fw) = ent_of(cycle[0]);
+                unsafe { *id_ptrs[fw].0.add(fi) = tag_base + Fr::from(tag as u64) };
+            });
         }
         let pub_inputs_offset = blocks.get(BlockId::PubInputs).trace_offset;
         let num_public_inputs = builder.public_inputs().len();
@@ -260,6 +279,8 @@ impl ProverInstance {
         }
 
         crate::base::timing::phase("      inst: sigma/id");
+        drop(_g_inst);
+        _g_inst = crate::base::bench::Scope::new("inst/tables_bus_masking");
         // bb `construct_lookup_table_polynomials` + `construct_lookup_read_counts`.
         if has(Ent::table_1) {
             let mut offset = blocks.get(BlockId::Lookup).trace_offset;
@@ -384,6 +405,7 @@ impl ProverInstance {
             );
         }
         crate::base::timing::phase("      inst: tables+bus+masking");
+        drop(_g_inst);
         let public_inputs = (0..num_public_inputs)
             .map(|i| polys[idx(Ent::w_r)].coeffs[pub_inputs_offset + i])
             .collect();

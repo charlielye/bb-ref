@@ -1135,7 +1135,9 @@ pub fn build_circuit_mega(
     ivc: Option<&mut Chonk>,
     rng: &mut dyn Rng,
 ) -> Builder {
+    let _g_cls2 = crate::base::bench::Scope::new("acir::classify");
     let (mut c, public_inputs) = classify(circuit, true);
+    drop(_g_cls2);
     assert!(
         c.honk_recursion.is_empty() && c.chonk_recursion.is_empty(),
         "Honk recursion constraints need an Ultra circuit"
