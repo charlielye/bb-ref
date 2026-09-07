@@ -1543,3 +1543,39 @@ Net: `45 files changed, 48 insertions(+), 3569 deletions(-)`; `tools/loc.sh` 44,
 what the delta is and what it would take to drop it is now written up in `docs/performance.md`
 ("Why ark-ff is vendored").
 
+## Update 58: is the ark-ff fork needed? The inlining half, measured (2026-09-07)
+
+Question: can bb-ref reach the same performance extending ark idiomatically, with no vendoring? The
+fork has two halves — (a) `#[inline(always)]` on ark's wrapper layers, (b) the wasm kernel and its
+2^261 stored domain. (a) is measurable without building anything new: a worktree with upstream's
+`arithmetic.rs`/`fp/mod.rs` restored and the kernel kept.
+
+`ecdsar1+transfer_0_recursions+sponsored_fpc`, 8 threads pinned to cores 0-7 of the local 192-core
+box, `perf stat -e instructions,cycles`, best of 2. Wall here is ±15% run to run and useless for a
+3% question; instruction counts are the signal (cycles swing ±6% and even move the other way on wasm).
+
+| variant | native instr | `call mul_assign` sites | binary | wasm host instr | module |
+|---|---|---|---|---|---|
+| A: fork as committed | 129.5 G | 43 | 17.1 MB | 341.2 G | 11.3 MB |
+| B: upstream attrs, kernel kept | 133.7 G (+3.2%) | 608 | 15.8 MB | 342.6 G (+0.4%) | 11.1 MB |
+| C: B + `-C llvm-args=-inline-threshold=1000` | 131.0 G (+1.2%) | 548 | 20.9 MB | 346.2 G (+1.5%) | 16.2 MB |
+| D: A + the same threshold | 129.5 G | 51 | 21.0 MB | — | — |
+
+All four write the identical proof (sha256 a5a1588b8db1…). Reading: the attributes are worth ~3%
+native instructions on this flow (the −31G at 98f541d was a rollup merge op — same direction, the
+magnitude is flow-dependent) and nothing on wasm, where the wrappers evidently already inline or cost
+nothing under V8. The threshold flag recovers two thirds natively for +33% code and hurts wasm.
+
+(b) was not built. From the code: every runtime hook the fork adds (`R`, `R2`, `mul_assign`,
+`square_in_place`, `sum_of_products`, `inverse`, `from_bigint`, `into_bigint`) is an overridable
+`MontConfig` item, so an own `impl MontConfig<4>` in bb-ref can carry the kernel with ark-ff untouched,
+at the price of own field types and therefore own BN254/Grumpkin curve and pairing configs (~600
+lines of constants) and re-pointing the direct `ark_bn254::` uses. The one unreachable piece is the
+`Fp::new` const path (the fork adds a `shl5_mod` so `MontFp!` constants land in 2^261): without the
+fork, store in the 2^256 domain on wasm or define constants as raw limbs.
+
+Verdict: for the wasm goal the attribute half buys nothing and the kernel half can live in bb-ref
+behind `MontConfig`; natively the attributes are worth ~3% instructions, ~2% of which a build flag
+recovers. The fork is a convenience, not a requirement. Spike left to do: the own-`MontConfig` port,
+gated on the byte-exact suites, the wasm/native proof `cmp` and a same-session wasm A/B.
+

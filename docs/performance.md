@@ -487,11 +487,13 @@ feature flags as upstream proposals for bb itself.
 
 Neither half was literally the only way; vendoring was the shortest.
 
-- **Inlining.** Untested alternatives: `-C llvm-args=-inline-threshold=<n>` (works on both targets) and
-  PGO (`-Cprofile-generate`/`-Cprofile-use`; native only — no profiler runtime ships for wasm32). Either
-  could recover the −31G with no source change and should be tried before the fork is kept for this
-  reason alone. Upstreaming the ~40 attribute lines to arkworks is a one-file PR. What cannot work is
-  anything on our side of the call.
+- **Inlining — measured (LADDER Update 58).** With upstream's attributes restored and the kernel kept, the
+  `ecdsar1+transfer_0` flow at 8 threads executes +3.2% instructions natively (133.7 vs 129.5 G; `call
+  mul_assign` sites 608 vs 43) and +0.4% under V8 (342.6 vs 341.2 G host instructions). Adding
+  `-C llvm-args=-inline-threshold=1000` gets native to +1.2% (131.0 G) at +33% binary size and makes wasm
+  worse (+1.5%, a 16.2 MB module against 11.3). So this half of the fork is worth ~3% native instructions
+  and nothing on wasm; a build flag recovers two thirds of the native part. PGO (native only; no wasm32
+  profiler runtime) is the untested remainder. Upstreaming the ~40 lines to arkworks is a one-file PR.
 - **The wasm form.** `MontConfig` is a public trait whose `R`, `R2`, `mul_assign`, `square_in_place` and
   `sum_of_products` are overridable, so a hand-written `impl MontConfig<4> for FrConfig`/`FqConfig` in
   bb-ref could carry the kernels with ark-ff untouched. The cost is that the field *type* changes
@@ -500,11 +502,15 @@ Neither half was literally the only way; vendoring was the shortest.
   types, and the few direct `ark_bn254::` references (`base/packed.rs`, `base/quadconsts.rs`)
   re-pointed. The earlier objection — "`Fp` derives `Eq` on raw storage, so coarse forms break it" —
   applied to the lane-packed, non-canonical design that was abandoned, not to the landed canonical
-  2^261 form.
+  2^261 form. One piece an own `MontConfig` cannot reach: the fork's `Fp::new` const constructor applies a
+  `·2^5` correction so `MontFp!` constants land in the 2^261 domain. Without the fork, either store in the
+  2^256 domain on wasm (the 8×2^29 + 1×2^24 kernel of 96bf2ac; the ladder's 63.7 vs 61.9 ns/mul also
+  includes straight-lining, so the domain's own cost is ≤3% and unmeasured) or define every constant as raw
+  limbs and never use `MontFp!`.
 
 If the vendoring itself is the objection, in order of cost: (1) move the fork out of tree —
 `[patch.crates-io] ark-ff = { git = "<fork>", rev = "<sha>" }` on a branch of arkworks `v0.6.0`: the
 same 1,441-line diff becomes a reviewable branch, 11,715 in-tree lines go, nothing changes
-behaviourally; (2) try inline-threshold/PGO to retire the attribute half; (3) own `MontConfig` +
-curve configs (~800 lines, byte-identical proofs required) to retire the kernel half and the patch.
-
+behaviourally; (2) own `MontConfig` + curve configs (~800 lines, byte-identical proofs required) to
+retire the kernel half and, with it, the patch — the attribute half costs nothing on wasm and ~3%
+instructions natively, of which `-inline-threshold` recovers two thirds as a build flag.
