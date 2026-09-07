@@ -1686,3 +1686,42 @@ they were vendored before), 23.4% `--no-tests`. Repo-wide wasm `cfg` sites: the 
 `base/wasm/mod.rs` plus the allocator choice in the binary. The tables of record
 (`bench-results/chonk*.txt`, `corpus.txt`) predate Updates 60–62 and need regenerating on bbbench.
 
+## Update 63: the HEAD tables on bbbench — two regressions, one fixed (2026-09-07)
+
+Regenerating the tables of record at a78054c on bbbench (the box was running all along; the
+"stopped" note was stale) showed both provers off their def1d24 marks:
+
+| table (bbbench, 8t) | def1d24 | a78054c |
+|---|---|---|
+| native chonk wall / proving | 0.92x / 0.96x | 0.97x / 1.01x |
+| wasm-V8 chonk wall / proving (median per flow) | 0.91x (1.00x) / 0.96x (1.06x) | 0.96x (1.04x) / 1.00x (1.11x) |
+| rollup corpus 16t | 0.856x | 0.903x |
+
+**Native: the retired inline attributes, fixed with a build flag.** Stock ark-ff leaves 2,945
+outlined `mul_assign` call sites; `-C llvm-args=-inline-threshold=1000` (now in
+`.cargo/config.toml` for x86_64) brings them to 499 and the table back to **wall 0.92x, proving
+0.95x** (threshold 2000: identical, bigger binary). Binary 20.2 MB vs 17.1 with the fork.
+
+**Wasm: the C kernels, not the field.** Every wasm candidate for the field side landed within 1%
+of each other under production tiering (5 instrumented runs, transfer_0 proving-only): HEAD 4.902 s
+median, kernel specialised per field 4.886, `-inline-threshold` 500/1000 4.873/4.937, both together
+4.906 — against def1d24's 4.642. The per-scope diff put the whole gap in the MSM and IPA paths
+(`MSM::batch_accumulate_into_buckets` +21%, `ECCVM::TripleIPA` +28%, `Gemini::commit_folds` +18%,
+`CommitmentKey::commit` +10%) while sumcheck got 3–4% faster (Update 62's field work). Same code
+with and without the C kernels (the b273bd1 `bbkernel` release module vs the step-1 module, 5 runs
+each): **4.667 vs 5.026 s, +7.7%**; bucket accumulation +15%, `TripleIPA` +30%, commits +12%.
+
+So Update 59's "~1%" was wrong for the reference machine. It was measured on this workstation,
+which is a Zen 3 EPYC 7R13 with SMT (`lscpu`), not bbbench's Zen 4 EPYC 9R14; bb's clang-scheduled
+`VectorField` drains are worth ~7.7% of wasm proving on Zen 4 and ~1% on Zen 3. Update 60 removed
+them on the strength of the wrong box and without the bbbench confirmation it said it wanted.
+Lesson for the traps list: kernel-level wasm decisions are only measurable on bbbench; this box
+disagrees with it by the whole effect size, and V8 tiering (the production shape) adds a second
+axis that `--no-liftoff` hides (HEAD and def1d24 are equal under `--no-liftoff` on bbbench, +8% in
+ChonkProve under tiering).
+
+Decision pending (owner): restore the C drains as they were (bb source + wasi-sdk at build time),
+restore them as frozen wasm objects checked into the repo (no bb-tree or sysroot dependency, an
+assembler at most), or close the Rust drain's gap to them. The tables of record stay at def1d24
+until the wasm path is settled; native is at 0.92x / 0.95x with the flag.
+

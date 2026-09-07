@@ -1,7 +1,13 @@
 # ark-ff's x86-64 Montgomery mul/sqr assembly (the "asm" feature) only compiles in when bmi2 and
 # adx are compile-time target features; without these flags the generic Rust CIOS loop runs instead.
+#
+# inline-threshold: stock ark-ff leaves its field-operator wrappers as `#[inline]` hints that LLVM
+# declines at the default threshold (2,945 outlined `mul_assign` call sites), which costs ~5% of
+# native proving on the reference box; at 1000 the wrappers inline (499 sites) and the chonk and
+# corpus tables return to their pre-stock level (bench-results/LADDER.md, Update 63). 2000 measured
+# identical with a larger binary. The alternative was patching the attributes into a vendored ark-ff.
 [target.'cfg(target_arch = "x86_64")']
-rustflags = ["-C", "target-feature=+bmi2,+adx"]
+rustflags = ["-C", "target-feature=+bmi2,+adx", "-C", "llvm-args=-inline-threshold=1000"]
 
 # Test binaries otherwise run one rayon pool per process at the machine's core count while cargo
 # runs binaries and tests concurrently; on large machines that oversubscribes by orders of magnitude.

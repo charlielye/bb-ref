@@ -17,10 +17,10 @@ test suite: none of it changes an output bit.
 
 ## Where it stands (2026-09-06)
 
-> The tables below predate LADDER Updates 60–62 (2026-09-07: C kernels removed, wasm code gathered
-> into `base/wasm`, vendored ark-ff retired). Locally those three moved the small flow by +0.8%,
-> ±0%, and −3.8% wasm instructions respectively, with byte-identical proofs; the bbbench tables need
-> regenerating before the next comparison.
+> The tables below are def1d24's (2026-09-06). At a78054c bbbench measures native 0.97x/1.01x
+> (fixed back to 0.92x/0.95x by the `-inline-threshold=1000` rustflag) and wasm 0.96x/1.00x, the
+> wasm loss being the removed C drains (Update 63). The tables are regenerated once the wasm path
+> is decided.
 
 The tables of record are in [`bench-results/`](../bench-results/) (`chonk.txt` native, `chonk-v8.txt`
 wasm, `corpus.txt` rollup), regenerated 2026-09-06 at `def1d24` with wall and proving-only side by
@@ -145,7 +145,7 @@ plus ≈12,800 vendored (ark-ff, whose own change is a handful of attributes).
    33.7 ns/elt; the MSM drain runs at the streaming multiply rate. The benchmark wasm builds use it.
    H C W.
     *LoC +423 (build.rs, csrc glue, Rust bindings) + bb's C++ kernel sources; shape: wasm-only, feature-gated (`bbkernel`); in bb: bb's code, linked.*
-    *Re-measured 2026-09-07 (LADDER Update 59): ~1% of the flow after #10, #37 and the Rust `quad261` port took the same ground. **Removed** the same day (Update 60): +0.8% instructions on the flow, identical proofs, and no build-time dependency on the bb source tree or the wasi-sdk any more. The Rust `quad261` drain is the wasm path.*
+    *Re-measured 2026-09-07 on the local Zen 3 workstation at ~1% and removed (Updates 59–60) — then measured on bbbench (Zen 4, the reference) at **7.7% of wasm proving** (Update 63: bucket accumulation +15%, `TripleIPA` +30%, commits +12% without it). The removal is under review; see Update 63 for the options. Kernel-level wasm decisions must be measured on bbbench.*
 5. **Canonical bytes → field element in one Montgomery multiply.** `from_bytes_be` went through
    ark's `from_be_bytes_mod_order`, whose full-width path reduces in several multiplies; every ACIR
    coefficient is canonical, so `from_bigint` is exact (non-canonical input still falls back).
