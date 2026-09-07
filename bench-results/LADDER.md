@@ -1603,3 +1603,41 @@ dependency on the bb source checkout and `/opt/wasi-sdk`), build.rs, the Rust bi
 the 48 wasm `cfg` sites (`feature = "bbkernel"` in fold.rs, msm.rs, packed.rs). Not re-measured on
 bbbench (box stopped): confirm across the 11 flows there before deleting if the last 1% matters.
 
+## Update 60: `bbkernel` removed (2026-09-07)
+
+Acting on Update 59. Gone: `csrc/bb_kernel.cpp` (676 lines) and the stale `bb_kernel.o`, `build.rs`
+(the wasi-sdk compile of bb's `vector_field_wasm.cpp`), the `bbkernel` feature, the FFI module in
+`packed.rs`, `drain_bbk` and the C stage-6a gather in `msm.rs`, `pass_add_bbk`/`pass_dbl_bbk` and
+their scratch in `fold.rs`, the `BBREF_NO_C6A` switch, the two C-kernel tests, `examples/chordbench.rs`
+and the `ab.sh drain` rung — 833 lines of Rust plus the C. bb-ref no longer needs the bb checkout or
+`/opt/wasi-sdk` to build any target. 26 of the 48 wasm `cfg` sites went with it (22 remain: the packed
+tree, the 2^261 SRS fix-ups, `quadconsts`, three `try_*` dispatches, two module gates).
+
+Same harness as Update 59 (`--no-liftoff`, 8 rayon threads on cores 0-15, perf, best of 3; the native
+suite was running on the other cores at the time, so wall is noisier than instructions):
+
+| module | instr | cycles | cpu | wall best |
+|---|---|---|---|---|
+| baseline: `bbkernel` module of b273bd1 | 388.2 G | 143.6 G | 40.2 s | 10.03 s |
+| this commit: no C kernels | 391.3 G (+0.8%) | 145.8 G | 40.7 s (+1.2%) | 10.10 s |
+
+Proofs identical across baseline wasm, new wasm and native. Not re-measured on bbbench (box stopped).
+
+## Update 61: the wasm special-casing gathered into `base/wasm` (2026-09-07)
+
+Everything wasm-specific now lives in `src/base/wasm/`: `mod.rs` holds the stored-domain and
+GLV-table constants, the SRS-cache domain conversion, the MSM chunk default and the only `cfg`
+lines in the tree — five, selecting `packed.rs` + `tree.rs` on wasm+simd128 or `fallback.rs`
+elsewhere; `packed.rs` is the streaming `axpy`/fold kernels plus the per-field kernel constants
+(formerly `base/packed.rs` + `base/quadconsts.rs`); `tree.rs` is the packed MSM tree drain
+(formerly `msm::packed_tree`); `fallback.rs` carries the same names with `false`/`None`/no-op
+bodies, `#[inline(always)]`. `msm.rs`, `srs.rs`, `poly.rs`, `sumcheck.rs` and `group.rs` carry no
+`cfg` at all: `TreeScratch` owns a `PackedTree` on every target and asks it `try_reduce` before
+the scalar tree; the SRS loader asks for the domain multiplier and gets `None` natively. Non-simd
+wasm builds keep the 2^261 fix-ups through the `cfg!(target_family = "wasm")` constants.
+
+Repo-wide wasm `cfg` sites: 48 (Update 59) → 22 (Update 60) → 5 in `wasm/mod.rs` plus the
+allocator choice in the binary. Behaviour-identical by construction and measured anyway: the
+step-1 and step-2 modules execute 392.6 vs 393.0 G instructions on the flow (noise), proofs
+identical (wasm == native), native suite green, the moved kernels' unit test green under wasmtime.
+

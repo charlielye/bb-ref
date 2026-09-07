@@ -1619,8 +1619,7 @@ where
                     .sum();
                 let fold_col = |col: &mut Column<F>| {
                     let Column::Own(v) = col else { unreachable!() };
-                    #[cfg(all(target_family = "wasm", target_feature = "simd128"))]
-                    if crate::base::packed::try_fold_halve(v, u) {
+                    if crate::base::wasm::try_fold_halve(v, u) {
                         return;
                     }
                     let half = v.len().div_ceil(2);
@@ -1642,20 +1641,17 @@ where
                 let folded: Vec<Column<F>> = (0..table.len())
                     .into_par_iter()
                     .map(|j| {
-                        #[cfg(all(target_family = "wasm", target_feature = "simd128"))]
-                        {
-                            let src: &[F] = match &table[j] {
-                                Column::Borrowed(s) => s,
-                                Column::Own(v) => v,
-                                Column::ShiftOf(k) => match &table[*k] {
-                                    Column::Borrowed(s) => &s[1.min(s.len())..],
-                                    Column::Own(v) => &v[1.min(v.len())..],
-                                    Column::ShiftOf(_) => unreachable!("nested shift"),
-                                },
-                            };
-                            if let Some(v) = crate::base::packed::try_fold_from(src, src.len(), u) {
-                                return Column::Own(v);
-                            }
+                        let src: &[F] = match &table[j] {
+                            Column::Borrowed(s) => s,
+                            Column::Own(v) => v,
+                            Column::ShiftOf(k) => match &table[*k] {
+                                Column::Borrowed(s) => &s[1.min(s.len())..],
+                                Column::Own(v) => &v[1.min(v.len())..],
+                                Column::ShiftOf(_) => unreachable!("nested shift"),
+                            },
+                        };
+                        if let Some(v) = crate::base::wasm::try_fold_from(src, src.len(), u) {
+                            return Column::Own(v);
                         }
                         let half = column_len(table, j).div_ceil(2);
                         Column::Own(

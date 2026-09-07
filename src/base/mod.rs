@@ -9,17 +9,15 @@ pub mod group;
 pub mod io;
 pub mod keccak;
 pub mod msm;
-#[cfg(all(target_family = "wasm", target_feature = "simd128"))]
-pub mod packed;
 pub mod poly;
 pub mod poseidon2;
-pub mod quadconsts;
 pub mod poseidon2_params;
 pub mod rng;
 pub mod srs;
 pub mod timing;
 pub mod transcript;
 pub mod vk;
+pub mod wasm;
 
 pub use codec::{ChallengeField, FromChallenge, Transcriptable};
 pub use field::{FieldLike, Fq, Fr, U256};

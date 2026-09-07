@@ -138,7 +138,7 @@ plus ≈12,800 vendored (ark-ff, whose own change is a handful of attributes).
    33.7 ns/elt; the MSM drain runs at the streaming multiply rate. The benchmark wasm builds use it.
    H C W.
     *LoC +423 (build.rs, csrc glue, Rust bindings) + bb's C++ kernel sources; shape: wasm-only, feature-gated (`bbkernel`); in bb: bb's code, linked.*
-    *Re-measured 2026-09-07 (LADDER Update 59): ~1% of the flow after #10, #37 and the Rust `quad261` port took the same ground; a removal candidate — it is the only build-time dependency on the bb source tree and the wasi-sdk.*
+    *Re-measured 2026-09-07 (LADDER Update 59): ~1% of the flow after #10, #37 and the Rust `quad261` port took the same ground. **Removed** the same day (Update 60): +0.8% instructions on the flow, identical proofs, and no build-time dependency on the bb source tree or the wasi-sdk any more. The Rust `quad261` drain is the wasm path.*
 5. **Canonical bytes → field element in one Montgomery multiply.** `from_bytes_be` went through
    ark's `from_be_bytes_mod_order`, whose full-width path reduces in several multiplies; every ACIR
    coefficient is canonical, so `from_bigint` is exact (non-canonical input still falls back).
@@ -177,7 +177,7 @@ plus ≈12,800 vendored (ark-ff, whose own change is a handful of attributes).
     scratch grown per rayon split caused page-fault churn (fixed by streaming BATCH-sized chunks),
     and a fixed ~1 MB scratch per tree caused first-touch faults across the flow's thousands of
     small MSMs (fixed by sizing to `min(n, batch)`). C W (drain is the wasm kernel path).
-    *LoC +256/−55 (two commits); shape: wasm-only (rides the `bbkernel` drain); in bb: bb's drain shape.*
+    *LoC +256/−55 (two commits); shape: wasm-only (the packed `quad261` drain since the C kernels went, Update 60); in bb: bb's drain shape.*
 11. **Structure-of-arrays tree** (bucket ids ∥ points; the pairing scan streams dense u32s):
     −0.15s native client wall from cache behaviour alone, instructions unchanged. Run-length
     `tree_reduce` bookkeeping: −5–10% MSM wall. H C N W.
@@ -475,6 +475,15 @@ chonk proof for `ecdsar1+transfer_0_recursions+sponsored_fpc` is byte-identical 
 protocol-level experiments (GKR for grand products, small-value sumcheck) remain candidates behind
 feature flags as upstream proposals for bb itself.
 
+### Where the wasm code lives
+
+Since Update 61 every wasm-specific path is in `src/base/wasm/`: the stored-domain constants and
+SRS-cache conversion, the packed `axpy`/fold kernels and per-field constants (`packed.rs`), the
+packed MSM tree drain (`tree.rs`), and a `fallback.rs` with the same names for every other target.
+The five `cfg` lines in its `mod.rs` are the only target conditionals in the prover; callers ask
+`try_*` and take the scalar path on `false`. The C++ kernel path (`bbkernel`, #4) was removed in
+Update 60 after measuring at ~1% of the flow.
+
 ### Why ark-ff is vendored, and what it would take not to
 
 `vendor/ark-ff` is upstream 0.6.0 (10,274 lines) plus 1,441 lines of ours, reached through
@@ -500,7 +509,7 @@ Neither half was literally the only way; vendoring was the shortest.
   bb-ref could carry the kernels with ark-ff untouched. The cost is that the field *type* changes
   (`Fp<MontBackend<OurConfig, 4>, 4>` is not `ark_bn254::Fr`), so the BN254 and Grumpkin curve configs
   and the BN pairing config (`ark-bn254` is ~600 lines of constants) have to be redefined over the new
-  types, and the few direct `ark_bn254::` references (`base/packed.rs`, `base/quadconsts.rs`)
+  types, and the few direct `ark_bn254::` references (`base/wasm/`)
   re-pointed. The earlier objection — "`Fp` derives `Eq` on raw storage, so coarse forms break it" —
   applied to the lane-packed, non-canonical design that was abandoned, not to the landed canonical
   2^261 form. One piece an own `MontConfig` cannot reach: the fork's `Fp::new` const constructor applies a

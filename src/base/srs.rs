@@ -32,20 +32,18 @@ pub fn load_bn254_g1(n: usize) -> Vec<G1Affine> {
             let mut buf = vec![0u8; n * 64];
             let mut f = f;
             f.read_exact(&mut buf).expect("short read on Montgomery SRS cache");
-            // The cache holds 2^256-domain Montgomery limbs (the shared cross-target format);
-            // on wasm's 2^261 stored domain each coordinate converts with one multiply by 32
-            // (bytes-as-element value is x/2^5 there).
-            #[cfg(target_family = "wasm")]
-            let fix = Fq::from(32u64);
+            // The cache holds 2^256-domain Montgomery limbs (the shared cross-target format).
+            let fix = crate::base::wasm::shared_to_stored();
             let limbs = |c: &[u8]| {
                 let mut l = [0u64; 4];
                 for (k, w) in c.chunks(8).enumerate() {
                     l[k] = u64::from_le_bytes(w.try_into().unwrap());
                 }
                 let v = unsafe { std::mem::transmute::<[u64; 4], Fq>(l) };
-                #[cfg(target_family = "wasm")]
-                let v = v * fix;
-                v
+                match fix {
+                    Some(f) => v * f,
+                    None => v,
+                }
             };
             let points: Vec<G1Affine> = buf
                 .par_chunks(64)
@@ -70,13 +68,14 @@ pub fn load_bn254_g1(n: usize) -> Vec<G1Affine> {
     if std::fs::metadata(&mont_path).map_or(0, |m| m.len()) < (n * 64) as u64 {
         let mut out: Vec<u8> = Vec::with_capacity(n * 64);
         // Written in the shared 2^256-domain format (see the reader above).
-        #[cfg(target_family = "wasm")]
-        let unfix = ark_ff::Field::inverse(&Fq::from(32u64)).unwrap();
+        let unfix = crate::base::wasm::stored_to_shared();
         for p in &points {
             for f in [&p.x, &p.y] {
-                #[cfg(target_family = "wasm")]
-                let f = &(*f * unfix);
-                let l = unsafe { &*(f as *const Fq as *const [u64; 4]) };
+                let f = match unfix {
+                    Some(u) => *f * u,
+                    None => *f,
+                };
+                let l = unsafe { &*(&f as *const Fq as *const [u64; 4]) };
                 for w in l {
                     out.extend_from_slice(&w.to_le_bytes());
                 }
@@ -163,7 +162,6 @@ pub struct Ck<G: AffineRepr> {
     pub points: PointsView<G>,
     /// GLV companion points `(beta * x, -y)`, built once per key on wasm (where the per-entry
     /// multiply at gather is the visible cost) and shared by every commit through this key.
-    #[cfg_attr(not(target_family = "wasm"), allow(dead_code))]
     phi: std::sync::OnceLock<Vec<G>>,
 }
 
@@ -328,10 +326,11 @@ where
         let c = if dedup_enabled() && k >= dedup_min_len() && duplicate_heavy(&p.coeffs[..k]) {
             self.commit_dedup(&p.coeffs[..k]).into_affine()
         } else {
-            #[cfg(target_family = "wasm")]
-            let phi = Some(&self.phi.get_or_init(|| G::phi_table(&self.points))[..k]);
-            #[cfg(not(target_family = "wasm"))]
-            let phi = None;
+            let phi = if crate::base::wasm::GLV_PHI_TABLE {
+                Some(&self.phi.get_or_init(|| G::phi_table(&self.points))[..k])
+            } else {
+                None
+            };
             G::batch_msm_with_phi(&self.points[..k], &p.coeffs[..k], phi).into_affine()
         };
         if let Some(t0) = t0 {

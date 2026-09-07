@@ -125,8 +125,7 @@ impl<F: FieldLike> Polynomial<F> {
             for (p, s) in terms {
                 let src = &p.coeffs[start.min(p.coeffs.len())..];
                 let overlap = chunk.len().min(src.len());
-                #[cfg(all(target_family = "wasm", target_feature = "simd128"))]
-                if crate::base::packed::try_axpy(&mut chunk[..overlap], &src[..overlap], s) {
+                if crate::base::wasm::try_axpy(&mut chunk[..overlap], &src[..overlap], s) {
                     continue;
                 }
                 for (a, b) in chunk[..overlap].iter_mut().zip(src) {

@@ -1,14 +1,70 @@
-//! wasm+simd128 packed streaming kernels over stored field slices. The wasm stored form is the
-//! 2^261 Montgomery domain, so packing is a pure SIMD transpose and the quad261 kernels apply
+//! Packed streaming kernels over stored field slices (wasm+simd128). The stored form is the 2^261
+//! Montgomery domain, so packing is a pure SIMD transpose and the `quad261` kernels apply
 //! directly; callers in generic code dispatch by `TypeId` (only bn254 Fr/Fq have packed forms)
-//! and fall back to scalar loops otherwise.
+//! and fall back to their scalar loops otherwise.
 
-#![cfg(all(target_family = "wasm", target_feature = "simd128"))]
-
+use crate::base::field::NativeField;
 use crate::base::{Fq, Fr};
-use crate::base::quadconsts::QuadConsts;
 use ark_ff::fields::models::fp::montgomery_backend::quad261::{self, QuadFp};
+use ark_ff::fields::models::fp::montgomery_backend::wasm_mont;
 use core::any::TypeId;
+use std::sync::LazyLock;
+
+/// Prepared per-field kernel constants.
+pub struct Kc {
+    pub c: quad261::Consts,
+    pub p29: [u64; 9],
+    pub modulus: [u64; 4],
+}
+unsafe impl Send for Kc {}
+unsafe impl Sync for Kc {}
+
+fn make_kc(modulus: [u64; 4], rinv29: [u32; 9]) -> Kc {
+    let p29 = wasm_mont::to29(&modulus);
+    let inv = wasm_mont::inv29(p29[0]);
+    Kc {
+        c: quad261::Consts::new(&rinv29, &p29, inv),
+        p29,
+        modulus,
+    }
+}
+
+/// The fields whose kernel constants are prepared: bn254 Fr and Fq.
+pub trait QuadConsts: NativeField {
+    fn kc() -> &'static Kc;
+}
+impl QuadConsts for Fr {
+    fn kc() -> &'static Kc {
+        static K: LazyLock<Kc> = LazyLock::new(|| {
+            make_kc(
+                [
+                    0x43e1f593f0000001,
+                    0x2833e84879b97091,
+                    0xb85045b68181585d,
+                    0x30644e72e131a029,
+                ],
+                wasm_mont::FR_RINV29,
+            )
+        });
+        &K
+    }
+}
+impl QuadConsts for Fq {
+    fn kc() -> &'static Kc {
+        static K: LazyLock<Kc> = LazyLock::new(|| {
+            make_kc(
+                [
+                    0x3c208c16d87cfd47,
+                    0x97816a916871ca8d,
+                    0xb85045b68181585d,
+                    0x30644e72e131a029,
+                ],
+                wasm_mont::FQ_RINV29,
+            )
+        });
+        &K
+    }
+}
 
 #[inline(always)]
 fn stored<F>(x: &F) -> [u64; 4] {
@@ -66,189 +122,9 @@ fn axpy<F: QuadConsts>(dst: &mut [F], src: &[F], s: &F) {
     }
 }
 
-/// bb's clang-compiled q1s1 kernels (feature `bbkernel`; see build.rs and csrc/bb_kernel.cpp).
-#[cfg(feature = "bbkernel")]
-pub mod bbk {
-    unsafe extern "C" {
-        pub fn bbref_axpy_fr(dst: *mut u64, src: *const u64, scalar: *const u64, n: usize);
-        pub fn bbref_axpy_fq(dst: *mut u64, src: *const u64, scalar: *const u64, n: usize);
-        pub fn bbref_chord_width() -> usize;
-        pub fn bbref_batch_capacity() -> usize;
-        pub fn bbref_pack_cap() -> usize;
-        pub fn bbref_reduce_chunk_fq(
-            points: *const u64,
-            phi: *const u64,
-            beta: *const u64,
-            sched: *const u32,
-            lo: usize,
-            hi: usize,
-            bstarts: *const u32,
-            b_cursor: *mut usize,
-            pts: *mut u64,
-            buckets: *mut u32,
-            packed: *mut u64,
-            pair_dest: *mut u32,
-        ) -> usize;
-        pub fn bbref_reduce_chunk_fr(
-            points: *const u64,
-            phi: *const u64,
-            beta: *const u64,
-            sched: *const u32,
-            lo: usize,
-            hi: usize,
-            bstarts: *const u32,
-            b_cursor: *mut usize,
-            pts: *mut u64,
-            buckets: *mut u32,
-            packed: *mut u64,
-            pair_dest: *mut u32,
-        ) -> usize;
-        pub fn bbref_tree_reduce_fq(
-            pts: *mut u64,
-            buckets: *mut u32,
-            len: usize,
-            packed: *mut u64,
-            pair_dest: *mut u32,
-        ) -> usize;
-        pub fn bbref_tree_reduce_fr(
-            pts: *mut u64,
-            buckets: *mut u32,
-            len: usize,
-            packed: *mut u64,
-            pair_dest: *mut u32,
-        ) -> usize;
-        pub fn bbref_vf_size() -> usize;
-        pub fn bbref_chord1_fr(ax: *const u64, bx: *const u64, n: usize, dx: *mut u64, prod: *mut u64);
-        pub fn bbref_chord1_fq(ax: *const u64, bx: *const u64, n: usize, dx: *mut u64, prod: *mut u64);
-        pub fn bbref_chord2_fr(
-            ax: *const u64,
-            ay: *const u64,
-            bx: *const u64,
-            by: *const u64,
-            n: usize,
-            dx: *mut u64,
-            prod: *const u64,
-            lane_inv: *const u64,
-            ox: *mut u64,
-            oy: *mut u64,
-        );
-        pub fn bbref_chord2s_fr(
-            ax: *const u64,
-            ay: *const u64,
-            bx: *const u64,
-            by: *const u64,
-            n: usize,
-            dx: *mut u64,
-            prod: *const u64,
-            lane_inv: *const u64,
-            dst: *const u32,
-            points: *mut u64,
-        );
-        pub fn bbref_chord2s_fq(
-            ax: *const u64,
-            ay: *const u64,
-            bx: *const u64,
-            by: *const u64,
-            n: usize,
-            dx: *mut u64,
-            prod: *const u64,
-            lane_inv: *const u64,
-            dst: *const u32,
-            points: *mut u64,
-        );
-        pub fn bbref_chord1p_fr(
-            ax: *const u64,
-            ay: *const u64,
-            bx: *const u64,
-            by: *const u64,
-            n: usize,
-            scratch: *mut u64,
-            lane_tot: *mut u64,
-        );
-        pub fn bbref_chord1p_fq(
-            ax: *const u64,
-            ay: *const u64,
-            bx: *const u64,
-            by: *const u64,
-            n: usize,
-            scratch: *mut u64,
-            lane_tot: *mut u64,
-        );
-        pub fn bbref_chord2p_fr(n: usize, scratch: *mut u64, lane_inv: *const u64, dst: *const u32, points: *mut u64);
-        pub fn bbref_chord2p_fq(n: usize, scratch: *mut u64, lane_inv: *const u64, dst: *const u32, points: *mut u64);
-        pub fn bbref_dbl1_fr(y: *const u64, n: usize, den: *mut u64, prod: *mut u64);
-        pub fn bbref_dbl1_fq(y: *const u64, n: usize, den: *mut u64, prod: *mut u64);
-        pub fn bbref_dbl2_fr(
-            x: *const u64,
-            y: *const u64,
-            n: usize,
-            den: *mut u64,
-            prod: *const u64,
-            lane_inv: *const u64,
-            ox: *mut u64,
-            oy: *mut u64,
-        );
-        pub fn bbref_dbl2_fq(
-            x: *const u64,
-            y: *const u64,
-            n: usize,
-            den: *mut u64,
-            prod: *const u64,
-            lane_inv: *const u64,
-            ox: *mut u64,
-            oy: *mut u64,
-        );
-        pub fn bbref_chord2_fq(
-            ax: *const u64,
-            ay: *const u64,
-            bx: *const u64,
-            by: *const u64,
-            n: usize,
-            dx: *mut u64,
-            prod: *const u64,
-            lane_inv: *const u64,
-            ox: *mut u64,
-            oy: *mut u64,
-        );
-    }
-}
-
 /// `dst[i] += s * src[i]` over the overlap through the packed kernels; false if `F` has no
 /// packed form (caller runs its scalar loop).
 pub fn try_axpy<F: 'static>(dst: &mut [F], src: &[F], s: &F) -> bool {
-    #[cfg(feature = "bbkernel")]
-    {
-        let n = dst.len().min(src.len());
-        if TypeId::of::<F>() == TypeId::of::<Fr>() {
-            unsafe {
-                bbk::bbref_axpy_fr(
-                    dst.as_mut_ptr() as *mut u64,
-                    src.as_ptr() as *const u64,
-                    s as *const F as *const u64,
-                    n,
-                )
-            };
-            return true;
-        }
-        if TypeId::of::<F>() == TypeId::of::<Fq>() {
-            unsafe {
-                bbk::bbref_axpy_fq(
-                    dst.as_mut_ptr() as *mut u64,
-                    src.as_ptr() as *const u64,
-                    s as *const F as *const u64,
-                    n,
-                )
-            };
-            return true;
-        }
-        return false;
-    }
-    #[cfg(not(feature = "bbkernel"))]
-    try_axpy_quad(dst, src, s)
-}
-
-#[cfg_attr(feature = "bbkernel", allow(dead_code))]
-fn try_axpy_quad<F: 'static>(dst: &mut [F], src: &[F], s: &F) -> bool {
     if TypeId::of::<F>() == TypeId::of::<Fr>() {
         axpy::<Fr>(reslice(dst), reslice_ref(src), &stored_as::<F, Fr>(s));
         return true;

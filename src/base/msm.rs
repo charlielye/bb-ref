@@ -24,7 +24,7 @@ const MIN_PTS_PER_THREAD: usize = 8;
 /// scratch reused across calls. ark's `serial_batch_inversion_and_mul` allocates its scratch and
 /// filters zeros on every call; the tree denominators are nonzero by construction and this runs
 /// tens of millions of elements per prove.
-fn batch_invert_nonzero<F: ark_ff::Field>(v: &mut [F], prod: &mut Vec<F>) {
+pub(crate) fn batch_invert_nonzero<F: ark_ff::Field>(v: &mut [F], prod: &mut Vec<F>) {
     if v.is_empty() {
         return;
     }
@@ -62,7 +62,7 @@ fn min_pts_per_thread() -> usize {
 
 pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -> Projective<P>
 where
-    P::BaseField: crate::base::quadconsts::QuadConsts + crate::base::endo::EndoField,
+    P::BaseField: crate::base::wasm::QuadConsts + crate::base::endo::EndoField,
     P::ScalarField: crate::base::endo::EndoField,
 {
     msm_with_phi(points, scalars, None)
@@ -77,7 +77,7 @@ pub fn msm_with_phi<P: SWCurveConfig>(
     phi_table: Option<&[Affine<P>]>,
 ) -> Projective<P>
 where
-    P::BaseField: crate::base::quadconsts::QuadConsts + crate::base::endo::EndoField,
+    P::BaseField: crate::base::wasm::QuadConsts + crate::base::endo::EndoField,
     P::ScalarField: crate::base::endo::EndoField,
 {
     crate::scope!("MSM::batch_multi_scalar_mul");
@@ -118,11 +118,10 @@ where
     static GLV_LOG2: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     let glv_threshold = 1usize
         << *GLV_LOG2.get_or_init(|| {
-            let default_log2 = if cfg!(target_family = "wasm") { 16 } else { 15 };
             std::env::var("BBREF_GLV_LOG2")
                 .ok()
                 .and_then(|v| v.parse().ok())
-                .unwrap_or(default_log2)
+                .unwrap_or(crate::base::wasm::MSM_DEFAULT_LOG2)
         });
     let use_glv = n <= glv_threshold;
     // Working sub-scalars: GLV gives two 128-bit halves per point (k1 against P, k2 against the
@@ -354,160 +353,10 @@ where
         present: Vec<u8>,
     }
     let beta = <P::BaseField as crate::base::endo::EndoField>::cube_root();
-    #[cfg(all(feature = "bbkernel", target_family = "wasm", target_feature = "simd128"))]
-    let bbk6a = {
-        use crate::base::packed::bbk;
-        use core::any::TypeId;
-        type RC = unsafe extern "C" fn(
-            *const u64,
-            *const u64,
-            *const u64,
-            *const u32,
-            usize,
-            usize,
-            *const u32,
-            *mut usize,
-            *mut u64,
-            *mut u32,
-            *mut u64,
-            *mut u32,
-        ) -> usize;
-        type TR = unsafe extern "C" fn(*mut u64, *mut u32, usize, *mut u64, *mut u32) -> usize;
-        if TypeId::of::<P::BaseField>() == TypeId::of::<crate::base::Fr>() {
-            Some((bbk::bbref_reduce_chunk_fr as RC, bbk::bbref_tree_reduce_fr as TR))
-        } else if TypeId::of::<P::BaseField>() == TypeId::of::<ark_bn254::Fq>() {
-            Some((bbk::bbref_reduce_chunk_fq as RC, bbk::bbref_tree_reduce_fq as TR))
-        } else {
-            None
-        }
-    };
     s6a_timing::reset();
-    #[cfg(all(feature = "bbkernel", target_family = "wasm", target_feature = "simd128"))]
-    let max_chunk_len = chunks
-        .iter()
-        .flat_map(|c| (0..threads).map(move |t| c.start[t + 1] - c.start[t]))
-        .max()
-        .unwrap_or(0);
     let partials: Vec<Vec<Partial<P>>> = (0..threads)
         .into_par_iter()
         .map(|t| {
-            // bb's 6a inner loop, compiled from bb source and linked in: gather + tree_reduce +
-            // batched-affine drain over bb's ThreadScratch shape, one call per sub-chunk. Only the
-            // densify + overflow bookkeeping stays in Rust (bb keeps that in the same function; the
-            // split is the linkage boundary, not an algorithmic change).
-            #[cfg(all(feature = "bbkernel", target_family = "wasm", target_feature = "simd128"))]
-            if let Some((rc, tr)) = if std::env::var_os("BBREF_NO_C6A").is_some() {
-                None
-            } else {
-                bbk6a
-            } {
-                use crate::base::packed::bbk;
-                let cap = SUBCHUNK.max(2 * (max_chunk_len / SUBCHUNK + 2));
-                let mut cpts: Vec<Affine<P>> = vec![Affine::<P>::zero(); cap];
-                let mut cbk: Vec<u32> = vec![0u32; cap];
-                let (vf, pack_cap, bcap) =
-                    unsafe { (bbk::bbref_vf_size(), bbk::bbref_pack_cap(), bbk::bbref_batch_capacity()) };
-                let mut packed: Vec<core::mem::MaybeUninit<u64>> =
-                    Vec::with_capacity((8 * pack_cap * vf).div_ceil(8) + 32);
-                packed.resize((8 * pack_cap * vf).div_ceil(8) + 32, core::mem::MaybeUninit::uninit());
-                let mut pair_dest: Vec<u32> = vec![0u32; bcap];
-                let phi_ptr: *const u64 = match phi_table {
-                    Some(tbl) => tbl.as_ptr() as *const u64,
-                    None => core::ptr::null(),
-                };
-                let beta_v = <P::BaseField as crate::base::endo::EndoField>::cube_root();
-                let beta_ptr = &beta_v as *const P::BaseField as *const u64;
-                return (0..num_windows)
-                    .map(|w| {
-                        let ch = &chunks[w];
-                        let (cs_lo, cs_hi) = (ch.start[t], ch.start[t + 1]);
-                        if cs_lo == cs_hi {
-                            return Partial {
-                                lo: 0,
-                                dense: Vec::new(),
-                                present: Vec::new(),
-                            };
-                        }
-                        let (my_lo, my_hi) = (ch.lo[t], ch.hi[t]);
-                        let width = my_hi - my_lo + 1;
-                        let mut dense = vec![Affine::<P>::zero(); width];
-                        let mut present = vec![0u8; width];
-                        let mut overflow: Vec<(u32, Affine<P>)> = Vec::new();
-                        let bs = &bucket_starts[w];
-                        let mut b: usize = bs.partition_point(|&st| st as usize <= cs_lo) - 1;
-                        let mut pos = cs_lo;
-                        while pos < cs_hi {
-                            let end = (pos + SUBCHUNK).min(cs_hi);
-                            let len = unsafe {
-                                rc(
-                                    points.as_ptr() as *const u64,
-                                    phi_ptr,
-                                    beta_ptr,
-                                    schedules[w].as_ptr(),
-                                    pos,
-                                    end,
-                                    bs.as_ptr(),
-                                    &mut b,
-                                    cpts.as_mut_ptr() as *mut u64,
-                                    cbk.as_mut_ptr(),
-                                    packed.as_mut_ptr() as *mut u64,
-                                    pair_dest.as_mut_ptr(),
-                                )
-                            };
-                            for k in 0..len {
-                                let slot = cbk[k] as usize + 1 - my_lo;
-                                if present[slot] != 0 {
-                                    overflow.push((slot as u32, cpts[k]));
-                                } else {
-                                    dense[slot] = cpts[k];
-                                    present[slot] = 1;
-                                }
-                            }
-                            pos = end;
-                        }
-                        if !overflow.is_empty() {
-                            let mut n = 0usize;
-                            let mut k = 0;
-                            while k < overflow.len() {
-                                let slot = overflow[k].0;
-                                cpts[n] = dense[slot as usize];
-                                cbk[n] = slot;
-                                n += 1;
-                                while k < overflow.len() && overflow[k].0 == slot {
-                                    cpts[n] = overflow[k].1;
-                                    cbk[n] = slot;
-                                    n += 1;
-                                    k += 1;
-                                }
-                            }
-                            let len = unsafe {
-                                tr(
-                                    cpts.as_mut_ptr() as *mut u64,
-                                    cbk.as_mut_ptr(),
-                                    n,
-                                    packed.as_mut_ptr() as *mut u64,
-                                    pair_dest.as_mut_ptr(),
-                                )
-                            };
-                            let mut seen = vec![false; width];
-                            for k in 0..len {
-                                dense[cbk[k] as usize] = cpts[k];
-                                seen[cbk[k] as usize] = true;
-                            }
-                            for (slot, _) in overflow.iter() {
-                                if !seen[*slot as usize] {
-                                    present[*slot as usize] = 0;
-                                }
-                            }
-                        }
-                        Partial {
-                            lo: my_lo,
-                            dense,
-                            present,
-                        }
-                    })
-                    .collect();
-            }
             let mut block_p: Vec<Affine<P>> = Vec::with_capacity(SUBCHUNK);
             let mut run_id: Vec<u32> = Vec::with_capacity(SUBCHUNK);
             let mut run_len: Vec<u32> = Vec::with_capacity(SUBCHUNK);
@@ -1075,25 +924,23 @@ pub(crate) fn extract_bits(limbs: &[u64], start: usize, len: usize) -> u64 {
 }
 
 /// Per-job scratch for `tree_reduce`, reused across jobs and levels. The scalar vectors serve
-/// the native tree and the packed tree's scalar tail; the packed staging exists on wasm+simd128
-/// builds only.
+/// the scalar tree and the packed tree's scalar tail; `packed` is the wasm+simd128 staging (an
+/// empty stand-in elsewhere).
 pub(crate) struct TreeScratch<P: SWCurveConfig> {
     dens: Vec<P::BaseField>,
     prod: Vec<P::BaseField>,
-    #[cfg(all(target_family = "wasm", target_feature = "simd128"))]
-    packed: packed_tree::PackedScratch<P>,
+    packed: crate::base::wasm::PackedTree<P>,
 }
 
 impl<P: SWCurveConfig> TreeScratch<P>
 where
-    P::BaseField: crate::base::quadconsts::QuadConsts,
+    P::BaseField: crate::base::wasm::QuadConsts,
 {
     fn with_capacity(cap: usize) -> Self {
         TreeScratch {
             dens: Vec::with_capacity(cap),
             prod: Vec::with_capacity(cap),
-            #[cfg(all(target_family = "wasm", target_feature = "simd128"))]
-            packed: packed_tree::PackedScratch::with_capacity(cap),
+            packed: crate::base::wasm::PackedTree::with_capacity(cap),
         }
     }
 }
@@ -1109,14 +956,9 @@ fn tree_reduce<P: SWCurveConfig>(
     ps: &mut Vec<Affine<P>>,
     s: &mut TreeScratch<P>,
 ) where
-    P::BaseField: crate::base::quadconsts::QuadConsts,
+    P::BaseField: crate::base::wasm::QuadConsts,
 {
-    #[cfg(all(target_family = "wasm", target_feature = "simd128"))]
-    {
-        packed_tree::tree_reduce(run_id, run_len, ps, s);
-    }
-    #[cfg(not(all(target_family = "wasm", target_feature = "simd128")))]
-    {
+    if !s.packed.try_reduce(run_id, run_len, ps, &mut s.dens, &mut s.prod) {
         tree_reduce_scalar(run_id, run_len, ps, &mut s.dens, &mut s.prod);
     }
 }
@@ -1126,7 +968,6 @@ fn tree_reduce<P: SWCurveConfig>(
 /// per-element bucket ids — no id compares, no id compaction, no tag lists (a pair's
 /// chord/double/infinity case is re-derived from the coordinates in the apply pass). Sequential:
 /// the caller's schedule chunks are the parallel unit.
-#[cfg_attr(all(target_family = "wasm", target_feature = "simd128"), allow(dead_code))]
 fn tree_reduce_scalar<P: SWCurveConfig>(
     run_id: &mut Vec<u32>,
     run_len: &mut Vec<u32>,
@@ -1237,343 +1078,6 @@ pub mod s6a_timing {
     }
 }
 
-#[cfg(all(target_family = "wasm", target_feature = "simd128"))]
-mod packed_tree {
-    use super::*;
-    use crate::base::quadconsts::QuadConsts;
-    use ark_ff::fields::models::fp::montgomery_backend::quad261::{self, QuadFp};
-
-    pub(crate) struct PackedScratch<P: SWCurveConfig> {
-        // Chord staging, coordinate-separated so groups of four pack straight from memory.
-        ax: Vec<P::BaseField>,
-        ay: Vec<P::BaseField>,
-        bx: Vec<P::BaseField>,
-        by: Vec<P::BaseField>,
-        dest: Vec<u32>,
-        dbl_dest: Vec<u32>,
-        // Opaque byte scratch for the C drain kernels (packed VectorFields); the kernel writes
-        // every word before reading it, so growth is left uninitialized rather than filled.
-        #[cfg(feature = "bbkernel")]
-        cscratch: Vec<core::mem::MaybeUninit<u64>>,
-        // Packed operands and batched-inversion chain, one entry per lane group.
-        qax: Vec<QuadFp>,
-        qbx: Vec<QuadFp>,
-        qden: Vec<QuadFp>,
-        qprod: Vec<QuadFp>,
-    }
-
-    impl<P: SWCurveConfig> PackedScratch<P>
-    where
-        P::BaseField: QuadConsts,
-    {
-        pub(crate) fn with_capacity(cap: usize) -> Self {
-            let half = cap / 2 + 1;
-            PackedScratch {
-                ax: Vec::with_capacity(half),
-                ay: Vec::with_capacity(half),
-                bx: Vec::with_capacity(half),
-                by: Vec::with_capacity(half),
-                dest: Vec::with_capacity(half),
-                dbl_dest: Vec::new(),
-                #[cfg(feature = "bbkernel")]
-                cscratch: Vec::new(),
-                qax: Vec::with_capacity(half / 4 + 1),
-                qbx: Vec::with_capacity(half / 4 + 1),
-                qden: Vec::with_capacity(half / 4 + 1),
-                qprod: Vec::with_capacity(half / 4 + 1),
-            }
-        }
-    }
-
-    pub(crate) fn tree_reduce<P: SWCurveConfig>(
-        run_id: &mut Vec<u32>,
-        run_len: &mut Vec<u32>,
-        ps: &mut Vec<Affine<P>>,
-        s: &mut TreeScratch<P>,
-    ) where
-        P::BaseField: QuadConsts,
-    {
-        loop {
-            let p = &mut s.packed;
-            p.ax.clear();
-            p.ay.clear();
-            p.bx.clear();
-            p.by.clear();
-            p.dest.clear();
-            p.dbl_dest.clear();
-            let mut any = false;
-            // Classify and compact in one pass. The write cursor never passes the read cursor
-            // (each read pair yields at most one output slot), so chord results scattered after
-            // the walk land on slots already read this level.
-            let (mut out, mut i, mut out_run) = (0usize, 0usize, 0usize);
-            for r in 0..run_len.len() {
-                let k = run_len[r] as usize;
-                let mut new_k = 0u32;
-                for j in 0..k / 2 {
-                    let at = i + 2 * j;
-                    let (a, b) = (ps[at], ps[at + 1]);
-                    if a.x == b.x {
-                        if a.y != b.y {
-                            continue; // inverse pair, sums to infinity — dropped
-                        }
-                        ps[out] = a;
-                        p.dbl_dest.push(out as u32);
-                    } else {
-                        p.ax.push(a.x);
-                        p.ay.push(a.y);
-                        p.bx.push(b.x);
-                        p.by.push(b.y);
-                        p.dest.push(out as u32);
-                    }
-                    out += 1;
-                    new_k += 1;
-                }
-                if k % 2 == 1 {
-                    ps[out] = ps[i + k - 1];
-                    out += 1;
-                    new_k += 1;
-                }
-                any |= k >= 2;
-                i += k;
-                if new_k > 0 {
-                    run_id[out_run] = run_id[r];
-                    run_len[out_run] = new_k;
-                    out_run += 1;
-                }
-            }
-            if !any {
-                return;
-            }
-            drain::<P>(s, ps);
-            run_id.truncate(out_run);
-            run_len.truncate(out_run);
-            ps.truncate(out);
-        }
-    }
-
-    /// Apply the level's queued additions: packed lane groups of four chords, then the scalar
-    /// tail (chord stragglers + doublings) through one shared scalar batched inversion.
-    fn drain<P: SWCurveConfig>(s: &mut TreeScratch<P>, ps: &mut [Affine<P>])
-    where
-        P::BaseField: QuadConsts,
-    {
-        // The bb-kernel drain loses its isolated 1t rung to the QuadFp chain below (~+15%/pair)
-        // but wins the real flow at 8t (6.11 vs 6.23 s canonical) — flow-verified, kept.
-        #[cfg(feature = "bbkernel")]
-        if drain_bbk::<P>(s, ps) {
-            return;
-        }
-        let p = &mut s.packed;
-        let groups = p.ax.len() / 4;
-        if groups > 0 {
-            // The wasm stored form is the 2^261 Montgomery domain, which the quad261 multiply
-            // is closed over — the whole level is plain Montgomery arithmetic on packed stored
-            // bytes, one scalar batched inversion per level.
-            let kc = <P::BaseField as QuadConsts>::kc();
-            #[inline(always)]
-            fn pack4<F>(v: &[F], g: usize) -> QuadFp {
-                // Fp<_, 4> is repr-equivalent to its 4x64 stored limbs.
-                QuadFp::pack(unsafe { &*(v.as_ptr().add(4 * g) as *const [[u64; 4]; 4]) })
-            }
-            p.qax.clear();
-            p.qbx.clear();
-            p.qden.clear();
-            p.qprod.clear();
-            for g in 0..groups {
-                let (qax, qbx) = (pack4(&p.ax, g), pack4(&p.bx, g));
-                let den = quad261::sub(&qbx, &qax, &kc.c);
-                let acc = match p.qprod.last() {
-                    Some(prev) => quad261::mont_mul(prev, &den, &kc.c),
-                    None => den,
-                };
-                p.qprod.push(acc);
-                p.qden.push(den);
-                p.qax.push(qax);
-                p.qbx.push(qbx);
-            }
-            // One scalar batched inversion for the level: the four lanes of the total product,
-            // inverted together, each scaled by 2^10 to seed the constant-exponent unwind.
-            let seed = {
-                let total = p.qprod[groups - 1].unpack(&kc.modulus);
-                let mut lanes: [P::BaseField; 4] =
-                    core::array::from_fn(|l| unsafe { core::mem::transmute_copy(&total[l]) });
-                let mut acc = lanes[0];
-                let mut pref = [acc; 4];
-                for l in 1..4 {
-                    acc *= lanes[l];
-                    pref[l] = acc;
-                }
-                let mut inv = acc.inverse().expect("zero denominator in packed tree inversion");
-                for l in (1..4).rev() {
-                    let prev = lanes[l];
-                    lanes[l] = inv * pref[l - 1];
-                    inv *= prev;
-                }
-                lanes[0] = inv;
-                let stored: [[u64; 4]; 4] = core::array::from_fn(|l| unsafe { core::mem::transmute_copy(&lanes[l]) });
-                QuadFp::pack(&stored)
-            };
-            let mut inv = seed;
-            for g in (1..groups).rev() {
-                let d = quad261::mont_mul(&inv, &p.qprod[g - 1], &kc.c);
-                inv = quad261::mont_mul(&inv, &p.qden[g], &kc.c);
-                p.qden[g] = d;
-            }
-            p.qden[0] = inv;
-            for g in 0..groups {
-                let (qay, qby) = (pack4(&p.ay, g), pack4(&p.by, g));
-                let (qax, qbx) = (p.qax[g], p.qbx[g]);
-                let dy = quad261::sub(&qby, &qay, &kc.c);
-                let l = quad261::mont_mul(&dy, &p.qden[g], &kc.c);
-                let x3 = quad261::sub(
-                    &quad261::sub(&quad261::mont_mul(&l, &l, &kc.c), &qax, &kc.c),
-                    &qbx,
-                    &kc.c,
-                );
-                let y3 = quad261::sub(
-                    &quad261::mont_mul(&l, &quad261::sub(&qax, &x3, &kc.c), &kc.c),
-                    &qay,
-                    &kc.c,
-                );
-                let (xs, ys) = (x3.unpack(&kc.modulus), y3.unpack(&kc.modulus));
-                for l in 0..4 {
-                    let d = p.dest[4 * g + l] as usize;
-                    let (x, y): (P::BaseField, P::BaseField) =
-                        unsafe { (core::mem::transmute_copy(&xs[l]), core::mem::transmute_copy(&ys[l])) };
-                    ps[d] = Affine::<P>::new_unchecked(x, y);
-                }
-            }
-        }
-        // Scalar tail: leftover chords and all doublings, one shared batched inversion.
-        s.dens.clear();
-        for t in groups * 4..p.ax.len() {
-            s.dens.push(p.bx[t] - p.ax[t]);
-        }
-        for &d in &p.dbl_dest {
-            s.dens.push(ps[d as usize].y.double());
-        }
-        if s.dens.is_empty() {
-            return;
-        }
-        batch_invert_nonzero(&mut s.dens, &mut s.prod);
-        let mut inv = s.dens.iter();
-        for t in groups * 4..p.ax.len() {
-            let d = *inv.next().unwrap();
-            let lambda = (p.by[t] - p.ay[t]) * d;
-            let x3 = lambda.square() - p.ax[t] - p.bx[t];
-            let y3 = lambda * (p.ax[t] - x3) - p.ay[t];
-            ps[p.dest[t] as usize] = Affine::<P>::new_unchecked(x3, y3);
-        }
-        for &dst in &p.dbl_dest {
-            let d = *inv.next().unwrap();
-            let (x, y) = (ps[dst as usize].x, ps[dst as usize].y);
-            let xx = x.square();
-            let lambda = (xx.double() + xx) * d;
-            let x3 = lambda.square() - x.double();
-            let y3 = lambda * (x - x3) - y;
-            ps[dst as usize] = Affine::<P>::new_unchecked(x3, y3);
-        }
-    }
-
-    /// Drain through bb's clang-compiled chord kernels (feature `bbkernel`): phase 1 builds the
-    /// denominators and five-lane product chains, the single inversion of the lane totals runs
-    /// here (ark), phase 2 unwinds and applies. Staging is padded to the kernel width with a
-    /// repeated valid pair (outputs ignored); doublings run the scalar batched path. Returns
-    /// false for base fields without a kernel.
-    #[cfg(feature = "bbkernel")]
-    fn drain_bbk<P: SWCurveConfig>(s: &mut TreeScratch<P>, ps: &mut [Affine<P>]) -> bool
-    where
-        P::BaseField: QuadConsts,
-    {
-        use crate::base::packed::bbk;
-        use core::any::TypeId;
-        type C1 = unsafe extern "C" fn(*const u64, *const u64, *const u64, *const u64, usize, *mut u64, *mut u64);
-        type C2 = unsafe extern "C" fn(usize, *mut u64, *const u64, *const u32, *mut u64);
-        let (c1, c2): (C1, C2) = if TypeId::of::<P::BaseField>() == TypeId::of::<crate::base::Fr>() {
-            (bbk::bbref_chord1p_fr, bbk::bbref_chord2p_fr)
-        } else if TypeId::of::<P::BaseField>() == TypeId::of::<ark_bn254::Fq>() {
-            (bbk::bbref_chord1p_fq, bbk::bbref_chord2p_fq)
-        } else {
-            return false;
-        };
-        let p = &mut s.packed;
-        if !p.ax.is_empty() {
-            let w = unsafe { bbk::bbref_chord_width() };
-            while p.ax.len() % w != 0 {
-                p.ax.push(p.ax[0]);
-                p.ay.push(p.ay[0]);
-                p.bx.push(p.bx[0]);
-                p.by.push(p.by[0]);
-            }
-            while p.dest.len() < p.ax.len() {
-                p.dest.push(p.dest[0]);
-            }
-            let n = p.ax.len();
-            // Stream the level through the kernels in fixed chunks (bb's BATCH_CAPACITY shape):
-            // one small scratch, allocated once and reused, stays cache-resident. A level-sized
-            // scratch was 3.6x the old footprint and paid memory-growth/page-fault churn on every
-            // rayon split — a flow loss the per-chord rung could not see. Six packed VectorFields
-            // per W-block, sized from the kernel's own sizeof (the 5-wide VF carries a scalar lane
-            // beside the four SIMD lanes).
-            let batch = (4096 / w) * w;
-            // Sized for this level's chunk, capped at the batch: small MSMs (the flow has
-            // thousands) keep a small scratch; a fixed batch-sized buffer per TreeScratch paid
-            // ~1 MB of first-touch page faults per instance.
-            let words = (6 * (n.min(batch) / w) * unsafe { bbk::bbref_vf_size() }).div_ceil(8) + 32;
-            if p.cscratch.len() < words {
-                p.cscratch.resize(words, core::mem::MaybeUninit::uninit());
-            }
-            let mut lane: Vec<P::BaseField> = vec![p.ax[0]; w];
-            let mut off = 0;
-            while off < n {
-                let m = batch.min(n - off);
-                unsafe {
-                    c1(
-                        p.ax.as_ptr().add(off) as *const u64,
-                        p.ay.as_ptr().add(off) as *const u64,
-                        p.bx.as_ptr().add(off) as *const u64,
-                        p.by.as_ptr().add(off) as *const u64,
-                        m,
-                        p.cscratch.as_mut_ptr() as *mut u64,
-                        lane.as_mut_ptr() as *mut u64,
-                    )
-                };
-                // One inversion per chunk: the w lane chain totals, batched.
-                batch_invert_nonzero(&mut lane, &mut s.prod);
-                // Phase 2 reads the packed intermediates and scatters {x3, y3} into ps by dest.
-                unsafe {
-                    c2(
-                        m,
-                        p.cscratch.as_mut_ptr() as *mut u64,
-                        lane.as_ptr() as *const u64,
-                        p.dest.as_ptr().add(off),
-                        ps.as_mut_ptr() as *mut u64,
-                    )
-                };
-                off += m;
-            }
-        }
-        // Doublings through the scalar batched path.
-        s.dens.clear();
-        for &d in &p.dbl_dest {
-            s.dens.push(ps[d as usize].y.double());
-        }
-        if !s.dens.is_empty() {
-            batch_invert_nonzero(&mut s.dens, &mut s.prod);
-            let mut inv = s.dens.iter();
-            for &dst in &p.dbl_dest {
-                let d = *inv.next().unwrap();
-                let (x, y) = (ps[dst as usize].x, ps[dst as usize].y);
-                let xx = x.square();
-                let lambda = (xx.double() + xx) * d;
-                let x3 = lambda.square() - x.double();
-                let y3 = lambda * (x - x3) - y;
-                ps[dst as usize] = Affine::<P>::new_unchecked(x3, y3);
-            }
-        }
-        true
-    }
-}
 
 /// `sum_b (b+1) * B_b` over singleton buckets: segmented double running sums, the affine chain
 /// steps batched across segments, segment totals recombined in projective.
@@ -1746,7 +1250,7 @@ mod tests {
 
     fn check<P: SWCurveConfig>(n: usize, tweak: impl Fn(&mut Vec<Affine<P>>, &mut Vec<P::ScalarField>))
     where
-        P::BaseField: crate::base::quadconsts::QuadConsts + crate::base::endo::EndoField,
+        P::BaseField: crate::base::wasm::QuadConsts + crate::base::endo::EndoField,
         P::ScalarField: crate::base::endo::EndoField,
     {
         let mut rng = ark_std::test_rng();
@@ -1766,158 +1270,6 @@ mod tests {
         for n in [1, 100, 1000, 5000, 70000] {
             check::<ark_bn254::g1::Config>(n, |_, _| ());
             check::<ark_grumpkin::GrumpkinConfig>(n, |_, _| ());
-        }
-    }
-
-    /// Isolates bb's linked Stage-6a tree (`bbref_tree_reduce_*`) from the gather: build a
-    /// bucket-sorted block of distinct points, reduce it with the C kernel, and compare each
-    /// bucket's survivor against an ark sum.
-    #[cfg(all(feature = "bbkernel", target_family = "wasm", target_feature = "simd128"))]
-    #[test]
-    fn c_tree_reduce_matches_ark() {
-        use crate::base::packed::bbk;
-        use ark_ec::CurveGroup;
-        use ark_std::UniformRand;
-        type P = ark_bn254::g1::Config;
-        let mut rng = ark_std::test_rng();
-        for &(nbuckets, per) in &[(1usize, 2usize), (1, 3), (3, 1), (5, 4), (7, 9), (13, 37), (2, 600)] {
-            let mut pts: Vec<Affine<P>> = Vec::new();
-            let mut bks: Vec<u32> = Vec::new();
-            let mut expect: Vec<Projective<P>> = Vec::new();
-            for b in 0..nbuckets {
-                let mut acc = Projective::<P>::zero();
-                for _ in 0..per {
-                    let p = ark_bn254::G1Projective::rand(&mut rng).into_affine();
-                    pts.push(p);
-                    bks.push(b as u32);
-                    acc += p;
-                }
-                expect.push(acc);
-            }
-            let n = pts.len();
-            let (vf, pack_cap, bcap) =
-                unsafe { (bbk::bbref_vf_size(), bbk::bbref_pack_cap(), bbk::bbref_batch_capacity()) };
-            let mut packed: Vec<core::mem::MaybeUninit<u64>> =
-                vec![core::mem::MaybeUninit::uninit(); (8 * pack_cap * vf).div_ceil(8) + 32];
-            let mut pair_dest: Vec<u32> = vec![0u32; bcap];
-            let len = unsafe {
-                bbk::bbref_tree_reduce_fq(
-                    pts.as_mut_ptr() as *mut u64,
-                    bks.as_mut_ptr(),
-                    n,
-                    packed.as_mut_ptr() as *mut u64,
-                    pair_dest.as_mut_ptr(),
-                )
-            };
-            assert_eq!(len, nbuckets, "survivor count (nbuckets={nbuckets}, per={per})");
-            for k in 0..len {
-                assert_eq!(bks[k] as usize, k, "survivor bucket order");
-                assert_eq!(
-                    pts[k].into_group(),
-                    expect[k],
-                    "bucket {k} sum (nbuckets={nbuckets}, per={per})"
-                );
-            }
-        }
-    }
-
-    /// Isolates bb's linked `bbref_reduce_chunk_*` gather: a hand-built bucket-sorted schedule
-    /// over known points, with and without a phi table, compared against an ark reference that
-    /// decodes the same entries.
-    #[cfg(all(feature = "bbkernel", target_family = "wasm", target_feature = "simd128"))]
-    #[test]
-    fn c_reduce_chunk_gather_matches_ark() {
-        use crate::base::endo::EndoField;
-        use crate::base::packed::bbk;
-        use ark_ec::CurveGroup;
-        use ark_std::UniformRand;
-        type P = ark_bn254::g1::Config;
-        const PHI_BIT: u32 = 1 << 30;
-        let mut rng = ark_std::test_rng();
-        let npts = 64usize;
-        let points: Vec<Affine<P>> = (0..npts)
-            .map(|_| ark_bn254::G1Projective::rand(&mut rng).into_affine())
-            .collect();
-        let beta = <ark_bn254::Fq as EndoField>::cube_root();
-        let phi: Vec<Affine<P>> = points
-            .iter()
-            .map(|p| Affine::<P>::new_unchecked(beta * p.x, -p.y))
-            .collect();
-
-        // Three buckets with 3, 5 and 2 entries, each entry exercising a phi/sign combination.
-        let per = [3usize, 5, 2];
-        let mut sched: Vec<u32> = Vec::new();
-        let mut bstarts: Vec<u32> = vec![0];
-        let mut idx = 0usize;
-        for &c in per.iter() {
-            for j in 0..c {
-                let pi = (idx % npts) as u32;
-                let f = (j % 4) as u32;
-                sched.push(pi | if f & 1 != 0 { PHI_BIT } else { 0 } | if f & 2 != 0 { 1 << 31 } else { 0 });
-                idx += 1;
-            }
-            bstarts.push(sched.len() as u32);
-        }
-        let decode = |e: u32, table: bool| -> Affine<P> {
-            let i = (e & 0x3fff_ffff) as usize;
-            let mut pt = points[i];
-            if e & PHI_BIT != 0 {
-                pt = if table {
-                    phi[i]
-                } else {
-                    Affine::<P>::new_unchecked(beta * pt.x, -pt.y)
-                };
-            }
-            if e >> 31 == 1 {
-                -pt
-            } else {
-                pt
-            }
-        };
-
-        for table in [false, true] {
-            let mut expect: Vec<Projective<P>> = Vec::new();
-            for b in 0..per.len() {
-                let mut acc = Projective::<P>::zero();
-                for e in &sched[bstarts[b] as usize..bstarts[b + 1] as usize] {
-                    acc += decode(*e, table);
-                }
-                expect.push(acc);
-            }
-            let (vf, pack_cap, bcap) =
-                unsafe { (bbk::bbref_vf_size(), bbk::bbref_pack_cap(), bbk::bbref_batch_capacity()) };
-            let mut packed: Vec<core::mem::MaybeUninit<u64>> =
-                vec![core::mem::MaybeUninit::uninit(); (8 * pack_cap * vf).div_ceil(8) + 32];
-            let mut pair_dest: Vec<u32> = vec![0u32; bcap];
-            let mut cpts: Vec<Affine<P>> = vec![Affine::<P>::zero(); sched.len()];
-            let mut cbk: Vec<u32> = vec![0u32; sched.len()];
-            let mut b_cursor: usize = 0;
-            let phi_ptr: *const u64 = if table {
-                phi.as_ptr() as *const u64
-            } else {
-                core::ptr::null()
-            };
-            let len = unsafe {
-                bbk::bbref_reduce_chunk_fq(
-                    points.as_ptr() as *const u64,
-                    phi_ptr,
-                    &beta as *const ark_bn254::Fq as *const u64,
-                    sched.as_ptr(),
-                    0,
-                    sched.len(),
-                    bstarts.as_ptr(),
-                    &mut b_cursor,
-                    cpts.as_mut_ptr() as *mut u64,
-                    cbk.as_mut_ptr(),
-                    packed.as_mut_ptr() as *mut u64,
-                    pair_dest.as_mut_ptr(),
-                )
-            };
-            assert_eq!(len, per.len(), "survivor count (table={table})");
-            for k in 0..len {
-                assert_eq!(cbk[k] as usize, k, "survivor bucket (table={table})");
-                assert_eq!(cpts[k].into_group(), expect[k], "bucket {k} (table={table})");
-            }
         }
     }
 
@@ -1958,7 +1310,7 @@ pub trait BatchMsm: AffineRepr {
 
 impl<P: SWCurveConfig> BatchMsm for Affine<P>
 where
-    P::BaseField: crate::base::quadconsts::QuadConsts + crate::base::endo::EndoField,
+    P::BaseField: crate::base::wasm::QuadConsts + crate::base::endo::EndoField,
     P::ScalarField: crate::base::endo::EndoField,
 {
     fn batch_msm(points: &[Self], scalars: &[Self::ScalarField]) -> Projective<P> {
