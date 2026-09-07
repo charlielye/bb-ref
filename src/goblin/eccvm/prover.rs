@@ -19,8 +19,7 @@ use crate::honk::pcs::{
     small_subgroup_ipa_prove_core, LibraPolys, ProverClaim, VerifierOpeningClaim,
 };
 use crate::honk::sumcheck::{interpolate_on_subgroup, prove_sumcheck, subgroup_domain, SumcheckSpec, ZkData};
-use ark_ec::{CurveGroup, VariableBaseMSM};
-use rayon::prelude::*;
+use ark_ec::CurveGroup;
 
 pub const NUM_TRANSLATION_EVALUATIONS: usize = 5;
 pub const TRANSLATION_LABELS: [&str; NUM_TRANSLATION_EVALUATIONS] = [

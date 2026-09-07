@@ -46,14 +46,6 @@ impl ProverInstance {
         let i = self.layout.idx(e);
         &mut self.polys[i]
     }
-    /// All entity polynomials (unshifted then shifted) as the sumcheck sees them.
-    pub fn all_polys(&self) -> Vec<Poly> {
-        let mut all = self.polys.clone();
-        for e in &self.layout.shifted {
-            all.push(self.poly(*e).shifted());
-        }
-        all
-    }
     /// One row of all entity values (unshifted at `i`, shifted at `i + 1`).
     pub fn row(&self, i: usize) -> Vec<Fr> {
         let mut out = Vec::new();

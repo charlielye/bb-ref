@@ -494,18 +494,6 @@ impl<P: BigGroupCurve> Element<P> {
         let y3 = lambda.madd(&x_minus_x3, &[neg_y]);
         Self::with_infinity(x3.clone(), y3, &Self::not_infinity(&x3), false)
     }
-    pub fn checked_unconditional_subtract(&self, other: &Self) -> Self {
-        other.x.assert_is_not_equal(&self.x);
-        let denominator = other.x.sub(&self.x);
-        let lambda = Fq::<P>::div_check_denominator_nonzero_off(&[other.y.clone(), self.y.clone()], &denominator);
-        let neg_ox = other.x.neg();
-        let neg_x = self.x.neg();
-        let x3 = lambda.sqradd(&[neg_ox, neg_x]);
-        let x3_minus_x = x3.sub(&self.x);
-        let neg_y = self.y.neg();
-        let y3 = lambda.madd(&x3_minus_x, &[neg_y]);
-        Self::with_infinity(x3.clone(), y3, &Self::not_infinity(&x3), false)
-    }
     /// bb `checked_unconditional_add_sub`: `(self + other, self - other)` sharing the denominator.
     pub fn checked_unconditional_add_sub(&self, other: &Self) -> [Self; 2] {
         other.x.assert_is_not_equal(&self.x);

@@ -5,7 +5,7 @@ use super::relations::{
     lookup_inverse_exists, lookup_terms, set_denominator, set_numerator, EccvmRel, ECCVM_RELATIONS,
 };
 use super::{EccvmPolys, Ent, TRACE_OFFSET};
-use crate::base::field::{batch_invert, grand_product, FieldLike};
+use crate::base::field::FieldLike;
 use crate::base::Fq;
 use crate::honk::relations::RelationParams;
 use rayon::prelude::*;

@@ -6,7 +6,7 @@
 #![cfg(all(target_family = "wasm", target_feature = "simd128"))]
 
 use crate::base::{Fq, Fr};
-use crate::honk::quadf::QuadConsts;
+use crate::base::quadconsts::QuadConsts;
 use ark_ff::fields::models::fp::montgomery_backend::quad261::{self, QuadFp};
 use core::any::TypeId;
 

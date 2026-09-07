@@ -154,7 +154,6 @@ pub fn glv_split<F: EndoField>(k: &F) -> ([u64; 2], [u64; 2]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_ff::UniformRand;
 
     fn check_split<F: EndoField>() {
         let mut rng = ark_std::test_rng();

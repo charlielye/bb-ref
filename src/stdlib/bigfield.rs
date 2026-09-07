@@ -934,9 +934,6 @@ impl<N: PrimeField> BigField<N> {
     pub fn div_without_denominator_check(&self, denominator: &Self) -> Self {
         Self::internal_div(&[self.clone()], denominator, false)
     }
-    pub fn div_check_denominator_nonzero(numerators: &[Self], denominator: &Self) -> Self {
-        Self::internal_div(numerators, denominator, true)
-    }
     /// bb static `div_without_denominator_check(numerators, denominator)`.
     pub fn div_check_denominator_nonzero_off(numerators: &[Self], denominator: &Self) -> Self {
         Self::internal_div(numerators, denominator, false)

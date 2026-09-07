@@ -8,7 +8,6 @@
 
 use super::flavor::{FlavorDesc, Layout};
 use super::graded::{lift_params, lift_params_wide, Graded, GradedWide, MAX_LEN as GRADED_MAX_LEN, WIDE_LEN as GRADED_WIDE_LEN};
-use super::quadf::{lift_params_quad, QuadConsts, QuadF};
 use super::relations::{RelationParams, Row};
 use crate::base::field::NativeField;
 use crate::base::field::{FieldLike, U256};
@@ -18,7 +17,6 @@ use crate::base::rng::{random_field, Rng};
 use crate::base::srs::Ck;
 use crate::base::transcript::Transcript;
 use crate::honk::flavor::{Ent, Rel, BUS_SPECS};
-use ark_ec::AffineRepr;
 use ark_ff::PrimeField;
 use rayon::prelude::*;
 
@@ -980,26 +978,6 @@ fn flush_graded<F: NativeField>(s: &Scratch<F>, acc: &mut Accumulators<F>) {
     }
 }
 
-/// The accumulators over a range of edges, split across threads (exact arithmetic: any split
-/// gives the same sums).
-/// Groups probed, and groups whose four edges shared a skip pattern (BBREF_QUAD_PROBE_STATS=1).
-static QUAD_PROBE: (std::sync::atomic::AtomicU64, std::sync::atomic::AtomicU64) =
-    (std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0));
-
-fn quad_probe_stats_enabled() -> bool {
-    static V: std::sync::LazyLock<bool> =
-        std::sync::LazyLock::new(|| std::env::var_os("BBREF_QUAD_PROBE_STATS").is_some());
-    *V
-}
-
-/// Total probed groups and the homogeneous share, for deciding whether compaction would pay.
-pub fn quad_probe_report() -> (u64, u64) {
-    (
-        QUAD_PROBE.0.load(std::sync::atomic::Ordering::Relaxed),
-        QUAD_PROBE.1.load(std::sync::atomic::Ordering::Relaxed),
-    )
-}
-
 /// BBREF_ROUND_DETAIL=1: per-round breakdown of the univariate (pows / edges / head / assembly)
 /// and the per-worker busy-time spread inside the edge loop, to locate barrier idle.
 fn round_detail() -> bool {
@@ -1008,176 +986,6 @@ fn round_detail() -> bool {
     *V
 }
 static SLOT_BUSY_NS: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
-
-/// Whether the quad (4-edges-per-evaluation) sumcheck path is enabled for a relation set of
-/// `nrel` relations. BBREF_QUAD_SUMCHECK=1/0 forces it globally; BBREF_QUAD_NREL=<n> enables it
-/// on wasm for sets with at most n relations (sweeping which sumchecks benefit). Bit-identical
-/// to the scalar path (field addition is exact).
-fn quad_sumcheck_enabled(nrel: usize, round: usize) -> bool {
-    static V: std::sync::LazyLock<Option<bool>> = std::sync::LazyLock::new(|| {
-        std::env::var("BBREF_QUAD_SUMCHECK").ok().map(|v| v != "0")
-    });
-    static NREL_MAX: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
-        std::env::var("BBREF_QUAD_NREL")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0)
-    });
-    static MIN_ROUND: std::sync::LazyLock<Option<usize>> = std::sync::LazyLock::new(|| {
-        std::env::var("BBREF_QUAD_MIN_ROUND").ok().and_then(|s| s.parse().ok())
-    });
-    if let Some(v) = *V {
-        return v;
-    }
-    if let Some(min_round) = *MIN_ROUND {
-        return round >= min_round;
-    }
-    cfg!(target_family = "wasm") && nrel <= *NREL_MAX
-}
-
-/// `accumulate_edges`, four edges per relation evaluation where the edges' skip patterns agree
-/// (trace blocks are homogeneous, so most groups qualify); stragglers fall back to the scalar
-/// edge. The lane accumulators are horizontally summed into the scalar accumulators per chunk.
-#[allow(clippy::too_many_arguments)]
-fn accumulate_edges_quad<F, R>(
-    rels: &R,
-    used: &[Vec<usize>],
-    table: &[Column<F>],
-    edges: std::ops::Range<usize>,
-    params: &RelationParams<F>,
-    pows: Pows<F>,
-    d: usize,
-) -> Accumulators<F>
-where
-    F: NativeField + QuadConsts,
-    R: RelationSet<F> + RelationSet<QuadF<F>> + Sync,
-    RelationParams<F>: Sync,
-{
-    let params_uni = lift_params(params);
-    let params_uni = &params_uni;
-    let params_q = lift_params_quad(params);
-    let params_q = &params_q;
-    let nrel = RelationSet::<F>::num_relations(rels);
-    let chunk = (edges.len() / (16 * rayon::current_num_threads())).max(1);
-    let starts: Vec<usize> = edges.clone().step_by(chunk).collect();
-    starts
-        .into_par_iter()
-        .map(|start| {
-            let mut acc = Accumulators::<F>::new(rels, d);
-            let mut acc_q = Accumulators::<QuadF<F>>::new(rels, d);
-            let mut s = Scratch::<F>::new(rels, table.len(), d);
-            let ncols = table.len();
-            let mut row0q = vec![QuadF::splat(F::ZERO); ncols];
-            let mut deltaq = vec![QuadF::splat(F::ZERO); ncols];
-            let mut rowq = vec![QuadF::splat(F::ZERO); ncols];
-            let mut active = vec![false; nrel];
-            let end = (start + chunk).min(edges.end);
-            let mut e = start;
-            while e < end {
-                if e + 4 > end {
-                    accumulate_edge(rels, used, table, e, params, params_uni, &pows.at(e), &mut acc, &mut s);
-                    e += 1;
-                    continue;
-                }
-                // Per-lane skip evaluation on the scalar rows; batch only homogeneous groups.
-                let mut ok = true;
-                for (lane, ee) in (e..e + 4).enumerate() {
-                    for &j in &s.skip_cols {
-                        s.row0[j] = column_value(table, j, 2 * ee);
-                        s.row1[j] = column_value(table, j, 2 * ee + 1);
-                    }
-                    if RelationSet::<F>::skip_row(rels, &s.row0, &s.row1) {
-                        ok = false;
-                        break;
-                    }
-                    for ri in 0..nrel {
-                        let a = !RelationSet::<F>::skip(rels, ri, &s.row0, &s.row1);
-                        if lane == 0 {
-                            active[ri] = a;
-                        } else if active[ri] != a {
-                            ok = false;
-                            break;
-                        }
-                    }
-                    if !ok {
-                        break;
-                    }
-                }
-                if quad_probe_stats_enabled() {
-                    QUAD_PROBE
-                        .0
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    if ok {
-                        QUAD_PROBE
-                            .1
-                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    }
-                }
-                if !ok {
-                    for ee in e..e + 4 {
-                        accumulate_edge(rels, used, table, ee, params, params_uni, &pows.at(ee), &mut acc, &mut s);
-                    }
-                    e += 4;
-                    continue;
-                }
-                let mut num_points = 0;
-                s.cols.clear();
-                for ri in 0..nrel {
-                    if active[ri] {
-                        num_points = num_points.max(s.len[ri]);
-                        for &j in &used[ri] {
-                            if !s.mark[j] {
-                                s.mark[j] = true;
-                                s.cols.push(j);
-                            }
-                        }
-                    }
-                }
-                for &j in &s.cols {
-                    s.mark[j] = false;
-                    let r0 = QuadF::lanes(
-                        column_value(table, j, 2 * e),
-                        column_value(table, j, 2 * (e + 1)),
-                        column_value(table, j, 2 * (e + 2)),
-                        column_value(table, j, 2 * (e + 3)),
-                    );
-                    let r1 = QuadF::lanes(
-                        column_value(table, j, 2 * e + 1),
-                        column_value(table, j, 2 * (e + 1) + 1),
-                        column_value(table, j, 2 * (e + 2) + 1),
-                        column_value(table, j, 2 * (e + 3) + 1),
-                    );
-                    row0q[j] = r0;
-                    deltaq[j] = r1 - r0;
-                }
-                let scaling_q = QuadF::lanes(pows.at(e), pows.at(e + 1), pows.at(e + 2), pows.at(e + 3));
-                for k in 0..num_points {
-                    for &j in &s.cols {
-                        if k == 0 {
-                            rowq[j] = row0q[j];
-                        } else {
-                            rowq[j] += &deltaq[j];
-                        }
-                    }
-                    for ri in 0..nrel {
-                        if !active[ri] || k >= s.len[ri] {
-                            continue;
-                        }
-                        RelationSet::<QuadF<F>>::accumulate(rels, ri, acc_q.point(ri, k), &rowq, params_q, &scaling_q);
-                    }
-                }
-                e += 4;
-            }
-            if s.graded {
-                flush_graded(&s, &mut acc);
-            }
-            for (dst, src) in acc.data.iter_mut().zip(&acc_q.data) {
-                *dst += src.hsum();
-            }
-            acc
-        })
-        .reduce(|| Accumulators::new(rels, d), Accumulators::add)
-}
 
 /// The row-disabling head is `trace_offset / 2` edges (two for the Mega flavors); summed on the
 /// calling thread because a pool dispatch costs more than the work.
@@ -1584,7 +1392,7 @@ pub struct RoundProver<'a, F> {
     pows0: Vec<F>,
 }
 
-impl<'a, F: NativeField + QuadConsts> RoundProver<'a, F>
+impl<'a, F: NativeField> RoundProver<'a, F>
 where
     RelationParams<F>: Sync,
 {
@@ -1668,7 +1476,7 @@ where
     /// or `compute_virtual_contribution` for a virtual round), without any Libra term.
     pub fn univariate(
         &mut self,
-        rels: &(impl RelationSet<F> + RelationSet<QuadF<F>> + Sync),
+        rels: &(impl RelationSet<F> + Sync),
         params: &RelationParams<F>,
         betas: &[F],
         partial_eval: &F,
@@ -1700,17 +1508,12 @@ where
                 .into_iter()
                 .enumerate()
                 .map(|(ri, edges)| {
-                    let nrel = RelationSet::<F>::num_relations(rels);
-                    if quad_sumcheck_enabled(nrel, round) && !(0..nrel).any(|r| coefficient_form::<F>(rels, r, d)) {
-                        accumulate_edges_quad(rels, &self.used, &self.table, edges, params, pows, d)
-                    } else {
-                        let head = if ri == 0 { head_range.clone() } else { None };
-                        let (a, h) = accumulate_edges(rels, &self.used, &self.table, edges, head, params, pows, d);
-                        if h.is_some() {
-                            head_acc = h;
-                        }
-                        a
+                    let head = if ri == 0 { head_range.clone() } else { None };
+                    let (a, h) = accumulate_edges(rels, &self.used, &self.table, edges, head, params, pows, d);
+                    if h.is_some() {
+                        head_acc = h;
                     }
+                    a
                 })
                 .reduce(Accumulators::add)
                 .unwrap_or_else(|| Accumulators::new(rels, d));
@@ -2000,7 +1803,7 @@ pub struct SumcheckProverOutput<C: Curve> {
 /// committed variant (to commit to the round univariates).
 pub fn prove_sumcheck<C: Curve>(
     n: usize,
-    rels: &(impl RelationSet<C::Fr> + RelationSet<QuadF<C::Fr>> + Sync),
+    rels: &(impl RelationSet<C::Fr> + Sync),
     spec: &SumcheckSpec,
     polys: &[Polynomial<C::Fr>],
     t: &mut crate::base::transcript::Transcript<C::TF, C::Hash>,
@@ -2011,7 +1814,7 @@ pub fn prove_sumcheck<C: Curve>(
     ck: Option<&Ck<C::G>>,
 ) -> SumcheckProverOutput<C>
 where
-    C::Fr: NativeField + QuadConsts,
+    C::Fr: NativeField,
     C::G: crate::base::msm::BatchMsm<ScalarField = C::Fr>,
     RelationParams<C::Fr>: Sync,
 {

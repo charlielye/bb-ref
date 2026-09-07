@@ -4,7 +4,7 @@
 
 use crate::base::transcript::Transcript;
 use crate::base::{Fq, Fr, GrumpkinAffine, GrumpkinKey, Poseidon2};
-use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
+use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{Field, One, Zero};
 
 pub const LOG_POLY_LENGTH: usize = 15;

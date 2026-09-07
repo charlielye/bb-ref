@@ -304,10 +304,6 @@ pub fn from_u256<F: PrimeField<BigInt = U256>>(v: U256) -> F {
     F::from_bigint(v).expect("value >= field modulus")
 }
 
-pub fn u256_from_u64(v: u64) -> U256 {
-    U256::from(v)
-}
-
 pub fn u256_shr(v: U256, bits: u32) -> U256 {
     v >> bits
 }
@@ -354,8 +350,4 @@ pub fn from_hex<F: PrimeField<BigInt = U256>>(s: &str) -> F {
     let padded = format!("{s:0>64}");
     let bytes = hex::decode(padded).expect("bad hex");
     F::from_be_bytes_mod_order(&bytes)
-}
-
-pub fn to_hex<F: PrimeField<BigInt = U256>>(f: &F) -> String {
-    format!("0x{}", hex::encode(to_bytes_be(f)))
 }

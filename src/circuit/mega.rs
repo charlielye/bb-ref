@@ -6,7 +6,7 @@ use super::op_queue::{EccOpCode, EccOpQueue, UltraOp};
 use super::trace::{BlockId, GateRow, Kind};
 use crate::base::field::FieldLike;
 use crate::base::poseidon2::round_constants;
-use crate::base::{Fq, Fr, G1Affine, Rng};
+use crate::base::{Fr, G1Affine, Rng};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -116,10 +116,6 @@ impl Builder {
     }
     pub fn queue_ecc_random_op(&mut self, rng: &mut dyn Rng) {
         let op = self.op_queue().borrow_mut().random_op_ultra_only(rng);
-        self.populate_ecc_op_wires(&op);
-    }
-    pub fn queue_ecc_hiding_op(&mut self, px: Fq, py: Fq) {
-        let op = self.op_queue().borrow_mut().append_hiding_op(px, py);
         self.populate_ecc_op_wires(&op);
     }
 

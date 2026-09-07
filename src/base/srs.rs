@@ -6,7 +6,7 @@ use super::field::{from_bytes_be, Fq, Fr};
 use super::group::{G1Affine, G2Affine, G2Points, GrumpkinAffine};
 use super::poly::Polynomial;
 use ark_ec::AffineRepr;
-use ark_ec::{CurveGroup, VariableBaseMSM};
+use ark_ec::CurveGroup;
 use std::io::Read;
 use std::path::PathBuf;
 
@@ -163,6 +163,7 @@ pub struct Ck<G: AffineRepr> {
     pub points: PointsView<G>,
     /// GLV companion points `(beta * x, -y)`, built once per key on wasm (where the per-entry
     /// multiply at gather is the visible cost) and shared by every commit through this key.
+    #[cfg_attr(not(target_family = "wasm"), allow(dead_code))]
     phi: std::sync::OnceLock<Vec<G>>,
 }
 

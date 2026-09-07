@@ -7,27 +7,6 @@ use super::field::FieldLike;
 use super::poseidon2::Hasher;
 use std::marker::PhantomData;
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum ManifestKind {
-    Entry,
-    HashBuffer,
-    Challenge,
-}
-
-#[derive(Debug, Clone)]
-pub struct ManifestEntry {
-    pub round: usize,
-    pub kind: ManifestKind,
-    pub label: String,
-    pub num_fields: usize,
-}
-
-/// Debug-only record of the transcript schedule, for diffing against bb's `TranscriptManifest`.
-#[derive(Debug, Default, Clone)]
-pub struct Manifest {
-    pub entries: Vec<ManifestEntry>,
-}
-
 pub struct Transcript<TF: TranscriptData, H: Hasher<TF>> {
     proof_data: Vec<TF>,
     proof_start: usize,
@@ -35,9 +14,6 @@ pub struct Transcript<TF: TranscriptData, H: Hasher<TF>> {
     num_read: usize,
     round_data: Vec<TF>,
     prev_challenge: Option<TF>,
-    round_index: usize,
-    in_challenge_phase: bool,
-    pub manifest: Option<Manifest>,
     _h: PhantomData<H>,
 }
 
@@ -56,9 +32,6 @@ impl<TF: TranscriptData, H: Hasher<TF>> Transcript<TF, H> {
             num_read: 0,
             round_data: Vec::new(),
             prev_challenge: None,
-            round_index: 0,
-            in_challenge_phase: false,
-            manifest: None,
             _h: PhantomData,
         }
     }
@@ -68,10 +41,6 @@ impl<TF: TranscriptData, H: Hasher<TF>> Transcript<TF, H> {
         let mut t = Self::new();
         t.load_proof(proof);
         t
-    }
-
-    pub fn enable_manifest(&mut self) {
-        self.manifest = Some(Manifest::default());
     }
 
     pub fn load_proof(&mut self, proof: &[TF]) {
@@ -84,28 +53,6 @@ impl<TF: TranscriptData, H: Hasher<TF>> Transcript<TF, H> {
         self.proof_start += self.num_written;
         self.num_written = 0;
         out
-    }
-
-    pub fn proof_size(&self) -> usize {
-        self.proof_data.len()
-    }
-
-    fn record(&mut self, kind: ManifestKind, label: &str, num_fields: usize) {
-        if let Some(m) = &mut self.manifest {
-            m.entries.push(ManifestEntry {
-                round: self.round_index,
-                kind,
-                label: label.to_string(),
-                num_fields,
-            });
-        }
-    }
-
-    fn begin_data_phase(&mut self) {
-        if self.in_challenge_phase {
-            self.in_challenge_phase = false;
-            self.round_index += 1;
-        }
     }
 
     fn next_challenge_hash(&mut self) -> TF {
@@ -124,20 +71,16 @@ impl<TF: TranscriptData, H: Hasher<TF>> Transcript<TF, H> {
     }
 
     /// Prover: append `element` to the proof and to the hash buffer.
-    pub fn send<T: Transcriptable<TF>>(&mut self, label: &str, element: &T) {
-        self.begin_data_phase();
+    pub fn send<T: Transcriptable<TF>>(&mut self, _label: &str, element: &T) {
         let fields = element.to_fields();
-        self.record(ManifestKind::Entry, label, fields.len());
         self.num_written += fields.len();
         self.round_data.extend_from_slice(&fields);
         self.proof_data.extend(fields);
     }
 
     /// Prover: send `elements` as one labelled object (arrays, univariates).
-    pub fn send_vec<T: Transcriptable<TF>>(&mut self, label: &str, elements: &[T]) {
-        self.begin_data_phase();
+    pub fn send_vec<T: Transcriptable<TF>>(&mut self, _label: &str, elements: &[T]) {
         let fields: Vec<TF> = elements.iter().flat_map(|e| e.to_fields()).collect();
-        self.record(ManifestKind::Entry, label, fields.len());
         self.num_written += fields.len();
         self.round_data.extend_from_slice(&fields);
         self.proof_data.extend(fields);
@@ -163,29 +106,21 @@ impl<TF: TranscriptData, H: Hasher<TF>> Transcript<TF, H> {
             self.num_read + n <= self.proof_data.len(),
             "transcript: proof too short at '{label}'"
         );
-        self.begin_data_phase();
         let fields = self.proof_data[self.num_read..self.num_read + n].to_vec();
         self.num_read += n;
-        self.record(ManifestKind::Entry, label, n);
         self.round_data.extend_from_slice(&fields);
         fields
     }
 
     /// Add to the hash buffer without writing to the proof (e.g. the VK hash).
-    pub fn add_to_hash_buffer<T: Transcriptable<TF>>(&mut self, label: &str, element: &T) {
-        self.begin_data_phase();
+    pub fn add_to_hash_buffer<T: Transcriptable<TF>>(&mut self, _label: &str, element: &T) {
         let fields = element.to_fields();
-        self.record(ManifestKind::HashBuffer, label, fields.len());
         self.round_data.extend(fields);
     }
 
     /// One full-width challenge per label.
     pub fn challenges<C: FromChallenge<TF>>(&mut self, labels: &[&str]) -> Vec<C> {
-        for l in labels {
-            self.record(ManifestKind::Challenge, l, 1);
-        }
         let out = labels.iter().map(|_| C::full(self.next_challenge_hash())).collect();
-        self.in_challenge_phase = true;
         out
     }
 
@@ -209,9 +144,6 @@ impl<TF: TranscriptData, H: Hasher<TF>> Transcript<TF, H> {
 impl<TF: ChallengeField, H: Hasher<TF>> Transcript<TF, H> {
     /// Short (127-bit) challenges: each hash output is split into two limbs, yielding two challenges.
     pub fn short_challenges<C: FromChallenge<TF>>(&mut self, labels: &[&str]) -> Vec<C> {
-        for l in labels {
-            self.record(ManifestKind::Challenge, l, 1);
-        }
         let n = labels.len();
         let mut out = Vec::with_capacity(n);
         for _ in 0..n / 2 {
@@ -223,7 +155,6 @@ impl<TF: ChallengeField, H: Hasher<TF>> Transcript<TF, H> {
             let [lo, _] = self.next_challenge_hash().split_challenge();
             out.push(C::short(lo));
         }
-        self.in_challenge_phase = true;
         out
     }
 

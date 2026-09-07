@@ -38,11 +38,11 @@ run() { # threads wasm args...
 
 case "${1:?rung}" in
 l0)
-    build_ours quadbench
+    build_ours fieldbench
     push_bb fr_bench
     push_bb vector_field_bench
-    echo "=== ours (quadbench) ==="
-    run 1 quadbench.wasm 8000000
+    echo "=== ours (fieldbench) ==="
+    run 1 fieldbench.wasm 8000000
     echo "=== bb fr_bench ==="
     run 1 fr_bench.wasm --benchmark_filter="${2:-.}" --benchmark_min_time=0.2s
     echo "=== bb vector_field_bench ==="

@@ -1515,3 +1515,31 @@ time, no copies, no branches) — not reproducible on stable Rust without `gener
 The remaining per-edge excess (Permutation 1.30x, Poseidon2 internals 1.07-1.21x) therefore stays
 unless bodies are hand-specialized for the prover type, which the minimality rule argues against.
 Item #3 of the "beat bb" list is closed as not viable in this form.
+
+## Update 57: dead-code deletion (2026-09-07)
+
+Deleted with no behaviour change — unit (73), `acir` byte-exact (5) and every integration suite
+green; native, wasm+`bbkernel` and plain-wasm builds warning-free:
+
+- `honk/quadf/` (the QuadF 4-lane sumcheck plane of R1, default-off since ea0d4e1) with its
+  `accumulate_edges_quad` branch, probe counters and `BBREF_QUAD_*` switches; the live `QuadConsts`
+  marker moved to `base/quadconsts.rs`.
+- `base/mont29.rs` (1,661 lines): the portable 9×29 reference the vendored `wasm_mont` kernel was
+  straight-lined from, no caller since 0c7a8d9. Its `fr_matches_ark`/`fq_matches_ark` tests went with
+  it; in their place, the end-to-end check: the wasm build (`bbkernel`, simd128, 8 threads under node)
+  and the native build produce byte-identical `proof` (80,064 B) and `vk` for
+  `ecdsar1+transfer_0_recursions+sponsored_fpc` with `BB_RNG_SEED=12345` — sha256 a5a1588b8db111da…
+  on both — so the vendored 29-bit kernel, `quad261` MSM path and bb kernels agree with the 64-bit
+  native field on a full flow.
+- In the vendored ark-ff: `quad256::mont_mul` (540 lines, the 2^256-domain SIMD multiply superseded
+  by `quad261`) and five `#[inline(always)]` on required trait methods (no-ops rustc warns about).
+- Examples `quadbench`, `relshape`, `msmmodel`; `ab.sh l0` runs `fieldbench` instead.
+- 20 zero-caller functions (`all_polys`, `to_hex`, `read_fields`/`write_fields`, `instance_and_ck`,
+  `to_public_inputs`, ...), the transcript `Manifest` recorder and the round tracking that only fed
+  it, 22 unused imports, two dead `PackedScratch` fields.
+
+Net: `45 files changed, 48 insertions(+), 3569 deletions(-)`; `tools/loc.sh` 44,278 code lines = 18.2% of bb-with-tests (19.1% at Update 55),
+23.0% `--no-tests` (24.3%). The vendored crate is 11,715 lines (1,441 over upstream 0.6.0);
+what the delta is and what it would take to drop it is now written up in `docs/performance.md`
+("Why ark-ff is vendored").
+

@@ -5,8 +5,8 @@ use super::codec::{FromChallenge, Transcriptable};
 use super::field::{FieldLike, Fq, Fr};
 use super::poseidon2::{Hasher, Poseidon2};
 use ark_ec::pairing::Pairing;
-use ark_ec::short_weierstrass::{Affine, Projective, SWCurveConfig};
-use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
+use ark_ec::short_weierstrass::{Affine, SWCurveConfig};
+use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{One, PrimeField};
 use std::fmt::Debug;
 
@@ -38,7 +38,7 @@ pub trait GroupLike<F: FieldLike>: Clone + Debug + PartialEq {
 impl<P: SWCurveConfig> GroupLike<P::ScalarField> for Affine<P>
 where
     P::ScalarField: super::field::NativeField + super::endo::EndoField,
-    P::BaseField: crate::honk::quadf::QuadConsts + super::endo::EndoField,
+    P::BaseField: crate::base::quadconsts::QuadConsts + super::endo::EndoField,
 {
     type Native = Affine<P>;
     fn one(_: &()) -> Self {

@@ -33,7 +33,6 @@ use crate::honk::sumcheck::{
     alpha_powers, evaluate_univariate, full_relation_value, gate_separator_factor, CommittedRounds, HonkRelations,
     RelationSet, RoundProver, ZkData,
 };
-use rayon::prelude::*;
 
 pub const JOINT_LOG_N: usize = CONST_TRANSLATOR_LOG_N;
 

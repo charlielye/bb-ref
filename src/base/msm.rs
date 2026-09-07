@@ -8,7 +8,7 @@
 //! verifier-side batch_muls as well as SRS commitments.
 
 use ark_ec::short_weierstrass::{Affine, Projective, SWCurveConfig};
-use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
+use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{AdditiveGroup, Field, PrimeField, Zero};
 use rayon::prelude::*;
 
@@ -62,7 +62,7 @@ fn min_pts_per_thread() -> usize {
 
 pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -> Projective<P>
 where
-    P::BaseField: crate::honk::quadf::QuadConsts + crate::base::endo::EndoField,
+    P::BaseField: crate::base::quadconsts::QuadConsts + crate::base::endo::EndoField,
     P::ScalarField: crate::base::endo::EndoField,
 {
     msm_with_phi(points, scalars, None)
@@ -77,7 +77,7 @@ pub fn msm_with_phi<P: SWCurveConfig>(
     phi_table: Option<&[Affine<P>]>,
 ) -> Projective<P>
 where
-    P::BaseField: crate::honk::quadf::QuadConsts + crate::base::endo::EndoField,
+    P::BaseField: crate::base::quadconsts::QuadConsts + crate::base::endo::EndoField,
     P::ScalarField: crate::base::endo::EndoField,
 {
     crate::scope!("MSM::batch_multi_scalar_mul");
@@ -382,6 +382,7 @@ where
         }
     };
     s6a_timing::reset();
+    #[cfg(all(feature = "bbkernel", target_family = "wasm", target_feature = "simd128"))]
     let max_chunk_len = chunks
         .iter()
         .flat_map(|c| (0..threads).map(move |t| c.start[t + 1] - c.start[t]))
@@ -1085,7 +1086,7 @@ pub(crate) struct TreeScratch<P: SWCurveConfig> {
 
 impl<P: SWCurveConfig> TreeScratch<P>
 where
-    P::BaseField: crate::honk::quadf::QuadConsts,
+    P::BaseField: crate::base::quadconsts::QuadConsts,
 {
     fn with_capacity(cap: usize) -> Self {
         TreeScratch {
@@ -1108,7 +1109,7 @@ fn tree_reduce<P: SWCurveConfig>(
     ps: &mut Vec<Affine<P>>,
     s: &mut TreeScratch<P>,
 ) where
-    P::BaseField: crate::honk::quadf::QuadConsts,
+    P::BaseField: crate::base::quadconsts::QuadConsts,
 {
     #[cfg(all(target_family = "wasm", target_feature = "simd128"))]
     {
@@ -1239,7 +1240,7 @@ pub mod s6a_timing {
 #[cfg(all(target_family = "wasm", target_feature = "simd128"))]
 mod packed_tree {
     use super::*;
-    use crate::honk::quadf::QuadConsts;
+    use crate::base::quadconsts::QuadConsts;
     use ark_ff::fields::models::fp::montgomery_backend::quad261::{self, QuadFp};
 
     pub(crate) struct PackedScratch<P: SWCurveConfig> {
@@ -1250,10 +1251,6 @@ mod packed_tree {
         by: Vec<P::BaseField>,
         dest: Vec<u32>,
         dbl_dest: Vec<u32>,
-        #[cfg(feature = "bbkernel")]
-        ox: Vec<P::BaseField>,
-        #[cfg(feature = "bbkernel")]
-        oy: Vec<P::BaseField>,
         // Opaque byte scratch for the C drain kernels (packed VectorFields); the kernel writes
         // every word before reading it, so growth is left uninitialized rather than filled.
         #[cfg(feature = "bbkernel")]
@@ -1278,10 +1275,6 @@ mod packed_tree {
                 by: Vec::with_capacity(half),
                 dest: Vec::with_capacity(half),
                 dbl_dest: Vec::new(),
-                #[cfg(feature = "bbkernel")]
-                ox: Vec::new(),
-                #[cfg(feature = "bbkernel")]
-                oy: Vec::new(),
                 #[cfg(feature = "bbkernel")]
                 cscratch: Vec::new(),
                 qax: Vec::with_capacity(half / 4 + 1),
@@ -1753,7 +1746,7 @@ mod tests {
 
     fn check<P: SWCurveConfig>(n: usize, tweak: impl Fn(&mut Vec<Affine<P>>, &mut Vec<P::ScalarField>))
     where
-        P::BaseField: crate::honk::quadf::QuadConsts + crate::base::endo::EndoField,
+        P::BaseField: crate::base::quadconsts::QuadConsts + crate::base::endo::EndoField,
         P::ScalarField: crate::base::endo::EndoField,
     {
         let mut rng = ark_std::test_rng();
@@ -1965,7 +1958,7 @@ pub trait BatchMsm: AffineRepr {
 
 impl<P: SWCurveConfig> BatchMsm for Affine<P>
 where
-    P::BaseField: crate::honk::quadf::QuadConsts + crate::base::endo::EndoField,
+    P::BaseField: crate::base::quadconsts::QuadConsts + crate::base::endo::EndoField,
     P::ScalarField: crate::base::endo::EndoField,
 {
     fn batch_msm(points: &[Self], scalars: &[Self::ScalarField]) -> Projective<P> {

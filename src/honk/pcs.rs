@@ -9,7 +9,6 @@ use crate::base::poly::Polynomial;
 use crate::base::rng::random_field;
 use crate::base::srs::Ck;
 use crate::base::transcript::Transcript;
-use ark_ec::AffineRepr;
 use ark_ff::PrimeField;
 use rayon::prelude::*;
 
@@ -1029,6 +1028,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ark_ec::AffineRepr;
     use crate::base::transcript::NativeTranscript;
     use crate::base::G1Affine;
     use ark_ff::UniformRand;

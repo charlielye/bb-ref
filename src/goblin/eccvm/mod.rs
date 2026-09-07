@@ -251,9 +251,6 @@ impl EccvmPolys {
     pub fn col(&self, e: Ent) -> &Polynomial<Fq> {
         &self.cols[e as usize]
     }
-    pub fn col_mut(&mut self, e: Ent) -> &mut Polynomial<Fq> {
-        &mut self.cols[e as usize]
-    }
     /// All entity values at row `i` (shifted entities read their source at row `i + 1`).
     pub fn row(&self, i: usize) -> Vec<Fq> {
         let mut out = Vec::new();

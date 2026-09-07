@@ -104,9 +104,6 @@ impl Chonk {
     pub fn next_kind(&self) -> Option<CircuitKind> {
         self.kinds.get(self.accumulated + 1).copied()
     }
-    pub fn num_circuits(&self) -> usize {
-        self.kinds.len()
-    }
     pub fn num_accumulated(&self) -> usize {
         self.accumulated
     }

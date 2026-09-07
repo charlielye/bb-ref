@@ -5,7 +5,7 @@ use super::flavor::{Ent, Rel, BUS_SPECS};
 use super::oink::compute_public_input_delta;
 use super::prover_instance::ProverInstance;
 use super::relations::{lookup_term, table_term, RelationParams, Row};
-use crate::base::field::{batch_invert, grand_product, FieldLike, Fr};
+use crate::base::field::{batch_invert, FieldLike, Fr};
 use crate::base::group::Curve;
 use crate::base::poly::Poly;
 use crate::base::rng::Rng;

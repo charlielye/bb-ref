@@ -5,12 +5,9 @@
 //! is the CRS at `~/.bb-crs` (needed to commit at all); tests that require it call [`crs_or_skip`].
 
 use crate::base::rng::{DebugRng, Rng};
-use crate::base::srs::CommitmentKey;
 use crate::base::Fr;
 use crate::circuit::builder::AddQuad;
 use crate::circuit::Builder;
-use crate::honk::flavor::FlavorDesc;
-use crate::honk::prover_instance::ProverInstance;
 
 /// A deterministic Rng for tests: seeded, no env coupling.
 pub fn test_rng() -> DebugRng {
@@ -42,17 +39,6 @@ pub fn tiny_circuit(rng: &mut dyn Rng) -> Builder {
     builder
 }
 
-/// Instance + commitment key for a builder, the common preamble of every prove call.
-pub fn instance_and_ck(
-    flavor: &'static FlavorDesc,
-    builder: &mut Builder,
-    rng: &mut dyn Rng,
-) -> (ProverInstance, CommitmentKey) {
-    let inst = ProverInstance::from_builder(flavor, builder, rng);
-    let ck = CommitmentKey::new(inst.max_end_index);
-    (inst, ck)
-}
-
 /// Skip (return None) when the CRS is not installed; tests must degrade to a skip, not a failure,
 /// so `cargo test --lib` stays green on a bare machine.
 pub fn crs_or_skip() -> Option<()> {
@@ -65,12 +51,4 @@ pub fn crs_or_skip() -> Option<()> {
         eprintln!("skipping: no CRS at {}", dir.display());
         None
     }
-}
-
-/// Flip one proof element (any 32-byte BE field) and return the mutated copy; the tamper
-/// harness sweeps `idx` over the whole proof.
-pub fn flip_element(proof: &[Fr], idx: usize) -> Vec<Fr> {
-    let mut out = proof.to_vec();
-    out[idx] += Fr::from(1u8);
-    out
 }

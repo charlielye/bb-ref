@@ -66,9 +66,6 @@ impl DataBusDepot {
             .expect("DataBusDepot has no free app return-data slot");
         *slot = Some(c);
     }
-    pub fn app_return_data_slots_are_empty(&self) -> bool {
-        self.app_return_data.iter().all(Option::is_none)
-    }
     pub fn construct_default_commitment(ctx: &Ctx) -> GoblinElement {
         fixed_witness_point(ctx, G1Affine::identity())
     }

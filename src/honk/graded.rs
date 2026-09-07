@@ -55,15 +55,6 @@ impl<F: NativeField, const N: usize> Graded<F, N> {
     pub fn coeffs(&self) -> &[F] {
         &self.c[..self.len as usize]
     }
-    /// Evaluation at the point `k` (Horner).
-    pub fn eval_at(&self, k: F) -> F {
-        let l = self.len as usize;
-        let mut acc = self.c[l - 1];
-        for i in (0..l - 1).rev() {
-            acc = acc * k + self.c[i];
-        }
-        acc
-    }
 }
 
 impl<F: NativeField, const N: usize> PartialEq for Graded<F, N> {

@@ -363,9 +363,6 @@ impl CycleGroup {
     pub fn unconditional_add(&self, other: &Self, hint: Option<GrumpkinAffine>) -> Self {
         self.unconditional_add_or_subtract(other, true, hint)
     }
-    pub fn unconditional_subtract(&self, other: &Self, hint: Option<GrumpkinAffine>) -> Self {
-        self.unconditional_add_or_subtract(other, false, hint)
-    }
     pub fn checked_unconditional_add(&self, other: &Self, hint: Option<GrumpkinAffine>) -> Self {
         let x_delta = &self.x - &other.x;
         if x_delta.is_constant() {

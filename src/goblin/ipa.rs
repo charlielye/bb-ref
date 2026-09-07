@@ -8,7 +8,7 @@ use crate::base::group::{Curve, GroupLike};
 use crate::base::poly::{eq_table, Polynomial};
 use crate::base::transcript::Transcript;
 use crate::base::{Fq, Grumpkin, GrumpkinAffine, GrumpkinKey, NativeTranscript};
-use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
+use ark_ec::{AffineRepr, CurveGroup};
 use rayon::prelude::*;
 
 type P = Polynomial<Fq>;

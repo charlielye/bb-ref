@@ -9,7 +9,6 @@ pub mod oink;
 pub mod oink_prover;
 pub mod pcs;
 pub mod prover_instance;
-pub mod quadf;
 pub mod quad_params;
 pub mod relations;
 pub mod sumcheck;

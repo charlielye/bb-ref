@@ -126,7 +126,7 @@ plus ≈12,800 vendored (ark-ff, whose own change is a handful of attributes).
 2. **Vendored ark-ff with `#[inline(always)]` on both wrapper layers** (`FpConfig` impl and
    `core::ops`). LTO could not do it (see traps). −31G instructions on a merge op, −3.5% merge
    wall, −5% chonk wall. H C N.
-    *LoC vendored ark-ff +12,375 (the change itself: `#[inline(always)]` on ~6 wrapper fns); shape: general; in bb: n/a — bb's C++ inlines by default.*
+    *LoC: the vendored crate is 11,715 lines in-tree, of which this change is ~40 attribute lines (the rest of the delta is the wasm kernel; see "Why ark-ff is vendored" under wasm); shape: general; in bb: n/a — bb's C++ inlines by default.*
 3. **bb's 29-bit wasm Montgomery multiply** (nine 29-bit limbs so every product fits one
    `i64.mul`; Karatsuba 5+4; 8×2^29 + 1×2^24 rounds dividing by exactly 2^256 so the stored
    representation and every proof byte match native), then straight-lined. V8 mul 121 → 62ns (bb
@@ -364,7 +364,7 @@ inside the noise band on the paired test described above.
 
 | # | attempt | result | why | retest if |
 |---|---|---|---|---|
-| R1 | **Packed (SIMD) sumcheck plane** — 4-wide `QuadF` edge batching; the theory that bb's 5-wide `VectorField` relation evaluation owns the residual | ours 507 vs 285ms (1.8× *slower*) on the dense round-0 rung; **bb's own switch** (`-DBB_FORCE_SCALAR_LANE=1`) shows its SIMD sumcheck is worth 2.7% on a real flow, and bb disables it whenever the row manifest is in use | our scalar round 0 already beats bb's (495 vs 520ms); bb gates SIMD off for skip-heavy real traces anyway | only with the linked bb kernels *and* evidence bb's path helps on real traces |
+| R1 | **Packed (SIMD) sumcheck plane** — 4-wide `QuadF` edge batching; the theory that bb's 5-wide `VectorField` relation evaluation owns the residual | ours 507 vs 285ms (1.8× *slower*) on the dense round-0 rung; **bb's own switch** (`-DBB_FORCE_SCALAR_LANE=1`) shows its SIMD sumcheck is worth 2.7% on a real flow, and bb disables it whenever the row manifest is in use | our scalar round 0 already beats bb's (495 vs 520ms); bb gates SIMD off for skip-heavy real traces anyway | only with the linked bb kernels *and* evidence bb's path helps on real traces — the code was deleted as dead on 2026-09-07 (`honk/quadf`, `base/mont29.rs`, `quad256::mont_mul`), so a retest is a rewrite |
 | R2 | **Fused wasm multiply variants** — q1s1 round-interleaved fusion, two fused quad muls, three SIMD field kernels (two quad layouts, a stay-packed 2^261 Karatsuba) | all correct, none faster; 46 ns/elt with register spills; bb's `VectorField` measures 52.2 vs its scalar 52.7ns on this box and is 1.76× *slower* than its scalar under V8 | V8 codegen-bound, not latency-bound; wasm `extmul` needs lane shuffles on x86 | **on ARM** — `extmul` maps cleanly to NEON and bb's browser users are largely Apple Silicon/phones; every SIMD number here is x86 |
 | R3 | **Fused `sum_of_products`** (native) — ark's generic, then a hand-written mulx/adcx/adox 4-limb interleaved Montgomery, then rewiring the graded multiply into a convolution over fused pairs | 48.7 / 41.9 vs 40.0ns for plain mul+add; in situ **+9G instructions** | the fused chain has less ILP than two independent multiplies, and the convolution forfeits the zero-coefficient skip, which is worth more; bb has no fused sum-of-products at this pin either | never, unless a call site has no zero-skip to lose |
 | R4 | LTO fat / `codegen-units=1` | flat (wall at 8t, instructions at 32t) | the outlining was the `#[inline]` attribute layers, not link-time visibility | — (the attribute fix is in) |
@@ -466,7 +466,45 @@ SIMD is dead on x86 by bb's own benchmark (R2) with the ARM caveat standing.
 
 Also settled on the way: wasm allocator contention is a null; wasm memory is 0.82–1.05× of bb's
 on the 11 flows; the wasm/native wall ratio equals the per-multiply ratio, i.e. the wasm build is
-purely mul-bound. The standalone `base/mont29.rs` is the reference implementation and cross-check
-for the kernel. The planned algorithmic tier — GLV over a precomputed φ(SRS) — landed as #9/#14;
+purely mul-bound. The standalone `base/mont29.rs` reference the kernel was derived from, and its native
+cross-check against ark's multiply, were deleted as dead code on 2026-09-07; the kernel is the vendored
+`wasm_mont` module (vendoring note below), and the check that replaces it is end to end: the wasm build's
+chonk proof for `ecdsar1+transfer_0_recursions+sponsored_fpc` is byte-identical to the native build's
+(both seeded; LADDER Update 57). The planned algorithmic tier — GLV over a precomputed φ(SRS) — landed as #9/#14;
 protocol-level experiments (GKR for grand products, small-value sumcheck) remain candidates behind
 feature flags as upstream proposals for bb itself.
+
+### Why ark-ff is vendored, and what it would take not to
+
+`vendor/ark-ff` is upstream 0.6.0 (10,274 lines) plus 1,441 lines of ours, reached through
+`[patch.crates-io]`. The delta, exactly (`diff -r` against the registry copy):
+
+| Change | Lines | Why it had to be inside the crate |
+|---|---|---|
+| `#[inline]` → `#[inline(always)]` on the `Fp` operator wrappers (`fields/arithmetic.rs`, 21 sites) and the `FpConfig`/`MontBackend` wrappers (`fields/models/fp/mod.rs`, 17 sites); `mod montgomery_backend` made `pub` | ~40 | an inlining attribute has to sit on the callee. The outlined chain (`Fp::mul` → `P::mul_assign` → `MontConfig::mul_assign`) lives entirely inside ark-ff, so no wrapper type of ours can force it; fat LTO + one codegen unit was measured flat twice (trap above). −31G instructions, −5% chonk (#2). |
+| `BigInt::montgomery_r_wasm261` / `montgomery_r2_wasm261` (`biginteger/mod.rs`) | 30 | constants of the 2^261 stored domain |
+| `wasm_mont` (scalar 9×29 Montgomery, straight-lined), `quad256::QuadFp` (SIMD pack/unpack), `quad261` (bb's 4-lane kernel) and the `cfg(wasm)` hooks in `MontBackend` (`R`, `R2`, `mul_assign`, `square_in_place`, `sum_of_products`) | ~1,400 | on wasm the *stored* element is `a·2^261 mod p` (bb's form), so the Montgomery constants and the multiply change together |
+
+Neither half was literally the only way; vendoring was the shortest.
+
+- **Inlining.** Untested alternatives: `-C llvm-args=-inline-threshold=<n>` (works on both targets) and
+  PGO (`-Cprofile-generate`/`-Cprofile-use`; native only — no profiler runtime ships for wasm32). Either
+  could recover the −31G with no source change and should be tried before the fork is kept for this
+  reason alone. Upstreaming the ~40 attribute lines to arkworks is a one-file PR. What cannot work is
+  anything on our side of the call.
+- **The wasm form.** `MontConfig` is a public trait whose `R`, `R2`, `mul_assign`, `square_in_place` and
+  `sum_of_products` are overridable, so a hand-written `impl MontConfig<4> for FrConfig`/`FqConfig` in
+  bb-ref could carry the kernels with ark-ff untouched. The cost is that the field *type* changes
+  (`Fp<MontBackend<OurConfig, 4>, 4>` is not `ark_bn254::Fr`), so the BN254 and Grumpkin curve configs
+  and the BN pairing config (`ark-bn254` is ~600 lines of constants) have to be redefined over the new
+  types, and the few direct `ark_bn254::` references (`base/packed.rs`, `base/quadconsts.rs`)
+  re-pointed. The earlier objection — "`Fp` derives `Eq` on raw storage, so coarse forms break it" —
+  applied to the lane-packed, non-canonical design that was abandoned, not to the landed canonical
+  2^261 form.
+
+If the vendoring itself is the objection, in order of cost: (1) move the fork out of tree —
+`[patch.crates-io] ark-ff = { git = "<fork>", rev = "<sha>" }` on a branch of arkworks `v0.6.0`: the
+same 1,441-line diff becomes a reviewable branch, 11,715 in-tree lines go, nothing changes
+behaviourally; (2) try inline-threshold/PGO to retire the attribute half; (3) own `MontConfig` +
+curve configs (~800 lines, byte-identical proofs required) to retire the kernel half and the patch.
+

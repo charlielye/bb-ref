@@ -272,13 +272,6 @@ fn main() {
     if scheme == "chonk" {
         chonk(cmd, &flags);
         bb_ref::base::bench::print();
-        let (probed, homogeneous) = bb_ref::honk::sumcheck::quad_probe_report();
-        if probed > 0 {
-            eprintln!(
-                "[quad-probe] {homogeneous}/{probed} groups homogeneous ({:.1}%)",
-                100.0 * homogeneous as f64 / probed as f64
-            );
-        }
         return;
     }
     let flavor: &'static FlavorDesc = match bb_ref::msgpack::handler::select_flavor(&settings) {

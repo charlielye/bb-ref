@@ -23,7 +23,7 @@ use crate::chonk::proof::ChonkProof as RefChonkProof;
 use crate::chonk::verifier::chonk_verify;
 use crate::goblin::eccvm::FIXED_SIZE as ECCVM_FIXED_SIZE;
 use crate::honk::prover_instance::ProverInstance;
-use crate::honk::ultra_prover::{prove_ultra, prove_ultra_as};
+use crate::honk::ultra_prover::prove_ultra_as;
 use crate::honk::ultra_verifier::{verify_ultra, verify_ultra_keccak};
 use crate::honk::{FlavorDesc, MEGA_APP, MEGA_KERNEL, MEGA_ZK, ULTRA, ULTRA_KECCAK, ULTRA_KECCAK_ZK, ULTRA_ZK};
 use crate::rollup::{verify_ultra_rollup, ROLLUP_PUBLIC_INPUTS_SIZE};
@@ -526,7 +526,7 @@ impl Handler for BbRefHandler {
             }
             let mut rng = GlobalProxy;
             let witness = decode_witness_raw(&cmd.witness, &mut rng);
-            let mut circuit = build_circuit_mega(&step.circuit, Some(&witness), Some(ivc), &mut rng);
+            let circuit = build_circuit_mega(&step.circuit, Some(&witness), Some(ivc), &mut rng);
             if let Some(msg) = &circuit.failed {
                 return Err(format!("circuit is not satisfied: {msg}"));
             }

@@ -8,12 +8,12 @@ pub mod generators;
 pub mod group;
 pub mod io;
 pub mod keccak;
-pub mod mont29;
 pub mod msm;
 #[cfg(all(target_family = "wasm", target_feature = "simd128"))]
 pub mod packed;
 pub mod poly;
 pub mod poseidon2;
+pub mod quadconsts;
 pub mod poseidon2_params;
 pub mod rng;
 pub mod srs;

@@ -69,29 +69,24 @@ pub trait FpConfig<const N: usize>: Send + Sync + 'static + Sized {
     const SQRT_PRECOMP: Option<SqrtPrecomputation<Fp<Self, N>>>;
 
     /// Set a += b.
-    #[inline(always)]
     fn add_assign(a: &mut Fp<Self, N>, b: &Fp<Self, N>);
 
     /// Set a -= b.
-    #[inline(always)]
     fn sub_assign(a: &mut Fp<Self, N>, b: &Fp<Self, N>);
 
     /// Set a = a + a.
-    #[inline(always)]
     fn double_in_place(a: &mut Fp<Self, N>);
 
     /// Set a = -a;
     fn neg_in_place(a: &mut Fp<Self, N>);
 
     /// Set a *= b.
-    #[inline(always)]
     fn mul_assign(a: &mut Fp<Self, N>, b: &Fp<Self, N>);
 
     /// Compute the inner product `<a, b>`.
     fn sum_of_products<const T: usize>(a: &[Fp<Self, N>; T], b: &[Fp<Self, N>; T]) -> Fp<Self, N>;
 
     /// Set a *= a.
-    #[inline(always)]
     fn square_in_place(a: &mut Fp<Self, N>);
 
     /// Compute a^{-1} if `a` is not zero.

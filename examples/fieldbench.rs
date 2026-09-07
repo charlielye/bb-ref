@@ -1,7 +1,6 @@
 //! Fr vs Fq throughput on the stored representation: ECCVM, IPA and the translator run entirely
 //! over Fq (Grumpkin's scalar field), so a slow Fq path would show up as an ECCVM-wide deficit.
 //! Array throughput (independent elements), like quadbench.
-use ark_ff::UniformRand;
 use bb_ref::base::{Fq, Fr};
 use std::hint::black_box;
 use std::time::Instant;
