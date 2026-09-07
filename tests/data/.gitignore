@@ -1,0 +1,3 @@
+# Per-run outputs of the test suite (proofs made with an unseeded RNG; regen scripts read them).
+*/acir/rust_1_1/
+*/instance/eccvm_proof/rust_base/
