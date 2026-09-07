@@ -12,7 +12,7 @@ use ark_ec::{AffineRepr, CurveGroup};
 use rayon::prelude::*;
 
 type P = Polynomial<Fq>;
-type Proj = ark_grumpkin::Projective;
+type Proj = crate::base::GrumpkinProjective;
 
 fn msm(points: &[GrumpkinAffine], scalars: &[Fq]) -> Proj {
     crate::base::msm::msm(points, scalars)

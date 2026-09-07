@@ -33,7 +33,7 @@ pub struct StdUltraBn254;
 impl Curve for StdUltraBn254 {
     type TF = FieldT;
     type Fr = FieldT;
-    type G = super::biggroup::Element<ark_bn254::g1::Config>;
+    type G = super::biggroup::Element<crate::base::G1Config>;
     type Hash = StdPoseidon2;
     const SUBGROUP_SIZE: usize = Bn254::SUBGROUP_SIZE;
     fn subgroup_generator() -> Fr {

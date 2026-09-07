@@ -9,7 +9,7 @@ use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{AdditiveGroup, BigInteger, Zero};
 use std::sync::OnceLock;
 
-type Proj = ark_bn254::G1Projective;
+type Proj = crate::base::G1Projective;
 
 /// The five transcript columns the Translator consumes.
 pub const TRANSLATION_ENTITIES: [Ent; 5] = [

@@ -26,7 +26,7 @@ pub fn msm_affine(points: &[GrumpkinAffine], scalars: &[Fq]) -> GrumpkinAffine {
     msm(points, scalars).into_affine()
 }
 
-fn msm(points: &[GrumpkinAffine], scalars: &[Fq]) -> ark_grumpkin::Projective {
+fn msm(points: &[GrumpkinAffine], scalars: &[Fq]) -> crate::base::GrumpkinProjective {
     crate::base::msm::msm(points, scalars)
 }
 
@@ -110,7 +110,7 @@ pub fn reduce_verify(ck: &GrumpkinKey, claim: &IpaClaim, t: &mut NativeTranscrip
     add_claim_to_hash_buffer_verifier(claim, t);
     let generator_challenge: Fq = t.challenge("IPA:generator_challenge");
     let aux_generator = GrumpkinAffine::generator() * generator_challenge;
-    let c_prime = ark_grumpkin::Projective::from(claim.commitment) + aux_generator * claim.evaluation;
+    let c_prime = crate::base::GrumpkinProjective::from(claim.commitment) + aux_generator * claim.evaluation;
     let mut msm_elements = Vec::with_capacity(2 * LOG_POLY_LENGTH);
     let mut round_challenges = Vec::with_capacity(LOG_POLY_LENGTH);
     for round_idx in 0..LOG_POLY_LENGTH {
@@ -145,6 +145,6 @@ pub fn reduce_verify(ck: &GrumpkinKey, claim: &IpaClaim, t: &mut NativeTranscrip
     if g_zero != g_zero_from_prover {
         return false;
     }
-    let rhs = ark_grumpkin::Projective::from(g_zero) * a_zero + aux_generator * (a_zero * b_zero);
+    let rhs = crate::base::GrumpkinProjective::from(g_zero) * a_zero + aux_generator * (a_zero * b_zero);
     c_zero.into_affine() == rhs.into_affine()
 }

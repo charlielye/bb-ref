@@ -1641,3 +1641,48 @@ allocator choice in the binary. Behaviour-identical by construction and measured
 step-1 and step-2 modules execute 392.6 vs 393.0 G instructions on the flow (noise), proofs
 identical (wasm == native), native suite green, the moved kernels' unit test green under wasmtime.
 
+## Update 62: the vendored ark-ff retired — own `MontConfig` for the wasm field (2026-09-07)
+
+Step 3 of the plan from Update 59. Natively nothing moved: `Fr`/`Fq`/`G1Config`/`GrumpkinConfig` are
+arkworks' own configs (`base/wasm/mod.rs` re-exports them off-wasm; the aliases in `base/field.rs`
+and `base/group.rs` point there), so `Fr` *is* `ark_bn254::Fr` and the `asm` feature is untouched.
+On wasm the same aliases resolve to bb-ref's own `impl MontConfig<4>` for Fr and Fq
+(`base/wasm/field.rs`) — the 2^261 stored domain, bb's 9×29-bit multiply (`mont29.rs`, moved from
+the vendored crate minus its unused 2^256 variant) behind `mul_assign`/`square_in_place`/
+`sum_of_products`/`inverse`/`from_bigint`/`into_bigint` — and own BN254-G1 (with GLV) and Grumpkin
+`SWCurveConfig`s over them (`curves.rs`). The one thing the fork patched that an impl cannot reach,
+arkworks' const-context constructor (`Fp::new`, hence `MontFp!`), is handled by `R2 = 2^517 mod p`:
+that constructor multiplies by `R2` and divides by 2^256, so constants land in the 2^261 form; the
+runtime users of `R2` (`from_bigint`, `inverse`) are overridden to `2^522 mod p`. G2 stays
+arkworks' type; `pairing_check` moves G1 points across through canonical coordinates. Sixty direct
+`ark_bn254::`/`ark_grumpkin::` uses now go through the base aliases. `vendor/ark-ff` (11,715 lines)
+and the `[patch]` are gone; Cargo.lock relocates one package to crates.io.
+
+Correctness: native suite green (23 suites); the module's own tests cross-check every operation and
+constant (generator, two-adic root, large-subgroup root, curve constants, scalar multiplication)
+against arkworks' bn254/grumpkin types through canonical integers, under wasmtime (6 tests); the
+wasm flow proof **and vk are byte-identical** to native and to the step-2 module.
+
+Performance, same harness as Updates 58–61 (`ecdsar1+transfer_0`, 8 threads, perf, best of 3):
+
+| build | instr | cycles | cpu | wall best | size |
+|---|---|---|---|---|---|
+| wasm, step 2 (vendored ark-ff, forced attrs) | 392.5 G | 146.7 G | 41.0 s | 10.03 s | 11.03 MB |
+| wasm, step 3 (own configs, stock ark-ff) | **377.6 G (−3.8%)** | 142.0 G | 39.7 s (−3.2%) | 9.80 s | 10.76 MB |
+| native, b273bd1 baseline (vendored, forced attrs) | 129.4 G | 60.8 G | 17.1 s | 3.12 s (3.65 3.12 3.16) | 17.1 MB |
+| native, step 3 (stock ark-ff) | 138.9 G (+7.3%) | 59.8 G (−1.6%) | 16.7 s | 2.90 s (3.02 2.91 2.90) | 15.1 MB |
+
+Wasm got faster: the kernel is now called from a concrete `MontConfig` impl instead of through
+`MontBackend`'s generic hooks (`N == 4 && MODULUS_HAS_SPARE_BIT` branches at every call). Native
+executes 7% more instructions (2,945 `call mul_assign` sites vs 43 — Update 58's variant B still
+had the vendored `MontBackend` layer inlined, hence its smaller +3.2%) yet spends fewer cycles and
+less wall here, consistently over three runs, with a 2 MB smaller binary; the −31G/−5% recorded at
+98f541d was measured on bbbench on a merge op, so the native effect must be re-read from the full
+tables there before drawing a conclusion. `-C llvm-args=-inline-threshold=1000` remains available
+as a build flag if the native instruction count matters (Update 58: recovers two thirds).
+
+Bookkeeping: `tools/loc.sh` 44,889 lines = 18.5% of bb with tests (the kernels moved into `src/`;
+they were vendored before), 23.4% `--no-tests`. Repo-wide wasm `cfg` sites: the lines in
+`base/wasm/mod.rs` plus the allocator choice in the binary. The tables of record
+(`bench-results/chonk*.txt`, `corpus.txt`) predate Updates 60–62 and need regenerating on bbbench.
+

@@ -116,7 +116,7 @@ const BN254_G2_X_BYTES: [u8; 128] = [
 /// `[[1]_2, [x]_2]` for the KZG pairing check.
 pub fn bn254_g2() -> G2Points {
     let b = &BN254_G2_X_BYTES;
-    let fq2 = |lo: &[u8], hi: &[u8]| ark_bn254::Fq2::new(from_bytes_be::<Fq>(lo), from_bytes_be::<Fq>(hi));
+    let fq2 = |lo: &[u8], hi: &[u8]| ark_bn254::Fq2::new(from_bytes_be::<ark_bn254::Fq>(lo), from_bytes_be::<ark_bn254::Fq>(hi));
     let x = G2Affine::new_unchecked(fq2(&b[0..32], &b[32..64]), fq2(&b[64..96], &b[96..128]));
     assert!(
         x.is_on_curve() && x.is_in_correct_subgroup_assuming_on_curve(),

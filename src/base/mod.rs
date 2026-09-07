@@ -22,7 +22,10 @@ pub mod wasm;
 pub use codec::{ChallengeField, FromChallenge, Transcriptable};
 pub use field::{FieldLike, Fq, Fr, U256};
 pub use group::KeccakBn254;
-pub use group::{Bn254, Curve, G1Affine, G2Affine, GroupLike, Grumpkin, GrumpkinAffine, PairingPoints};
+pub use group::{
+    Bn254, Curve, G1Affine, G1Config, G1Projective, G2Affine, GroupLike, Grumpkin, GrumpkinAffine, GrumpkinConfig,
+    GrumpkinProjective, PairingPoints,
+};
 pub use poly::Poly;
 pub use poseidon2::{Hasher, Poseidon2};
 pub use rng::{OsRng, Rng};
@@ -34,9 +37,9 @@ pub use vk::Vk;
 /// scalar-field split (`Bn254FqParams::endo_*`; the cube roots are bb's Montgomery limbs, which
 /// arkworks shares). Verified on first use: the split's field identity is asserted per call, and
 /// the (λ, β) pairing is checked on the generator here.
-pub fn grumpkin_endo() -> &'static fold::Endo<ark_grumpkin::GrumpkinConfig> {
+pub fn grumpkin_endo() -> &'static fold::Endo<GrumpkinConfig> {
     use ark_ec::{AffineRepr, CurveGroup};
-    static ENDO: std::sync::LazyLock<fold::Endo<ark_grumpkin::GrumpkinConfig>> = std::sync::LazyLock::new(|| {
+    static ENDO: std::sync::LazyLock<fold::Endo<GrumpkinConfig>> = std::sync::LazyLock::new(|| {
         // λ in Grumpkin's scalar field (bn254 Fq), β in its base field (bn254 Fr).
         use crate::base::endo::EndoField;
         let lambda = <Fq as EndoField>::cube_root();

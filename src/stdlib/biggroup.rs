@@ -167,7 +167,7 @@ impl<P: BigGroupCurve> ScalarOps<P> for Scalar<P> {
     }
 }
 
-impl ScalarOps<ark_bn254::g1::Config> for FieldT {
+impl ScalarOps<crate::base::G1Config> for FieldT {
     fn ctx_of(&self) -> Option<Ctx> {
         self.ctx.clone()
     }
@@ -1293,7 +1293,7 @@ impl<P: BigGroupCurve> Element<P> {
     }
 }
 
-impl crate::base::codec::Transcriptable<FieldT> for Element<ark_bn254::g1::Config> {
+impl crate::base::codec::Transcriptable<FieldT> for Element<crate::base::G1Config> {
     fn num_fields() -> usize {
         4
     }
@@ -1303,7 +1303,7 @@ impl crate::base::codec::Transcriptable<FieldT> for Element<ark_bn254::g1::Confi
         let shift = FieldT::constant(crate::base::field::from_u256(
             crate::base::field::U256::from(1u64) << NUM_LIMB_BITS as u32,
         ));
-        let half = |c: &Fq<ark_bn254::g1::Config>, lo: usize| {
+        let half = |c: &Fq<crate::base::G1Config>, lo: usize| {
             c.get_limb(lo).element.add(&c.get_limb(lo + 1).element.mul(&shift))
         };
         vec![half(&self.x, 0), half(&self.x, 2), half(&self.y, 0), half(&self.y, 2)]
@@ -1311,16 +1311,16 @@ impl crate::base::codec::Transcriptable<FieldT> for Element<ark_bn254::g1::Confi
     /// bb `StdlibCodec::deserialize_from_fields`: bigfield halves with in-field validation, infinity
     /// auto-detected from zero coordinates, on-curve asserted.
     fn from_fields(f: &[FieldT]) -> Self {
-        let x = Fq::<ark_bn254::g1::Config>::from_halves(&f[0], &f[1], false, 0);
+        let x = Fq::<crate::base::G1Config>::from_halves(&f[0], &f[1], false, 0);
         x.assert_is_in_field();
-        let y = Fq::<ark_bn254::g1::Config>::from_halves(&f[2], &f[3], false, 0);
+        let y = Fq::<crate::base::G1Config>::from_halves(&f[2], &f[3], false, 0);
         y.assert_is_in_field();
         Self::new(x, y, true)
     }
 }
 
-impl crate::base::group::GroupLike<FieldT> for Element<ark_bn254::g1::Config> {
-    type Native = Affine<ark_bn254::g1::Config>;
+impl crate::base::group::GroupLike<FieldT> for Element<crate::base::G1Config> {
+    type Native = Affine<crate::base::G1Config>;
     fn one(ctx: &Ctx) -> Self {
         Element::one(ctx)
     }
@@ -1358,12 +1358,12 @@ impl crate::base::group::GroupLike<FieldT> for Element<ark_bn254::g1::Config> {
     }
 }
 
-impl BigGroupCurve for ark_bn254::g1::Config {
+impl BigGroupCurve for crate::base::G1Config {
     fn biggroup_offset_generator() -> Affine<Self> {
-        let x = ark_bn254::Fq::from(
+        let x = crate::base::Fq::from(
             BigUint::parse_bytes(b"169b33374f53b95f16edf369c34509da6485297ee10452a62af4bd2820d6fb33", 16).unwrap(),
         );
-        let y = ark_bn254::Fq::from(
+        let y = crate::base::Fq::from(
             BigUint::parse_bytes(b"019d6e473e9b638cfe2b8f232288a075050a381b745cffaa9f9264121567315b", 16).unwrap(),
         );
         Affine::new_unchecked(x, y)

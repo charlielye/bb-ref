@@ -12,7 +12,7 @@ use crate::circuit::builder::{EccAddGate, EccDblGate};
 use ark_ec::short_weierstrass::{Projective, SWCurveConfig};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{AdditiveGroup, Field, PrimeField};
-use ark_grumpkin::GrumpkinConfig;
+use crate::base::GrumpkinConfig;
 
 type Element = Projective<GrumpkinConfig>;
 

@@ -148,7 +148,7 @@ impl<T> SubTables<T> {
 }
 
 pub struct EccOpQueue {
-    accumulator: ark_bn254::G1Projective,
+    accumulator: crate::base::G1Projective,
     pub eccvm_ops: SubTables<EccvmOp>,
     pub ultra_ops: SubTables<UltraOp>,
     /// The ZK prefix of the merged Ultra table (built once, at the end of an IVC).
@@ -166,7 +166,7 @@ impl Default for EccOpQueue {
 impl EccOpQueue {
     pub fn new() -> Self {
         Self {
-            accumulator: ark_bn254::G1Projective::default(),
+            accumulator: crate::base::G1Projective::default(),
             eccvm_ops: Default::default(),
             ultra_ops: Default::default(),
             zk_ops: vec![],
@@ -224,7 +224,7 @@ impl EccOpQueue {
     }
     pub fn eq_and_reset(&mut self) -> UltraOp {
         let expected = self.get_accumulator();
-        self.accumulator = ark_bn254::G1Projective::default();
+        self.accumulator = crate::base::G1Projective::default();
         self.eccvm_ops.current.push(EccvmOp {
             op_code: EccOpCode::eq_reset(),
             base_point: expected,

@@ -16,7 +16,7 @@ use crate::stdlib::curve::StdUltraBn254;
 use crate::stdlib::hash::StdPoseidon2;
 use crate::stdlib::{Ctx, FieldT};
 
-type G = Element<ark_bn254::g1::Config>;
+type G = Element<crate::base::G1Config>;
 
 pub struct UltraRecursiveOutput {
     pub points_accumulator: PairingPoints<StdUltraBn254>,

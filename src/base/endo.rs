@@ -176,11 +176,11 @@ mod tests {
     #[test]
     fn endo_maps() {
         use ark_ec::{AffineRepr, CurveGroup};
-        let g = ark_bn254::G1Affine::generator();
+        let g = crate::base::G1Affine::generator();
         let lg = (g * Fr::cube_root()).into_affine();
-        assert_eq!(lg, ark_bn254::G1Affine::new_unchecked(g.x * Fq::cube_root(), g.y));
-        let g = ark_grumpkin::Affine::generator();
+        assert_eq!(lg, crate::base::G1Affine::new_unchecked(g.x * Fq::cube_root(), g.y));
+        let g = crate::base::GrumpkinAffine::generator();
         let lg = (g * Fq::cube_root()).into_affine();
-        assert_eq!(lg, ark_grumpkin::Affine::new_unchecked(g.x * Fr::cube_root(), g.y));
+        assert_eq!(lg, crate::base::GrumpkinAffine::new_unchecked(g.x * Fr::cube_root(), g.y));
     }
 }

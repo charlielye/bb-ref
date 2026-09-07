@@ -367,7 +367,7 @@ fn biggroup_bn254_ops(ctx: &Ctx) {
     use ark_ec::{AffineRepr, CurveGroup};
     use bb_ref::base::G1Affine;
     bb_ref::base::rng::set_global(Box::new(bb_ref::base::rng::DebugRng::new(12345)));
-    type Bn = ark_bn254::g1::Config;
+    type Bn = bb_ref::base::G1Config;
     let tr = |l: &str| bb_ref::circuit::builder::trace_phase(&format!("biggroup_bn254_ops: {l}"));
     let g = G1Affine::generator();
     let p_n = (g * Fr::from(7u64)).into_affine();

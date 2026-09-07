@@ -17,6 +17,11 @@ test suite: none of it changes an output bit.
 
 ## Where it stands (2026-09-06)
 
+> The tables below predate LADDER Updates 60–62 (2026-09-07: C kernels removed, wasm code gathered
+> into `base/wasm`, vendored ark-ff retired). Locally those three moved the small flow by +0.8%,
+> ±0%, and −3.8% wasm instructions respectively, with byte-identical proofs; the bbbench tables need
+> regenerating before the next comparison.
+
 The tables of record are in [`bench-results/`](../bench-results/) (`chonk.txt` native, `chonk-v8.txt`
 wasm, `corpus.txt` rollup), regenerated 2026-09-06 at `def1d24` with wall and proving-only side by
 side; the wasm tables use the *stripped* bb module for wall and bb's `ENABLE_WASM_BENCH` module for
@@ -126,13 +131,15 @@ plus ≈12,800 vendored (ark-ff, whose own change is a handful of attributes).
 2. **Vendored ark-ff with `#[inline(always)]` on both wrapper layers** (`FpConfig` impl and
    `core::ops`). LTO could not do it (see traps). −31G instructions on a merge op, −3.5% merge
    wall, −5% chonk wall. H C N.
-    *LoC: the vendored crate is 11,715 lines in-tree, of which this change is ~40 attribute lines (the rest of the delta is the wasm kernel; see "Why ark-ff is vendored" under wasm); shape: general; in bb: n/a — bb's C++ inlines by default.*
+    *LoC: was ~40 attribute lines inside a vendored copy of the crate; shape: general; in bb: n/a — bb's C++ inlines by default.*
+    *Retired 2026-09-07 (LADDER Update 62) with the vendored crate: measured at ~3% native instructions and nothing on wasm (Update 58); `-C llvm-args=-inline-threshold=1000` recovers two thirds natively as a build flag if wanted.*
 3. **bb's 29-bit wasm Montgomery multiply** (nine 29-bit limbs so every product fits one
    `i64.mul`; Karatsuba 5+4; 8×2^29 + 1×2^24 rounds dividing by exactly 2^256 so the stored
    representation and every proof byte match native), then straight-lined. V8 mul 121 → 62ns (bb
    57.5); the canonical wasm flow 19.0 → 10.5–12.2s. The wasm prover is mul-bound, so this was
    the whole first tier of wasm work. H C W.
-    *LoC vendored ark-ff ≈+400 (two commits); shape: wasm-only `cfg` path inside the vendored field; in bb: bb's own scheme, ported.*
+    *LoC ≈+400 (two commits); shape: wasm-only; in bb: bb's own scheme, ported.*
+    *Since Update 62 the kernel is bb-ref's own code: `base/wasm/mont29.rs` behind bb-ref's `MontConfig` impls in `base/wasm/field.rs` (2^261 stored domain), with arkworks' `Fp` container unchanged and no vendored crate. The move itself was −3.8% wasm instructions (the kernel calls lost a layer of generic dispatch).*
 4. **`bbkernel`: bb's `VectorField` C++ kernels compiled with the wasi-sdk and linked into the
    module** (`csrc/`; bb's memory barriers survive because they are bb's bytes). `axpy` 42.8 →
    33.7 ns/elt; the MSM drain runs at the streaming multiply rate. The benchmark wasm builds use it.
@@ -477,50 +484,46 @@ feature flags as upstream proposals for bb itself.
 
 ### Where the wasm code lives
 
-Since Update 61 every wasm-specific path is in `src/base/wasm/`: the stored-domain constants and
-SRS-cache conversion, the packed `axpy`/fold kernels and per-field constants (`packed.rs`), the
-packed MSM tree drain (`tree.rs`), and a `fallback.rs` with the same names for every other target.
-The five `cfg` lines in its `mod.rs` are the only target conditionals in the prover; callers ask
-`try_*` and take the scalar path on `false`. The C++ kernel path (`bbkernel`, #4) was removed in
-Update 60 after measuring at ~1% of the flow.
+Since Updates 61–62 every wasm-specific path is in `src/base/wasm/`: the bn254 fields as
+bb-ref's own `MontConfig` impls over arkworks' `Fp` container (`field.rs`: the 2^261 stored domain
+and its four constants), bb's 9×29-bit multiply (`mont29.rs`) and four-lane SIMD kernel
+(`quad261.rs`), bb-ref's own BN254-G1 (with GLV) and Grumpkin curve configs over those fields
+(`curves.rs`), the stored-domain constants and SRS-cache conversion (`mod.rs`), the packed
+`axpy`/fold kernels and per-field constants (`packed.rs`), the packed MSM tree drain (`tree.rs`),
+and a `fallback.rs` with the same names for every other target. Natively the field and curve types
+are exactly `ark_bn254`'s and `ark_grumpkin`'s: `mod.rs` re-exports their configs, and the aliases
+in `base/field.rs`/`base/group.rs` point at `base::wasm::{FrConfig, FqConfig, G1Config,
+GrumpkinConfig}`. G2 stays arkworks' type everywhere; `pairing_check` moves G1 points across
+through their canonical coordinates. The `cfg` lines in `wasm/mod.rs` are the only target
+conditionals in the prover; callers ask `try_*` and take the scalar path on `false`. The C++ kernel
+path (`bbkernel`, #4) was removed in Update 60 after measuring at ~1% of the flow, and the vendored
+ark-ff in Update 62.
 
-### Why ark-ff is vendored, and what it would take not to
+### Why ark-ff was vendored, and how the fork was retired
 
-`vendor/ark-ff` is upstream 0.6.0 (10,274 lines) plus 1,441 lines of ours, reached through
-`[patch.crates-io]`. The delta, exactly (`diff -r` against the registry copy):
+Until 2026-09-07 `vendor/ark-ff` was upstream 0.6.0 (10,274 lines) plus 1,441 lines of ours behind
+`[patch.crates-io]`: ~40 `#[inline(always)]` attributes on the `Fp` operator and `FpConfig` wrappers
+(#2), 30 lines of 2^261-domain constants, and ~1,400 lines of wasm kernels hooked into
+`MontBackend` (#3). Neither half needed the fork:
 
-| Change | Lines | Why it had to be inside the crate |
-|---|---|---|
-| `#[inline]` → `#[inline(always)]` on the `Fp` operator wrappers (`fields/arithmetic.rs`, 21 sites) and the `FpConfig`/`MontBackend` wrappers (`fields/models/fp/mod.rs`, 17 sites); `mod montgomery_backend` made `pub` | ~40 | an inlining attribute has to sit on the callee. The outlined chain (`Fp::mul` → `P::mul_assign` → `MontConfig::mul_assign`) lives entirely inside ark-ff, so no wrapper type of ours can force it; fat LTO + one codegen unit was measured flat twice (trap above). −31G instructions, −5% chonk (#2). |
-| `BigInt::montgomery_r_wasm261` / `montgomery_r2_wasm261` (`biginteger/mod.rs`) | 30 | constants of the 2^261 stored domain |
-| `wasm_mont` (scalar 9×29 Montgomery, straight-lined), `quad256::QuadFp` (SIMD pack/unpack), `quad261` (bb's 4-lane kernel) and the `cfg(wasm)` hooks in `MontBackend` (`R`, `R2`, `mul_assign`, `square_in_place`, `sum_of_products`) | ~1,400 | on wasm the *stored* element is `a·2^261 mod p` (bb's form), so the Montgomery constants and the multiply change together |
+- **Inlining (measured, LADDER Update 58).** With upstream's attributes restored, the
+  `ecdsar1+transfer_0` flow executes +3.2% instructions natively and +0.4% under V8; `-C
+  llvm-args=-inline-threshold=1000` recovers two thirds natively at +33% binary size and hurts wasm.
+  The attributes were dropped with the fork; the flag is available if the native 3% ever matters.
+- **The wasm form (landed, Update 62).** `MontConfig` is a public trait whose `R`, `R2`,
+  `mul_assign`, `square_in_place`, `sum_of_products`, `inverse`, `from_bigint` and `into_bigint` are
+  all overridable, so bb-ref's own `impl MontConfig<4>` for Fr and Fq (`base/wasm/field.rs`) carries
+  the 2^261 domain and bb's kernel with arkworks untouched. The one piece the fork patched that an
+  impl cannot reach — the const-context constructor `Fp::new`, hence every `MontFp!` — is handled
+  by choosing `R2 = 2^517 mod p`: that constructor multiplies by `R2` while dividing by 2^256, so
+  constants land in the 2^261 form; the runtime paths that also used `R2` (`from_bigint`,
+  `inverse`) are overridden to use `2^522 mod p` instead. The price was own field *types* on wasm,
+  hence own BN254-G1 and Grumpkin configs (`curves.rs`, ~150 lines of arkworks' constants) and
+  re-pointing ~60 direct `ark_bn254::`/`ark_grumpkin::` uses to the base aliases; G2 and the pairing
+  stay arkworks' through a canonical-coordinate conversion. Natively nothing changed: the aliases
+  resolve to arkworks' own configs, so `Fr` *is* `ark_bn254::Fr`.
 
-Neither half was literally the only way; vendoring was the shortest.
-
-- **Inlining — measured (LADDER Update 58).** With upstream's attributes restored and the kernel kept, the
-  `ecdsar1+transfer_0` flow at 8 threads executes +3.2% instructions natively (133.7 vs 129.5 G; `call
-  mul_assign` sites 608 vs 43) and +0.4% under V8 (342.6 vs 341.2 G host instructions). Adding
-  `-C llvm-args=-inline-threshold=1000` gets native to +1.2% (131.0 G) at +33% binary size and makes wasm
-  worse (+1.5%, a 16.2 MB module against 11.3). So this half of the fork is worth ~3% native instructions
-  and nothing on wasm; a build flag recovers two thirds of the native part. PGO (native only; no wasm32
-  profiler runtime) is the untested remainder. Upstreaming the ~40 lines to arkworks is a one-file PR.
-- **The wasm form.** `MontConfig` is a public trait whose `R`, `R2`, `mul_assign`, `square_in_place` and
-  `sum_of_products` are overridable, so a hand-written `impl MontConfig<4> for FrConfig`/`FqConfig` in
-  bb-ref could carry the kernels with ark-ff untouched. The cost is that the field *type* changes
-  (`Fp<MontBackend<OurConfig, 4>, 4>` is not `ark_bn254::Fr`), so the BN254 and Grumpkin curve configs
-  and the BN pairing config (`ark-bn254` is ~600 lines of constants) have to be redefined over the new
-  types, and the few direct `ark_bn254::` references (`base/wasm/`)
-  re-pointed. The earlier objection — "`Fp` derives `Eq` on raw storage, so coarse forms break it" —
-  applied to the lane-packed, non-canonical design that was abandoned, not to the landed canonical
-  2^261 form. One piece an own `MontConfig` cannot reach: the fork's `Fp::new` const constructor applies a
-  `·2^5` correction so `MontFp!` constants land in the 2^261 domain. Without the fork, either store in the
-  2^256 domain on wasm (the 8×2^29 + 1×2^24 kernel of 96bf2ac; the ladder's 63.7 vs 61.9 ns/mul also
-  includes straight-lining, so the domain's own cost is ≤3% and unmeasured) or define every constant as raw
-  limbs and never use `MontFp!`.
-
-If the vendoring itself is the objection, in order of cost: (1) move the fork out of tree —
-`[patch.crates-io] ark-ff = { git = "<fork>", rev = "<sha>" }` on a branch of arkworks `v0.6.0`: the
-same 1,441-line diff becomes a reviewable branch, 11,715 in-tree lines go, nothing changes
-behaviourally; (2) own `MontConfig` + curve configs (~800 lines, byte-identical proofs required) to
-retire the kernel half and, with it, the patch — the attribute half costs nothing on wasm and ~3%
-instructions natively, of which `-inline-threshold` recovers two thirds as a build flag.
+Net: the vendored crate (11,715 lines) is gone, the wasm module is 2.4% smaller and executes 3.8%
+fewer instructions (the kernel calls lost a layer of generic dispatch), proofs are byte-identical,
+and every field and curve constant is cross-checked against arkworks' own types in the module's
+tests.

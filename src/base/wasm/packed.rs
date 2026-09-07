@@ -3,10 +3,10 @@
 //! directly; callers in generic code dispatch by `TypeId` (only bn254 Fr/Fq have packed forms)
 //! and fall back to their scalar loops otherwise.
 
+use super::mont29;
+use super::quad261::{self, QuadFp};
 use crate::base::field::NativeField;
 use crate::base::{Fq, Fr};
-use ark_ff::fields::models::fp::montgomery_backend::quad261::{self, QuadFp};
-use ark_ff::fields::models::fp::montgomery_backend::wasm_mont;
 use core::any::TypeId;
 use std::sync::LazyLock;
 
@@ -20,8 +20,8 @@ unsafe impl Send for Kc {}
 unsafe impl Sync for Kc {}
 
 fn make_kc(modulus: [u64; 4], rinv29: [u32; 9]) -> Kc {
-    let p29 = wasm_mont::to29(&modulus);
-    let inv = wasm_mont::inv29(p29[0]);
+    let p29 = mont29::to29(&modulus);
+    let inv = mont29::inv29(p29[0]);
     Kc {
         c: quad261::Consts::new(&rinv29, &p29, inv),
         p29,
@@ -43,7 +43,7 @@ impl QuadConsts for Fr {
                     0xb85045b68181585d,
                     0x30644e72e131a029,
                 ],
-                wasm_mont::FR_RINV29,
+                quad261::FR_RINV29,
             )
         });
         &K
@@ -59,7 +59,7 @@ impl QuadConsts for Fq {
                     0xb85045b68181585d,
                     0x30644e72e131a029,
                 ],
-                wasm_mont::FQ_RINV29,
+                quad261::FQ_RINV29,
             )
         });
         &K

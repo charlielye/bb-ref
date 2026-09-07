@@ -9,16 +9,16 @@ fn main() {
     let iters: usize = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(5);
     let n = 1usize << log_n;
     let mut rng = ark_std::test_rng();
-    let points = ark_bn254::G1Projective::normalize_batch(
+    let points = bb_ref::base::G1Projective::normalize_batch(
         &(0..n)
-            .map(|_| ark_bn254::G1Projective::rand(&mut rng))
+            .map(|_| bb_ref::base::G1Projective::rand(&mut rng))
             .collect::<Vec<_>>(),
     );
     let bits: u32 = std::env::args().nth(3).and_then(|s| s.parse().ok()).unwrap_or(254);
-    let scalars: Vec<ark_bn254::Fr> = (0..n)
+    let scalars: Vec<bb_ref::base::Fr> = (0..n)
         .map(|_| {
             use ark_ff::PrimeField;
-            let mut b = ark_bn254::Fr::rand(&mut rng).into_bigint();
+            let mut b = bb_ref::base::Fr::rand(&mut rng).into_bigint();
             for (k, limb) in b.0.iter_mut().enumerate() {
                 let lo = (k * 64) as u32;
                 if lo >= bits {
@@ -27,7 +27,7 @@ fn main() {
                     *limb &= (1u64 << (bits - lo)) - 1;
                 }
             }
-            ark_bn254::Fr::from_bigint(b).unwrap()
+            bb_ref::base::Fr::from_bigint(b).unwrap()
         })
         .collect();
 
@@ -37,7 +37,7 @@ fn main() {
             "ours",
             (|p: &[_], s: &[_]| bb_ref::base::msm::msm(p, s)) as fn(&[_], &[_]) -> _,
         ),
-        ("ark ", |p, s| ark_bn254::G1Projective::msm_unchecked(p, s)),
+        ("ark ", |p, s| bb_ref::base::G1Projective::msm_unchecked(p, s)),
     ] {
         if skip_ark && name == "ark " {
             continue;

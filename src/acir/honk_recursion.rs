@@ -57,7 +57,7 @@ fn mock_vk_fields(acir_public_inputs: usize, ipa: bool) -> Vec<Fr> {
         Fr::from((acir_public_inputs + io_size) as u64),
         Fr::from(1u64), // NUM_ZERO_ROWS
     ];
-    let one = <ark_bn254::G1Affine as Transcriptable<Fr>>::to_fields(&ark_bn254::G1Affine::generator());
+    let one = <crate::base::G1Affine as Transcriptable<Fr>>::to_fields(&crate::base::G1Affine::generator());
     for _ in 0..ULTRA.layout().num_precomputed {
         fields.extend_from_slice(&one);
     }
@@ -70,7 +70,7 @@ fn mock_proof_fields(acir_public_inputs: usize, ipa: bool) -> Vec<Fr> {
     let lay = ULTRA.layout();
     let num_witness_comms = lay.num_unshifted() - lay.num_precomputed;
     let num_all = lay.num_unshifted() + lay.num_shifted();
-    let one = <ark_bn254::G1Affine as Transcriptable<Fr>>::to_fields(&ark_bn254::G1Affine::generator());
+    let one = <crate::base::G1Affine as Transcriptable<Fr>>::to_fields(&crate::base::G1Affine::generator());
     let mut fields = Vec::new();
     // Oink: ACIR public inputs (random), the IO public inputs from a scratch `add_default`, and
     // the witness commitments.
@@ -315,7 +315,7 @@ pub fn process_honk_recursion_constraints(
 /// bb `create_mock_honk_vk<MegaZKFlavor, HidingKernelIO>`.
 fn mock_mega_zk_vk_fields(acir_public_inputs: usize) -> Vec<Fr> {
     use crate::honk::flavor::MEGA_ZK;
-    let one = <ark_bn254::G1Affine as Transcriptable<Fr>>::to_fields(&ark_bn254::G1Affine::generator());
+    let one = <crate::base::G1Affine as Transcriptable<Fr>>::to_fields(&crate::base::G1Affine::generator());
     let mut fields = vec![
         Fr::from(MEGA_ZK.virtual_log_n as u64),
         Fr::from((acir_public_inputs + crate::chonk::verifier::HIDING_KERNEL_PUBLIC_INPUTS_SIZE) as u64),
@@ -338,7 +338,7 @@ fn mock_chonk_proof_fields(acir_public_inputs: usize) -> Vec<Fr> {
         CONST_TRANSLATOR_LOG_N, FULL_CIRCUIT_ENTITIES, LOG_MINI_CIRCUIT_SIZE, NUM_MINICIRCUIT_EVALUATIONS,
     };
     use crate::honk::flavor::MEGA_ZK;
-    let bn_one = <ark_bn254::G1Affine as Transcriptable<Fr>>::to_fields(&ark_bn254::G1Affine::generator());
+    let bn_one = <crate::base::G1Affine as Transcriptable<Fr>>::to_fields(&crate::base::G1Affine::generator());
     let gr_one = <GrumpkinAffine as Transcriptable<Fr>>::to_fields(&GrumpkinAffine::generator());
     let mut fields = Vec::new();
 
@@ -348,7 +348,7 @@ fn mock_chonk_proof_fields(acir_public_inputs: usize) -> Vec<Fr> {
     }
     fields.extend(std::iter::repeat(Fr::from(0u64)).take(8));
     let default_comm =
-        <ark_bn254::G1Affine as Transcriptable<Fr>>::to_fields(&crate::stdlib::io::default_ecc_commitment());
+        <crate::base::G1Affine as Transcriptable<Fr>>::to_fields(&crate::stdlib::io::default_ecc_commitment());
     for _ in 0..5 {
         fields.extend_from_slice(&default_comm);
     }

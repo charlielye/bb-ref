@@ -5,8 +5,11 @@ use ark_ff::{BigInt, BigInteger, PrimeField};
 use std::fmt::Debug;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-pub type Fr = ark_bn254::Fr;
-pub type Fq = ark_bn254::Fq;
+/// bn254 scalar field. Arkworks' own type natively; on wasm the same `Fp` container over
+/// bb-ref's `MontConfig` (`base/wasm`).
+pub type Fr = ark_ff::Fp256<ark_ff::MontBackend<crate::base::wasm::FrConfig, 4>>;
+/// bn254 base field (Grumpkin's scalar field); as above.
+pub type Fq = ark_ff::Fp256<ark_ff::MontBackend<crate::base::wasm::FqConfig, 4>>;
 
 /// The native prime fields values can live in, with the conversions relation bodies need at no
 /// per-call cost (`F::from(u64)` is a Montgomery multiplication).

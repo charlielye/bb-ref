@@ -300,14 +300,14 @@ fn fq_from_bytes(b: &[u8; 32]) -> Result<Fq, String> {
 
 /// y from x on `y^2 = x^3 + b`, with the branch the sign bit selected.
 fn recover_y_bn254(x: Fq, sign: bool) -> Result<Fq, String> {
-    let b = <ark_bn254::g1::Config as ark_ec::short_weierstrass::SWCurveConfig>::COEFF_B;
+    let b = <crate::base::G1Config as ark_ec::short_weierstrass::SWCurveConfig>::COEFF_B;
     let y2 = x * x * x + b;
     let y = y2.sqrt().ok_or("proof_compression: BN254 point not on curve")?;
     Ok(if y_is_negative(&y) != sign { -y } else { y })
 }
 
 fn recover_y_grumpkin(x: Fr, sign: bool) -> Result<Fr, String> {
-    let b = <ark_grumpkin::GrumpkinConfig as ark_ec::short_weierstrass::SWCurveConfig>::COEFF_B;
+    let b = <crate::base::GrumpkinConfig as ark_ec::short_weierstrass::SWCurveConfig>::COEFF_B;
     let y2 = x * x * x + b;
     let y = y2.sqrt().ok_or("proof_compression: Grumpkin point not on curve")?;
     Ok(if y_is_negative(&y) != sign { -y } else { y })
@@ -411,7 +411,7 @@ mod roundtrip_tests {
         c[0] = 0x7f; // clear the sign bit so it parses as a scalar, not a point
         assert!(decompress_chonk_proof(&c, 1).is_err());
         // an x-coordinate that is not on the curve, in the first commitment slot
-        let b = <ark_bn254::g1::Config as ark_ec::short_weierstrass::SWCurveConfig>::COEFF_B;
+        let b = <crate::base::G1Config as ark_ec::short_weierstrass::SWCurveConfig>::COEFF_B;
         let off_curve_x = (1u8..)
             .map(Fq::from)
             .find(|x| (*x * x * x + b).sqrt().is_none())

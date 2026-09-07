@@ -4,9 +4,9 @@
 //! `base/msm.rs`.
 
 use super::packed::QuadConsts;
+use super::quad261::{self, QuadFp};
 use crate::base::msm::batch_invert_nonzero;
 use ark_ec::short_weierstrass::{Affine, SWCurveConfig};
-use ark_ff::fields::models::fp::montgomery_backend::quad261::{self, QuadFp};
 use ark_ff::{AdditiveGroup, Field};
 
 pub struct PackedTree<P: SWCurveConfig> {

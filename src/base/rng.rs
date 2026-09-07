@@ -262,7 +262,7 @@ mod tests {
     #[test]
     fn random_affine_is_on_curve() {
         for _ in 0..4 {
-            let p = global_random_affine::<ark_bn254::g1::Config>();
+            let p = global_random_affine::<crate::base::G1Config>();
             assert!(p.is_on_curve());
         }
     }

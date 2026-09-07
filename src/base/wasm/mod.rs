@@ -1,12 +1,31 @@
-//! Every wasm-specific code path of the prover, behind one boundary. The wasm build stores field
-//! elements in the 2^261 Montgomery domain (bb's wasm form; the vendored field kernel) and, with
-//! simd128, runs bb's four-lane 29-bit kernels (`quad261`) for the streaming polynomial ops and the
-//! MSM tree drain. Callers stay `cfg`-free: the same names exist on every target, and the native
-//! fallbacks answer `false`/`None` so the generic scalar paths run.
+//! Every wasm-specific code path of the prover, behind one boundary. On wasm the bn254 fields are
+//! bb-ref's own `MontConfig`s (`field.rs`: the 2^261 stored domain and bb's 9×29-bit multiply in
+//! `mont29.rs`) and the curves bb-ref's own configs over them (`curves.rs`); with simd128, bb's
+//! four-lane kernels (`quad261.rs`) drive the streaming polynomial ops (`packed.rs`) and the MSM
+//! tree drain (`tree.rs`). Every other target uses arkworks' own bn254/grumpkin configs, so the
+//! types there are exactly arkworks'. Callers stay `cfg`-free: the same names exist on every
+//! target, and the native fallbacks answer `false`/`None` so the generic scalar paths run.
 
 use crate::base::Fq;
 
-/// Field elements are stored as `a·2^261 mod p` on wasm and as `a·2^256 mod p` elsewhere.
+#[cfg(target_family = "wasm")]
+mod curves;
+#[cfg(target_family = "wasm")]
+mod field;
+#[cfg(target_family = "wasm")]
+mod mont29;
+#[cfg(not(target_family = "wasm"))]
+pub use ark_bn254::{g1::Config as G1Config, FqConfig, FrConfig};
+#[cfg(not(target_family = "wasm"))]
+pub use ark_grumpkin::GrumpkinConfig;
+#[cfg(target_family = "wasm")]
+pub use {
+    curves::{G1Config, GrumpkinConfig},
+    field::{FqConfig, FrConfig},
+};
+
+/// Field elements are stored as `a·2^261 mod p` on wasm (`field.rs`) and as `a·2^256 mod p`
+/// elsewhere (arkworks' configs).
 pub const STORED_DOMAIN_261: bool = cfg!(target_family = "wasm");
 
 /// The GLV companion table `(β·x, −y)` per SRS point pays off where the per-entry multiply at
@@ -30,6 +49,8 @@ pub fn stored_to_shared() -> Option<Fq> {
 
 #[cfg(all(target_family = "wasm", target_feature = "simd128"))]
 mod packed;
+#[cfg(all(target_family = "wasm", target_feature = "simd128"))]
+mod quad261;
 #[cfg(all(target_family = "wasm", target_feature = "simd128"))]
 mod tree;
 #[cfg(all(target_family = "wasm", target_feature = "simd128"))]

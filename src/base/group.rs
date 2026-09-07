@@ -5,16 +5,21 @@ use super::codec::{FromChallenge, Transcriptable};
 use super::field::{FieldLike, Fq, Fr};
 use super::poseidon2::{Hasher, Poseidon2};
 use ark_ec::pairing::Pairing;
-use ark_ec::short_weierstrass::{Affine, SWCurveConfig};
+use ark_ec::short_weierstrass::{Affine, Projective, SWCurveConfig};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{One, PrimeField};
 use std::fmt::Debug;
 
-/// Spelled via the concrete curve config (not ark's projected alias) so coherence can tell it apart
-/// from other `Affine<_>` instantiations.
-pub type G1Affine = Affine<ark_bn254::g1::Config>;
+/// The curve configs: arkworks' own natively, bb-ref's own over the wasm fields on wasm
+/// (`base/wasm`). Spelled via the concrete config (not ark's projected alias) so coherence can
+/// tell the instantiations apart.
+pub use crate::base::wasm::{G1Config, GrumpkinConfig};
+pub type G1Affine = Affine<G1Config>;
+pub type G1Projective = Projective<G1Config>;
+/// G2 stays arkworks' type on every target: it only ever meets the pairing.
 pub type G2Affine = ark_bn254::G2Affine;
-pub type GrumpkinAffine = Affine<ark_grumpkin::GrumpkinConfig>;
+pub type GrumpkinAffine = Affine<GrumpkinConfig>;
+pub type GrumpkinProjective = Projective<GrumpkinConfig>;
 
 pub trait GroupLike<F: FieldLike>: Clone + Debug + PartialEq {
     type Native: AffineRepr;
@@ -211,7 +216,18 @@ pub type G2Points = [G2Affine; 2];
 
 /// `e(p0, [1]_2) * e(p1, [x]_2) == 1`.
 pub fn pairing_check(p0: G1Affine, p1: G1Affine, g2: &G2Points) -> bool {
-    ark_bn254::Bn254::multi_pairing([p0, p1], [g2[0], g2[1]]).0.is_one()
+    // The pairing runs on arkworks' own bn254 types; G1 points cross over through their canonical
+    // coordinates (an identity natively, a stored-domain change on wasm).
+    let cross = |p: G1Affine| -> ark_bn254::G1Affine {
+        match p.xy() {
+            None => ark_bn254::G1Affine::zero(),
+            Some((x, y)) => ark_bn254::G1Affine::new_unchecked(
+                ark_bn254::Fq::from_bigint(x.into_bigint()).unwrap(),
+                ark_bn254::Fq::from_bigint(y.into_bigint()).unwrap(),
+            ),
+        }
+    };
+    ark_bn254::Bn254::multi_pairing([cross(p0), cross(p1)], [g2[0], g2[1]]).0.is_one()
 }
 
 #[cfg(test)]

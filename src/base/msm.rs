@@ -1268,8 +1268,8 @@ mod tests {
     #[test]
     fn matches_ark() {
         for n in [1, 100, 1000, 5000, 70000] {
-            check::<ark_bn254::g1::Config>(n, |_, _| ());
-            check::<ark_grumpkin::GrumpkinConfig>(n, |_, _| ());
+            check::<crate::base::G1Config>(n, |_, _| ());
+            check::<crate::base::GrumpkinConfig>(n, |_, _| ());
         }
     }
 
@@ -1277,12 +1277,12 @@ mod tests {
     fn edge_cases() {
         // Zero scalars, tiny scalars, duplicate points (equal pairs in one bucket), inverse points,
         // and infinity inputs must all agree with ark.
-        check::<ark_bn254::g1::Config>(1000, |points, scalars| {
+        check::<crate::base::G1Config>(1000, |points, scalars| {
             for i in 0..200 {
                 scalars[i] = ark_ff::Zero::zero();
             }
             for i in 200..300 {
-                scalars[i] = ark_bn254::Fr::from((i % 7) as u64);
+                scalars[i] = crate::base::Fr::from((i % 7) as u64);
             }
             for i in 300..400 {
                 points[i] = points[0];

@@ -44,7 +44,7 @@ fn hash_to_curve(seed: &[u8]) -> GrumpkinAffine {
 }
 
 fn derive_from_x_coordinate(x: Fr, sign_bit: bool) -> Option<GrumpkinAffine> {
-    let yy = x.square() * x + ark_grumpkin::GrumpkinConfig::COEFF_B;
+    let yy = x.square() * x + crate::base::GrumpkinConfig::COEFF_B;
     let mut y = yy.sqrt()?;
     if (u256(&y).0[0] & 1 == 1) != sign_bit {
         y = -y;

@@ -307,7 +307,7 @@ mod tests {
     use crate::base::grumpkin_endo;
     use ark_ec::VariableBaseMSM;
     use ark_ff::UniformRand;
-    use ark_grumpkin::GrumpkinConfig;
+    use crate::base::GrumpkinConfig;
 
     #[test]
     fn two_round_fold_matches_projective() {
@@ -318,15 +318,15 @@ mod tests {
         let endo = grumpkin_endo();
         for _ in 0..4 {
             // 127-bit challenges, like the transcript's.
-            let mask = |v: ark_grumpkin::Fr| {
+            let mask = |v: crate::base::Fq| {
                 let mut b = v.into_bigint();
                 b.0[1] &= (1 << 63) - 1;
                 b.0[2] = 0;
                 b.0[3] = 0;
-                ark_grumpkin::Fr::from_bigint(b).unwrap()
+                crate::base::Fq::from_bigint(b).unwrap()
             };
-            let u1 = mask(ark_grumpkin::Fr::rand(&mut rng));
-            let u2 = mask(ark_grumpkin::Fr::rand(&mut rng));
+            let u1 = mask(crate::base::Fq::rand(&mut rng));
+            let u2 = mask(crate::base::Fq::rand(&mut rng));
             let folded = fold_points_two_rounds(&g, &u1, &u2, endo);
             let q = n / 4;
             let u12 = u1 * u2;
@@ -334,7 +334,7 @@ mod tests {
                 let direct: G = g[i] * u12 + g[i + q] * u1 + g[i + 2 * q] * u2 + G::from(g[i + 3 * q]);
                 assert_eq!(G::from(folded[i]), direct, "output {i}");
             }
-            let scalars = vec![u12, u1, u2, ark_grumpkin::Fr::one()];
+            let scalars = vec![u12, u1, u2, crate::base::Fq::one()];
             let pts = vec![g[5], g[5 + q], g[5 + 2 * q], g[5 + 3 * q]];
             assert_eq!(G::from(folded[5]), G::msm_unchecked(&pts, &scalars));
         }
