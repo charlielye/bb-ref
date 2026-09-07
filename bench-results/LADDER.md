@@ -1579,3 +1579,27 @@ behind `MontConfig`; natively the attributes are worth ~3% instructions, ~2% of 
 recovers. The fork is a convenience, not a requirement. Spike left to do: the own-`MontConfig` port,
 gated on the byte-exact suites, the wasm/native proof `cmp` and a same-session wasm A/B.
 
+## Update 59: what `bbkernel` is worth today (2026-09-07)
+
+Revisiting `csrc/bb_kernel.cpp` — bb's `VectorField` kernels compiled with the wasi-sdk from the bb
+checkout and linked in (MSM stage-6a drain, packed-tree drain, IPA fold passes, axpy/chords). Same
+flow and harness as Update 58; 8 rayon threads pinned to 16 cores (node's own threads need the
+headroom — on 8 cores identical runs were bimodal, 304 vs 341 G); `node --no-liftoff` so V8 compiles
+TurboFan-only and instruction counts are deterministic (dynamic tiering varied ±5% between identical
+runs; the up-front compile adds ~45 G and ~3 s to every variant alike). Identical proofs throughout.
+
+| module / switch | instr | cycles | cpu | wall best |
+|---|---|---|---|---|
+| bbkernel module, C 6a drain (the benchmarked build) | 388.5 G | 140.9 G | 39.4 s | 9.66 s |
+| bbkernel module, `BBREF_NO_C6A=1` (Rust drain; C fold/axpy kept) | 388.8 G (+0.1%) | 144.6 G | 40.4 s (+2.5%) | 9.92 s |
+| plain module, no `bbkernel` (pure Rust: `quad261` kernels throughout) | 392.1 G (+0.9%) | 142.6 G | 39.8 s (+1.0%) | 9.75 s (+0.9%) |
+
+Production shape (dynamic tiering, 16 cores): 341.2 / 343.3 / 335.5 G and 6.29 / 6.25 / 6.37 s —
+the same within noise. When the route landed (Updates 2–3) it was the answer to the mul gap; since
+then the Rust `quad261` port of bb's kernel (971a1e6), the packed drain (#10), dedup (#37) and the
+tiny-MSM paths took the same ground from the Rust side, and the C object now buys ~1% on this flow.
+Its cost: 676 lines of C++ glue plus bb's `vector_field_wasm.cpp` compiled at build time (a hard
+dependency on the bb source checkout and `/opt/wasi-sdk`), build.rs, the Rust bindings, and 26 of
+the 48 wasm `cfg` sites (`feature = "bbkernel"` in fold.rs, msm.rs, packed.rs). Not re-measured on
+bbbench (box stopped): confirm across the 11 flows there before deleting if the last 1% matters.
+

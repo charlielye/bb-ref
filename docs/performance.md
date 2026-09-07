@@ -138,6 +138,7 @@ plus ≈12,800 vendored (ark-ff, whose own change is a handful of attributes).
    33.7 ns/elt; the MSM drain runs at the streaming multiply rate. The benchmark wasm builds use it.
    H C W.
     *LoC +423 (build.rs, csrc glue, Rust bindings) + bb's C++ kernel sources; shape: wasm-only, feature-gated (`bbkernel`); in bb: bb's code, linked.*
+    *Re-measured 2026-09-07 (LADDER Update 59): ~1% of the flow after #10, #37 and the Rust `quad261` port took the same ground; a removal candidate — it is the only build-time dependency on the bb source tree and the wasi-sdk.*
 5. **Canonical bytes → field element in one Montgomery multiply.** `from_bytes_be` went through
    ark's `from_be_bytes_mod_order`, whose full-width path reduces in several multiplies; every ACIR
    coefficient is canonical, so `from_bigint` is exact (non-canonical input still falls back).
