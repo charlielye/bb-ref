@@ -1725,3 +1725,58 @@ restore them as frozen wasm objects checked into the repo (no bb-tree or sysroot
 assembler at most), or close the Rust drain's gap to them. The tables of record stay at def1d24
 until the wasm path is settled; native is at 0.92x / 0.95x with the flag.
 
+## Update 64: what the C drains were buying — V8's baseline tier (2026-09-08)
+
+Chasing Update 63's wasm loss on bbbench, `ecdsar1+transfer_0`, 8 threads, proving-only from
+`BBREF_BENCH=1`, five runs per module unless noted, production tiering (plain `node`) unless noted.
+
+**It is not TurboFan code quality.** With `--no-liftoff` (V8 compiles every function with TurboFan
+before running it; the compile then lands inside the timed scopes, which is why these absolute
+numbers are higher) def1d24 and HEAD are equal: ChonkProve 3.20/3.22/3.22 s vs 3.23/3.24/3.25 s.
+Under production tiering HEAD is +8.5% in ChonkProve and +4% in accumulate. Same code with and
+without the C drains (b273bd1's `bbkernel` release module vs the step-1 module): 4.667 vs 5.026 s
+median, bucket accumulation 0.575 → 0.662, `TripleIPA` 0.347 → 0.452, commits 1.087 → 1.215.
+
+**It is not the field-side shape either.** Six lto modules of HEAD's code under tiering, median of
+five: HEAD 4.902 s; kernel monomorphised per field (constants as immediates) 4.886; LLVM
+`-inline-threshold` 500 / 1000 4.873 / 4.937; both 4.906; def1d24 4.642. Within 1% of each other.
+
+**Force-inlining the Rust SIMD kernels made it worse.** The Rust drains call `quad261::mont_mul`,
+`add`, `sub`, `QuadFp::pack/unpack` as separate wasm functions (no inline attribute, 22 call sites);
+the hypothesis was that Liftoff pays those calls and the monolithic C functions do not. With
+`#[inline(always)]` on the five (no outlined copies remain, module +1%): **5.363 s** — bucket
+accumulation 0.785 s against 0.641 (HEAD) and 0.453 (def1d24). Liftoff is a single-pass compiler
+with a trivial register allocator: a large SIMD body with many simultaneously live `v128` values
+spills relentlessly, and a larger function also waits longer for its TurboFan replacement.
+
+**Working explanation.** bb's `VectorField` body is written with empty-asm barriers that stop
+clang/LLVM from interleaving the independent lane chains, so live ranges stay short; Liftoff copes
+with that order, and TurboFan does equally well with either order (hence the `--no-liftoff` tie).
+Rust cannot pin an order on wasm32: `asm!` is unavailable for the target, `black_box`/volatile
+approximations are rescheduled (Update 2 era), and the flow spends enough time in baseline code —
+thousands of short MSMs, eight provers competing with TurboFan's background threads on 16 cores —
+for the difference to be 7.7% of proving. On the Zen 3 workstation (192 logical CPUs, so the
+compile threads never wait) the same modules differ by ~1%, which is what Update 59 measured.
+**LLVM flags do not reproduce the order.** Same harness, HEAD's code, lto profile, median of five:
+
+| module | proving | note |
+|---|---|---|
+| def1d24 (C drains) | 4.627 s | reference |
+| HEAD | 4.901 s | |
+| `-C llvm-args=-pre-RA-sched=source` | 4.823 s | −1.6%, module +0.4% |
+| `-C llvm-args=-enable-misched=false -enable-post-misched=false` | 4.885 s | module differs by bytes only |
+| `opt-level = 2` for the lto profile | 4.851 s | −1.0%, module −14% |
+| `-C llvm-args=-unroll-threshold=0` | 6.294 s | +28%, the unrolling was doing real work |
+| `#[inline(always)]` on the five SIMD kernel entry points | 5.363 s | +9%, see above |
+
+Proofs identical throughout. Best case leaves 4.2% of the 5.9% gap to def1d24 on the table.
+
+**Conclusion.** The C drains' value is their instruction order under V8's baseline tier, and neither
+Rust attributes nor LLVM's scheduling knobs reach it from source. What does reproduce it is
+clang's bytes: either the C sources compiled at build time (the `bbkernel` path of Update 2, needing
+the bb checkout and a wasi-sdk) or those objects frozen in the repo and linked by `build.rs` (no
+build-time dependency beyond the linker; an object boundary is a call boundary, which is how the C
+path always worked). Hand-restructuring the Rust kernels to shorten live ranges (memory round-trips
+as barriers) is untested research. The native side is settled (Update 63); the wasm decision and
+the final tables of record wait on the owner's choice between those two forms.
+

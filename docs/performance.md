@@ -145,7 +145,7 @@ plus ≈12,800 vendored (ark-ff, whose own change is a handful of attributes).
    33.7 ns/elt; the MSM drain runs at the streaming multiply rate. The benchmark wasm builds use it.
    H C W.
     *LoC +423 (build.rs, csrc glue, Rust bindings) + bb's C++ kernel sources; shape: wasm-only, feature-gated (`bbkernel`); in bb: bb's code, linked.*
-    *Re-measured 2026-09-07 on the local Zen 3 workstation at ~1% and removed (Updates 59–60) — then measured on bbbench (Zen 4, the reference) at **7.7% of wasm proving** (Update 63: bucket accumulation +15%, `TripleIPA` +30%, commits +12% without it). The removal is under review; see Update 63 for the options. Kernel-level wasm decisions must be measured on bbbench.*
+    *Re-measured 2026-09-07 on the local Zen 3 workstation at ~1% and removed (Updates 59–60) — then measured on bbbench (Zen 4, the reference) at **7.7% of wasm proving** (Update 63: bucket accumulation +15%, `TripleIPA` +30%, commits +12% without it). Update 64 traced the value to V8's baseline tier: with TurboFan-only compilation the Rust drains are equal, under production tiering clang's barrier-pinned instruction order is worth the 7.7%, and no Rust attribute or LLVM scheduling flag reproduces it (best −1.6%). Restoring the drains, as C compiled at build time or as frozen objects in the repo, is the owner's pending decision. Kernel-level wasm decisions must be measured on bbbench under production tiering.*
 5. **Canonical bytes → field element in one Montgomery multiply.** `from_bytes_be` went through
    ark's `from_be_bytes_mod_order`, whose full-width path reduces in several multiplies; every ACIR
    coefficient is canonical, so `from_bigint` is exact (non-canonical input still falls back).
