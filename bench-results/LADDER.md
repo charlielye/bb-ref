@@ -1780,3 +1780,34 @@ path always worked). Hand-restructuring the Rust kernels to shorten live ranges 
 as barriers) is untested research. The native side is settled (Update 63); the wasm decision and
 the final tables of record wait on the owner's choice between those two forms.
 
+## Update 65: the barriers are the mechanism — measured on bb's own kernel (2026-09-08)
+
+Not a guess any more. bb documents the intent in `vector_field.hpp` (5bb2fc9dd0): its `q1s1` kernel
+interleaves one scalar `i64` lane op with one `v128` quad op per statement, and 33 empty
+`asm volatile("" : "+r"(...))` barriers keep that interleaving in the emitted wasm, because "V8
+keeps v128 live-ranges short only when it sees scalar i64 ops interleaved with v128 ops" while
+"LLVM's WASM backend ... will hoist one before the other absent a barrier"; the `"+r"` form also
+stops CSE from turning nine fast `extmul_low/high_u32x4` into nine slow `i64x2.mul`. bb measured
+~30 vs ~33 ns per element.
+
+Test: the pre-removal tree (b273bd1, `bbkernel`) built twice with the wasi-sdk, once against bb's
+source and once against a copy with all 33 barrier expressions replaced by `((void)0)`. Same flow,
+production tiering, median of five instrumented runs:
+
+| module | proving | buckets | `TripleIPA` |
+|---|---|---|---|
+| def1d24 (table of record) | 4.605 s | 0.560 | 0.340 |
+| b273bd1 + bb's kernel, barriers intact | 4.610 s | 0.494 | 0.339 |
+| b273bd1 + bb's kernel, barriers removed | **4.858 s** | 0.519 | 0.379 |
+| HEAD (Rust drains) | 4.870 s | 0.581 | 0.436 |
+
+Removing the barriers from bb's own C++ costs 5.4% of proving and lands within 0.2% of the Rust
+drains. The C kernels' whole advantage is the barrier-pinned instruction order; the algorithm and
+the 5-wide shape contribute nothing beyond what the Rust 4-lane drains already deliver.
+
+Consequences: (1) Rust source cannot reproduce it on wasm32 — no `asm!` for the target, and every
+scheduler-side substitute (Update 64) failed; (2) it can only come back as bytes carrying that
+order: bb's objects compiled from its C++ (at build time, or frozen into the repo), or assembly we
+write and own for the inner kernels; (3) it is a baseline-tier (first-proof) effect — under
+`--no-liftoff` the drains tie — so a warm column belongs in the tables next to the cold one.
+
