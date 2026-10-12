@@ -5,7 +5,7 @@
 #   tools/ab_chonk.sh [--reps n] [--threads t] [--flows regex] name=path [name=path ...]
 #
 # Paths are on the bench host ($BENCH_HOST, default bbbench); a local path is rsync'd over first
-# (as ~/ab-bin/<name>). bb and bb-ref take the same CLI and seed. bb-ref's seeded proof is
+# (as ~/ab-bin/<name>.<content hash>). bb and bb-ref take the same CLI and seed. bb-ref's seeded proof is
 # thread-count independent and equals single-threaded bb's; bb's own seeded proof is NOT
 # deterministic above one thread (its parallel random-polynomial draws race on the engine), so
 # binaries named bb* are exempt and every other binary's proof must equal the golden in
@@ -36,9 +36,10 @@ REMOTE=()
 ssh "$HOST" mkdir -p ab-bin
 for b in "${BINS[@]}"; do
     name=${b%%=*} path=${b#*=}
-    if [ -e "$path" ]; then
-        rsync -az --checksum "$path" "$HOST:ab-bin/$name"
-        path="ab-bin/$name"
+    if [ -e "$path" ]; then  # content-addressed: concurrent runs reusing a name never clobber each other
+        remote="ab-bin/$name.$(sha256sum "$path" | cut -c1-12)"
+        rsync -az --checksum "$path" "$HOST:$remote"
+        path=$remote
     fi
     REMOTE+=("$name=$path")
 done
