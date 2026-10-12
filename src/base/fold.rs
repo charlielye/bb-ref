@@ -10,6 +10,8 @@
 //! handle equal, inverse, and infinity operands exactly, so no schedule simulation ("safe flags")
 //! is needed.
 
+use super::field::NativeField;
+use super::ifma::Chords;
 use super::msm::extract_bits;
 use ark_ec::short_weierstrass::{Affine, Projective, SWCurveConfig};
 use ark_ec::{AffineRepr, CurveGroup};
@@ -113,8 +115,25 @@ fn booth_digits(v: [u64; 2], negate: bool) -> [i8; NUM_WINDOWS] {
     out
 }
 
-/// One batched-affine pass: `acc[i] = 2·acc[i]`.
-pub(crate) fn pass_dbl<P: SWCurveConfig>(acc: &mut [Option<Affine<P>>], dens: &mut Vec<P::BaseField>) {
+/// One batched-affine pass: `acc[i] = 2·acc[i]`; with `chords`, on the AVX-512 IFMA kernel.
+pub(crate) fn pass_dbl<P: SWCurveConfig>(
+    acc: &mut [Option<Affine<P>>],
+    dens: &mut Vec<P::BaseField>,
+    chords: Option<&mut Chords<P::BaseField>>,
+) where
+    P::BaseField: NativeField,
+{
+    if let Some(q) = chords {
+        q.clear();
+        for a in acc.iter().flatten() {
+            q.push(a.x, a.y, a.x, a.y);
+        }
+        q.run(true);
+        for (a, k) in acc.iter_mut().flatten().zip(0..) {
+            *a = Affine::<P>::new_unchecked(q.ax[k], q.ay[k]);
+        }
+        return;
+    }
     dens.clear();
     for a in acc.iter().flatten() {
         dens.push(a.y.double());
@@ -133,12 +152,16 @@ pub(crate) fn pass_dbl<P: SWCurveConfig>(acc: &mut [Option<Affine<P>>], dens: &m
 }
 
 /// One batched-affine pass: `acc[i] += addend(i)`; equal, inverse, and infinity operands exact.
+/// With `chords`, the chord additions run on the AVX-512 IFMA kernel.
 pub(crate) fn pass_add<P: SWCurveConfig>(
     acc: &mut [Option<Affine<P>>],
     addend: impl Fn(usize) -> Option<Affine<P>>,
     dens: &mut Vec<P::BaseField>,
     kinds: &mut Vec<u8>,
-) {
+    mut chords: Option<&mut Chords<P::BaseField>>,
+) where
+    P::BaseField: NativeField,
+{
     const SKIP: u8 = 0;
     const SET: u8 = 1;
     const ADD: u8 = 2;
@@ -146,6 +169,9 @@ pub(crate) fn pass_add<P: SWCurveConfig>(
     const INF: u8 = 4;
     dens.clear();
     kinds.clear();
+    if let Some(q) = chords.as_mut() {
+        q.clear();
+    }
     for (i, a) in acc.iter().enumerate() {
         let kind = match (a, addend(i)) {
             (_, None) => SKIP,
@@ -158,6 +184,9 @@ pub(crate) fn pass_add<P: SWCurveConfig>(
                     } else {
                         INF
                     }
+                } else if let Some(c) = chords.as_mut() {
+                    c.push(p.x, p.y, q.x, q.y);
+                    ADD
                 } else {
                     dens.push(q.x - p.x);
                     ADD
@@ -167,12 +196,21 @@ pub(crate) fn pass_add<P: SWCurveConfig>(
         kinds.push(kind);
     }
     ark_ff::serial_batch_inversion_and_mul(dens, &P::BaseField::one());
+    if let Some(q) = chords.as_mut() {
+        q.run(false);
+    }
     let mut inv = dens.iter();
+    let mut chord = 0;
     for (i, a) in acc.iter_mut().enumerate() {
         match kinds[i] {
             SKIP => {}
             SET => *a = addend(i),
             INF => *a = None,
+            ADD if chords.is_some() => {
+                let q = chords.as_ref().unwrap();
+                *a = Some(Affine::<P>::new_unchecked(q.ax[chord], q.ay[chord]));
+                chord += 1;
+            }
             kind => {
                 let p = a.unwrap();
                 let q = addend(i).unwrap();
@@ -197,7 +235,10 @@ pub fn fold_points_two_rounds<P: SWCurveConfig>(
     u1: &P::ScalarField,
     u2: &P::ScalarField,
     endo: &Endo<P>,
-) -> Vec<Affine<P>> {
+) -> Vec<Affine<P>>
+where
+    P::BaseField: NativeField,
+{
     let q = g.len() / 4;
     let (p0, rest) = g.split_at(q);
     let (p1, rest) = rest.split_at(q);
@@ -238,6 +279,7 @@ pub fn fold_points_two_rounds<P: SWCurveConfig>(
             let m = chunk.min(q - s);
             let mut dens: Vec<P::BaseField> = Vec::with_capacity(m);
             let mut kinds: Vec<u8> = Vec::with_capacity(m);
+            let mut chords = crate::base::ifma::available::<P::BaseField>().then(Chords::default);
             // Tables [B, 2B, .., 8B] per multiplied base; term 2 reads P0's table through φ.
             let bases = [&p0[s..s + m], &p1[s..s + m], &p2[s..s + m]];
             let mut tables: Vec<Vec<Option<Affine<P>>>> = Vec::with_capacity(24);
@@ -245,11 +287,11 @@ pub fn fold_points_two_rounds<P: SWCurveConfig>(
                 let start = tables.len();
                 tables.push(b.iter().map(|p| Some(*p)).collect());
                 let mut dbld = tables[start].clone();
-                pass_dbl(&mut dbld, &mut dens);
+                pass_dbl(&mut dbld, &mut dens, chords.as_mut());
                 tables.push(dbld);
                 for _ in 2..8 {
                     let mut next = tables.last().unwrap().clone();
-                    pass_add(&mut next, |i| Some(b[i]), &mut dens, &mut kinds);
+                    pass_add(&mut next, |i| Some(b[i]), &mut dens, &mut kinds, chords.as_mut());
                     tables.push(next);
                 }
             }
@@ -275,7 +317,7 @@ pub fn fold_points_two_rounds<P: SWCurveConfig>(
             for w in (0..=top).rev() {
                 if started {
                     for _ in 0..4 {
-                        pass_dbl(&mut acc, &mut dens);
+                        pass_dbl(&mut acc, &mut dens, chords.as_mut());
                     }
                 }
                 for (term, dset) in digits.iter().enumerate() {
@@ -284,7 +326,7 @@ pub fn fold_points_two_rounds<P: SWCurveConfig>(
                         continue;
                     }
                     if started {
-                        pass_add(&mut acc, |i| entry(term, d, i), &mut dens, &mut kinds);
+                        pass_add(&mut acc, |i| entry(term, d, i), &mut dens, &mut kinds, chords.as_mut());
                     } else {
                         for (i, a) in acc.iter_mut().enumerate() {
                             *a = entry(term, d, i);
@@ -293,7 +335,7 @@ pub fn fold_points_two_rounds<P: SWCurveConfig>(
                     }
                 }
             }
-            pass_add(&mut acc, |i| Some(p3[s + i]), &mut dens, &mut kinds);
+            pass_add(&mut acc, |i| Some(p3[s + i]), &mut dens, &mut kinds, chords.as_mut());
             acc.into_iter()
                 .map(|a| a.unwrap_or(Affine::<P>::zero()))
                 .collect::<Vec<_>>()

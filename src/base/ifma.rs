@@ -59,20 +59,21 @@ impl<F: NativeField> Chords<F> {
     }
 
     /// Replace every queued `a` by `a + b`, so pair k's sum is `(ax[k], ay[k])`. Needs
-    /// `available::<F>()`, canonical inputs and `ax[k] != bx[k]`.
-    pub fn run(&mut self) {
+    /// `available::<F>()`, canonical inputs and `ax[k] != bx[k]`; with `double`, every pair is
+    /// `(a, a)` with `ay[k] != 0` and the tangent is used.
+    pub fn run(&mut self, double: bool) {
         let n = self.ax.len();
         if n == 0 {
             return;
         }
-        // Padding pairs (0, 0) + (1, 0) have dx = 1: the chain products are unchanged.
+        // Padding pairs (0, 1) + (1, 1) have dx = 1 (dy = 2 doubled): nonzero denominators.
         while self.ax.len() % 8 != 0 {
-            self.push(F::ZERO, F::ZERO, F::ONE, F::ZERO);
+            self.push(F::ZERO, F::ONE, F::ONE, F::ONE);
         }
         assert!(available::<F>());
         #[cfg(target_arch = "x86_64")]
         unsafe {
-            add_kernel(&mut self.ax, &mut self.ay, &self.bx, &self.by, &mut self.chain)
+            add_kernel(&mut self.ax, &mut self.ay, &self.bx, &self.by, &mut self.chain, double)
         };
         self.ax.truncate(n);
         self.ay.truncate(n);
@@ -506,8 +507,9 @@ mod x86 {
     /// (ax, ay)[k] ← (ax, ay)[k] + (bx, by)[k] over a multiple of 8 pairs with one field inversion
     /// (golf's `drain_vector`): pair k runs in lane k % 8 of eight Montgomery prefix chains, the
     /// eight chain products are inverted together on the scalar side, and the backward pass peels
-    /// off each 1/dx and finishes the addition. Bounds (units of p): dx < 3, prefixes ~4.1, slope
-    /// ~4.2, slope² ~4.3, x3 before reduction < 8.3, y3 < 5.4.
+    /// off each 1/dx and finishes the addition; `double` takes the tangent (dx = 2y, dy = 3x²).
+    /// Bounds (units of p): dx < 3, dy < 3.6, prefixes ~4.1, slope ~4.2, slope² ~4.3, x3 before
+    /// reduction < 8.3, y3 < 5.4.
     #[target_feature(enable = "avx512f,avx512ifma")]
     pub(super) unsafe fn add_kernel<F: NativeField>(
         ax: &mut [F],
@@ -515,6 +517,7 @@ mod x86 {
         bx: &[F],
         by: &[F],
         chain: &mut Vec<[V5; 2]>,
+        double: bool,
     ) {
         let c = &const { Consts::new(F::MODULUS.0) };
         let groups = ax.len() / 8;
@@ -522,7 +525,12 @@ mod x86 {
         let mut lanes = [F::one(); 8];
         let mut acc = load8(lanes.as_ptr());
         for g in 0..groups {
-            let dx = sub_plus(&load8(&bx[8 * g]), &load8(&ax[8 * g]), None, &c.p2);
+            let dx = if double {
+                let y = load8(&ay[8 * g]);
+                add(&y, &y)
+            } else {
+                sub_plus(&load8(&bx[8 * g]), &load8(&ax[8 * g]), None, &c.p2)
+            };
             chain.push([dx, acc]);
             acc = mont_mul(c, &acc, &dx);
         }
@@ -534,7 +542,13 @@ mod x86 {
             let inv = mont_mul(c, &acc, &pre);
             acc = mont_mul(c, &acc, &dx);
             let (x1, y1, x2) = (load8(&ax[8 * g]), load8(&ay[8 * g]), load8(&bx[8 * g]));
-            let slope = mont_mul(c, &sub_plus(&load8(&by[8 * g]), &y1, None, &c.p2), &inv);
+            let dy = if double {
+                let xx = mont_mul(c, &x1, &x1);
+                add(&add(&xx, &xx), &xx)
+            } else {
+                sub_plus(&load8(&by[8 * g]), &y1, None, &c.p2)
+            };
+            let slope = mont_mul(c, &dy, &inv);
             let x3 = canonical(c, &sub_plus(&mont_mul(c, &slope, &slope), &x1, Some(&x2), &c.p4));
             let y3 = mont_mul(c, &slope, &sub_plus(&x1, &x3, None, &c.p));
             store8(&mut ay[8 * g], &canonical(c, &sub_plus(&y3, &y1, None, &c.p2)));
@@ -553,7 +567,8 @@ mod tests {
     use ark_ff::UniformRand;
 
     /// golf 0038: random pairs, consecutive generator multiples, negated points (y near p) and
-    /// P + (−2P), across partial lane groups and long chains, against ark's projective sum.
+    /// P + (−2P), across partial lane groups and long chains, against ark's projective sum; and
+    /// the doubling mode on the same points.
     fn chords_match_ark<P: SWCurveConfig>()
     where
         P::BaseField: NativeField,
@@ -585,10 +600,19 @@ mod tests {
             for (a, b) in &pairs {
                 q.push(a.x, a.y, b.x, b.y);
             }
-            q.run();
+            q.run(false);
             for (k, (a, b)) in pairs.iter().enumerate() {
                 let sum = Affine::<P>::new_unchecked(q.ax[k], q.ay[k]);
                 assert_eq!(sum, (*a + *b).into_affine(), "n={n} k={k}");
+            }
+            q.clear();
+            for (a, _) in &pairs {
+                q.push(a.x, a.y, a.x, a.y);
+            }
+            q.run(true);
+            for (k, (a, _)) in pairs.iter().enumerate() {
+                let dbl = Affine::<P>::new_unchecked(q.ax[k], q.ay[k]);
+                assert_eq!(dbl, a.into_group().double().into_affine(), "double n={n} k={k}");
             }
         }
     }

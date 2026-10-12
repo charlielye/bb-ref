@@ -694,7 +694,7 @@ fn batch_affine_add_indexed<P: SWCurveConfig>(
             let (d, sidx) = (d as usize, sidx as usize);
             q.push(dx[sidx], dy[sidx], dx[d], dy[d]);
         }
-        q.run();
+        q.run(false);
         for (k, &(d, _)) in pairs.iter().enumerate() {
             (dx[d as usize], dy[d as usize]) = (q.ax[k], q.ay[k]);
         }
@@ -1031,7 +1031,7 @@ fn tree_reduce_scalar<P: SWCurveConfig>(
         }
         batch_invert_nonzero(dens, prod);
         if let Some(q) = chords.as_mut() {
-            q.run();
+            q.run(false);
         }
         let mut chord = 0;
         // Pass 2: apply the additions, compacting points and runs in place (the write cursor
