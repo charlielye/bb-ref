@@ -7,6 +7,7 @@ use crate::base::{Fr, G1Affine};
 use crate::circuit::op_queue::{EccOpQueue, EccvmOp};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{AdditiveGroup, BigInteger, Zero};
+use rayon::prelude::*;
 use std::sync::OnceLock;
 
 type Proj = crate::base::G1Projective;
@@ -142,7 +143,7 @@ pub fn get_msms(ops: &[EccvmOp]) -> Vec<Vec<ScalarMul>> {
         base_point,
         wnaf_digits: compute_wnaf_digits(scalar),
         wnaf_skew: scalar.0[0] & 1 == 0,
-        precomputed_table: compute_precomputed_table(&base_point),
+        precomputed_table: [G1Affine::zero(); POINT_TABLE_SIZE + 1],
     };
     for op in ops {
         if op.op_code.mul {
@@ -170,6 +171,10 @@ pub fn get_msms(ops: &[EccvmOp]) -> Vec<Vec<ScalarMul>> {
         }
     }
     assert_eq!(pc, 0);
+    // The point tables (an inversion each) are independent per mul.
+    msms.par_iter_mut()
+        .flatten()
+        .for_each(|mul| mul.precomputed_table = compute_precomputed_table(&mul.base_point));
     msms
 }
 
@@ -252,6 +257,18 @@ pub fn compute_transcript_rows(ops: &[EccvmOp], total_muls: u32) -> Vec<Transcri
     let mut msm_acc_trace = vec![Proj::zero(); n];
     let mut intermediate_trace = vec![Proj::zero(); n];
     let mut count_inverse = vec![Fq::from(0u64); n];
+    // The full scalar muls do not depend on the VM state: only their sum into the accumulator is
+    // sequential.
+    let products: Vec<Proj> = ops
+        .par_iter()
+        .map(|op| {
+            if op.op_code.mul {
+                op.base_point * op.mul_scalar_full
+            } else {
+                Proj::zero()
+            }
+        })
+        .collect();
     {
         let hiding = &ops[0];
         let row = &mut rows[1];
@@ -282,7 +299,7 @@ pub fn compute_transcript_rows(ops: &[EccvmOp], total_muls: u32) -> Vec<Transcri
         let current_ongoing_msm = is_mul && !next_not_msm;
         updated.count = if current_ongoing_msm { state.count + muls } else { 0 };
         if is_mul {
-            updated.msm_accumulator = state.msm_accumulator + entry.base_point * entry.mul_scalar_full;
+            updated.msm_accumulator = state.msm_accumulator + products[i];
         }
         let row = &mut rows[i + 1];
         if is_msm_transition {
@@ -354,8 +371,9 @@ pub fn compute_transcript_rows(ops: &[EccvmOp], total_muls: u32) -> Vec<Transcri
             state.msm_accumulator = offset;
         }
     }
-    for i in 0..n {
-        let row = &mut rows[i + 1];
+    // Each row's normalizations and inversions only read that row's traces.
+    let offset_x = offset_generator().x;
+    rows[1..=n].par_iter_mut().enumerate().for_each(|(i, row)| {
         if !acc_trace[i].is_zero() {
             (row.accumulator_x, row.accumulator_y) = xy(&acc_trace[i]);
         }
@@ -365,15 +383,10 @@ pub fn compute_transcript_rows(ops: &[EccvmOp], total_muls: u32) -> Vec<Transcri
         if !intermediate_trace[i].is_zero() {
             (row.msm_intermediate_x, row.msm_intermediate_y) = xy(&intermediate_trace[i]);
         }
-    }
-    let offset_x = offset_generator().x;
-    for i in 0..n {
-        let row = &mut rows[i + 1];
         let is_msm_transition = row.msm_transition;
         let is_add = ops[i].op_code.add;
         if !(is_msm_transition || is_add) {
-            count_inverse[i] = Fq::from(0u64);
-            continue;
+            return;
         }
         row.msm_x_inverse = if row.msm_infinity || msm_acc_trace[i].is_zero() {
             Fq::from(0u64)
@@ -409,10 +422,8 @@ pub fn compute_transcript_rows(ops: &[EccvmOp], total_muls: u32) -> Vec<Transcri
             (Fq::from(0u64), Fq::from(0u64))
         };
         row.add_lambda = numerator * invert_or_zero(denominator);
-    }
-    for i in 0..n {
-        rows[i + 1].msm_count_at_transition_inverse = invert_or_zero(count_inverse[i]);
-    }
+        row.msm_count_at_transition_inverse = invert_or_zero(count_inverse[i]);
+    });
     let last = rows.last_mut().unwrap();
     last.pc = state.pc;
     (last.accumulator_x, last.accumulator_y) = xy(&state.accumulator);
@@ -561,14 +572,30 @@ pub fn compute_msm_rows(msms: &[Vec<ScalarMul>], total_muls: u32, num_rows: usiz
     let mut rows = vec![MsmRow::default(); num_rows];
     // Accumulator after each row (index 0: before the first MSM) and the pending slope computations.
     let mut accumulator_trace = vec![offset; num_rows - 1];
+    #[derive(Clone, Default)]
     struct Op {
         p1: Proj,
         p2: (Fq, Fq),
         is_double: bool,
     }
-    let mut ops: Vec<Op> = Vec::with_capacity((num_rows - 2) * ADDITIONS_PER_ROW);
-    let mut row_index = 1;
-    for (msm_idx, msm) in msms.iter().enumerate() {
+    // Every row holds ADDITIONS_PER_ROW ops. Each MSM starts from the offset generator and owns a
+    // disjoint range of rows and ops, so the MSMs fill in parallel.
+    let mut ops = vec![Op::default(); (num_rows - 2) * ADDITIONS_PER_ROW];
+    let mut chunks = Vec::with_capacity(msms.len());
+    let (mut r, mut a, mut o) = (&mut rows[1..num_rows - 1], &mut accumulator_trace[1..], &mut ops[..]);
+    for msm_idx in 0..msms.len() {
+        let k = num_msm_rows(msms[msm_idx].len());
+        let (r0, r1) = std::mem::take(&mut r).split_at_mut(k);
+        let (a0, a1) = std::mem::take(&mut a).split_at_mut(k);
+        let (o0, o1) = std::mem::take(&mut o).split_at_mut(k * ADDITIONS_PER_ROW);
+        chunks.push((msm_idx, r0, a0, o0));
+        (r, a, o) = (r1, a1, o1);
+    }
+    assert!(r.is_empty());
+    let fill = |(msm_idx, rows, accumulator_trace, ops): (usize, &mut [MsmRow], &mut [Proj], &mut [Op])| {
+        let msm = &msms[msm_idx];
+        let mut ops = ops.iter_mut();
+        let mut row_index = 0;
         let mut accumulator = offset;
         let size = msm.len();
         let start_pc = pc_values[msm_idx];
@@ -595,11 +622,11 @@ pub fn compute_msm_rows(msms: &[Vec<ScalarMul>], total_muls: u32, num_rows: usiz
                     if st.add {
                         accumulator += msm[offset_idx + p].precomputed_table[st.slice as usize];
                     }
-                    ops.push(Op {
+                    *ops.next().unwrap() = Op {
                         p1,
                         p2: st.point,
                         is_double: false,
-                    });
+                    };
                 }
                 accumulator_trace[row_index] = accumulator;
                 row.q_add = true;
@@ -618,11 +645,11 @@ pub fn compute_msm_rows(msms: &[Vec<ScalarMul>], total_muls: u32, num_rows: usiz
                 for _ in 0..ADDITIONS_PER_ROW {
                     let p1 = accumulator;
                     accumulator = accumulator.double();
-                    ops.push(Op {
+                    *ops.next().unwrap() = Op {
                         p1,
                         p2: (Fq::from(0u64), Fq::from(0u64)),
                         is_double: true,
-                    });
+                    };
                 }
                 accumulator_trace[row_index] = accumulator;
                 row_index += 1;
@@ -644,11 +671,11 @@ pub fn compute_msm_rows(msms: &[Vec<ScalarMul>], total_muls: u32, num_rows: usiz
                         if add_predicate {
                             accumulator += msm[offset_idx + p].precomputed_table[st.slice as usize];
                         }
-                        ops.push(Op {
+                        *ops.next().unwrap() = Op {
                             p1,
                             p2: st.point,
                             is_double: false,
-                        });
+                        };
                     }
                     row.q_skew = true;
                     row.msm_round = digit_idx as u32 + 1;
@@ -660,8 +687,9 @@ pub fn compute_msm_rows(msms: &[Vec<ScalarMul>], total_muls: u32, num_rows: usiz
                 }
             }
         }
-    }
-    assert_eq!(row_index, num_rows - 1);
+        assert_eq!(row_index, rows.len());
+    };
+    chunks.into_par_iter().for_each(fill);
     // Slopes: one batched normalization of the accumulators and one batched inversion of the
     // slope denominators (zero denominators stay zero).
     let p1: Vec<(Fq, Fq)> = Proj::normalize_batch(&ops.iter().map(|o| o.p1).collect::<Vec<_>>())
@@ -678,13 +706,12 @@ pub fn compute_msm_rows(msms: &[Vec<ScalarMul>], total_muls: u32, num_rows: usiz
         .map(|(op, (x1, y1))| if op.is_double { *y1 + *y1 } else { op.p2.0 - *x1 })
         .collect();
     crate::base::field::batch_invert_par(&mut inverses);
-    let mut op_idx = 0;
-    for (row_index, row) in rows.iter_mut().enumerate().take(num_rows - 1).skip(1) {
-        (row.accumulator_x, row.accumulator_y) = acc[row_index - 1];
+    rows[1..num_rows - 1].par_iter_mut().enumerate().for_each(|(i, row)| {
+        (row.accumulator_x, row.accumulator_y) = acc[i];
         let (skew_row, add_row) = (row.q_skew, row.q_add);
-        for st in row.add_state.iter_mut() {
+        for (k, st) in row.add_state.iter_mut().enumerate() {
+            let op_idx = i * ADDITIONS_PER_ROW + k;
             let (op, (x1, y1), inverse) = (&ops[op_idx], p1[op_idx], inverses[op_idx]);
-            op_idx += 1;
             if op.is_double {
                 st.lambda = (x1 + x1 + x1) * x1 * inverse;
                 st.collision_inverse = Fq::from(0u64);
@@ -702,7 +729,7 @@ pub fn compute_msm_rows(msms: &[Vec<ScalarMul>], total_muls: u32, num_rows: usiz
                 };
             }
         }
-    }
+    });
     let last = rows.last_mut().unwrap();
     last.msm_transition = true;
     (last.accumulator_x, last.accumulator_y) = *acc.last().unwrap();
@@ -740,8 +767,7 @@ impl EccvmPolys {
         let msms = get_msms(&ops);
         let flattened: Vec<ScalarMul> = msms.iter().flatten().cloned().collect();
         let num_msm_rows_total = 2 + msms.iter().map(|m| num_msm_rows(m.len())).sum::<usize>();
-        // The three row tables are independent; transcript rows dominate (a sequential accumulator
-        // that cannot parallelize internally), so overlap precompute and msm rows with it.
+        // The three row tables are independent, so they overlap.
         let (transcript_rows, (precompute_rows, (msm_rows, read_counts))) = rayon::join(
             || compute_transcript_rows(&ops, total_muls),
             || {
