@@ -4,7 +4,7 @@
 
 use super::builder::TranslatorCircuit;
 use super::*;
-use crate::base::field::{u256, FieldLike};
+use crate::base::field::{ascending_to_fr, u256, FieldLike};
 use crate::base::rng::{random_field, Rng};
 
 /// `2^14 - 1, 2^14 - 4, ..., 1` — the step values the range check permutes into every ordered column.
@@ -136,16 +136,18 @@ impl TranslatorPolys {
                 ordered[free_space_before_runway + i] = *s as u32;
             }
             ordered.sort_unstable();
-            for pos in 1..n - MAX_RANDOM_VALUES_PER_ORDERED {
-                self.cols[FIRST_ORDERED + g].coeffs[pos] = Fr::from(ordered[pos]);
+            let col = &mut self.cols[FIRST_ORDERED + g].coeffs[1..n - MAX_RANDOM_VALUES_PER_ORDERED];
+            for (c, v) in col.iter_mut().zip(ascending_to_fr(ordered[1..].iter().map(|v| *v as u64))) {
+                *c = v;
             }
         }
         for (i, s) in steps.iter().enumerate() {
             extra_denominator[(NUM_CONCATENATED_POLYS - 1) * steps.len() + i] = *s as u32;
         }
         extra_denominator.sort_unstable();
-        for pos in 1..n - MAX_RANDOM_VALUES_PER_ORDERED {
-            self.cols[FIRST_ORDERED + 4].coeffs[pos] = Fr::from(extra_denominator[pos]);
+        let col = &mut self.cols[FIRST_ORDERED + 4].coeffs[1..n - MAX_RANDOM_VALUES_PER_ORDERED];
+        for (c, v) in col.iter_mut().zip(ascending_to_fr(extra_denominator[1..].iter().map(|v| *v as u64))) {
+            *c = v;
         }
         // The masking values of the four range-constraint concatenations move to the tails of the
         // ordered columns so that the permutation still holds.

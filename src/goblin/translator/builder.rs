@@ -82,14 +82,17 @@ fn fq_modulus() -> U256 {
 
 /// `2^272 - q` in 68-bit limbs, and `-q` in the scalar field (bb `NEGATIVE_MODULUS_LIMBS`).
 pub fn negative_modulus_limbs() -> [Fr; 5] {
-    let h = |s: &str| crate::base::field::from_hex::<Fr>(s);
-    [
-        h("0x2c3df73e9278302b9"),
-        h("0xa2687e956e978e357"),
-        h("0xfd647afba497e7ea7"),
-        h("0xffffcf9bb18d1ece5"),
-        -Fr::from_le_bytes_mod_order(&fq_modulus().to_bytes_le()),
-    ]
+    static L: std::sync::LazyLock<[Fr; 5]> = std::sync::LazyLock::new(|| {
+        let h = |s: &str| crate::base::field::from_hex::<Fr>(s);
+        [
+            h("0x2c3df73e9278302b9"),
+            h("0xa2687e956e978e357"),
+            h("0xfd647afba497e7ea7"),
+            h("0xffffcf9bb18d1ece5"),
+            -Fr::from_le_bytes_mod_order(&fq_modulus().to_bytes_le()),
+        ]
+    });
+    *L
 }
 
 fn mul_wrapping(a: &U256, b: &U256) -> U256 {
@@ -200,8 +203,11 @@ pub fn generate_witness_values(op: &UltraOp, previous_accumulator: &Fq, v: &Fq, 
     let quotient_limbs: [Fr; 4] =
         std::array::from_fn(|i| slice(&quotient, NUM_LIMB_BITS * i as u32, NUM_LIMB_BITS * (i as u32 + 1)));
     let neg_mod = negative_modulus_limbs();
-    let shift_1 = Fr::from(2u64).pow_u64(NUM_LIMB_BITS as u64);
-    let shift_2_inverse = Fr::from(2u64).pow_u64(2 * NUM_LIMB_BITS as u64).invert();
+    static SHIFTS: std::sync::LazyLock<(Fr, Fr)> = std::sync::LazyLock::new(|| {
+        let shift_1 = Fr::from(2u64).pow_u64(NUM_LIMB_BITS as u64);
+        (shift_1, (shift_1 * shift_1).invert())
+    });
+    let (shift_1, shift_2_inverse) = *SHIFTS;
     let pa = &previous_accumulator_limbs;
     let (xw, vw, v2, v3, v4) = (
         &x_witnesses,
