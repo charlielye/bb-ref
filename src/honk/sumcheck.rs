@@ -1382,14 +1382,6 @@ pub enum Column<'a, F> {
     Own(Vec<F>),
 }
 
-fn column_len<F>(table: &[Column<F>], j: usize) -> usize {
-    match &table[j] {
-        Column::Borrowed(s) => s.len(),
-        Column::Own(v) => v.len(),
-        Column::ShiftOf(k) => column_len(table, *k).saturating_sub(1),
-    }
-}
-
 /// Value of column `j` at row `i` (zero past the column's end).
 fn column_value<F: FieldLike + Copy>(table: &[Column<F>], j: usize, i: usize) -> F {
     match &table[j] {
@@ -1686,11 +1678,10 @@ where
                         if let Some(v) = crate::base::wasm::try_fold_from(src, src.len(), u) {
                             return Column::Own(v);
                         }
-                        let half = column_len(table, j).div_ceil(2);
                         Column::Own(
-                            (0..half)
-                                .map(|k| {
-                                    let (a, b) = (column_value(table, j, 2 * k), column_value(table, j, 2 * k + 1));
+                            src.chunks(2)
+                                .map(|p| {
+                                    let (a, b) = (p[0], p.get(1).copied().unwrap_or_else(F::zero));
                                     if a == b { a } else { a + *u * (b - a) }
                                 })
                                 .collect(),
