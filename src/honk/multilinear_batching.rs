@@ -55,23 +55,29 @@ pub fn mlb_prove(claims: Vec<ProverClaim>, t: &mut NativeTranscript) -> ProverCl
     // Columns: [non_shifted_i, shifted_i, eq_i]; the shifted columns are the shifts of the pre-shift
     // polynomials. Round 0 reads the claims' own coefficient vectors where they already have the
     // full size (the first fold writes a fresh vector regardless), so no up-front copies.
-    fn pad(p: &Poly, size: usize) -> Cow<'_, [Fr]> {
-        if p.coeffs.len() == size {
-            Cow::Borrowed(&p.coeffs)
-        } else {
-            let mut c = p.coeffs.clone();
-            c.resize(size, Fr::zero());
-            Cow::Owned(c)
-        }
-    }
-    let mut non_shifted: Vec<Cow<[Fr]>> =
-        claims.iter().map(|c| pad(&c.non_shifted_polynomial, circuit_size)).collect();
+    // `src` from `off` on, zero-extended to the circuit size, filled on the pool.
+    let window = |src: &[Fr], off: usize| -> Vec<Fr> {
+        (0..circuit_size)
+            .into_par_iter()
+            .map(|i| src.get(i + off).copied().unwrap_or_default())
+            .collect()
+    };
+    let mut non_shifted: Vec<Cow<[Fr]>> = claims
+        .iter()
+        .map(|c| match &c.non_shifted_polynomial.coeffs {
+            p if p.len() == circuit_size => Cow::Borrowed(&p[..]),
+            p => Cow::Owned(window(p, 0)),
+        })
+        .collect();
     let mut shifted: Vec<Cow<[Fr]>> = claims
         .iter()
         .map(|c| {
-            let mut s = c.shifted_polynomial.shifted().coeffs;
-            s.resize(circuit_size, Fr::zero());
-            Cow::Owned(s)
+            let p = &c.shifted_polynomial.coeffs;
+            assert!(
+                p.first().map_or(true, Fr::is_zero),
+                "shifting a polynomial with non-zero constant term"
+            );
+            Cow::Owned(window(p, 1))
         })
         .collect();
     let mut eq: Vec<Cow<[Fr]>> = claims.iter().map(|c| Cow::Owned(eq_table(&c.challenge, log_n))).collect();
