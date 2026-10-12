@@ -383,34 +383,38 @@ where
             counts[id as usize] += 1;
             cluster_of.push((i as u32, id));
         }
-        // Sum the points of every repeated scalar; singletons keep their SRS point.
+        // The points of every repeated scalar, grouped by scalar and summed batched-affine;
+        // singletons keep their SRS point.
         let mut slot: Vec<u32> = vec![u32::MAX; reps.len()];
-        let mut sums: Vec<G::Group> = Vec::new();
+        let mut lens: Vec<u32> = Vec::new();
         for (id, &c) in counts.iter().enumerate() {
             if c > 1 {
-                slot[id] = sums.len() as u32;
-                sums.push(<G::Group as ark_ff::Zero>::zero());
+                slot[id] = lens.len() as u32;
+                lens.push(c);
             }
         }
+        let mut fill: Vec<u32> = lens.iter().scan(0, |at, &l| Some(std::mem::replace(at, *at + l))).collect();
+        let mut grouped = vec![G::zero(); lens.iter().sum::<u32>() as usize];
         for &(i, id) in &cluster_of {
             let sl = slot[id as usize];
             if sl != u32::MAX {
-                sums[sl as usize] += self.points[i as usize];
+                grouped[fill[sl as usize] as usize] = self.points[i as usize];
+                fill[sl as usize] += 1;
             }
         }
-        let normalized = G::Group::normalize_batch(&sums);
+        let sums = G::sum_runs(&grouped, &lens);
         let points: Vec<G> = (0..reps.len())
             .map(|id| {
                 let sl = slot[id];
-                if sl == u32::MAX { self.points[reps[id] as usize] } else { normalized[sl as usize] }
+                if sl == u32::MAX { self.points[reps[id] as usize] } else { sums[sl as usize] }
             })
             .collect();
         let scalars: Vec<G::ScalarField> = reps.iter().map(|&i| coeffs[i as usize]).collect();
         if std::env::var_os("BBREF_COMMIT_TIMING").is_some() {
             eprintln!("[dedup] nnz={} distinct={} merged_clusters={}", cluster_of.len(), reps.len(), sums.len());
         }
-        let phi = G::phi_table(&points);
-        G::batch_msm_with_phi(&points, &scalars, Some(&phi))
+        let phi = crate::base::wasm::GLV_PHI_TABLE.then(|| G::phi_table(&points));
+        G::batch_msm_with_phi(&points, &scalars, phi.as_deref())
     }
 }
 

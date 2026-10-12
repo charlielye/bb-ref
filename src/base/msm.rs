@@ -996,6 +996,59 @@ fn tree_reduce<P: SWCurveConfig>(
     }
 }
 
+/// One point per run of consecutive `ps` (`run_len[r]` points each; the identity where a run
+/// cancels): batched-affine tree reductions over fixed-size pieces in parallel (a run cut by a
+/// piece boundary leaves a partial on each side), then one more over the pieces' survivors.
+fn sum_runs<P: SWCurveConfig>(ps: &[Affine<P>], run_len: &[u32]) -> Vec<Affine<P>>
+where
+    P::BaseField: crate::base::wasm::QuadConsts,
+{
+    const PIECE: usize = 4096;
+    let mut run_start = Vec::with_capacity(run_len.len() + 1);
+    run_start.push(0usize);
+    for &l in run_len {
+        run_start.push(run_start.last().unwrap() + l as usize);
+    }
+    assert_eq!(*run_start.last().unwrap(), ps.len());
+    let reduce = |ids: &mut Vec<u32>, lens: &mut Vec<u32>, pts: &mut Vec<Affine<P>>| {
+        tree_reduce(ids, lens, pts, &mut TreeScratch::with_capacity(pts.len()));
+    };
+    let partials: Vec<(Vec<u32>, Vec<Affine<P>>)> = (0..ps.len().div_ceil(PIECE))
+        .into_par_iter()
+        .map(|k| {
+            let (lo, hi) = (k * PIECE, ((k + 1) * PIECE).min(ps.len()));
+            let (mut ids, mut lens) = (Vec::new(), Vec::new());
+            let mut r = run_start.partition_point(|&st| st <= lo) - 1;
+            while run_start[r] < hi {
+                ids.push(r as u32);
+                lens.push((run_start[r + 1].min(hi) - run_start[r].max(lo)) as u32);
+                r += 1;
+            }
+            let mut pts = ps[lo..hi].to_vec();
+            reduce(&mut ids, &mut lens, &mut pts);
+            (ids, pts)
+        })
+        .collect();
+    let (mut ids, mut lens, mut pts) = (Vec::new(), Vec::new(), Vec::new());
+    for (pid, pp) in partials {
+        for (i, p) in pid.into_iter().zip(pp) {
+            if ids.last() == Some(&i) {
+                *lens.last_mut().unwrap() += 1;
+            } else {
+                ids.push(i);
+                lens.push(1);
+            }
+            pts.push(p);
+        }
+    }
+    reduce(&mut ids, &mut lens, &mut pts);
+    let mut out = vec![Affine::<P>::zero(); run_len.len()];
+    for (i, p) in ids.into_iter().zip(pts) {
+        out[i as usize] = p;
+    }
+    out
+}
+
 /// The scalar tree level loop (see `tree_reduce`): the same-bucket runs are described by the
 /// parallel `run_id`/`run_len` arrays and updated arithmetically, so the inner loops never touch
 /// per-element bucket ids — no id compares, no id compaction, no tag lists (a pair's
@@ -1318,6 +1371,33 @@ mod tests {
         );
     }
 
+    /// Runs of every length, across piece boundaries, with repeated and cancelling points.
+    #[test]
+    fn sum_runs_matches_projective() {
+        use crate::base::G1Config as C;
+        let mut rng = ark_std::test_rng();
+        let base: Vec<Affine<C>> = (0..64).map(|_| Projective::<C>::rand(&mut rng).into_affine()).collect();
+        let lens: Vec<u32> = [1u32, 2, 3, 5, 9000, 1, 4100, 7, 2, 2, 300].to_vec();
+        let mut ps = Vec::new();
+        for (r, &l) in lens.iter().enumerate() {
+            for j in 0..l as usize {
+                // Run 8: P, -P (cancels); run 9: P, P (doubling); others: mixed repeats.
+                ps.push(match r {
+                    8 => if j == 0 { base[0] } else { -base[0] },
+                    9 => base[1],
+                    _ => base[(j * 7 + r) % base.len()],
+                });
+            }
+        }
+        let sums = sum_runs(&ps, &lens);
+        let mut at = 0;
+        for (r, &l) in lens.iter().enumerate() {
+            let want: Projective<C> = ps[at..at + l as usize].iter().map(|p| p.into_group()).sum();
+            assert_eq!(sums[r], want.into_affine(), "run {r}");
+            at += l as usize;
+        }
+    }
+
     #[test]
     fn matches_ark() {
         for n in [1, 100, 1000, 5000, 70000] {
@@ -1359,6 +1439,8 @@ pub trait BatchMsm: AffineRepr {
     fn batch_msm_with_phi(points: &[Self], scalars: &[Self::ScalarField], phi: Option<&[Self]>) -> Self::Group;
     /// The GLV companion table `phi[i] = (beta * x_i, -y_i)`.
     fn phi_table(points: &[Self]) -> Vec<Self>;
+    /// One sum per run of consecutive points (`sum_runs`).
+    fn sum_runs(points: &[Self], run_len: &[u32]) -> Vec<Self>;
 }
 
 impl<P: SWCurveConfig> BatchMsm for Affine<P>
@@ -1371,6 +1453,9 @@ where
     }
     fn batch_msm_with_phi(points: &[Self], scalars: &[Self::ScalarField], phi: Option<&[Self]>) -> Projective<P> {
         msm_with_phi(points, scalars, phi)
+    }
+    fn sum_runs(points: &[Self], run_len: &[u32]) -> Vec<Self> {
+        sum_runs(points, run_len)
     }
     fn phi_table(points: &[Self]) -> Vec<Self> {
         let beta = <P::BaseField as crate::base::endo::EndoField>::cube_root();
