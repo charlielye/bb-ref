@@ -168,15 +168,10 @@ pub fn joint_prove(
         committed.process(round, &univariate, ck, t);
         let u: Fr = t.challenge(&format!("Sumcheck:u_{round}"));
         let t2 = std::time::Instant::now();
-        mega_state.partially_evaluate(&u);
-        let t3 = std::time::Instant::now();
-        trans_state.partially_evaluate(&u);
+        // One parallel region: each fold's columns fill the pool where the other leaves gaps.
+        rayon::join(|| mega_state.partially_evaluate(&u), || trans_state.partially_evaluate(&u));
         if std::env::var_os("BBREF_TIMING").is_some() {
-            eprintln!(
-                "[joint round {round}] fold mega {:.1} ms, translator {:.1} ms",
-                (t3 - t2).as_secs_f64() * 1e3,
-                t3.elapsed().as_secs_f64() * 1e3
-            );
+            eprintln!("[joint round {round}] fold {:.1} ms", t2.elapsed().as_secs_f64() * 1e3);
         }
         if round == LOG_MINI_CIRCUIT_SIZE - 1 {
             let mini: Vec<Fr> = minicircuit_entities().map(|e| trans_state.current(e)).collect();
