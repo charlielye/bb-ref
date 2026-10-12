@@ -1626,7 +1626,8 @@ where
                     for k in 0..half {
                         let a = v[2 * k];
                         let b = if 2 * k + 1 < v.len() { v[2 * k + 1] } else { F::zero() };
-                        v[k] = a + *u * (b - a);
+                        // Equal neighbours (constant selector runs, zero padding) fold to themselves.
+                        v[k] = if a == b { a } else { a + *u * (b - a) };
                     }
                     v.truncate(half);
                 };
@@ -1657,8 +1658,8 @@ where
                         Column::Own(
                             (0..half)
                                 .map(|k| {
-                                    let a = column_value(table, j, 2 * k);
-                                    a + *u * (column_value(table, j, 2 * k + 1) - a)
+                                    let (a, b) = (column_value(table, j, 2 * k), column_value(table, j, 2 * k + 1));
+                                    if a == b { a } else { a + *u * (b - a) }
                                 })
                                 .collect(),
                         )
