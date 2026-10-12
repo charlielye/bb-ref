@@ -245,7 +245,7 @@ fn dedup_min_len() -> usize {
 fn duplicate_heavy<F: FieldLike>(coeffs: &[F]) -> bool {
     use std::collections::HashSet;
     assert_eq!(std::mem::size_of::<F>(), 32);
-    let mut seen: HashSet<[u64; 4], std::hash::BuildHasherDefault<LimbHasher>> = HashSet::default();
+    let mut seen: HashSet<[u64; 4], LimbHashBuilder> = HashSet::default();
     let mut sample = 0usize;
     for s in coeffs {
         if s.is_zero() {
@@ -263,7 +263,8 @@ fn duplicate_heavy<F: FieldLike>(coeffs: &[F]) -> bool {
 /// Hash of a field element's limbs: the low limb is already well mixed for field elements and
 /// small values, and the map compares full keys on collision.
 #[derive(Default)]
-struct LimbHasher(u64);
+pub struct LimbHasher(u64);
+pub type LimbHashBuilder = std::hash::BuildHasherDefault<LimbHasher>;
 impl std::hash::Hasher for LimbHasher {
     fn finish(&self) -> u64 {
         self.0
@@ -365,7 +366,7 @@ where
         use std::collections::HashMap;
         assert_eq!(std::mem::size_of::<G::ScalarField>(), 32);
         let key = |s: &G::ScalarField| unsafe { std::mem::transmute_copy::<G::ScalarField, [u64; 4]>(s) };
-        let mut map: HashMap<[u64; 4], u32, std::hash::BuildHasherDefault<LimbHasher>> =
+        let mut map: HashMap<[u64; 4], u32, LimbHashBuilder> =
             HashMap::with_capacity_and_hasher(coeffs.len() / 2, Default::default());
         let mut reps: Vec<u32> = Vec::new();
         let mut counts: Vec<u32> = Vec::new();

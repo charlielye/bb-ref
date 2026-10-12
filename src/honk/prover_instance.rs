@@ -322,13 +322,28 @@ impl ProverInstance {
         if has(Ent::table_1) {
             let mut offset = blocks.get(BlockId::Lookup).trace_offset;
             for table in &builder.lookup_tables {
-                let index: std::collections::HashMap<[Fr; 3], usize> = (0..table.size())
-                    .map(|i| ([table.columns[0][i], table.columns[1][i], table.columns[2][i]], i))
+                let index: std::collections::HashMap<[Fr; 3], u32, crate::base::srs::LimbHashBuilder> = (0..table
+                    .size())
+                    .map(|i| {
+                        (
+                            [table.columns[0][i], table.columns[1][i], table.columns[2][i]],
+                            i as u32,
+                        )
+                    })
                     .collect();
-                for gate in &table.lookup_gates {
-                    let i = offset + index[&gate.to_table_components(table.use_twin_keys)];
-                    polys[idx(Ent::lookup_read_counts)].coeffs[i] += Fr::one();
-                    polys[idx(Ent::lookup_read_tags)].coeffs[i] = Fr::one();
+                // Resolve the gates' table rows in parallel, then count them as integers.
+                let rows: Vec<u32> = table
+                    .lookup_gates
+                    .par_iter()
+                    .map(|gate| index[&gate.to_table_components(table.use_twin_keys)])
+                    .collect();
+                let mut counts = vec![0u32; table.size()];
+                for r in rows {
+                    counts[r as usize] += 1;
+                }
+                for (i, c) in counts.into_iter().enumerate().filter(|(_, c)| *c != 0) {
+                    polys[idx(Ent::lookup_read_counts)].coeffs[offset + i] = Fr::from(c as u64);
+                    polys[idx(Ent::lookup_read_tags)].coeffs[offset + i] = Fr::one();
                 }
                 for i in 0..table.size() {
                     for c in 0..3 {
