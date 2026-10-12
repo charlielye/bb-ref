@@ -266,22 +266,6 @@ pub fn grand_product_par<F: PrimeField + Send + Sync>(
     out.par_chunks_mut(chunk).zip(scale).skip(1).for_each(|(o, s)| o.iter_mut().for_each(|x| *x *= s));
 }
 
-pub fn grand_product<F: PrimeField>(num: &[F], den: &[F]) -> Vec<F> {
-    let mut num_prefix = Vec::with_capacity(num.len() + 1);
-    let mut den_prefix = Vec::with_capacity(num.len() + 1);
-    let (mut n, mut d) = (F::one(), F::one());
-    num_prefix.push(n);
-    den_prefix.push(d);
-    for (a, b) in num.iter().zip(den) {
-        n *= a;
-        d *= b;
-        num_prefix.push(n);
-        den_prefix.push(d);
-    }
-    batch_invert(&mut den_prefix);
-    num_prefix.iter().zip(&den_prefix).map(|(n, d)| *n * d).collect()
-}
-
 pub fn u256<F: PrimeField<BigInt = U256>>(f: &F) -> U256 {
     f.into_bigint()
 }

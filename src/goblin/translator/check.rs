@@ -3,10 +3,9 @@
 use super::builder::split_fq_into_limbs;
 use super::relations::{permutation_denominator, permutation_numerator, TranslatorRel, TRANSLATOR_RELATIONS};
 use super::{Ent, TranslatorPolys, CIRCUIT_SIZE};
-use crate::base::field::{from_u256, grand_product, u256, FieldLike};
+use crate::base::field::{from_u256, grand_product_par, u256, FieldLike};
 use crate::base::{Fq, Fr};
 use crate::honk::relations::RelationParams;
-use rayon::prelude::*;
 
 /// The Translator's relation parameters: the limbs of `x` and `v..v⁴`, the claimed result limbs,
 /// and the permutation challenges (bb `TranslatorProver`/`TranslatorCircuitChecker`).
@@ -40,16 +39,34 @@ impl TranslatorPolys {
     /// views, so no shifted columns are materialized here; `check_circuit` callers need a
     /// `set_shifted` afterwards because `row` reads the dense shift columns.
     pub fn compute_grand_product(&mut self, p: &RelationParams<Fr>) {
-        let terms: Vec<(Fr, Fr)> = (0..CIRCUIT_SIZE - 1)
-            .into_par_iter()
-            .map_init(Vec::new, |row, i| {
-                self.row_into(i, row);
-                (permutation_numerator(row, p), permutation_denominator(row, p))
-            })
-            .collect();
-        let (num, den): (Vec<Fr>, Vec<Fr>) = terms.into_iter().unzip();
-        let prefix = grand_product(&num, &den);
-        self.cols[Ent::z_perm as usize].coeffs[1..CIRCUIT_SIZE].copy_from_slice(&prefix[1..]);
+        use Ent::*;
+        crate::scope!("TranslatorProver::compute_grand_product");
+        // The only columns the numerator and denominator read; the rest of the row stays zero.
+        const COLS: [Ent; 12] = [
+            lagrange_masking,
+            lagrange_ordered_masking,
+            concatenated_range_constraints_0,
+            concatenated_range_constraints_1,
+            concatenated_range_constraints_2,
+            concatenated_range_constraints_3,
+            ordered_extra_range_constraints_numerator,
+            ordered_range_constraints_0,
+            ordered_range_constraints_1,
+            ordered_range_constraints_2,
+            ordered_range_constraints_3,
+            ordered_range_constraints_4,
+        ];
+        let mut z = std::mem::take(&mut self.cols[z_perm as usize].coeffs);
+        grand_product_par(&mut z[1..CIRCUIT_SIZE], |lo, num, den| {
+            let mut row = vec![Fr::zero(); self.cols.len()];
+            for (k, (n, d)) in num.iter_mut().zip(den).enumerate() {
+                for e in COLS {
+                    row[e as usize] = self.cols[e as usize].at(lo + k);
+                }
+                (*n, *d) = (permutation_numerator(&row, p), permutation_denominator(&row, p));
+            }
+        });
+        self.cols[z_perm as usize].coeffs = z;
     }
 }
 
