@@ -33,7 +33,7 @@ fn real_flow_circuits_match_bb() {
     let witnesses: Vec<Vec<bb_ref::base::Fr>> = steps.iter().map(|s| s.decode_witness(&mut rng)).collect();
     let mut ivc = Chonk::new(steps.iter().map(|s| s.kind).collect(), CommitmentKey::new(1 << 17));
     for (idx, step) in steps.iter().enumerate() {
-        let mut circuit = build_circuit_mega(&step.circuit, Some(&witnesses[idx]), Some(&mut ivc), &mut rng);
+        let mut circuit = build_circuit_mega(&step.circuit(), Some(&witnesses[idx]), Some(&mut ivc), &mut rng);
         assert!(
             circuit.failed.is_none(),
             "circuit {idx} ({}): builder failure {:?}",

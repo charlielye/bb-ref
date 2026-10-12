@@ -52,7 +52,9 @@ struct StepRaw {
 
 pub struct PrivateExecutionStep {
     pub name: String,
-    pub circuit: Circuit,
+    /// The gzipped bytecode, decoded only when the step is accumulated (bb `ChonkLoad` per step),
+    /// so at most one decoded program is alive at a time.
+    pub bytecode_gz: Vec<u8>,
     /// The gzipped witness, decoded (and its gaps filled with random elements) only when the step is
     /// accumulated: `bb prove` drives the bbapi `ChonkAccumulate` command, which decodes per step,
     /// so the gap-fill draws interleave with the accumulation draws.
@@ -63,12 +65,15 @@ pub struct PrivateExecutionStep {
 }
 
 impl PrivateExecutionStep {
+    pub fn circuit(&self) -> Circuit {
+        decode_program_gz(&self.bytecode_gz)
+    }
     pub fn decode_witness(&self, rng: &mut dyn Rng) -> Vec<Fr> {
         decode_witness(&self.witness_gz, rng)
     }
 }
 
-/// The bytecode/VK halves of bb's step parsing (witnesses stay raw; see `PrivateExecutionStep`).
+/// The VK half of bb's step parsing (bytecode and witnesses stay raw; see `PrivateExecutionStep`).
 pub fn decode_steps(bytes: &[u8]) -> Vec<PrivateExecutionStep> {
     let raw: Vec<StepRaw> = rmp_serde::from_slice(bytes).expect("ivc-inputs msgpack");
     raw.into_iter()
@@ -81,7 +86,7 @@ pub fn decode_steps(bytes: &[u8]) -> Vec<PrivateExecutionStep> {
             };
             PrivateExecutionStep {
                 name: s.function_name,
-                circuit: decode_program_gz(&s.bytecode.0),
+                bytecode_gz: s.bytecode.0,
                 witness_gz: s.witness.0,
                 kind,
                 vk: Vk::<crate::base::Bn254>::from_bytes(&s.vk.0, kind.flavor().layout().num_precomputed),
@@ -103,12 +108,13 @@ pub fn prove_steps(
     for step in steps {
         let step = &step;
         crate::base::timing::phase(&format!("== {} ({:?})", step.name, step.kind));
+        let program = step.circuit();
         let _gc = crate::base::bench::Scope::new("create_circuit");
         let _gw = crate::base::bench::Scope::new("create_circuit/decode_witness");
         let witness = step.decode_witness(rng);
         drop(_gw);
         let _gb = crate::base::bench::Scope::new("create_circuit/build_circuit");
-        let circuit = build_circuit_mega(&step.circuit, Some(&witness), Some(&mut ivc), rng);
+        let circuit = build_circuit_mega(&program, Some(&witness), Some(&mut ivc), rng);
         drop(_gb);
         assert!(
             circuit.failed.is_none(),
@@ -116,7 +122,7 @@ pub fn prove_steps(
             step.name,
             circuit.failed
         );
-        drop(witness);
+        drop((witness, program));
         drop(_gc);
         crate::base::timing::phase("circuit built");
         let _ga = crate::base::bench::Scope::new("Chonk::accumulate");

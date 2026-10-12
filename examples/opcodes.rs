@@ -54,7 +54,7 @@ fn main() {
         println!("== {}", flow.file_name().unwrap().to_string_lossy());
         for s in &steps {
             let mut counts: BTreeMap<String, usize> = BTreeMap::new();
-            for op in &s.circuit.opcodes {
+            for op in &s.circuit().opcodes {
                 if let Opcode::BlackBoxFuncCall(b) = op {
                     let name = format!("{b:?}");
                     let name = name.split(|c: char| !c.is_alphanumeric()).next().unwrap().to_string();
