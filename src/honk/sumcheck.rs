@@ -186,7 +186,10 @@ impl<F: FieldLike> RelationSet<F> for HonkRelations<'_> {
                 Rel::Masking | Rel::MegaEccOpBoundary => {}
                 Rel::BilinearBatchedEq => cols.push(l.idx(Ent::q_bilinear_batched_eq)),
                 Rel::EccOpQueue => cols.push(l.idx(Ent::lagrange_ecc_op)),
-                Rel::Bus(b) => cols.extend([l.idx(Ent::q_busread), l.idx(BUS_SPECS[*b].read_counts)]),
+                Rel::Bus(b) => {
+                    let s = &BUS_SPECS[*b];
+                    cols.extend([s.selector, Ent::q_busread, s.read_counts].map(|e| l.idx(e)))
+                }
                 Rel::Poseidon2InitialExternal => cols.push(l.idx(Ent::q_poseidon2_external_initial)),
                 Rel::Poseidon2QuadInternal => cols.push(l.idx(Ent::q_poseidon2_quad_internal)),
                 Rel::Poseidon2QuadInternalTerminal => cols.push(l.idx(Ent::q_poseidon2_quad_internal_terminal)),
@@ -216,7 +219,8 @@ impl<F: FieldLike> RelationSet<F> for HonkRelations<'_> {
             Rel::Masking | Rel::MegaEccOpBoundary => false,
             Rel::BilinearBatchedEq => zero(Ent::q_bilinear_batched_eq),
             Rel::EccOpQueue => zero(Ent::lagrange_ecc_op),
-            Rel::Bus(b) => zero(Ent::q_busread) && zero(BUS_SPECS[b].read_counts),
+            // a read gate of another bus column has this column's read selector q_busread·selector = 0
+            Rel::Bus(b) => (zero(Ent::q_busread) || zero(BUS_SPECS[b].selector)) && zero(BUS_SPECS[b].read_counts),
             Rel::Poseidon2InitialExternal => zero(Ent::q_poseidon2_external_initial),
             Rel::Poseidon2QuadInternal => zero(Ent::q_poseidon2_quad_internal),
             Rel::Poseidon2QuadInternalTerminal => zero(Ent::q_poseidon2_quad_internal_terminal),
