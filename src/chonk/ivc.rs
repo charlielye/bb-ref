@@ -113,10 +113,6 @@ impl Chonk {
         assert!(n < self.kinds.len(), "Chonk: mock position past the last circuit");
         self.accumulated = n;
     }
-    /// The previous kernel's output accumulator (what the next kernel verifies against).
-    pub fn prover_accumulator(&self) -> Option<&ProverClaim> {
-        self.prover_accumulator.as_ref()
-    }
     /// The folded circuits a kernel must verify recursively (bb `instantiate_stdlib_verification_queue`);
     /// a kernel's builder takes them before the kernel is accumulated.
     pub fn take_verification_queue(&mut self) -> Vec<VerifierInputs> {
@@ -147,8 +143,10 @@ impl Chonk {
                 self.accumulate_and_fold(circuit, vk, kind, next, rng);
                 if next == Some(CircuitKind::HidingKernel) {
                     let _gd = crate::base::bench::Scope::new("HypernovaDeciderProver::construct_proof");
+                    // The final accumulator's batched polynomials are freed once decided, not held
+                    // through the hiding kernel, ECCVM, translator and joint proof.
                     decider_prove(
-                        self.prover_accumulator.as_ref().unwrap(),
+                        &self.prover_accumulator.take().unwrap(),
                         &self.ck,
                         &mut self.accumulation_transcript,
                     );
