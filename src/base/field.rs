@@ -234,60 +234,36 @@ pub fn batch_invert_par<F: PrimeField + Send + Sync>(v: &mut [F]) {
     v.par_chunks_mut(chunk).for_each(ark_ff::batch_inversion);
 }
 
-/// `z[0] = 1, z[i+1] = z[i] * num[i] / den[i]` with a single batched inversion (bb `compute_grand_product`).
-/// `grand_product` with blocked-parallel prefix products, per-chunk inversion and a parallel
-/// combine (bb `GrandProduct::step1/2a/2b/3`). Bit-identical to the serial version: prefix products
-/// are associative and inversion is element-wise. Falls back to serial below the pool-dispatch cost.
-pub fn grand_product_par<F: PrimeField + Send + Sync>(num: &[F], den: &[F]) -> Vec<F> {
-    use crate::base::msm::SendPtr;
+/// The grand product `out[i] = ∏_{j<=i} num_j / den_j` (bb `compute_grand_product`), where
+/// `terms(lo, num, den)` fills rows `lo..lo + num.len()`. Each thread fills its chunk with `num`
+/// in place, batch-inverts its `den`, and forms the running product of the ratios; a scan over
+/// the chunk totals then scales every later chunk. A zero `den` zeroes every later entry.
+pub fn grand_product_par<F: PrimeField + Send + Sync>(
+    out: &mut [F],
+    terms: impl Fn(usize, &mut [F], &mut [F]) + Sync,
+) {
     use rayon::prelude::*;
-    let n = num.len();
-    if n < 8192 {
-        return grand_product(num, den);
-    }
-    let nthreads = rayon::current_num_threads().max(1);
-    let chunk = n.div_ceil(nthreads);
-    let nb = n.div_ceil(chunk);
-    // Inclusive prefix product of `src` into `out` (len n+1, out[0] = 1): per-block total, an
-    // exclusive scan over the nb block totals, then each block fills its range from its offset.
-    let prefix = |src: &[F]| -> Vec<F> {
-        let totals: Vec<F> = (0..nb)
-            .into_par_iter()
-            .map(|b| {
-                let (lo, hi) = (b * chunk, ((b + 1) * chunk).min(n));
-                let mut p = F::one();
-                for x in &src[lo..hi] {
-                    p *= x;
-                }
-                p
-            })
-            .collect();
-        let mut offs = vec![F::one(); nb];
-        for b in 1..nb {
-            offs[b] = offs[b - 1] * totals[b - 1];
-        }
-        let mut out = vec![F::one(); n + 1];
-        let ptr = SendPtr(out.as_mut_ptr());
-        (0..nb).into_par_iter().for_each(|b| {
-            let (lo, hi) = (b * chunk, ((b + 1) * chunk).min(n));
-            let mut run = offs[b];
-            let ptr = &ptr;
-            for i in lo..hi {
-                run *= &src[i];
-                unsafe { *ptr.0.add(i + 1) = run };
+    let chunk = out.len().div_ceil(rayon::current_num_threads()).max(1024);
+    let totals: Vec<F> = out
+        .par_chunks_mut(chunk)
+        .enumerate()
+        .map(|(b, o)| {
+            let mut den = vec![F::zero(); o.len()];
+            terms(b * chunk, o, &mut den);
+            ark_ff::serial_batch_inversion_and_mul(&mut den, &F::one());
+            let mut run = F::one();
+            for (x, d) in o.iter_mut().zip(&den) {
+                run *= *x * d;
+                *x = run;
             }
-        });
-        out
-    };
-    let num_prefix = prefix(num);
-    let mut den_prefix = prefix(den);
-    // Element-wise inversion, so each chunk runs the Montgomery batch trick independently.
-    den_prefix.par_chunks_mut(chunk).for_each(ark_ff::batch_inversion);
-    num_prefix
-        .par_iter()
-        .zip(den_prefix.par_iter())
-        .map(|(n, d)| *n * d)
-        .collect()
+            run
+        })
+        .collect();
+    let mut scale = vec![F::one(); totals.len()];
+    for b in 1..totals.len() {
+        scale[b] = scale[b - 1] * totals[b - 1];
+    }
+    out.par_chunks_mut(chunk).zip(scale).skip(1).for_each(|(o, s)| o.iter_mut().for_each(|x| *x *= s));
 }
 
 pub fn grand_product<F: PrimeField>(num: &[F], den: &[F]) -> Vec<F> {

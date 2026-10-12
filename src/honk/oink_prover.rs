@@ -287,22 +287,17 @@ fn compute_grand_product(inst: &mut ProverInstance, p: &RelationParams<Fr>) {
     for (i, c) in masked.coeffs.iter().take(gp_start).enumerate() {
         z.coeffs[i] = *c;
     }
-    let terms: Vec<(Fr, Fr)> = (0..active_size - 1)
-        .into_par_iter()
-        .map(|i| {
-            let row = i + gp_start;
-            let (mut num, mut den) = (Fr::from(1u64), Fr::from(1u64));
+    crate::base::field::grand_product_par(&mut z.coeffs[gp_start + 1..], |lo, num, den| {
+        for (r, (n, d)) in num.iter_mut().zip(den).enumerate() {
+            let row = gp_start + lo + r;
+            (*n, *d) = (Fr::from(1u64), Fr::from(1u64));
             for k in 0..4 {
                 let w = inst.poly(wires[k]).coeffs[row];
-                num *= w + inst.poly(ids[k]).coeffs[row] * p.beta + p.gamma;
-                den *= w + inst.poly(sigmas[k]).coeffs[row] * p.beta + p.gamma;
+                *n *= w + inst.poly(ids[k]).coeffs[row] * p.beta + p.gamma;
+                *d *= w + inst.poly(sigmas[k]).coeffs[row] * p.beta + p.gamma;
             }
-            (num, den)
-        })
-        .collect();
-    let (num, den): (Vec<Fr>, Vec<Fr>) = terms.into_iter().unzip();
-    let prefix = crate::base::field::grand_product_par(&num, &den);
-    z.coeffs[gp_start + 1..gp_start + active_size].copy_from_slice(&prefix[1..]);
+        }
+    });
     *inst.poly_mut(Ent::z_perm) = z;
 }
 

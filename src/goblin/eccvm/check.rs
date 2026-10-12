@@ -53,16 +53,15 @@ impl EccvmPolys {
                 self.cols[Ent::lookup_inverses as usize].coeffs[i] = d;
             }
         }
-        let terms: Vec<(Fq, Fq)> = (TRACE_OFFSET..n - 1)
-            .into_par_iter()
-            .map_init(Vec::new, |row, i| {
-                self.row_into(i, row);
-                (set_numerator(row, p), set_denominator(row, p))
-            })
-            .collect();
-        let (num, den): (Vec<Fq>, Vec<Fq>) = terms.into_iter().unzip();
-        let prefix = crate::base::field::grand_product_par(&num, &den);
-        self.cols[Ent::z_perm as usize].coeffs[TRACE_OFFSET + 1..n].copy_from_slice(&prefix[1..]);
+        let mut z = std::mem::take(&mut self.cols[Ent::z_perm as usize].coeffs);
+        crate::base::field::grand_product_par(&mut z[TRACE_OFFSET + 1..n], |lo, num, den| {
+            let mut row = Vec::new();
+            for (k, (n, d)) in num.iter_mut().zip(den).enumerate() {
+                self.row_into(TRACE_OFFSET + lo + k, &mut row);
+                (*n, *d) = (set_numerator(&row, p), set_denominator(&row, p));
+            }
+        });
+        self.cols[Ent::z_perm as usize].coeffs = z;
     }
 }
 
