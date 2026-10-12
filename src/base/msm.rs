@@ -111,10 +111,9 @@ where
     const PHI: u32 = 1 << 30;
     // bb `GLV_SMALL_N_THRESHOLD`: above this the doubled point count (2n gathers, 2n schedule
     // entries) outweighs halving the windows, so the MSM runs on full-width scalars instead.
-    // The crossover is platform-specific: measured here at 2^16 on wasm and 2^15 native (8t and
-    // 1t agree; GLV wins at 2^14, ties at 2^15, loses 5% at 2^16). bb's own constants are 2^16 /
-    // 2^13 — its native decode is cheaper, so its crossover sits lower than ours.
-    // BBREF_GLV_LOG2 overrides.
+    // The crossover is platform-specific: measured at 2^16 on wasm; natively at 2^12 (8t,
+    // bbbench: full-width 2^13 3.59 -> 3.41 ms and 2^15 10.3 -> 9.2 ms without GLV on the IFMA
+    // drain, neutral without IFMA). bb's own constants are 2^16 / 2^13. BBREF_GLV_LOG2 overrides.
     static GLV_LOG2: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     let glv_threshold = 1usize
         << *GLV_LOG2.get_or_init(|| {
@@ -123,18 +122,15 @@ where
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(crate::base::wasm::MSM_DEFAULT_LOG2)
         });
-    let use_glv = n <= glv_threshold;
+    let full: Vec<[u64; 4]> = scalars[..n].par_iter().map(|s| s.into_bigint().0).collect();
+    // Scalars of at most 128 bits already have GLV's window count: splitting only doubles the points.
+    let use_glv = n <= glv_threshold && full.iter().any(|k| k[2] | k[3] != 0);
     // Working sub-scalars: GLV gives two 128-bit halves per point (k1 against P, k2 against the
     // endomorphism image), otherwise one full-width scalar per point.
     let subs: Vec<([u64; 2], [u64; 2])> = if use_glv {
         scalars[..n].par_iter().map(crate::base::endo::glv_split).collect()
     } else {
         Vec::new()
-    };
-    let full: Vec<[u64; 4]> = if use_glv {
-        Vec::new()
-    } else {
-        scalars[..n].par_iter().map(|s| s.into_bigint().0).collect()
     };
     // bb Phase 1 scalar profile: the window count tracks the largest *actual* working scalar
     // (not the nominal bound) and the window size is chosen for the *nonzero* working scalar
@@ -347,6 +343,7 @@ where
     // overflow list that one tree reduce per window folds back in. Output: per-(thread, window)
     // dense partials with a presence bitmap — no second survivor tree per job or per window.
     const SUBCHUNK: usize = 2048;
+    const GATHER_PREFETCH: usize = 16;
     struct Partial<P: SWCurveConfig> {
         lo: usize,
         dense: Vec<Affine<P>>,
@@ -394,6 +391,20 @@ where
                         for j in pos..end {
                             while bs[b + 1] as usize <= j {
                                 b += 1;
+                            }
+                            // The point loads are random over the SRS; prefetching a few entries
+                            // ahead keeps more of them in flight than the branchy loop does.
+                            #[cfg(target_arch = "x86_64")]
+                            if let Some(&f) = sched.get(j + GATHER_PREFETCH) {
+                                let k = (f & 0x3fff_ffff) as usize;
+                                let p = match phi_table {
+                                    Some(tbl) if f & PHI != 0 => &tbl[k],
+                                    _ => &points[k],
+                                };
+                                unsafe {
+                                    use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
+                                    _mm_prefetch(p as *const Affine<P> as *const i8, _MM_HINT_T0);
+                                }
                             }
                             let e = sched[j];
                             let i = (e & 0x3fff_ffff) as usize;

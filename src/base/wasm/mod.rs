@@ -47,7 +47,7 @@ pub const STORED_DOMAIN_261: bool = cfg!(target_family = "wasm");
 pub const GLV_PHI_TABLE: bool = cfg!(target_family = "wasm");
 
 /// Default `log2` of the Pippenger chunk (`BBREF_GLV_LOG2` overrides).
-pub const MSM_DEFAULT_LOG2: u32 = if cfg!(target_family = "wasm") { 16 } else { 15 };
+pub const MSM_DEFAULT_LOG2: u32 = if cfg!(target_family = "wasm") { 16 } else { 12 };
 
 /// The shared SRS cache holds 2^256-domain Montgomery limbs. The multiplier that takes such a limb
 /// set, reinterpreted as a stored element, to the value it encodes: `Some(2^5)` where the stored
