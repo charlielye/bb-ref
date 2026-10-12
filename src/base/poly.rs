@@ -16,30 +16,12 @@ impl<F: FieldLike + Send + Sync> Polynomial<F> {
     /// `evaluate` for large polynomials (the Gemini batched polynomial and its folds are
     /// 2^16-2^17): chunk-wise Horner on the pool, recombined with z^L. Exact — the same polynomial.
     pub fn evaluate_par(&self, z: &F) -> F {
-        fn horner<F: FieldLike>(coeffs: &[F], z: &F) -> F {
-            let mut acc = F::zero();
-            for c in coeffs.iter().rev() {
-                acc = acc * z + c;
-            }
-            acc
-        }
         const CHUNK: usize = 8192;
         if self.coeffs.len() <= 2 * CHUNK {
             return horner(&self.coeffs, z);
         }
-        use rayon::prelude::*;
         let partials: Vec<F> = self.coeffs.par_chunks(CHUNK).map(|c| horner(c, z)).collect();
-        let mut z_chunk = F::one();
-        let mut base = z.clone();
-        let mut e = CHUNK;
-        while e > 0 {
-            if e & 1 == 1 {
-                z_chunk *= &base;
-            }
-            base = base.clone() * &base;
-            e >>= 1;
-        }
-        horner(&partials, &z_chunk)
+        horner(&partials, &z.pow_u64(CHUNK as u64))
     }
 }
 
@@ -191,6 +173,53 @@ impl<F: FieldLike> Polynomial<F> {
         }
         Self { coeffs: result }
     }
+}
+
+fn horner<F: FieldLike>(coeffs: &[F], z: &F) -> F {
+    let mut acc = F::zero();
+    for c in coeffs.iter().rev() {
+        acc = acc * z + c;
+    }
+    acc
+}
+
+/// `q += sum_j s_j (p_j - v_j) / (X - x_j)` over terms `(p_j, x_j, v_j, s_j)`, asserting that every
+/// division is exact (bb `factor_roots` per term, then `add_scaled`). A term's quotient is
+/// `q_i = sum_{k>i} p_k x^{k-i-1}`: each chunk of indices Horner-evaluates its own coefficients in
+/// parallel, a serial scan from the top gives the value of `q` at every chunk boundary, then the
+/// chunks run the descending recurrence `q_{i-1} = p_i + x q_i` from there in parallel.
+pub fn add_linear_quotients<F: FieldLike + Copy + Send + Sync>(q: &mut [F], terms: &[(&[F], F, F, F)]) {
+    const CHUNK: usize = 1 << 12;
+    let num_chunks = q.len().div_ceil(CHUNK);
+    // bounds[c][j]: q_j at the upper boundary of chunk c, from the Horner values of chunk c + 1
+    let mut bounds: Vec<Vec<F>> = (1..=num_chunks)
+        .into_par_iter()
+        .map(|c| {
+            let range = |p: &[F]| (c * CHUNK + 1).min(p.len())..((c + 1) * CHUNK + 1).min(p.len());
+            terms.iter().map(|(p, x, ..)| horner(&p[range(p)], x)).collect()
+        })
+        .collect();
+    let x_chunk: Vec<F> = terms.iter().map(|t| t.1.pow_u64(CHUNK as u64)).collect();
+    for c in (0..num_chunks.saturating_sub(1)).rev() {
+        for j in 0..terms.len() {
+            bounds[c][j] = bounds[c][j] + x_chunk[j] * bounds[c + 1][j];
+        }
+    }
+    q.par_chunks_mut(CHUNK)
+        .zip(bounds)
+        .enumerate()
+        .for_each(|(c, (out, b))| {
+            let lo = c * CHUNK;
+            for ((p, x, v, s), mut carry) in terms.iter().zip(b) {
+                for i in (lo..(lo + out.len()).min(p.len().saturating_sub(1))).rev() {
+                    carry = p[i + 1] + *x * carry;
+                    out[i - lo] += *s * carry;
+                }
+                if c == 0 && !p.is_empty() {
+                    assert!((p[0] - v + *x * carry).is_zero(), "add_linear_quotients: not a root");
+                }
+            }
+        });
 }
 
 /// The table of `eq(x, r[..log_n]) · ∏_{j ≥ log_n} (1 - r_j)` over the hypercube, index bit `j` ↔ `r[j]`

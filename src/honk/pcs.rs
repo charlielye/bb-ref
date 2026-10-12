@@ -794,17 +794,6 @@ pub fn sumcheck_round_claims(univariates: &[Poly], evaluations: &[[Fr; 3]], u: &
     claims
 }
 
-/// `q += scale * (p - v) / (X - x)` with `x` a root of `p - v` (bb `factor_roots`), fused with
-/// the accumulation: `q_{n-2} = p_{n-1}`, `q_{i-1} = p_i + x q_i`.
-fn accumulate_quotient<F: FieldLike + Copy>(q: &mut [F], p: &[F], x: F, v: F, scale: F) {
-    let mut carry = F::zero();
-    for i in (1..p.len()).rev() {
-        carry = p[i] + x * carry;
-        q[i - 1] += scale * carry;
-    }
-    assert!((p[0] - v + x * carry).is_zero(), "accumulate_quotient: not a root");
-}
-
 /// bb `ShplonkProver_::prove`: batched quotient `Q`, then `G = Q - Q_z` opened at `z` with value 0.
 /// `virtual_log_n` only matters when `libra_claims` is non-empty.
 pub fn shplonk_prove<C: Curve>(
@@ -824,7 +813,7 @@ where
     let fold_pos_evals: Vec<F<C>> = claims
         .iter()
         .filter(|c| c.gemini_fold)
-        .map(|c| c.poly.evaluate(&(-c.challenge)))
+        .map(|c| c.poly.evaluate_par(&(-c.challenge)))
         .collect();
     let max_size = claims
         .iter()
@@ -857,20 +846,12 @@ where
             current_nu *= nu;
         }
     }
-    // Longest openings first so the parallel folds below balance.
-    openings.sort_by_key(|o| std::cmp::Reverse(o.0.len()));
-    // Q = sum_i nu^i (p_i(X) - v_i) / (X - x_i): each quotient at its own length, openings in
-    // parallel, then one row-parallel sum.
-    let quotients: Vec<Polynomial<F<C>>> = openings
-        .par_iter()
-        .map(|(poly, x, v, scale)| {
-            let mut q = Polynomial::zero(poly.len());
-            accumulate_quotient(&mut q.coeffs, &poly.coeffs, *x, *v, *scale);
-            q
-        })
-        .collect();
     let mut q = Polynomial::<F<C>>::zero(max_size);
-    q.add_scaled_batch(&quotients.iter().map(|p| (p, F::<C>::one())).collect::<Vec<_>>());
+    let terms: Vec<_> = openings
+        .iter()
+        .map(|(p, x, v, s)| (&p.coeffs[..], *x, *v, *s))
+        .collect();
+    crate::base::poly::add_linear_quotients(&mut q.coeffs, &terms);
     crate::base::timing::phase("    shplonk: quotient");
     let quotient_commitment = ck.commit(&q);
     crate::base::timing::phase("    shplonk: Q commit");
@@ -883,13 +864,15 @@ where
         .iter()
         .map(|(_, x, _, scale)| *scale * (z - x).invert())
         .collect();
-    g.add_scaled_batch(
-        &openings
-            .iter()
-            .zip(&scalars)
-            .map(|((poly, ..), s)| (*poly, -*s))
-            .collect::<Vec<_>>(),
-    );
+    // A Gemini fold opened at both +-r^{2^l} enters once, with the sum of its two factors.
+    let mut batch: Vec<(&Polynomial<F<C>>, F<C>)> = Vec::with_capacity(openings.len());
+    for ((poly, ..), s) in openings.iter().zip(&scalars) {
+        match batch.last_mut() {
+            Some((p, acc)) if std::ptr::eq(*p, *poly) => *acc -= *s,
+            _ => batch.push((poly, -*s)),
+        }
+    }
+    g.add_scaled_batch(&batch);
     for ((_, _, v, _), s) in openings.iter().zip(&scalars) {
         g.coeffs[0] += *s * v;
     }
@@ -914,9 +897,9 @@ where
     Fr: crate::base::codec::Transcriptable<C::TF>,
     crate::base::G1Affine: crate::base::codec::Transcriptable<C::TF>,
 {
-    let mut quotient = claim.poly;
-    quotient.coeffs[0] -= claim.evaluation;
-    quotient.factor_root(&claim.challenge);
+    let mut quotient = Poly::zero(claim.poly.len());
+    let term = (&claim.poly.coeffs[..], claim.challenge, claim.evaluation, Fr::one());
+    crate::base::poly::add_linear_quotients(&mut quotient.coeffs, &[term]);
     crate::base::timing::phase("    kzg: quotient");
     t.send("KZG:W", &ck.commit(&quotient));
     crate::base::timing::phase("    kzg: W commit");
