@@ -125,11 +125,19 @@ impl<F: FieldLike> Polynomial<F> {
             for (p, s) in terms {
                 let src = &p.coeffs[start.min(p.coeffs.len())..];
                 let overlap = chunk.len().min(src.len());
+                // Unit scalars (Shplonk's quotient sum, rho^0) need no multiplication.
+                if s.value() == <F::Native as ark_ff::Field>::ONE {
+                    chunk[..overlap].iter_mut().zip(src).for_each(|(a, b)| *a += b);
+                    continue;
+                }
                 if crate::base::wasm::try_axpy(&mut chunk[..overlap], &src[..overlap], s) {
                     continue;
                 }
+                // Selector columns are mostly zero inside their backing range.
                 for (a, b) in chunk[..overlap].iter_mut().zip(src) {
-                    *a += &(s.clone() * b);
+                    if !b.is_zero() {
+                        *a += &(s.clone() * b);
+                    }
                 }
             }
         });
