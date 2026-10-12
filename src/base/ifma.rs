@@ -9,7 +9,11 @@
 //! 512-bit registers carries `#[target_feature]` and runs only once [`available`] has confirmed the
 //! CPU. `BBREF_NO_IFMA` forces the scalar paths (A/B on one binary). Elsewhere `available` is false.
 
+// Off x86-64 the kernel calls compile out (`available` is false), leaving their inputs unused.
+#![cfg_attr(not(target_arch = "x86_64"), allow(unused))]
+
 use crate::base::field::NativeField;
+use crate::base::{Fq, Fr};
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
@@ -74,6 +78,106 @@ impl<F: NativeField> Chords<F> {
         self.ay.truncate(n);
         self.bx.truncate(n);
         self.by.truncate(n);
+    }
+}
+
+/// `Some(true)` for bn254 Fr, `Some(false)` for Fq, when `F` is one of them and the kernels serve
+/// it; the hooks below then reinterpret `F` as that type.
+fn bn254<F: 'static>() -> Option<bool> {
+    use core::any::TypeId;
+    let (fr, fq) = (TypeId::of::<F>() == TypeId::of::<Fr>(), TypeId::of::<F>() == TypeId::of::<Fq>());
+    (fr && available::<Fr>() || fq && available::<Fq>()).then_some(fr)
+}
+
+macro_rules! on_bn254 {
+    ($F:ty, |$G:ident| $body:expr) => {
+        match bn254::<$F>() {
+            Some(true) => {
+                type $G = Fr;
+                $body
+            }
+            Some(false) => {
+                type $G = Fq;
+                $body
+            }
+            None => return Default::default(),
+        }
+    };
+}
+
+/// In-place sumcheck fold `v[k] = v[2k] + u·(v[2k + 1] − v[2k])`, halving `v`; false if `F` has no
+/// kernel here.
+pub fn try_fold_halve<F: 'static>(v: &mut Vec<F>, u: &F) -> bool {
+    on_bn254!(F, |G| fold_halve::<G>(unsafe { &mut *(v as *mut Vec<F> as *mut Vec<G>) }, unsafe {
+        &*(u as *const F as *const G)
+    }));
+    true
+}
+
+/// The fold of `src` zero-extended to `len`, as a new vector; None if `F` has no kernel here.
+pub fn try_fold_from<F: 'static>(src: &[F], len: usize, u: &F) -> Option<Vec<F>> {
+    on_bn254!(F, |G| {
+        let out = fold_from::<G>(unsafe { &*(src as *const [F] as *const [G]) }, len, unsafe {
+            &*(u as *const F as *const G)
+        });
+        Some(unsafe { core::mem::transmute::<Vec<G>, Vec<F>>(out) })
+    })
+}
+
+/// `dst[i] += Σ s·src[i]` over `terms` (sources shorter than `dst` are zero-extended); false if
+/// `F` has no kernel here.
+pub fn try_axpy_batch<F: 'static>(dst: &mut [F], terms: &[(&[F], F)]) -> bool {
+    on_bn254!(F, |G| axpy_batch::<G>(unsafe { &mut *(dst as *mut [F] as *mut [G]) }, unsafe {
+        &*(terms as *const [(&[F], F)] as *const [(&[G], G)])
+    }));
+    true
+}
+
+fn fold_halve<G: NativeField>(v: &mut Vec<G>, u: &G) {
+    let (len, half) = (v.len(), v.len().div_ceil(2));
+    let blocks = len / 16;
+    let p = v.as_mut_ptr();
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        fold_kernel(p, p, blocks, u)
+    };
+    for k in 8 * blocks..half {
+        let a = v[2 * k];
+        let b = if 2 * k + 1 < len { v[2 * k + 1] } else { G::ZERO };
+        v[k] = if a == b { a } else { a + *u * (b - a) };
+    }
+    v.truncate(half);
+}
+
+fn fold_from<G: NativeField>(src: &[G], len: usize, u: &G) -> Vec<G> {
+    let n = len.min(src.len());
+    let blocks = n / 16;
+    let mut out = Vec::with_capacity(len.div_ceil(2));
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        fold_kernel(src.as_ptr(), out.as_mut_ptr(), blocks, u);
+        out.set_len(8 * blocks);
+    }
+    let at = |i: usize| if i < n { src[i] } else { G::ZERO };
+    out.extend((8 * blocks..len.div_ceil(2)).map(|k| {
+        let (a, b) = (at(2 * k), at(2 * k + 1));
+        if a == b { a } else { a + *u * (b - a) }
+    }));
+    out
+}
+
+fn axpy_batch<G: NativeField>(dst: &mut [G], terms: &[(&[G], G)]) {
+    let blocks = dst.len() / 8;
+    for t in (0..blocks).step_by(32) {
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            axpy_tile(dst.as_mut_ptr().add(8 * t), (blocks - t).min(32), terms, 8 * t)
+        };
+    }
+    for (src, s) in terms {
+        for i in 8 * blocks..dst.len().min(src.len()) {
+            dst[i] += *s * src[i];
+        }
     }
 }
 
@@ -238,14 +342,13 @@ mod x86 {
     const C: [i64; 8] = [0, 1, 2, 3, 8, 9, 10, 11];
     const D: [i64; 8] = [4, 5, 6, 7, 12, 13, 14, 15];
 
-    /// Elements 8g..8g + 8 of an ark 4×64 slice, transposed to limb-major lanes.
+    /// Four registers of two ark 4×64 elements each (eight elements, in order), transposed to
+    /// limb-major lanes and re-limbed to 52 bits.
     #[inline]
     #[target_feature(enable = "avx512f,avx512ifma")]
-    pub(crate) unsafe fn load8<F>(s: &[F], g: usize) -> V5 {
-        debug_assert!(size_of::<F>() == 32 && s.len() >= 8 * g + 8);
-        let p = s.as_ptr().add(8 * g) as *const __m512i;
-        let (u0, u1) = mix(_mm512_loadu_si512(p), _mm512_loadu_si512(p.add(1)), A, B);
-        let (u2, u3) = mix(_mm512_loadu_si512(p.add(2)), _mm512_loadu_si512(p.add(3)), A, B);
+    fn from_rows(x0: __m512i, x1: __m512i, x2: __m512i, x3: __m512i) -> V5 {
+        let (u0, u1) = mix(x0, x1, A, B);
+        let (u2, u3) = mix(x2, x3, A, B);
         let (a0, a1) = mix(u0, u2, C, D);
         let (a2, a3) = mix(u1, u3, C, D);
         let m = splat(M52);
@@ -258,24 +361,146 @@ mod x86 {
         ]
     }
 
+    /// The eight elements at `p` (ark 4×64 limbs), as lanes.
+    #[inline]
+    #[target_feature(enable = "avx512f,avx512ifma")]
+    pub(crate) unsafe fn load8<F>(p: *const F) -> V5 {
+        debug_assert!(size_of::<F>() == 32);
+        let p = p as *const __m512i;
+        from_rows(_mm512_loadu_si512(p), _mm512_loadu_si512(p.add(1)), _mm512_loadu_si512(p.add(2)), _mm512_loadu_si512(p.add(3)))
+    }
+
+    /// The even- and odd-indexed elements of the sixteen at `p`, as lanes.
+    #[inline]
+    #[target_feature(enable = "avx512f,avx512ifma")]
+    pub(crate) unsafe fn load8_pairs<F>(p: *const F) -> (V5, V5) {
+        let p = p as *const __m512i;
+        let mut z = [_mm512_setzero_si512(); 8];
+        for i in 0..8 {
+            z[i] = _mm512_loadu_si512(p.add(i));
+        }
+        // z[i] holds elements 2i and 2i + 1; regroup the 256-bit halves.
+        let even = from_rows(
+            _mm512_shuffle_i64x2::<0x44>(z[0], z[1]),
+            _mm512_shuffle_i64x2::<0x44>(z[2], z[3]),
+            _mm512_shuffle_i64x2::<0x44>(z[4], z[5]),
+            _mm512_shuffle_i64x2::<0x44>(z[6], z[7]),
+        );
+        let odd = from_rows(
+            _mm512_shuffle_i64x2::<0xee>(z[0], z[1]),
+            _mm512_shuffle_i64x2::<0xee>(z[2], z[3]),
+            _mm512_shuffle_i64x2::<0xee>(z[4], z[5]),
+            _mm512_shuffle_i64x2::<0xee>(z[6], z[7]),
+        );
+        (even, odd)
+    }
+
     /// Inverse of `load8` for values below 2^256.
     #[inline]
     #[target_feature(enable = "avx512f,avx512ifma")]
-    pub(crate) unsafe fn store8<F>(s: &mut [F], g: usize, v: &V5) {
-        debug_assert!(size_of::<F>() == 32 && s.len() >= 8 * g + 8);
+    pub(crate) unsafe fn store8<F>(p: *mut F, v: &V5) {
         let a0 = _mm512_or_si512(v[0], _mm512_slli_epi64::<52>(v[1]));
         let a1 = _mm512_or_si512(_mm512_srli_epi64::<12>(v[1]), _mm512_slli_epi64::<40>(v[2]));
         let a2 = _mm512_or_si512(_mm512_srli_epi64::<24>(v[2]), _mm512_slli_epi64::<28>(v[3]));
         let a3 = _mm512_or_si512(_mm512_srli_epi64::<36>(v[3]), _mm512_slli_epi64::<16>(v[4]));
         let (u0, u2) = mix(a0, a1, C, D);
         let (u1, u3) = mix(a2, a3, C, D);
-        let p = s.as_mut_ptr().add(8 * g) as *mut __m512i;
+        let p = p as *mut __m512i;
         let (x0, x1) = mix(u0, u1, A, B);
         let (x2, x3) = mix(u2, u3, A, B);
         _mm512_storeu_si512(p, x0);
         _mm512_storeu_si512(p.add(1), x1);
         _mm512_storeu_si512(p.add(2), x2);
         _mm512_storeu_si512(p.add(3), x3);
+    }
+
+    /// a + b, normalised.
+    #[inline]
+    #[target_feature(enable = "avx512f,avx512ifma")]
+    pub(crate) fn add(a: &V5, b: &V5) -> V5 {
+        let mut r = *a;
+        for i in 0..5 {
+            r[i] = _mm512_add_epi64(a[i], b[i]);
+        }
+        normalise(r)
+    }
+
+    /// Whether every lane of a equals b's (bit-identical limbs).
+    #[inline]
+    #[target_feature(enable = "avx512f,avx512ifma")]
+    fn same(a: &V5, b: &V5) -> bool {
+        let mut d = _mm512_setzero_si512();
+        for i in 0..5 {
+            d = _mm512_or_si512(d, _mm512_xor_si512(a[i], b[i]));
+        }
+        _mm512_test_epi64_mask(d, d) == 0
+    }
+
+    /// dst[k] = src[2k] + u·(src[2k + 1] − src[2k]) for k < 8·blocks (golf 0061); dst may alias
+    /// src, as each block reads its sixteen inputs before writing. A block of eight bit-identical
+    /// pairs is copied (golf 0053). Bounds: (odd − even + 2p)·u + even < 2.6p.
+    #[target_feature(enable = "avx512f,avx512ifma")]
+    pub(super) unsafe fn fold_kernel<F: NativeField>(src: *const F, dst: *mut F, blocks: usize, u: &F) {
+        let c = &const { Consts::new(F::MODULUS.0) };
+        let uv = load8([*u; 8].as_ptr());
+        for g in 0..blocks {
+            let (even, odd) = load8_pairs(src.add(16 * g));
+            let r = if same(&even, &odd) {
+                even
+            } else {
+                canonical(c, &add(&mont_mul(c, &sub_plus(&odd, &even, None, &c.p2), &uv), &even))
+            };
+            store8(dst.add(8 * g), &r);
+        }
+    }
+
+    /// dst[i] += Σ s·src[i] over `terms` for i < 8·blocks (golf 0062): the tile stays in 52-bit
+    /// lanes across all terms, all-zero source blocks are skipped, unit scalars add without a
+    /// multiply, and the tail of a source shorter than the tile is read with masked loads. Each
+    /// block is reduced after every sixth term (p + 6·1.19p < 9p).
+    #[target_feature(enable = "avx512f,avx512ifma")]
+    pub(super) unsafe fn axpy_tile<F: NativeField>(dst: *mut F, blocks: usize, terms: &[(&[F], F)], at: usize) {
+        const TILE: usize = 32;
+        debug_assert!(blocks <= TILE);
+        let c = &const { Consts::new(F::MODULUS.0) };
+        let mut acc = [[_mm512_setzero_si512(); 5]; TILE];
+        let mut count = [0u8; TILE];
+        for b in 0..blocks {
+            acc[b] = load8(dst.add(8 * b));
+        }
+        for (src, s) in terms {
+            let src = &src[at.min(src.len())..];
+            let unit = *s == F::ONE;
+            let sv = load8([*s; 8].as_ptr());
+            for b in 0..blocks.min(src.len().div_ceil(8)) {
+                let live = (src.len() - 8 * b).min(8);
+                let p = src.as_ptr().add(8 * b) as *const i64;
+                let mut z = [_mm512_setzero_si512(); 4];
+                let mut any = _mm512_setzero_si512();
+                for j in 0..4 {
+                    // Words of elements 2j and 2j + 1 that lie inside the source.
+                    let words = (if 2 * j < live { 0x0f } else { 0 }) | (if 2 * j + 1 < live { 0xf0 } else { 0 });
+                    z[j] = _mm512_maskz_loadu_epi64(words, p.add(8 * j));
+                    any = _mm512_or_si512(any, z[j]);
+                }
+                if _mm512_test_epi64_mask(any, any) == 0 {
+                    continue;
+                }
+                let mut v = from_rows(z[0], z[1], z[2], z[3]);
+                if !unit {
+                    v = mont_mul(c, &v, &sv);
+                }
+                acc[b] = add(&acc[b], &v);
+                count[b] += 1;
+                if count[b] == 6 {
+                    acc[b] = canonical(c, &acc[b]);
+                    count[b] = 0;
+                }
+            }
+        }
+        for b in 0..blocks {
+            store8(dst.add(8 * b), &canonical(c, &acc[b]));
+        }
     }
 
     /// (ax, ay)[k] ← (ax, ay)[k] + (bx, by)[k] over a multiple of 8 pairs with one field inversion
@@ -295,30 +520,30 @@ mod x86 {
         let groups = ax.len() / 8;
         chain.clear();
         let mut lanes = [F::one(); 8];
-        let mut acc = load8(&lanes, 0);
+        let mut acc = load8(lanes.as_ptr());
         for g in 0..groups {
-            let dx = sub_plus(&load8(bx, g), &load8(ax, g), None, &c.p2);
+            let dx = sub_plus(&load8(&bx[8 * g]), &load8(&ax[8 * g]), None, &c.p2);
             chain.push([dx, acc]);
             acc = mont_mul(c, &acc, &dx);
         }
-        store8(&mut lanes, 0, &canonical(c, &acc));
+        store8(lanes.as_mut_ptr(), &canonical(c, &acc));
         crate::base::msm::batch_invert_nonzero(&mut lanes, &mut Vec::with_capacity(8));
-        acc = load8(&lanes, 0);
+        acc = load8(lanes.as_ptr());
         for g in (0..groups).rev() {
             let [dx, pre] = chain[g];
             let inv = mont_mul(c, &acc, &pre);
             acc = mont_mul(c, &acc, &dx);
-            let (x1, y1, x2) = (load8(ax, g), load8(ay, g), load8(bx, g));
-            let slope = mont_mul(c, &sub_plus(&load8(by, g), &y1, None, &c.p2), &inv);
+            let (x1, y1, x2) = (load8(&ax[8 * g]), load8(&ay[8 * g]), load8(&bx[8 * g]));
+            let slope = mont_mul(c, &sub_plus(&load8(&by[8 * g]), &y1, None, &c.p2), &inv);
             let x3 = canonical(c, &sub_plus(&mont_mul(c, &slope, &slope), &x1, Some(&x2), &c.p4));
             let y3 = mont_mul(c, &slope, &sub_plus(&x1, &x3, None, &c.p));
-            store8(ay, g, &canonical(c, &sub_plus(&y3, &y1, None, &c.p2)));
-            store8(ax, g, &x3);
+            store8(&mut ay[8 * g], &canonical(c, &sub_plus(&y3, &y1, None, &c.p2)));
+            store8(&mut ax[8 * g], &x3);
         }
     }
 }
 #[cfg(target_arch = "x86_64")]
-use x86::add_kernel;
+use x86::{add_kernel, axpy_tile, fold_kernel};
 
 #[cfg(test)]
 mod tests {
@@ -366,6 +591,62 @@ mod tests {
                 assert_eq!(sum, (*a + *b).into_affine(), "n={n} k={k}");
             }
         }
+    }
+
+    /// Random values, edge values (0, 1, p − 1) and runs of identical neighbours.
+    fn sample<F: NativeField>(n: usize, rng: &mut impl ark_std::rand::Rng) -> Vec<F> {
+        (0..n)
+            .map(|i| match (i / 16) % 4 {
+                0 => F::rand(rng),
+                1 => [F::ZERO, F::ONE, -F::ONE][i % 3],
+                2 => F::from((i / 2) as u64),
+                _ => F::from(7u64),
+            })
+            .collect()
+    }
+
+    fn folds_and_axpy_match<F: NativeField>() {
+        if !available::<F>() {
+            eprintln!("no AVX-512 IFMA: skipped");
+            return;
+        }
+        let mut rng = ark_std::test_rng();
+        let u = F::rand(&mut rng);
+        let fold = |v: &[F], len: usize| -> Vec<F> {
+            let at = |i: usize| if i < v.len().min(len) { v[i] } else { F::ZERO };
+            (0..len.div_ceil(2)).map(|k| at(2 * k) + u * (at(2 * k + 1) - at(2 * k))).collect()
+        };
+        for n in [0usize, 1, 15, 16, 17, 33, 255, 256, 1000, 4099] {
+            let v = sample::<F>(n, &mut rng);
+            let mut w = v.clone();
+            assert!(try_fold_halve(&mut w, &u));
+            assert_eq!(w, fold(&v, n), "halve n={n}");
+            assert_eq!(try_fold_from(&v, n, &u).unwrap(), fold(&v, n), "from n={n}");
+            assert_eq!(try_fold_from(&v, n + 37, &u).unwrap(), fold(&v, n + 37), "from n={n}+37");
+            // Thirteen terms: unit and random scalars, zero stretches, sources shorter and longer.
+            let srcs: Vec<Vec<F>> = (0..13).map(|t| sample::<F>((n * (t + 3)) / 8 + t, &mut rng)).collect();
+            let terms: Vec<(&[F], F)> =
+                srcs.iter().enumerate().map(|(t, s)| (&s[..], if t % 4 == 0 { F::ONE } else { F::rand(&mut rng) })).collect();
+            let mut dst = sample::<F>(n, &mut rng);
+            let mut expect = dst.clone();
+            for (s, x) in &terms {
+                for i in 0..n.min(s.len()) {
+                    expect[i] += *x * s[i];
+                }
+            }
+            assert!(try_axpy_batch(&mut dst, &terms));
+            assert_eq!(dst, expect, "axpy n={n}");
+        }
+    }
+
+    #[test]
+    fn folds_and_axpy_fr() {
+        folds_and_axpy_match::<crate::base::Fr>();
+    }
+
+    #[test]
+    fn folds_and_axpy_fq() {
+        folds_and_axpy_match::<crate::base::Fq>();
     }
 
     #[test]

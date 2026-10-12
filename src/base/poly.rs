@@ -104,6 +104,11 @@ impl<F: FieldLike> Polynomial<F> {
         const CHUNK: usize = 1 << 12;
         self.coeffs.par_chunks_mut(CHUNK).enumerate().for_each(|(c, chunk)| {
             let start = c * CHUNK;
+            let srcs: Vec<(&[F], F)> =
+                terms.iter().map(|(p, s)| (&p.coeffs[start.min(p.coeffs.len())..], s.clone())).collect();
+            if crate::base::ifma::try_axpy_batch(chunk, &srcs) {
+                return;
+            }
             for (p, s) in terms {
                 let src = &p.coeffs[start.min(p.coeffs.len())..];
                 let overlap = chunk.len().min(src.len());

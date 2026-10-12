@@ -1,5 +1,6 @@
 //! Stand-ins for the simd128 kernels on every other target: the same names and signatures,
-//! answering "no packed form" so the generic scalar paths run. All inlined away.
+//! answering "no packed form" so the generic scalar paths run (the folds go to the AVX-512 IFMA
+//! kernels, which answer the same way where the CPU lacks them).
 
 use crate::base::field::NativeField;
 use ark_ec::short_weierstrass::{Affine, SWCurveConfig};
@@ -14,15 +15,7 @@ pub fn try_axpy<F: 'static>(_dst: &mut [F], _src: &[F], _s: &F) -> bool {
     false
 }
 
-#[inline(always)]
-pub fn try_fold_halve<F: 'static>(_v: &mut Vec<F>, _u: &F) -> bool {
-    false
-}
-
-#[inline(always)]
-pub fn try_fold_from<F: 'static>(_src: &[F], _len: usize, _u: &F) -> Option<Vec<F>> {
-    None
-}
+pub use crate::base::ifma::{try_fold_from, try_fold_halve};
 
 /// The packed MSM tree drain; absent here, so `try_reduce` hands every level to the scalar tree.
 pub struct PackedTree<P: SWCurveConfig>(PhantomData<P>);
