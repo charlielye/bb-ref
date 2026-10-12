@@ -6,7 +6,7 @@
 use super::mega::MegaState;
 use super::op_queue::EccOpQueue;
 use super::trace::{BlockId, Blocks, GateRow, Kind, MEGA_BLOCKS, ULTRA_BLOCKS};
-use crate::base::field::{u256, u256_num_bits, u256_shr, FieldLike};
+use crate::base::field::{u256, u256_num_bits, u256_shr, FieldLike, NativeField};
 use crate::base::poseidon2::round_constants;
 use crate::base::Fr;
 use std::cell::RefCell;
@@ -561,7 +561,7 @@ impl Builder {
                 q_3: g.c_scaling,
                 q_4: g.d_scaling,
                 kind: Kind::Arith,
-                gate_value: Fr::from(if include_next_gate_w_4 { 2u64 } else { 1 }),
+                gate_value: Fr::small(1 + include_next_gate_w_4 as u64),
                 ..Default::default()
             },
         );
@@ -570,7 +570,7 @@ impl Builder {
     /// term is scaled here to compensate.
     pub fn create_big_mul_add_gate(&mut self, g: &MulQuad, include_next_gate_w_4: bool) {
         let mul_scaling = if include_next_gate_w_4 {
-            g.mul_scaling * Fr::from(2u64)
+            g.mul_scaling + g.mul_scaling
         } else {
             g.mul_scaling
         };
@@ -585,7 +585,7 @@ impl Builder {
                 q_3: g.c_scaling,
                 q_4: g.d_scaling,
                 kind: Kind::Arith,
-                gate_value: Fr::from(if include_next_gate_w_4 { 2u64 } else { 1 }),
+                gate_value: Fr::small(1 + include_next_gate_w_4 as u64),
                 ..Default::default()
             },
         );
@@ -872,25 +872,26 @@ impl Builder {
         let last_limb_size = num_bits - (num_bits / target_range_bitnum) * target_range_bitnum;
         let last_limb_range = (1u64 << last_limb_size) - 1;
 
-        let mut sublimbs = vec![];
+        // Each sublimb converted to a field element once, for its witness and the accumulator.
+        let mut sublimbs = Vec::with_capacity(num_limbs as usize);
         let mut acc = val;
         for _ in 0..num_limbs {
-            sublimbs.push(acc.0[0] & sublimb_mask);
+            sublimbs.push(Fr::from(acc.0[0] & sublimb_mask));
             acc = u256_shr(acc, target_range_bitnum as u32);
         }
-        let mut sublimb_indices = vec![];
+        let mut sublimb_indices = Vec::with_capacity(num_limbs as usize);
         let num_full_limbs = if has_remainder_bits {
             sublimbs.len() - 1
         } else {
             sublimbs.len()
         };
         for &limb in &sublimbs[..num_full_limbs] {
-            let idx = self.add_variable(Fr::from(limb));
+            let idx = self.add_variable(limb);
             sublimb_indices.push(idx);
             self.create_small_range_constraint(idx, sublimb_mask);
         }
         if has_remainder_bits {
-            let idx = self.add_variable(Fr::from(*sublimbs.last().unwrap()));
+            let idx = self.add_variable(*sublimbs.last().unwrap());
             sublimb_indices.push(idx);
             self.create_small_range_constraint(idx, last_limb_range);
         }
@@ -902,7 +903,7 @@ impl Builder {
         for i in 0..num_limb_triples as usize {
             let last = i as u64 == num_limb_triples - 1;
             let real = |k: u64| !(last && leftovers < k + 1);
-            let limb_val = |k: usize| if real(k as u64) { sublimbs[3 * i + k] } else { 0 };
+            let limb_val = |k: usize| if real(k as u64) { sublimbs[3 * i + k] } else { Fr::zero() };
             let limb_idx = |k: usize| {
                 if real(k as u64) {
                     sublimb_indices[3 * i + k]
@@ -914,7 +915,7 @@ impl Builder {
             let pow2 = |k: u64| pow2_table()[shift(k) as usize];
             let mut new_accumulator = accumulator;
             for k in 0..3 {
-                new_accumulator -= Fr::from(limb_val(k)) * pow2(k as u64);
+                new_accumulator -= limb_val(k) * pow2(k as u64);
             }
             self.create_big_add_gate(
                 AddQuad {
@@ -957,8 +958,13 @@ impl Builder {
             padding += NUM_WIRES;
         }
         let mut indices = vec![self.zero_idx; padding];
-        for v in sorted_list {
-            let index = self.add_variable(Fr::from(v as u64));
+        indices.reserve(sorted_list.len());
+        self.blocks
+            .get_mut(BlockId::DeltaRange)
+            .rows
+            .reserve((padding + sorted_list.len()) / NUM_WIRES + 1);
+        for value in crate::base::field::ascending_to_fr(sorted_list.into_iter().map(u64::from)) {
+            let index = self.add_variable(value);
             self.assign_tag(index, list.tau_tag);
             indices.push(index);
         }

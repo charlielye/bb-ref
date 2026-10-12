@@ -280,6 +280,16 @@ pub fn from_limbs_mod_order<F: PrimeField>(v: impl IntoIterator<Item = u64>) -> 
     F::from_bigint(x).unwrap()
 }
 
+/// The field images of an ascending run of small integers (sorted range-constraint lists): each
+/// is the previous plus a table constant when the step is small, instead of a Montgomery conversion.
+pub fn ascending_to_fr(values: impl IntoIterator<Item = u64>) -> impl Iterator<Item = Fr> {
+    values.into_iter().scan((0u64, Fr::zero()), |(prev, value), v| {
+        *value = if v >= *prev && v - *prev < 64 { *value + Fr::small(v - *prev) } else { Fr::small(v) };
+        *prev = v;
+        Some(*value)
+    })
+}
+
 pub fn u256<F: PrimeField<BigInt = U256>>(f: &F) -> U256 {
     f.into_bigint()
 }
