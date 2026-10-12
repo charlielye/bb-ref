@@ -1,8 +1,8 @@
 //! Randomness source for ZK provers. bb's proofs are reproduced either by replaying a recorded tape of
 //! its CSPRNG or by seeding both sides' `mt19937_64` (bb's debug engine, `BB_RNG_SEED`).
 
-use super::field::{Fq, Fr, U256};
-use ark_ff::{BigInteger, PrimeField, UniformRand};
+use super::field::{from_limbs_mod_order, Fq, Fr, U256};
+use ark_ff::{PrimeField, UniformRand};
 
 pub trait Rng {
     /// A uniformly random 256-bit integer (bb `RNG::get_random_uint256`).
@@ -22,9 +22,11 @@ pub fn random_field<F: PrimeField>(rng: &mut dyn Rng) -> F {
     random_field_from(rng.next_u256(), rng.next_u256())
 }
 
+/// `2^256` is three squarings of `2^32`: a few multiplications instead of a 256-step `pow` and
+/// the byte-at-a-time `from_le_bytes_mod_order`.
 fn random_field_from<F: PrimeField>(lo: U256, hi: U256) -> F {
-    let pow_2_256 = F::from(2u64).pow([256u64]);
-    F::from_le_bytes_mod_order(&lo.to_bytes_le()) + pow_2_256 * F::from_le_bytes_mod_order(&hi.to_bytes_le())
+    let pow_2_256 = F::from(1u64 << 32).square().square().square();
+    from_limbs_mod_order::<F>(lo.0) + pow_2_256 * from_limbs_mod_order::<F>(hi.0)
 }
 
 /// OS randomness.

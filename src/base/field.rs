@@ -266,6 +266,20 @@ pub fn grand_product_par<F: PrimeField + Send + Sync>(
     out.par_chunks_mut(chunk).zip(scale).skip(1).for_each(|(o, s)| o.iter_mut().for_each(|x| *x *= s));
 }
 
+/// `v mod p` for a little-endian integer of at most four limbs, reduced by subtracting the
+/// modulus (a few times at most for 254-bit fields): ark's `from_le_bytes_mod_order` and
+/// `From<BigUint>` go byte by byte through field multiplications.
+pub fn from_limbs_mod_order<F: PrimeField>(v: impl IntoIterator<Item = u64>) -> F {
+    let mut x = F::BigInt::default();
+    for (l, d) in x.as_mut().iter_mut().zip(v) {
+        *l = d;
+    }
+    while x >= F::MODULUS {
+        x.sub_with_borrow(&F::MODULUS);
+    }
+    F::from_bigint(x).unwrap()
+}
+
 pub fn u256<F: PrimeField<BigInt = U256>>(f: &F) -> U256 {
     f.into_bigint()
 }
