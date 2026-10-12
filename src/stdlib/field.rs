@@ -320,6 +320,10 @@ impl FieldT {
 
     /// bb `divide_no_zero_check`: `self / other` with the divisor assumed non-zero.
     pub fn divide_no_zero_check(&self, other: &Self) -> Self {
+        self.divide_with_inverse(other, None)
+    }
+    /// `divide_no_zero_check` given the divisor value's native inverse, if already computed.
+    fn divide_with_inverse(&self, other: &Self, inverse: Option<Fr>) -> Self {
         let ctx = same_ctx(&self.ctx, &other.ctx);
         let mut r = Self {
             ctx: ctx.clone(),
@@ -344,13 +348,7 @@ impl FieldT {
                 r.multiplicative_constant = Fr::one();
                 r.witness_index = IS_CONSTANT;
             } else {
-                let denominator = other.get_value();
-                let out = self.get_value()
-                    * if denominator.is_zero() {
-                        Fr::zero()
-                    } else {
-                        denominator.invert()
-                    };
+                let out = self.get_value() * inverse.unwrap_or_else(|| inverse_or_zero(other.get_value()));
                 let q_c = -self.get_value();
                 let ctx = ctx.unwrap();
                 let mut b = ctx.borrow_mut();
@@ -367,13 +365,7 @@ impl FieldT {
                 });
             }
         } else {
-            let denominator = other.get_value();
-            let out = self.get_value()
-                * if denominator.is_zero() {
-                    Fr::zero()
-                } else {
-                    denominator.invert()
-                };
+            let out = self.get_value() * inverse.unwrap_or_else(|| inverse_or_zero(other.get_value()));
             let ctx = ctx.unwrap();
             let mut b = ctx.borrow_mut();
             r.witness_index = b.add_variable(out);
@@ -439,8 +431,8 @@ impl FieldT {
         lhs.sub(rhs).madd(&predicate.to_field(), rhs)
     }
     pub fn div(&self, other: &Self) -> Self {
-        other.assert_is_not_zero();
-        self.divide_no_zero_check(other)
+        let inverse = other.assert_is_not_zero();
+        self.divide_with_inverse(other, inverse)
     }
 
     /// bb `invert`: `1 / self`; the division gate doubles as the non-zero check.
@@ -505,20 +497,22 @@ impl FieldT {
         });
     }
 
-    pub fn assert_is_not_zero(&self) {
+    /// Returns the native inverse it witnessed (none for a constant), which `div` reuses.
+    pub fn assert_is_not_zero(&self) -> Option<Fr> {
         if self.is_constant() {
             assert!(
                 !self.additive_constant.is_zero(),
                 "assert_is_not_zero on a zero constant"
             );
-            return;
+            return None;
         }
         let ctx = self.ctx();
         let value = self.get_value();
         if value.is_zero() {
             ctx.borrow_mut().failure("field_t::assert_is_not_zero");
         }
-        let inverse = Self::from_witness(&ctx, if value.is_zero() { Fr::zero() } else { value.invert() });
+        let inverse_native = inverse_or_zero(value);
+        let inverse = Self::from_witness(&ctx, inverse_native);
         let mut b = ctx.borrow_mut();
         let z = b.zero_idx();
         b.create_arithmetic_gate(ArithmeticTriple {
@@ -531,6 +525,7 @@ impl FieldT {
             q_o: Fr::zero(),
             q_c: -Fr::one(),
         });
+        Some(inverse_native)
     }
 
     fn wire_or_zero(b: &Builder, f: &Self) -> u32 {
@@ -969,5 +964,13 @@ impl Neg for &FieldT {
     type Output = FieldT;
     fn neg(self) -> FieldT {
         FieldT::neg(self)
+    }
+}
+
+fn inverse_or_zero(v: Fr) -> Fr {
+    if v.is_zero() {
+        Fr::zero()
+    } else {
+        v.invert()
     }
 }
