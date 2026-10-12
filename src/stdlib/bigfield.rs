@@ -6,7 +6,7 @@
 use super::bool::BoolT;
 use super::byte_array::ByteArray;
 use super::field::{Ctx, FieldT};
-use crate::base::field::{from_u256, u256, FieldLike, U256};
+use crate::base::field::{from_limbs_mod_order, from_u256, u256, FieldLike, U256};
 use crate::base::Fr;
 use crate::circuit::nnf::{AddSimple, NonNativeMultiplicationWitnesses, DEFAULT_NON_NATIVE_FIELD_LIMB_BITS};
 use crate::circuit::BlockId;
@@ -26,7 +26,13 @@ fn big(f: &Fr) -> BigUint {
     f.into_bigint().into()
 }
 fn fr(b: &BigUint) -> Fr {
-    Fr::from(b.clone())
+    to_field(b)
+}
+fn to_field<F: PrimeField>(b: &BigUint) -> F {
+    if b.bits() > 256 {
+        return F::from(b.clone());
+    }
+    from_limbs_mod_order(b.iter_u64_digits())
 }
 fn pow2(bits: u64) -> BigUint {
     BigUint::from(1u64) << bits
@@ -93,7 +99,7 @@ impl<N: PrimeField> BigField<N> {
         N::MODULUS.into()
     }
     fn native(v: &BigUint) -> N {
-        N::from(v.clone())
+        to_field(v)
     }
     fn native_value(n: &N) -> BigUint {
         n.into_bigint().into()
