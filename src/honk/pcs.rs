@@ -680,8 +680,13 @@ where
     batched_to_be_shifted.add_scaled_batch(&shifted_terms);
     drop(_gb);
     let _gf = crate::base::bench::Scope::new("Gemini::compute_fold_polynomials");
-    let mut a_0 = batched_unshifted.clone();
-    a_0.add_shifted(&batched_to_be_shifted);
+    let (f, g) = (&batched_unshifted.coeffs, &batched_to_be_shifted.coeffs);
+    let a_0 = Poly::from_coeffs(
+        (0..n)
+            .into_par_iter()
+            .map(|i| f[i] + g.get(i + 1).copied().unwrap_or_default())
+            .collect(),
+    );
     crate::base::timing::phase("    shplemini: batching");
 
     // folds A_{l+1}[j] = A_l[2j] + u_l (A_l[2j+1] - A_l[2j]), l = 0..log_n-2
@@ -725,10 +730,13 @@ where
     }
     // A_0_pos = F + G/r, A_0_neg = F - G/r
     let r_inv = r.invert();
-    let mut a_0_pos = batched_unshifted.clone();
-    a_0_pos.add_scaled(&batched_to_be_shifted, &r_inv);
-    let mut a_0_neg = batched_unshifted;
-    a_0_neg.add_scaled(&batched_to_be_shifted, &(-r_inv));
+    let (a_0_pos, a_0_neg): (Vec<Fr>, Vec<Fr>) = (f.par_iter().zip(g))
+        .map(|(f, g)| {
+            let g = *g * r_inv;
+            (*f + g, *f - g)
+        })
+        .unzip();
+    let (a_0_pos, a_0_neg) = (Poly::from_coeffs(a_0_pos), Poly::from_coeffs(a_0_neg));
 
     let mut claims = Vec::with_capacity(virtual_log_n + 1);
     let a_0_pos_eval = a_0_pos.evaluate_par(&r);
