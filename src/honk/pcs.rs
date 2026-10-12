@@ -932,6 +932,14 @@ where
     )
 }
 
+/// The coefficients of `a(X) b(X)`, each in parallel.
+fn convolve<F: FieldLike + Copy + Send + Sync>(a: &[F], b: &[F]) -> Vec<F> {
+    (0..a.len() + b.len() - 1)
+        .into_par_iter()
+        .map(|k| (k.saturating_sub(b.len() - 1)..a.len().min(k + 1)).fold(F::zero(), |acc, i| acc + a[i] * b[k - i]))
+        .collect()
+}
+
 /// The SmallSubgroupIPA prover proper (bb `SmallSubgroupIPAProver::prove`) for a concatenated
 /// witness `G` (monomial form, masked) with Lagrange values `g` over the subgroup and a challenge
 /// polynomial `F` given by its Lagrange values: proves `Σ_i g_i F_i = claimed_inner_product`.
@@ -981,10 +989,9 @@ where
     let mut e_last = vec![F::<C>::zero(); n];
     e_last[n - 1] = F::<C>::one();
     let l_last = interpolate_on_subgroup(&e_last, &g);
-    for i in 0..masked_g_len {
-        for j in 0..n {
-            c[i + j] -= g_poly.coeffs[i] * f_monomial.coeffs[j];
-        }
+    let gf = convolve(&g_poly.coeffs[..masked_g_len], &f_monomial.coeffs);
+    for (c, gf) in c.iter_mut().zip(gf) {
+        *c -= gf;
     }
     for i in 0..masked_a_len {
         c[i] += shifted_a[i] - a.coeffs[i];
@@ -997,10 +1004,9 @@ where
     for i in 0..identity_len - 1 {
         c[i] = c[i] - c[i + 1] * g_inv;
     }
-    for i in 0..masked_a_len {
-        for j in 0..n {
-            c[i + j] += a.coeffs[i] * (l_first.coeffs[j] + l_last.coeffs[j]);
-        }
+    let l_sum: Vec<F<C>> = l_first.coeffs.iter().zip(&l_last.coeffs).map(|(x, y)| *x + y).collect();
+    for (c, al) in c.iter_mut().zip(convolve(&a.coeffs[..masked_a_len], &l_sum)) {
+        *c += al;
     }
     for j in 0..n {
         c[j] -= l_last.coeffs[j] * *claimed_inner_product;

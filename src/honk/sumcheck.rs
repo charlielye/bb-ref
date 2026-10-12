@@ -509,21 +509,27 @@ pub struct ZkData<C: Curve> {
 }
 
 /// Monomial coefficients of the polynomial with the given values on the subgroup `{g^i}`.
-pub fn interpolate_on_subgroup<F: FieldLike + Copy>(evals: &[F], g: &F) -> Polynomial<F> {
+pub fn interpolate_on_subgroup<F: FieldLike + Copy + Send + Sync>(evals: &[F], g: &F) -> Polynomial<F> {
     let n = evals.len();
-    let g_inv = g.invert();
     let n_inv = F::from_u64(n as u64).invert();
-    let mut coeffs = Vec::with_capacity(n);
-    for j in 0..n {
-        let w = g_inv.pow_u64(j as u64);
-        let mut acc = F::zero();
-        let mut wi = F::one();
-        for e in evals {
-            acc += *e * wi;
-            wi *= w;
-        }
-        coeffs.push(acc * n_inv);
+    // coefficient j is n^{-1} sum_k e_k g^{-jk}, the powers read from a table of g^{-i}
+    let g_inv = g.invert();
+    let mut inv_powers = vec![F::one(); n];
+    for i in 1..n {
+        inv_powers[i] = inv_powers[i - 1] * g_inv;
     }
+    assert!((inv_powers[n - 1] * g_inv) == F::one(), "g is not of order n");
+    let nonzero: Vec<(usize, &F)> = evals.iter().enumerate().filter(|(_, e)| !e.is_zero()).collect();
+    let coeffs = (0..n)
+        .into_par_iter()
+        .map(|j| {
+            let mut acc = F::zero();
+            for (k, e) in &nonzero {
+                acc += **e * inv_powers[j * k % n];
+            }
+            acc * n_inv
+        })
+        .collect();
     Polynomial::from_coeffs(coeffs)
 }
 
