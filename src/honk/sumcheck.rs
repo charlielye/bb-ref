@@ -1039,6 +1039,8 @@ where
     acc
 }
 
+const SERIAL_EDGES: usize = 8;
+
 #[allow(clippy::too_many_arguments)]
 fn accumulate_edges<F: NativeField>(
     rels: &(impl RelationSet<F> + Sync),
@@ -1053,6 +1055,11 @@ fn accumulate_edges<F: NativeField>(
 where
     RelationParams<F>: Sync,
 {
+    // A few edges cost less than waking the pool (~100us per round).
+    if edges.len() <= SERIAL_EDGES {
+        let serial = |e| accumulate_edges_serial(rels, used, table, e, params, pows, d);
+        return (serial(edges), head.map(serial));
+    }
     let params_uni = lift_params(params);
     let params_uni = &params_uni;
     // Several chunks per thread: active-edge cost is skewed (a poseidon2 block's edges cost
