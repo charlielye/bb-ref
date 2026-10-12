@@ -213,24 +213,32 @@ fn add_rom_logup_inverses_to_wire_4(inst: &mut ProverInstance, p: &RelationParam
 
 /// `lookup_inverses[i] = 1 / (lookup_term_i * table_term_i)` on rows with a lookup gate or a read table entry.
 fn compute_logderivative_inverses(inst: &mut ProverInstance, p: &RelationParams<Fr>) {
+    use Ent::*;
+    let layout = &inst.layout;
     let denominators: Vec<Fr> = (inst.flavor.trace_offset..inst.max_end_index)
         .into_par_iter()
-        .map_init(Vec::new, |vals, i| {
-            let active = inst.poly(Ent::q_lookup).at(i) == Fr::from(1u64)
-                || inst.poly(Ent::lookup_read_tags).at(i) == Fr::from(1u64);
-            if !active {
-                return Fr::zero();
-            }
-            inst.row_into(i, vals);
-            let row = Row {
-                vals,
-                layout: &inst.layout,
-            };
-            lookup_term(&row, p) * table_term(&row, p)
-        })
+        .map_init(
+            || vec![Fr::zero(); layout.unshifted.len() + layout.shifted.len()],
+            |vals, i| {
+                let active = inst.poly(q_lookup).at(i) == Fr::from(1u64)
+                    || inst.poly(lookup_read_tags).at(i) == Fr::from(1u64);
+                if !active {
+                    return Fr::zero();
+                }
+                // Only the columns the two terms read; the rest of the row stays zero.
+                for e in [q_r, q_m, q_c, q_o, w_l, w_r, w_o, table_1, table_2, table_3, table_4] {
+                    vals[layout.idx(e)] = inst.poly(e).at(i);
+                }
+                for e in [w_l, w_r, w_o] {
+                    vals[layout.shift_idx(e)] = inst.poly(e).at(i + 1);
+                }
+                let row = Row { vals, layout };
+                lookup_term(&row, p) * table_term(&row, p)
+            },
+        )
         .collect();
-    let inv = write_inverses(inst.poly(Ent::lookup_inverses), inst.flavor.trace_offset, denominators);
-    *inst.poly_mut(Ent::lookup_inverses) = inv;
+    let inv = write_inverses(inst.poly(lookup_inverses), inst.flavor.trace_offset, denominators);
+    *inst.poly_mut(lookup_inverses) = inv;
 }
 
 /// Write `1 / denominators[i]` at row `trace_offset + i` where the denominator is non-zero, into a
