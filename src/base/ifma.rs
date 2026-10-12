@@ -125,6 +125,24 @@ pub fn try_fold_from<F: 'static>(src: &[F], len: usize, u: &F) -> Option<Vec<F>>
     })
 }
 
+/// The fold of `src` (even length) into `dst` (half its length); false if `F` has no kernel here.
+pub fn try_fold_into<F: 'static>(src: &[F], dst: &mut [core::mem::MaybeUninit<F>], u: &F) -> bool {
+    assert_eq!(src.len(), 2 * dst.len());
+    on_bn254!(F, |G| {
+        let (src, u) = unsafe { (&*(src as *const [F] as *const [G]), &*(u as *const F as *const G)) };
+        let blocks = src.len() / 16;
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            fold_kernel(src.as_ptr(), dst.as_mut_ptr().cast::<G>(), blocks, u)
+        };
+        for k in 8 * blocks..dst.len() {
+            let (a, b) = (src[2 * k], src[2 * k + 1]);
+            dst[k].write(unsafe { core::mem::transmute_copy::<G, F>(&(a + *u * (b - a))) });
+        }
+    });
+    true
+}
+
 /// `dst[i] += Σ s·src[i]` over `terms` (sources shorter than `dst` are zero-extended); false if
 /// `F` has no kernel here.
 pub fn try_axpy_batch<F: 'static>(dst: &mut [F], terms: &[(&[F], F)]) -> bool {
@@ -647,6 +665,10 @@ mod tests {
             assert_eq!(w, fold(&v, n), "halve n={n}");
             assert_eq!(try_fold_from(&v, n, &u).unwrap(), fold(&v, n), "from n={n}");
             assert_eq!(try_fold_from(&v, n + 37, &u).unwrap(), fold(&v, n + 37), "from n={n}+37");
+            let mut into = Vec::with_capacity(n / 2);
+            assert!(try_fold_into(&v[..n / 2 * 2], &mut into.spare_capacity_mut()[..n / 2], &u));
+            unsafe { into.set_len(n / 2) };
+            assert_eq!(into, fold(&v, n / 2 * 2), "into n={n}");
             // Thirteen terms: unit and random scalars, zero stretches, sources shorter and longer.
             let srcs: Vec<Vec<F>> = (0..13).map(|t| sample::<F>((n * (t + 3)) / 8 + t, &mut rng)).collect();
             let terms: Vec<(&[F], F)> =

@@ -693,12 +693,7 @@ where
     let mut folds: Vec<Poly> = Vec::with_capacity(virtual_log_n - 1);
     for l in 0..log_n - 1 {
         let current: &[Fr] = if l == 0 { &a_0.coeffs } else { &folds[l - 1].coeffs };
-        let half = current.len() / 2;
-        let next: Vec<Fr> = (0..half)
-            .into_par_iter()
-            .map(|j| current[2 * j] + u[l] * (current[2 * j + 1] - current[2 * j]))
-            .collect();
-        folds.push(Poly::from_coeffs(next));
+        folds.push(Poly::from_coeffs(crate::base::poly::fold_par(current, &u[l])));
     }
     // constant folds for the virtual rounds
     if log_n < virtual_log_n {

@@ -140,27 +140,8 @@ pub fn mlb_prove(claims: Vec<ProverClaim>, t: &mut NativeTranscript) -> ProverCl
         }
         t.send_vec(&format!("Sumcheck:univariate_{round}"), &univariate);
         let u: Fr = t.challenge(&format!("Sumcheck:u_{round}"));
-        // With two or three claims there are only 3n columns, so folding column-by-column left
-        // most of the pool idle for ~2ms per column per round; fold every column's elements in
-        // parallel instead (element k reads 2k and 2k+1 only).
-        let fold = |col: &mut Cow<[Fr]>| {
-            let half = col.len() / 2;
-            if half >= 4096 {
-                let src: &[Fr] = col;
-                let out: Vec<Fr> = (0..half)
-                    .into_par_iter()
-                    .with_min_len(1024)
-                    .map(|k| src[2 * k] + u * (src[2 * k + 1] - src[2 * k]))
-                    .collect();
-                *col = Cow::Owned(out);
-            } else {
-                let v = col.to_mut();
-                for k in 0..half {
-                    v[k] = v[2 * k] + u * (v[2 * k + 1] - v[2 * k]);
-                }
-                v.truncate(half);
-            }
-        };
+        // With two or three claims there are only 3n columns, so each column's fold runs on the pool.
+        let fold = |col: &mut Cow<[Fr]>| *col = Cow::Owned(crate::base::poly::fold_par(col, &u));
         if round < log_n {
             for col in non_shifted.iter_mut().chain(shifted.iter_mut()).chain(eq.iter_mut()) {
                 fold(col);
