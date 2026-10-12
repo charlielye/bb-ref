@@ -11,6 +11,8 @@
 //! `cmov`/borrow mask: on its own an add measures mixed (dependent 2.4 → 1.9 ns, streaming
 //! 2.0 → 2.5 ns), but in place they took 5% off chonk proving. Negation measured neutral and stays
 //! arkworks'.
+//! Inversion is bb's Bernstein–Yang safegcd (`safegcd` below) in place of arkworks' binary EEA:
+//! 4.2 → 1.2 µs, and 8% of chonk proving samples were in `inverse` (mostly the MSM's Fq tree).
 
 use ark_ff::{BigInt, Fp, MontBackend, MontConfig};
 use core::arch::asm;
@@ -235,6 +237,134 @@ fn sub(a: [u64; 4], b: [u64; 4], p: &[u64; 5]) -> [u64; 4] {
     [t0, t1, t2, t3]
 }
 
+/// Bernstein–Yang safegcd inverse (bb's `bernstein_yang_inverse.hpp`, with golf 0007's batched
+/// variable-time divsteps): (f, g) start at (p, a) with Bézout coefficients (d, e), d·a ≡ f and
+/// e·a ≡ g (mod p). Each round runs 62 divsteps on the low limbs of f and g alone, collecting them
+/// in a 2×2 matrix, and then applies the matrix to the full state with an exact /2^62 (plus k·p on
+/// the (d, e) side to make it exact); 12 rounds cover the 735-divstep bound for 254-bit inputs.
+/// When g reaches 0, f = ±1 and a⁻¹ = ±d. Integers are 5 limbs, the top one signed.
+mod safegcd {
+    type S = [u64; 5];
+    const MASK: u64 = (1 << 62) - 1;
+
+    /// 62 divsteps on the low bits of (f, g): the matrix [u v; q r] (scaled by 2^62), δ updated.
+    /// Runs of even g are taken at once (count trailing zeros), and consecutive g ← (g + f)/2
+    /// steps collapse into g ← g + w·f with w = −g/f mod 2^4 (2^6 right after a swap).
+    fn divsteps(delta: &mut i64, mut f: u64, mut g: u64) -> [i64; 4] {
+        let (mut u, mut v, mut q, mut r) = (1u64, 0u64, 0u64, 1u64);
+        let (mut eta, mut i) = (-*delta, 62u32);
+        loop {
+            // The sentinel bit at i caps the run at the divsteps left.
+            let zeros = (g | (!0u64 << i)).trailing_zeros();
+            (g, u, v) = (g >> zeros, u << zeros, v << zeros);
+            eta -= zeros as i64;
+            i -= zeros;
+            if i == 0 {
+                break;
+            }
+            let limit = (eta.unsigned_abs() + 1).min(i as u64) as u32;
+            let w = if eta < 0 {
+                // δ > 0: (f, g) ← (g, −f), (u, v, q, r) ← (q, r, −u, −v).
+                eta = -eta;
+                (f, g) = (g, f.wrapping_neg());
+                (u, q) = (q, u.wrapping_neg());
+                (v, r) = (r, v.wrapping_neg());
+                f.wrapping_mul(g).wrapping_mul(f.wrapping_mul(f).wrapping_sub(2)) & (!0u64 >> (64 - limit)) & 63
+            } else {
+                let w = f.wrapping_add((f.wrapping_add(1) & 4) << 1);
+                w.wrapping_mul(g).wrapping_neg() & (!0u64 >> (64 - limit)) & 15
+            };
+            g = g.wrapping_add(f.wrapping_mul(w));
+            q = q.wrapping_add(u.wrapping_mul(w));
+            r = r.wrapping_add(v.wrapping_mul(w));
+        }
+        *delta = -eta;
+        [u as i64, v as i64, q as i64, r as i64]
+    }
+
+    /// a·x + b·y as a 6-limb signed integer.
+    fn lincomb(a: i64, x: &S, b: i64, y: &S) -> [u64; 6] {
+        let (mut t, mut c) = ([0u64; 6], 0i128);
+        for i in 0..4 {
+            c += a as i128 * x[i] as i128 + b as i128 * y[i] as i128;
+            t[i] = c as u64;
+            c >>= 64;
+        }
+        c += a as i128 * x[4] as i64 as i128 + b as i128 * y[4] as i64 as i128;
+        [t[0], t[1], t[2], t[3], c as u64, (c >> 64) as u64]
+    }
+
+    /// Exact arithmetic t / 2^62.
+    fn shift(t: &[u64; 6]) -> S {
+        core::array::from_fn(|i| (t[i] >> 62) | (t[i + 1] << 2))
+    }
+
+    /// (a·x + b·y + k·p) / 2^62, with k making the division exact.
+    fn row(a: i64, x: &S, b: i64, y: &S, p: &S, pinv: u64) -> S {
+        let mut t = lincomb(a, x, b, y);
+        let k = t[0].wrapping_neg().wrapping_mul(pinv) & MASK;
+        let mut c = 0u128;
+        for i in 0..6 {
+            c += t[i] as u128 + if i < 5 { k as u128 * p[i] as u128 } else { 0 };
+            t[i] = c as u64;
+            c >>= 64;
+        }
+        shift(&t)
+    }
+
+    fn add(x: &mut S, y: &S) {
+        let mut c = false;
+        for i in 0..5 {
+            (x[i], c) = x[i].carrying_add(y[i], c);
+        }
+    }
+
+    /// Into [0, p) by repeated ±p (|x| stays within a few dozen p between calls).
+    fn canon(x: &mut S, p: &S) {
+        let minus_p = neg(*p);
+        loop {
+            if (x[4] as i64) < 0 {
+                add(x, p);
+            } else if x.iter().rev().ge(p.iter().rev()) {
+                add(x, &minus_p);
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn neg(mut x: S) -> S {
+        x = x.map(|l| !l);
+        add(&mut x, &[1, 0, 0, 0, 0]);
+        x
+    }
+
+    /// a⁻¹ mod p for 0 < a < p; `p` is the modulus limbs then `−p⁻¹ mod 2^64`.
+    pub(super) fn inverse(a: &[u64; 4], p: &[u64; 5]) -> [u64; 4] {
+        let pinv = p[4].wrapping_neg() & MASK;
+        let p: S = [p[0], p[1], p[2], p[3], 0];
+        let (mut f, mut g, mut d, mut e) = (p, [a[0], a[1], a[2], a[3], 0], [0; 5], [1, 0, 0, 0, 0]);
+        let mut delta = 1;
+        for i in 0..12 {
+            let [u, v, q, r] = divsteps(&mut delta, f[0], g[0]);
+            (f, g) = (shift(&lincomb(u, &f, v, &g)), shift(&lincomb(q, &f, r, &g)));
+            (d, e) = (row(u, &d, v, &e, &p, pinv), row(q, &d, r, &e, &p, pinv));
+            if g == [0; 5] {
+                break;
+            }
+            if i % 4 == 3 {
+                canon(&mut d, &p);
+                canon(&mut e, &p);
+            }
+        }
+        if (f[4] as i64) < 0 {
+            d = neg(d);
+        }
+        canon(&mut d, &p);
+        [d[0], d[1], d[2], d[3]]
+    }
+}
+
 macro_rules! adx_config {
     ($name:ident, $ark:ty) => {
         #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
@@ -245,6 +375,11 @@ macro_rules! adx_config {
                 let m = <$ark as MontConfig<4>>::MODULUS.0;
                 [m[0], m[1], m[2], m[3], <$ark as MontConfig<4>>::INV]
             };
+            /// R³ mod p: the safegcd inverse of the stored a·R is a⁻¹·R⁻¹, and one multiply by R³
+            /// takes it to the stored a⁻¹·R.
+            const R3: [u64; 4] = Fp::<MontBackend<Self, 4>, 4>::new(<Self as MontConfig<4>>::R2)
+                .0
+                 .0;
         }
 
         impl MontConfig<4> for $name {
@@ -268,6 +403,11 @@ macro_rules! adx_config {
             #[inline(always)]
             fn square_in_place(a: &mut Fp<MontBackend<Self, 4>, 4>) {
                 a.0 .0 = sqr(&a.0 .0, &Self::P);
+            }
+
+            fn inverse(a: &Fp<MontBackend<Self, 4>, 4>) -> Option<Fp<MontBackend<Self, 4>, 4>> {
+                let x = (a.0 .0 != [0; 4]).then(|| safegcd::inverse(&a.0 .0, &Self::P))?;
+                Some(Fp::new_unchecked(BigInt(mul(&x, &Self::R3, &Self::P))))
             }
 
             #[inline(always)]
@@ -316,6 +456,7 @@ mod tests {
             let (ox, ax) = (F::<C>::new_unchecked(BigInt(*x)), F::<A>::new_unchecked(BigInt(*x)));
             assert_eq!(ox.square().0, ax.square().0, "square {x:?}");
             assert_eq!(ox.double().0, ax.double().0, "double {x:?}");
+            assert_eq!(ox.inverse().map(|v| v.0), ax.inverse().map(|v| v.0), "inverse {x:?}");
             for y in limbs.iter().step_by(7).chain(&limbs[..7]) {
                 let (oy, ay) = (F::<C>::new_unchecked(BigInt(*y)), F::<A>::new_unchecked(BigInt(*y)));
                 assert_eq!((ox * oy).0, (ax * ay).0, "mul {x:?} {y:?}");
