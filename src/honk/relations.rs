@@ -189,7 +189,7 @@ fn arithmetic<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: &T) {
         std::sync::LazyLock::new(|| -(crate::base::Fr::from(2u64)).inverse().unwrap());
     // Prover fast path for q_arith ≡ 1 on the edge (bb's common arithmetic gate): subrelation 1
     // carries q_arith − 1 and vanishes, (q_arith − 3)·(−1/2) = 1 and the w_4 shift term drops.
-    if T::IS_PROVER && r.e(q_arith).as_const() == Some(T::Native::small(1)) {
+    if is_const(r.e(q_arith), 1) {
         let mut id = r.e(q_m).clone() * r.e(w_r) * r.e(w_l) + &(r.e(q_l).clone() * r.e(w_l));
         id += &(r.e(q_r).clone() * r.e(w_r));
         id += &(r.e(q_o).clone() * r.e(w_o));
@@ -280,12 +280,31 @@ fn elliptic<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: &T) {
     acc[1] -= &(neg_y_double_identity * &q_elliptic_q_double_scaling);
 }
 
+/// Prover-side: `v` is the constant `k` on the whole edge (never in-circuit).
+fn is_const<T: FieldLike>(v: &T, k: u64) -> bool {
+    T::IS_PROVER && v.as_const() == Some(T::Native::small(k))
+}
+
+/// `acc += t` over the live terms of a sum (`None`: no live term yet).
+fn add_live<T: FieldLike>(acc: &mut Option<T>, t: T) {
+    match acc {
+        Some(a) => *a += &t,
+        None => *acc = Some(t),
+    }
+}
+
 // relations/memory_relation.hpp
 fn memory<T: FieldLike>(acc: &mut [T], r: &Row<T>, p: &RelationParams<T>, scaling: &T) {
     let (w_1, w_2, w_3, w_4v) = (r.e(w_l), r.e(w_r), r.e(w_o), r.e(w_4));
     let (w_1s, w_2s, w_3s, w_4s) = (r.s(w_l), r.s(w_r), r.s(w_o), r.s(w_4));
     let (q_1, q_2, q_3, q_4v, q_mv, q_cv) = (r.e(q_l), r.e(q_r), r.e(q_o), r.e(q_4), r.e(q_m), r.e(q_c));
     let q_mem = r.e(q_memory);
+    // Prover: a gate type whose selector product vanishes on the whole edge contributes exact
+    // zeros, so its terms are not computed. In-circuit every type is live, in bb's order.
+    let live = |v: &T| !is_const(v, 0);
+    let (rom, ram) = (live(q_1) && live(q_2), live(q_3));
+    let (timestamp, record) = (live(q_1) && live(q_4v), live(q_1) && live(q_mv));
+    let logup = !is_const(q_1, 1) && (live(q_2) || live(q_4v));
 
     // qc + w1 η + w2 η₂ + w3 η₃ - w4
     let mut memory_record_check = w_3.clone() * &p.eta_three;
@@ -299,55 +318,70 @@ fn memory<T: FieldLike>(acc: &mut [T], r: &Row<T>, p: &RelationParams<T>, scalin
     let index_delta_is_zero = neg_index_delta.clone() + &c(1);
     let record_delta = w_4s.clone() - w_4v;
     let index_increases_by_zero_or_one = neg_index_delta.sqr() + &neg_index_delta;
-    let adjacent_values_match_if_adjacent_indices_match = index_delta_is_zero.clone() * &record_delta;
+    let adjacent_values_match_if_adjacent_indices_match = rom.then(|| index_delta_is_zero.clone() * &record_delta);
 
     let q_memory_by_scaling = q_mem.clone() * scaling;
-    let q_one_by_two = q_1.clone() * q_2;
-    let q_one_by_two_by_memory_by_scaling = q_one_by_two.clone() * &q_memory_by_scaling;
-    acc[1] += &(adjacent_values_match_if_adjacent_indices_match * &q_one_by_two_by_memory_by_scaling);
-    acc[2] += &(index_increases_by_zero_or_one.clone() * &q_one_by_two_by_memory_by_scaling);
-    let rom_consistency_check_identity = memory_record_check.clone() * &q_one_by_two;
+    let rom_consistency_check_identity = adjacent_values_match_if_adjacent_indices_match.map(|adjacent| {
+        let q_one_by_two = q_1.clone() * q_2;
+        let q_one_by_two_by_memory_by_scaling = q_one_by_two.clone() * &q_memory_by_scaling;
+        acc[1] += &(adjacent * &q_one_by_two_by_memory_by_scaling);
+        acc[2] += &(index_increases_by_zero_or_one.clone() * &q_one_by_two_by_memory_by_scaling);
+        memory_record_check.clone() * &q_one_by_two
+    });
 
     // RAM consistency
-    let neg_access_type = partial_record_check - w_4v;
-    let access_check = neg_access_type.sqr() + &neg_access_type;
-    let mut neg_next_gate_access_type = w_3s.clone() * &p.eta_three;
-    neg_next_gate_access_type += &(w_2s.clone() * &p.eta_two);
-    neg_next_gate_access_type += &(w_1s.clone() * &p.eta);
-    neg_next_gate_access_type = neg_next_gate_access_type - w_4s;
-    let value_delta = w_3s.clone() - w_3;
-    let adjacent_values_match_if_adjacent_indices_match_and_next_access_is_a_read_operation =
-        (index_delta_is_zero.clone() * &value_delta) * &(neg_next_gate_access_type.clone() + &c(1));
-    let next_gate_access_type_is_boolean = neg_next_gate_access_type.sqr() + &neg_next_gate_access_type;
-    let q_3_by_memory_and_scaling = q_3.clone() * &q_memory_by_scaling;
-    acc[3] += &(adjacent_values_match_if_adjacent_indices_match_and_next_access_is_a_read_operation
-        * &q_3_by_memory_and_scaling);
-    acc[4] += &(index_increases_by_zero_or_one * &q_3_by_memory_and_scaling);
-    acc[5] += &(next_gate_access_type_is_boolean * &q_3_by_memory_and_scaling);
-    let ram_consistency_check_identity = access_check * &q_3_by_memory_and_scaling;
+    let ram_consistency_check_identity = ram.then(|| {
+        let neg_access_type = partial_record_check - w_4v;
+        let access_check = neg_access_type.sqr() + &neg_access_type;
+        let mut neg_next_gate_access_type = w_3s.clone() * &p.eta_three;
+        neg_next_gate_access_type += &(w_2s.clone() * &p.eta_two);
+        neg_next_gate_access_type += &(w_1s.clone() * &p.eta);
+        neg_next_gate_access_type = neg_next_gate_access_type - w_4s;
+        let value_delta = w_3s.clone() - w_3;
+        let adjacent_values_match_if_adjacent_indices_match_and_next_access_is_a_read_operation =
+            (index_delta_is_zero.clone() * &value_delta) * &(neg_next_gate_access_type.clone() + &c(1));
+        let next_gate_access_type_is_boolean = neg_next_gate_access_type.sqr() + &neg_next_gate_access_type;
+        let q_3_by_memory_and_scaling = q_3.clone() * &q_memory_by_scaling;
+        acc[3] += &(adjacent_values_match_if_adjacent_indices_match_and_next_access_is_a_read_operation
+            * &q_3_by_memory_and_scaling);
+        acc[4] += &(index_increases_by_zero_or_one * &q_3_by_memory_and_scaling);
+        acc[5] += &(next_gate_access_type_is_boolean * &q_3_by_memory_and_scaling);
+        access_check * &q_3_by_memory_and_scaling
+    });
 
     // RAM timestamp consistency
-    let timestamp_delta = w_2s.clone() - w_2;
-    let ram_timestamp_check_identity = index_delta_is_zero * &timestamp_delta - w_3;
-
     let mut memory_identity = rom_consistency_check_identity;
-    memory_identity += &(ram_timestamp_check_identity * &(q_4v.clone() * q_1));
-    memory_identity += &(memory_record_check * &(q_mv.clone() * q_1));
-    memory_identity *= &q_memory_by_scaling;
-    memory_identity += &ram_consistency_check_identity;
-    acc[0] += &memory_identity;
+    if timestamp {
+        let timestamp_delta = w_2s.clone() - w_2;
+        let ram_timestamp_check_identity = index_delta_is_zero * &timestamp_delta - w_3;
+        add_live(&mut memory_identity, ram_timestamp_check_identity * &(q_4v.clone() * q_1));
+    }
+    if record {
+        add_live(&mut memory_identity, memory_record_check * &(q_mv.clone() * q_1));
+    }
+    if let Some(m) = memory_identity.as_mut() {
+        *m *= &q_memory_by_scaling;
+    }
+    if let Some(ram) = ram_consistency_check_identity {
+        add_live(&mut memory_identity, ram);
+    }
+    if let Some(m) = memory_identity {
+        acc[0] += &m;
+    }
 
     // ROM LogUp
-    let one_minus_q_1 = -q_1.clone() + &c(1);
-    let q_logup_table = q_2.clone() * &one_minus_q_1;
-    let q_logup_read = q_4v.clone() * &one_minus_q_1;
-    let q_logup_any = q_logup_table.clone() + &q_logup_read;
-    let denom = w_1.clone() + &(w_2.clone() * &p.eta) + &(q_cv.clone() * &p.eta_two) + &p.rom_logup_gamma;
-    acc[6] += &(q_memory_by_scaling * &q_logup_any * &(w_4v.clone() * &denom - &c(1)));
-    let mut logup_sum_contribution = q_logup_read - &(q_logup_table * w_3);
-    logup_sum_contribution *= w_4v;
-    logup_sum_contribution *= q_mem;
-    acc[7] += &logup_sum_contribution;
+    if logup {
+        let one_minus_q_1 = -q_1.clone() + &c(1);
+        let q_logup_table = q_2.clone() * &one_minus_q_1;
+        let q_logup_read = q_4v.clone() * &one_minus_q_1;
+        let q_logup_any = q_logup_table.clone() + &q_logup_read;
+        let denom = w_1.clone() + &(w_2.clone() * &p.eta) + &(q_cv.clone() * &p.eta_two) + &p.rom_logup_gamma;
+        acc[6] += &(q_memory_by_scaling * &q_logup_any * &(w_4v.clone() * &denom - &c(1)));
+        let mut logup_sum_contribution = q_logup_read - &(q_logup_table * w_3);
+        logup_sum_contribution *= w_4v;
+        logup_sum_contribution *= q_mem;
+        acc[7] += &logup_sum_contribution;
+    }
 }
 
 // relations/non_native_field_relation.hpp
