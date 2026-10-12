@@ -4,7 +4,7 @@
 use super::relations::{
     lookup_inverse_exists, lookup_terms, set_denominator, set_numerator, EccvmRel, ECCVM_RELATIONS,
 };
-use super::{EccvmPolys, Ent, TRACE_OFFSET};
+use super::{EccvmPolys, Ent, NUM_ALL_ENTITIES, TRACE_OFFSET};
 use crate::base::field::FieldLike;
 use crate::base::Fq;
 use crate::honk::relations::RelationParams;
@@ -37,7 +37,10 @@ impl EccvmPolys {
     /// bb `compute_logderivative_inverse` + `compute_grand_product` for the ECCVM, then the shifts.
     pub fn compute_derived(&mut self, p: &RelationParams<Fq>) {
         let n = self.size();
-        let mut denominators: Vec<Fq> = (TRACE_OFFSET..n)
+        // From `num_rows` on, every column the lookup and set terms read is zero (a shift reads
+        // the next row): no lookup inverse exists and the set ratio is a zero row's, which is 1.
+        let end = self.num_rows;
+        let mut denominators: Vec<Fq> = (TRACE_OFFSET..end)
             .into_par_iter()
             .map_init(Vec::new, |row, i| {
                 self.row_into(i, row);
@@ -48,19 +51,24 @@ impl EccvmPolys {
             })
             .collect();
         crate::base::field::batch_invert_par(&mut denominators);
-        for (i, d) in (TRACE_OFFSET..n).zip(denominators) {
+        for (i, d) in (TRACE_OFFSET..end).zip(denominators) {
             if !d.is_zero() {
                 self.cols[Ent::lookup_inverses as usize].coeffs[i] = d;
             }
         }
+        let end = end.min(n - 1);
+        let zero_row = vec![Fq::zero(); NUM_ALL_ENTITIES];
+        assert_eq!(set_numerator(&zero_row, p), set_denominator(&zero_row, p));
         let mut z = std::mem::take(&mut self.cols[Ent::z_perm as usize].coeffs);
-        crate::base::field::grand_product_par(&mut z[TRACE_OFFSET + 1..n], |lo, num, den| {
+        crate::base::field::grand_product_par(&mut z[TRACE_OFFSET + 1..=end], |lo, num, den| {
             let mut row = Vec::new();
             for (k, (n, d)) in num.iter_mut().zip(den).enumerate() {
                 self.row_into(TRACE_OFFSET + lo + k, &mut row);
                 (*n, *d) = (set_numerator(&row, p), set_denominator(&row, p));
             }
         });
+        let last = z[end];
+        z[end + 1..].fill(last);
         self.cols[Ent::z_perm as usize].coeffs = z;
     }
 }
