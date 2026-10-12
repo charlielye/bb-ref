@@ -7,7 +7,10 @@
 //! reduced and the high half added); and the final `≥ p` subtraction is a `cmov`, not a branch.
 //! Montgomery reduction is unique once the output is canonical, so results equal arkworks'.
 //! Zen 4, ns/op vs ark-ff-asm: mul 20.3 → 16.1 dependent, 19.6 → 15.0 independent; square
-//! 19.5 → 18.0 and 18.7 → 14.5.
+//! 19.5 → 18.0 and 18.7 → 14.5. Add, double and subtract are asm too, reducing through the same
+//! `cmov`/borrow mask: on its own an add measures mixed (dependent 2.4 → 1.9 ns, streaming
+//! 2.0 → 2.5 ns), but in place they took 5% off chonk proving. Negation measured neutral and stays
+//! arkworks'.
 
 use ark_ff::{BigInt, Fp, MontBackend, MontConfig};
 use core::arch::asm;
@@ -179,6 +182,59 @@ fn sqr(a: &[u64; 4], p: &[u64; 5]) -> [u64; 4] {
     [r12, r13, r14, r15]
 }
 
+/// a + b mod p (a, b < p), or 2a with `b = a`.
+#[inline(always)]
+fn add(a: [u64; 4], b: [u64; 4], p: &[u64; 5]) -> [u64; 4] {
+    let [mut t0, mut t1, mut t2, mut t3] = a;
+    unsafe {
+        asm!(
+            "add {b0}, {t0}",
+            "adc {b1}, {t1}",
+            "adc {b2}, {t2}",
+            "adc {b3}, {t3}",
+            csub!("{t0}", "{t1}", "{t2}", "{t3}", "{b0}", "{b1}", "{b2}", "{b3}"),
+            p = in(reg) p.as_ptr(),
+            t0 = inout(reg) t0, t1 = inout(reg) t1, t2 = inout(reg) t2, t3 = inout(reg) t3,
+            b0 = inout(reg) b[0] => _, b1 = inout(reg) b[1] => _, b2 = inout(reg) b[2] => _, b3 = inout(reg) b[3] => _,
+            options(att_syntax, pure, readonly, nostack),
+        );
+    }
+    [t0, t1, t2, t3]
+}
+
+/// a − b mod p (a, b < p): p is added back under a borrow mask.
+#[inline(always)]
+fn sub(a: [u64; 4], b: [u64; 4], p: &[u64; 5]) -> [u64; 4] {
+    let [mut t0, mut t1, mut t2, mut t3] = a;
+    unsafe {
+        asm!(
+            "sub {b0}, {t0}",
+            "sbb {b1}, {t1}",
+            "sbb {b2}, {t2}",
+            "sbb {b3}, {t3}",
+            "sbb {m}, {m}",
+            "mov 0({p}), {b0}",
+            "mov 8({p}), {b1}",
+            "mov 16({p}), {b2}",
+            "mov 24({p}), {b3}",
+            "and {m}, {b0}",
+            "and {m}, {b1}",
+            "and {m}, {b2}",
+            "and {m}, {b3}",
+            "add {b0}, {t0}",
+            "adc {b1}, {t1}",
+            "adc {b2}, {t2}",
+            "adc {b3}, {t3}",
+            p = in(reg) p.as_ptr(),
+            t0 = inout(reg) t0, t1 = inout(reg) t1, t2 = inout(reg) t2, t3 = inout(reg) t3,
+            b0 = inout(reg) b[0] => _, b1 = inout(reg) b[1] => _, b2 = inout(reg) b[2] => _, b3 = inout(reg) b[3] => _,
+            m = out(reg) _,
+            options(att_syntax, pure, readonly, nostack),
+        );
+    }
+    [t0, t1, t2, t3]
+}
+
 macro_rules! adx_config {
     ($name:ident, $ark:ty) => {
         #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
@@ -213,6 +269,21 @@ macro_rules! adx_config {
             fn square_in_place(a: &mut Fp<MontBackend<Self, 4>, 4>) {
                 a.0 .0 = sqr(&a.0 .0, &Self::P);
             }
+
+            #[inline(always)]
+            fn add_assign(a: &mut Fp<MontBackend<Self, 4>, 4>, b: &Fp<MontBackend<Self, 4>, 4>) {
+                a.0 .0 = add(a.0 .0, b.0 .0, &Self::P);
+            }
+
+            #[inline(always)]
+            fn double_in_place(a: &mut Fp<MontBackend<Self, 4>, 4>) {
+                a.0 .0 = add(a.0 .0, a.0 .0, &Self::P);
+            }
+
+            #[inline(always)]
+            fn sub_assign(a: &mut Fp<MontBackend<Self, 4>, 4>, b: &Fp<MontBackend<Self, 4>, 4>) {
+                a.0 .0 = sub(a.0 .0, b.0 .0, &Self::P);
+            }
         }
     };
 }
@@ -223,7 +294,7 @@ adx_config!(FqConfig, ark_bn254::FqConfig);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_ff::{Field, UniformRand};
+    use ark_ff::{AdditiveGroup, Field, UniformRand};
 
     /// Limb-for-limb against arkworks on edge values (0, 1, p−1, p−2, values with all-ones and
     /// top-heavy limbs) and random ones.
@@ -244,11 +315,12 @@ mod tests {
         for x in &limbs {
             let (ox, ax) = (F::<C>::new_unchecked(BigInt(*x)), F::<A>::new_unchecked(BigInt(*x)));
             assert_eq!(ox.square().0, ax.square().0, "square {x:?}");
+            assert_eq!(ox.double().0, ax.double().0, "double {x:?}");
             for y in limbs.iter().step_by(7).chain(&limbs[..7]) {
-                assert_eq!(
-                    (ox * F::<C>::new_unchecked(BigInt(*y))).0,
-                    (ax * F::<A>::new_unchecked(BigInt(*y))).0
-                );
+                let (oy, ay) = (F::<C>::new_unchecked(BigInt(*y)), F::<A>::new_unchecked(BigInt(*y)));
+                assert_eq!((ox * oy).0, (ax * ay).0, "mul {x:?} {y:?}");
+                assert_eq!((ox + oy).0, (ax + ay).0, "add {x:?} {y:?}");
+                assert_eq!((ox - oy).0, (ax - ay).0, "sub {x:?} {y:?}");
             }
         }
     }
