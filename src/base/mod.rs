@@ -5,6 +5,7 @@ pub mod endo;
 pub mod field;
 pub mod fold;
 pub mod generators;
+pub mod ifma;
 pub mod group;
 pub mod io;
 pub mod keccak;

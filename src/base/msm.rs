@@ -925,11 +925,12 @@ pub(crate) fn extract_bits(limbs: &[u64], start: usize, len: usize) -> u64 {
 
 /// Per-job scratch for `tree_reduce`, reused across jobs and levels. The scalar vectors serve
 /// the scalar tree and the packed tree's scalar tail; `packed` is the wasm+simd128 staging (an
-/// empty stand-in elsewhere).
+/// empty stand-in elsewhere); `chords` the scalar tree's AVX-512 IFMA queue where available.
 pub(crate) struct TreeScratch<P: SWCurveConfig> {
     dens: Vec<P::BaseField>,
     prod: Vec<P::BaseField>,
     packed: crate::base::wasm::PackedTree<P>,
+    chords: Option<crate::base::ifma::Chords<P::BaseField>>,
 }
 
 impl<P: SWCurveConfig> TreeScratch<P>
@@ -941,6 +942,7 @@ where
             dens: Vec::with_capacity(cap),
             prod: Vec::with_capacity(cap),
             packed: crate::base::wasm::PackedTree::with_capacity(cap),
+            chords: crate::base::ifma::available::<P::BaseField>().then(Default::default),
         }
     }
 }
@@ -959,7 +961,7 @@ fn tree_reduce<P: SWCurveConfig>(
     P::BaseField: crate::base::wasm::QuadConsts,
 {
     if !s.packed.try_reduce(run_id, run_len, ps, &mut s.dens, &mut s.prod) {
-        tree_reduce_scalar(run_id, run_len, ps, &mut s.dens, &mut s.prod);
+        tree_reduce_scalar(run_id, run_len, ps, &mut s.dens, &mut s.prod, s.chords.as_mut());
     }
 }
 
@@ -967,17 +969,24 @@ fn tree_reduce<P: SWCurveConfig>(
 /// parallel `run_id`/`run_len` arrays and updated arithmetically, so the inner loops never touch
 /// per-element bucket ids — no id compares, no id compaction, no tag lists (a pair's
 /// chord/double/infinity case is re-derived from the coordinates in the apply pass). Sequential:
-/// the caller's schedule chunks are the parallel unit.
+/// the caller's schedule chunks are the parallel unit. With `chords` (AVX-512 IFMA), the chord
+/// additions run eight lanes wide in `ifma::Chords::run` and only doublings take the scalar pass.
 fn tree_reduce_scalar<P: SWCurveConfig>(
     run_id: &mut Vec<u32>,
     run_len: &mut Vec<u32>,
     ps: &mut Vec<Affine<P>>,
     dens: &mut Vec<P::BaseField>,
     prod: &mut Vec<P::BaseField>,
-) {
+    mut chords: Option<&mut crate::base::ifma::Chords<P::BaseField>>,
+) where
+    P::BaseField: crate::base::field::NativeField,
+{
     loop {
         // Pass 1: denominators for every adjacent same-bucket pair, positions implicit.
         dens.clear();
+        if let Some(q) = chords.as_mut() {
+            q.clear();
+        }
         let mut i = 0usize;
         let mut any = false;
         for &k in run_len.iter() {
@@ -988,6 +997,8 @@ fn tree_reduce_scalar<P: SWCurveConfig>(
                     if a.y == b.y {
                         dens.push(a.y.double());
                     } // else: inverse pair, sums to infinity — no denominator, dropped in pass 2
+                } else if let Some(q) = chords.as_mut() {
+                    q.push(a.x, a.y, b.x, b.y);
                 } else {
                     dens.push(b.x - a.x);
                 }
@@ -999,6 +1010,10 @@ fn tree_reduce_scalar<P: SWCurveConfig>(
             return;
         }
         batch_invert_nonzero(dens, prod);
+        if let Some(q) = chords.as_mut() {
+            q.run();
+        }
+        let mut chord = 0;
         // Pass 2: apply the additions, compacting points and runs in place (the write cursor
         // never passes the read cursor). Every slot holds a finite point: zero points never enter
         // the schedule and inverse pairs are dropped, so in-place x/y writes keep slots finite.
@@ -1012,6 +1027,13 @@ fn tree_reduce_scalar<P: SWCurveConfig>(
                 let (ax, ay) = (ps[at].x, ps[at].y);
                 let (bx, by) = (ps[at + 1].x, ps[at + 1].y);
                 if ax == bx && ay != by {
+                    continue;
+                }
+                if let (Some(q), false) = (chords.as_ref(), ax == bx) {
+                    (ps[out].x, ps[out].y) = (q.ax[chord], q.ay[chord]);
+                    chord += 1;
+                    out += 1;
+                    new_k += 1;
                     continue;
                 }
                 let d = *inv.next().unwrap();
