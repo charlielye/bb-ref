@@ -166,24 +166,21 @@ pub fn mlb_prove(claims: Vec<ProverClaim>, t: &mut NativeTranscript) -> ProverCl
     // Merge with powers of ρ, drawn after the evaluations are bound.
     let rho: Fr = t.challenge("claim_merge_challenge");
     let scalars = powers(&rho, n);
-    let mut new_non_shifted = Poly::zero(circuit_size);
-    let mut new_shifted = Poly::zero(circuit_size);
+    drop((non_shifted, shifted, eq));
+    // ρ^0 = 1: the first claim's polynomials start the sums, moved rather than added to zeros.
+    let mut claims = claims;
+    let take = |p: &mut Poly| {
+        let mut p = std::mem::replace(p, Poly::from_coeffs(Vec::new()));
+        p.coeffs.resize(circuit_size, Fr::zero());
+        p
+    };
+    let mut new_non_shifted = take(&mut claims[0].non_shifted_polynomial);
+    let mut new_shifted = take(&mut claims[0].shifted_polynomial);
     let mut non_shifted_evaluation = Fr::zero();
     let mut shifted_evaluation = Fr::zero();
-    new_non_shifted.add_scaled_batch(
-        &claims
-            .iter()
-            .zip(&scalars)
-            .map(|(c, s)| (&c.non_shifted_polynomial, *s))
-            .collect::<Vec<_>>(),
-    );
-    new_shifted.add_scaled_batch(
-        &claims
-            .iter()
-            .zip(&scalars)
-            .map(|(c, s)| (&c.shifted_polynomial, *s))
-            .collect::<Vec<_>>(),
-    );
+    let rest = || claims[1..].iter().zip(&scalars[1..]);
+    new_non_shifted.add_scaled_batch(&rest().map(|(c, s)| (&c.non_shifted_polynomial, *s)).collect::<Vec<_>>());
+    new_shifted.add_scaled_batch(&rest().map(|(c, s)| (&c.shifted_polynomial, *s)).collect::<Vec<_>>());
     for i in 0..n {
         non_shifted_evaluation += scalars[i] * evals[i];
         shifted_evaluation += scalars[i] * evals[n + i];
