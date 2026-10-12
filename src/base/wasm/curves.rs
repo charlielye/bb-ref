@@ -1,6 +1,6 @@
-//! BN254 G1 and Grumpkin for the wasm build, over the wasm field types (`field.rs`). The
-//! constants are arkworks' (`ark-bn254`/`ark-grumpkin` 0.6); every other target uses those crates'
-//! configs directly (see `base/wasm/mod.rs`), so the point types there are exactly arkworks'.
+//! BN254 G1 and Grumpkin over bb-ref's own field types (`field.rs` on wasm, `adx.rs` on x86-64).
+//! The constants are arkworks' (`ark-bn254`/`ark-grumpkin` 0.6); every other target uses those
+//! crates' configs directly (see `base/wasm/mod.rs`), so the point types there are exactly arkworks'.
 
 use crate::base::{Fq, Fr};
 use ark_ec::models::CurveConfig;

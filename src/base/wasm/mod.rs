@@ -2,26 +2,40 @@
 //! bb-ref's own `MontConfig`s (`field.rs`: the 2^261 stored domain and bb's 9×29-bit multiply in
 //! `mont29.rs`) and the curves bb-ref's own configs over them (`curves.rs`); with simd128, bb's
 //! four-lane kernels (`quad261.rs`) drive the streaming polynomial ops (`packed.rs`) and the MSM
-//! tree drain (`tree.rs`). Every other target uses arkworks' own bn254/grumpkin configs, so the
-//! types there are exactly arkworks'. Callers stay `cfg`-free: the same names exist on every
+//! tree drain (`tree.rs`). On x86-64 with ADX the fields are `adx.rs`'s (arkworks' constants and
+//! stored form, bb's multiply and square) under the same curve configs; every other target uses
+//! arkworks' own bn254/grumpkin configs. Callers stay `cfg`-free: the same names exist on every
 //! target, and the native fallbacks answer `false`/`None` so the generic scalar paths run.
 
 use crate::base::Fq;
 
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_arch = "x86_64", target_feature = "adx", target_feature = "bmi2"))]
+mod adx;
+#[cfg(any(
+    target_family = "wasm",
+    all(target_arch = "x86_64", target_feature = "adx", target_feature = "bmi2")
+))]
 mod curves;
 #[cfg(target_family = "wasm")]
 mod field;
 #[cfg(target_family = "wasm")]
 mod mont29;
-#[cfg(not(target_family = "wasm"))]
-pub use ark_bn254::{g1::Config as G1Config, FqConfig, FrConfig};
-#[cfg(not(target_family = "wasm"))]
-pub use ark_grumpkin::GrumpkinConfig;
+#[cfg(all(target_arch = "x86_64", target_feature = "adx", target_feature = "bmi2"))]
+pub use adx::{FqConfig, FrConfig};
+#[cfg(any(
+    target_family = "wasm",
+    all(target_arch = "x86_64", target_feature = "adx", target_feature = "bmi2")
+))]
+pub use curves::{G1Config, GrumpkinConfig};
 #[cfg(target_family = "wasm")]
+pub use field::{FqConfig, FrConfig};
+#[cfg(not(any(
+    target_family = "wasm",
+    all(target_arch = "x86_64", target_feature = "adx", target_feature = "bmi2")
+)))]
 pub use {
-    curves::{G1Config, GrumpkinConfig},
-    field::{FqConfig, FrConfig},
+    ark_bn254::{g1::Config as G1Config, FqConfig, FrConfig},
+    ark_grumpkin::GrumpkinConfig,
 };
 
 /// Field elements are stored as `a·2^261 mod p` on wasm (`field.rs`) and as `a·2^256 mod p`

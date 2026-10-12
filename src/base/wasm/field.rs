@@ -1,7 +1,6 @@
 //! bn254 Fr and Fq for the wasm build: arkworks' `Fp` container over bb-ref's own `MontConfig`,
 //! storing `a·2^261 mod p` (bb's wasm form) and multiplying through bb's 9×29-bit scheme
-//! (`mont29`). Every other target uses arkworks' own bn254 configs (see `base/wasm/mod.rs`), so
-//! the field type there is exactly `ark_bn254::Fr`.
+//! (`mont29`). Other targets keep arkworks' 2^256 domain (see `base/wasm/mod.rs`).
 //!
 //! The 2^261 domain appears in exactly four constants, all here: `R` (the stored form of one),
 //! `R2 = 2^517 mod p` — what arkworks' const-context constructor (`Fp::new`, hence every `MontFp!`)

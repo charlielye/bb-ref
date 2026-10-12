@@ -5,8 +5,8 @@ use ark_ff::{BigInt, BigInteger, PrimeField};
 use std::fmt::Debug;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-/// bn254 scalar field. Arkworks' own type natively; on wasm the same `Fp` container over
-/// bb-ref's `MontConfig` (`base/wasm`).
+/// bn254 scalar field: arkworks' `Fp` container over bb-ref's `MontConfig` on wasm and x86-64
+/// with ADX (`base/wasm`), arkworks' own type elsewhere.
 pub type Fr = ark_ff::Fp256<ark_ff::MontBackend<crate::base::wasm::FrConfig, 4>>;
 /// bn254 base field (Grumpkin's scalar field); as above.
 pub type Fq = ark_ff::Fp256<ark_ff::MontBackend<crate::base::wasm::FqConfig, 4>>;
