@@ -81,10 +81,13 @@ pub fn total_offset() -> Affine<Config> {
 
 /// The two 68-bit limbs of one coordinate: axis 0/1 = x limbs (0,1)/(2,3), axis 2/3 = the same of y.
 pub fn extract_axis(point: &Affine<Config>, axis: u8) -> [Fr; 2] {
-    let coordinate: BigUint = if axis < 2 { point.x } else { point.y }.into_bigint().into();
-    let low_limb = 2 * (axis as u64 % 2);
-    let mask = (BigUint::from(1u64) << NUM_LIMB_BITS) - 1u64;
-    let limb = |i: u64| Fr::from((&coordinate >> (i * NUM_LIMB_BITS)) & &mask);
+    let coordinate = if axis < 2 { point.x } else { point.y }.into_bigint();
+    let low_limb = 2 * (axis as u32 % 2);
+    // Limbs are under 128 bits: shift the 256-bit integer down and mask its low two words.
+    let limb = |i: u32| {
+        let c = coordinate >> (i * NUM_LIMB_BITS as u32);
+        Fr::from((c.0[0] as u128 | (c.0[1] as u128) << 64) & ((1u128 << NUM_LIMB_BITS) - 1))
+    };
     [limb(low_limb), limb(low_limb + 1)]
 }
 
