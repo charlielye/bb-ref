@@ -248,35 +248,32 @@ pub fn fold_par<F: FieldLike + Copy + Send + Sync + 'static>(src: &[F], u: &F) -
 
 /// The table of `eq(x, r[..log_n]) · ∏_{j ≥ log_n} (1 - r_j)` over the hypercube, index bit `j` ↔ `r[j]`
 /// (bb `ProverEqPolynomial::construct`).
-pub fn eq_table<F: FieldLike + Send + Sync>(r: &[F], log_n: usize) -> Vec<F> {
+pub fn eq_table<F: FieldLike + Copy + Send + Sync>(r: &[F], log_n: usize) -> Vec<F> {
+    // The table of eq over `r` times `init`, doubling the live prefix: t[2^j + i] = t[i] r_j, t[i] *= 1 - r_j.
+    let small = |r: &[F], init: F| {
+        let mut t = vec![init];
+        for rj in r {
+            let hi: Vec<F> = t.iter().map(|a| *a * rj).collect();
+            t.iter_mut().for_each(|a| *a *= &(F::one() - rj));
+            t.extend(hi);
+        }
+        t
+    };
     let mut tail = F::one();
     for rj in &r[log_n..] {
         tail *= &(F::one() - rj);
     }
-    // In place, doubling the live prefix each level: table[2^j + i] = table[i] * r_j and
-    // table[i] *= (1 - r_j). The last levels are the bulk of the work and run on the pool.
-    let mut table = vec![F::zero(); 1 << log_n];
-    table[0] = tail;
-    for (j, rj) in r.iter().take(log_n).enumerate() {
-        let len = 1 << j;
-        let one_minus = F::one() - rj;
-        let (lo, hi) = table.split_at_mut(len);
-        let hi = &mut hi[..len];
-        if len >= 4096 {
-            use rayon::prelude::*;
-            lo.par_chunks_mut(1024).zip(hi.par_chunks_mut(1024)).for_each(|(l, h)| {
-                for (a, b) in l.iter_mut().zip(h.iter_mut()) {
-                    *b = a.clone() * rj;
-                    *a *= &one_minus;
-                }
-            });
-        } else {
-            for (a, b) in lo.iter_mut().zip(hi.iter_mut()) {
-                *b = a.clone() * rj;
-                *a *= &one_minus;
-            }
+    // table[h 2^c + l] = lo[l] hi[h] over two half-width tables: one parallel product pass.
+    let c = log_n / 2;
+    let (lo, hi) = (small(&r[..c], tail), small(&r[c..log_n], F::one()));
+    let mut table = Vec::with_capacity(1 << log_n);
+    let dst = &mut table.spare_capacity_mut()[..1 << log_n];
+    dst.par_chunks_mut(lo.len()).zip(&hi).for_each(|(d, h)| {
+        for (o, l) in d.iter_mut().zip(&lo) {
+            o.write(*l * h);
         }
-    }
+    });
+    unsafe { table.set_len(1 << log_n) };
     table
 }
 
