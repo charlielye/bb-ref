@@ -252,6 +252,7 @@ pub fn lift_params_n<F: NativeField, const N: usize>(p: &RelationParams<F>) -> R
         evaluation_input_x: std::array::from_fn(|i| c(&p.evaluation_input_x[i])),
         batching_challenge_v: std::array::from_fn(|i| std::array::from_fn(|j| c(&p.batching_challenge_v[i][j]))),
         accumulated_result: std::array::from_fn(|i| c(&p.accumulated_result[i])),
+        quad_batching: p.quad_batching.iter().map(|v| v.iter().map(c).collect()).collect(),
     }
 }
 

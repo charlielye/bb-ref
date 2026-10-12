@@ -8,7 +8,7 @@
 
 use super::flavor::{FlavorDesc, Layout};
 use super::graded::{lift_params, lift_params_wide, Graded, GradedWide, MAX_LEN as GRADED_MAX_LEN, WIDE_LEN as GRADED_WIDE_LEN};
-use super::relations::{RelationParams, Row};
+use super::relations::{quad_batching_constants, RelationParams, Row};
 use crate::base::field::NativeField;
 use crate::base::field::{FieldLike, U256};
 use crate::base::group::Curve;
@@ -85,6 +85,11 @@ pub trait RelationSet<F: FieldLike> {
         _scaling: &GradedWide<F::Native>,
     ) {
         unreachable!("no wide graded evaluation for this relation set")
+    }
+    /// Prover: `params` with the set's subrelation-separator folding constants for `alphas`
+    /// (`quad_batching_constants`), or `None` when it has none.
+    fn fold_separators(&self, _params: &RelationParams<F>, _alphas: &[F]) -> Option<RelationParams<F>> {
+        None
     }
     fn total_subrelations(&self) -> usize {
         (0..self.num_relations()).map(|r| self.num_subrelations(r)).sum()
@@ -168,6 +173,23 @@ impl<F: FieldLike> RelationSet<F> for HonkRelations<'_> {
             p,
             scaling,
         )
+    }
+    fn fold_separators(&self, params: &RelationParams<F>, alphas: &[F]) -> Option<RelationParams<F>> {
+        let quad = [Rel::Poseidon2QuadInternal, Rel::Poseidon2QuadInternalTerminal, Rel::Poseidon2TransitionEntry];
+        let alpha = |g: usize| if g == 0 { F::one() } else { alphas[g - 1].clone() };
+        let mut out = params.clone();
+        out.quad_batching = vec![Vec::new(); quad.len()];
+        let mut g = 0;
+        for rel in self.flavor.relations {
+            if let Some(i) = quad.iter().position(|q| q == rel) {
+                // α_0 = 0 only for α = 0, where every α_j vanishes too: zero weights stay exact.
+                let inv = if alpha(g).is_zero() { F::zero() } else { alpha(g).invert() };
+                let w: Vec<F> = (0..rel.num_subrelations()).map(|j| alpha(g + j) * &inv).collect();
+                out.quad_batching[i] = quad_batching_constants(*rel, &w);
+            }
+            g += rel.num_subrelations();
+        }
+        out.quad_batching.iter().any(|v| !v.is_empty()).then_some(out)
     }
     fn skip_columns(&self) -> Option<Vec<usize>> {
         let l = self.layout;
@@ -1394,6 +1416,8 @@ pub struct RoundProver<'a, F> {
     used: Vec<Vec<usize>>,
     /// Round-0 gate separators; round r's are the stride-2^r subsequence, so they are built once.
     pows0: Vec<F>,
+    /// The relation parameters with the separator-folding constants (`fold_separators`), if any.
+    folded: Option<RelationParams<F>>,
 }
 
 impl<'a, F: NativeField> RoundProver<'a, F>
@@ -1438,11 +1462,13 @@ where
             ext: ExtensionWeights { weights: vec![] },
             used: vec![],
             pows0: vec![],
+            folded: None,
         }
     }
     /// Extension weights for this relation set and univariate length (built once, on the first round).
-    fn ensure_weights(&mut self, rels: &impl RelationSet<F>, params: &RelationParams<F>, d: usize) {
+    fn ensure_weights(&mut self, rels: &impl RelationSet<F>, params: &RelationParams<F>, alphas: &[F], d: usize) {
         if self.ext.weights.is_empty() {
+            self.folded = rels.fold_separators(params, alphas);
             self.ext = ExtensionWeights::new((0..rels.num_relations()).map(|r| rels.partial_length(r)), d);
             self.used = used_columns(rels, self.table.len(), params);
         }
@@ -1487,7 +1513,9 @@ where
         alphas: &[F],
         d: usize,
     ) -> Vec<F> {
-        self.ensure_weights(rels, params, d);
+        self.ensure_weights(rels, params, alphas, d);
+        let folded = self.folded.clone();
+        let params = folded.as_ref().unwrap_or(params);
         let round = self.round;
         if round < self.log_n {
             let round_size = 1 << (self.log_n - round);
@@ -1929,6 +1957,80 @@ mod tests {
     use super::*;
     use crate::base::transcript::NativeTranscript;
     use crate::base::{Bn254, Fr};
+
+    /// The prover's relation paths (coefficient basis, gate-type shortcuts, folded Poseidon2
+    /// separators) against the circuit-order bodies (constant `FieldT`s, `IS_PROVER = false`) on
+    /// edges whose columns are zero, one, another constant or linear, compared as the
+    /// separator-batched sum of each relation at every point of its univariate (bb golf 0050).
+    #[test]
+    fn prover_relation_paths_match_circuit_bodies_on_gate_like_edges() {
+        use crate::honk::flavor::{MEGA_APP, MEGA_KERNEL};
+        use crate::stdlib::field::FieldT;
+        use ark_ff::UniformRand;
+        let mut rng = ark_std::test_rng();
+        let mut params = RelationParams::<Fr>::default();
+        for v in [&mut params.eta, &mut params.eta_two, &mut params.eta_three, &mut params.rom_logup_gamma]
+            .into_iter()
+            .chain([&mut params.beta, &mut params.gamma, &mut params.public_input_delta])
+            .chain([&mut params.beta_sqr, &mut params.beta_cube])
+        {
+            *v = Fr::rand(&mut rng);
+        }
+        let k = |v: &Fr| FieldT::constant(*v);
+        let params_ref = RelationParams::<FieldT> {
+            eta: k(&params.eta),
+            eta_two: k(&params.eta_two),
+            eta_three: k(&params.eta_three),
+            rom_logup_gamma: k(&params.rom_logup_gamma),
+            beta: k(&params.beta),
+            gamma: k(&params.gamma),
+            public_input_delta: k(&params.public_input_delta),
+            beta_sqr: k(&params.beta_sqr),
+            beta_cube: k(&params.beta_cube),
+            ..Default::default()
+        };
+        let scaling = Fr::rand(&mut rng);
+        for flavor in [&MEGA_KERNEL, &MEGA_APP] {
+            let layout = flavor.layout();
+            let rels = HonkRelations { flavor, layout: &layout };
+            let alphas = alpha_powers(&Fr::rand(&mut rng), RelationSet::<Fr>::total_subrelations(&rels) - 1);
+            let alpha = |g: usize| if g == 0 { Fr::one() } else { alphas[g - 1] };
+            let params_uni = lift_params(&RelationSet::<Fr>::fold_separators(&rels, &params, &alphas).unwrap());
+            for _ in 0..300 {
+                let edge: Vec<(Fr, Fr)> = (0..layout.num_all())
+                    .map(|_| match u8::rand(&mut rng) % 4 {
+                        0 => (Fr::zero(), Fr::zero()),
+                        1 => (Fr::one(), Fr::one()),
+                        2 => (Fr::rand(&mut rng), Fr::zero()),
+                        _ => (Fr::rand(&mut rng), Fr::rand(&mut rng)),
+                    })
+                    .map(|(v, d)| if d.is_zero() { (v, v) } else { (v, d) })
+                    .collect();
+                let row_uni: Vec<Graded<Fr>> = edge.iter().map(|(a, b)| Graded::linear(*a, *b - a)).collect();
+                let mut g = 0;
+                for ri in 0..flavor.relations.len() {
+                    let n = RelationSet::<Fr>::num_subrelations(&rels, ri);
+                    let mut acc = vec![Graded::constant(Fr::zero()); n];
+                    let s = Graded::constant(scaling);
+                    RelationSet::<Fr>::accumulate_graded(&rels, ri, &mut acc, &row_uni, &params_uni, &s);
+                    for x in 0..RelationSet::<Fr>::partial_length(&rels, ri) as u64 {
+                        let x = Fr::from(x);
+                        let row: Vec<FieldT> = edge.iter().map(|(a, b)| k(&(*a + x * (*b - a)))).collect();
+                        let mut acc_ref = vec![FieldT::constant(Fr::zero()); n];
+                        rels.accumulate(ri, &mut acc_ref, &row, &params_ref, &k(&scaling));
+                        let at = |p: &Graded<Fr>| p.coeffs().iter().rev().fold(Fr::zero(), |v, c| v * x + c);
+                        let (mut got, mut want) = (Fr::zero(), Fr::zero());
+                        for j in 0..n {
+                            got += alpha(g + j) * at(&acc[j]);
+                            want += alpha(g + j) * acc_ref[j].get_value();
+                        }
+                        assert_eq!(got, want, "{} {:?} at {x}", flavor.name, flavor.relations[ri]);
+                    }
+                    g += n;
+                }
+            }
+        }
+    }
 
     /// One relation, one subrelation: `w0 · w1 == 0` on every row. The relation itself has degree 2
     /// (partial length 3); the batched univariate carries one more point for the linear

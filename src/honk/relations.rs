@@ -32,6 +32,9 @@ pub struct RelationParams<T> {
     pub batching_challenge_v: [[T; 5]; 4],
     /// Translator: the claimed accumulation result as four 68-bit limbs.
     pub accumulated_result: [T; 4],
+    /// Prover only: `quad_batching_constants` of the Poseidon2 quad relations (QuadInternal,
+    /// QuadInternalTerminal, TransitionEntry) for this sumcheck's separators; empty elsewhere.
+    pub quad_batching: Vec<Vec<T>>,
 }
 
 impl<T: FieldLike> Default for RelationParams<T> {
@@ -52,6 +55,7 @@ impl<T: FieldLike> Default for RelationParams<T> {
             evaluation_input_x: std::array::from_fn(|_| z()),
             batching_challenge_v: std::array::from_fn(|_| std::array::from_fn(|_| z())),
             accumulated_result: std::array::from_fn(|_| z()),
+            quad_batching: Vec::new(),
         }
     }
 }
@@ -91,6 +95,11 @@ impl Rel {
             Rel::MegaEccOpBoundary => mega_ecc_op_boundary(acc, r, scaling),
             Rel::Bus(b) => bus_lookup(b, acc, r, p, scaling),
             Rel::Poseidon2InitialExternal => poseidon2_initial_external(acc, r, scaling),
+            Rel::Poseidon2QuadInternal | Rel::Poseidon2QuadInternalTerminal | Rel::Poseidon2TransitionEntry
+                if T::IS_PROVER && !p.quad_batching.is_empty() =>
+            {
+                quad_batched(self, acc, r, &p.quad_batching, scaling)
+            }
             Rel::Poseidon2QuadInternal => poseidon2_quad_internal(acc, r, scaling),
             Rel::Poseidon2QuadInternalTerminal => poseidon2_quad_internal_terminal(acc, r, scaling),
             Rel::Poseidon2TransitionEntry => poseidon2_transition_entry(acc, r, scaling),
@@ -703,4 +712,91 @@ fn poseidon2_transition_entry<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: 
     acc[1] += q_by_scaling.clone() * &a1_body;
     let a2_body = u_2 * &d1 + u_1 * &c::<T>(3) + u_0 * &k::<T>(qp.sum_a_one) + &wp_2;
     acc[2] += q_by_scaling * &a2_body;
+}
+
+/// S-box inputs `(wire, shifted, constant selector)` and linear wires `(wire, shifted)` of the
+/// Poseidon2 quad relations' bodies (the terminal relation's S-boxes are the first four).
+const QUAD_SBOX: [(Ent, bool, Ent); 7] = [
+    (w_l, false, q_l),
+    (w_r, false, q_r),
+    (w_o, false, q_o),
+    (w_4, false, q_4),
+    (w_l, true, q_m),
+    (w_r, true, q_c),
+    (w_o, true, q_5),
+];
+const QUAD_WIRES: [(Ent, bool); 7] =
+    [(w_r, false), (w_o, false), (w_4, false), (w_l, true), (w_r, true), (w_o, true), (w_4, true)];
+const ENTRY_SBOX: [(Ent, bool, Ent); 3] = [(w_l, false, q_l), (w_r, true, q_r), (w_o, true, q_o)];
+const ENTRY_WIRES: [(Ent, bool); 6] = [(w_r, false), (w_o, false), (w_4, false), (w_r, true), (w_o, true), (w_4, true)];
+
+/// The Poseidon2 quad relations' subrelation bodies are fixed linear maps of shared S-box outputs
+/// and wires under one selector factor, so for separator weights `w_j = α_j / α_0` the weighted
+/// sum `Σ_j w_j A_j = Σ_i m_i u_i + Σ_k n_k v_k` is one body. Returns `m ‖ n` (bb golf).
+pub fn quad_batching_constants<F: FieldLike>(rel: Rel, w: &[F]) -> Vec<F> {
+    let qp = quad_params();
+    let dot = |rows: &[&[crate::base::Fr; 7]], i: usize| {
+        rows.iter().zip(w).fold(F::zero(), |a, (row, w)| a + w.clone() * &k::<F>(row[i]))
+    };
+    let (d1, three) = (k::<F>(qp.d1), c::<F>(3));
+    let mut out: Vec<F>;
+    match rel {
+        Rel::Poseidon2QuadInternal => {
+            let [l0, l1, l2] = &qp.forward_vandermonde_lhs;
+            let rows = [&qp.closed_form[0], l0, l1, l2];
+            out = (3..7).map(|i| dot(&rows, i)).collect();
+            let b3 = k::<F>(qp.b3_u0_coef);
+            out.push(w[1].clone() * &d1 + w[2].clone() * &(three - d1.clone() - &d1) - w[3].clone() * &b3);
+            out.push(w[2].clone() * &d1 - w[3].clone() * &k::<F>(qp.d1_minus_3));
+            out.push(w[3].clone() * &d1);
+            out.extend((0..3).map(|i| dot(&rows, i)));
+            out.push(-w[0].clone());
+            out.push(w[2].clone() + &w[2] + &(w[3].clone() * &k::<F>(qp.sigma_plus_2)) - &w[1]);
+            out.push(w[3].clone() - &w[2]);
+            out.push(-w[3].clone());
+        }
+        Rel::Poseidon2QuadInternalTerminal => {
+            let cf = &qp.closed_form;
+            let rows = [&cf[0], &cf[1], &cf[2], &cf[3]];
+            out = (3..6).map(|i| dot(&rows, i)).collect();
+            out.push(w[0].clone() * &k::<F>(cf[0][6]) + &w[1] + &w[2] + &w[3]);
+            out.extend((0..3).map(|i| dot(&rows, i)));
+            out.extend(w.iter().map(|w| -w.clone()));
+        }
+        Rel::Poseidon2TransitionEntry => {
+            out = vec![
+                w[0].clone() * &d1 + w[1].clone() * &three + w[2].clone() * &k::<F>(qp.sum_a_one),
+                w[1].clone() * &d1 + w[2].clone() * &three,
+                w[2].clone() * &d1,
+            ];
+            let (a1, a2) = (qp.a_one.map(k::<F>), qp.a2_one.map(k::<F>));
+            out.extend((0..3).map(|i| w[0].clone() + w[1].clone() * &a1[i] + w[2].clone() * &a2[i]));
+            out.extend(w.iter().map(|w| -w.clone()));
+        }
+        _ => unreachable!("not a Poseidon2 quad relation"),
+    }
+    out
+}
+
+/// Prover: `q·scaling·(Σ m_i x_i⁵ + Σ n_k v_k)` into `acc[0]` (the other subrelations stay zero),
+/// each `m_i` folded into the degree-1 factor of `x⁵ = x⁴·x`.
+fn quad_batched<T: FieldLike>(rel: Rel, acc: &mut [T], r: &Row<T>, consts: &[Vec<T>], scaling: &T) {
+    let (q, sbox, wires, consts) = match rel {
+        Rel::Poseidon2QuadInternal => (q_poseidon2_quad_internal, &QUAD_SBOX[..], &QUAD_WIRES[..], &consts[0]),
+        Rel::Poseidon2QuadInternalTerminal => {
+            (q_poseidon2_quad_internal_terminal, &QUAD_SBOX[..4], &QUAD_WIRES[..], &consts[1])
+        }
+        _ => (q_poseidon2_transition_entry, &ENTRY_SBOX[..], &ENTRY_WIRES[..], &consts[2]),
+    };
+    let v = |(e, shifted): (Ent, bool)| if shifted { r.s(e) } else { r.e(e) };
+    let (m, n) = consts.split_at(sbox.len());
+    let mut body = v(wires[0]).clone() * &n[0];
+    for (&wire, n) in wires.iter().zip(n).skip(1) {
+        body += &(v(wire).clone() * n);
+    }
+    for (&(wire, shifted, sel), m) in sbox.iter().zip(m) {
+        let x = v((wire, shifted)).clone() + r.e(sel);
+        body += &(x.sqr().sqr() * &(x * m));
+    }
+    acc[0] += &(r.e(q).clone() * scaling * &body);
 }
