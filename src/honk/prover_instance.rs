@@ -345,13 +345,11 @@ impl ProverInstance {
                     polys[idx(Ent::lookup_read_counts)].coeffs[offset + i] = Fr::from(c as u64);
                     polys[idx(Ent::lookup_read_tags)].coeffs[offset + i] = Fr::one();
                 }
-                for i in 0..table.size() {
-                    for c in 0..3 {
-                        polys[idx([Ent::table_1, Ent::table_2, Ent::table_3][c])].coeffs[offset + i] =
-                            table.columns[c][i];
-                    }
-                    polys[idx(Ent::table_4)].coeffs[offset + i] = Fr::from(table.table_index as u64);
+                let rows = offset..offset + table.size();
+                for (c, e) in [Ent::table_1, Ent::table_2, Ent::table_3].into_iter().enumerate() {
+                    polys[idx(e)].coeffs[rows.clone()].copy_from_slice(&table.columns[c]);
                 }
+                polys[idx(Ent::table_4)].coeffs[rows].fill(Fr::from(table.table_index as u64));
                 offset += table.size();
             }
         } else {
