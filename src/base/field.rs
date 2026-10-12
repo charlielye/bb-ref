@@ -122,6 +122,11 @@ pub trait FieldLike:
     fn is_zero(&self) -> bool {
         ark_ff::Zero::is_zero(&self.value())
     }
+    /// Prover-side probe: the value if it is constant over the whole sumcheck edge (a native
+    /// value, or a degree-0 coefficient-basis univariate); `None` when unknown (circuit witnesses).
+    fn as_const(&self) -> Option<Self::Native> {
+        None
+    }
     /// bb `convert_constant_to_fixed_witness` on a constant: natively just the constant; in-circuit a
     /// fresh witness fixed to `v` by a gate (an artifact bb's verifiers emit that must be mirrored).
     fn fixed_witness(_ctx: &Self::Ctx, v: Self::Native) -> Self {
@@ -183,6 +188,9 @@ impl<F: NativeField> FieldLike for F {
         self.inverse().expect("inverse of zero")
     }
     fn assert_equal(&self, _other: &Self) {}
+    fn as_const(&self) -> Option<F> {
+        Some(*self)
+    }
     fn zeroed(n: usize) -> Vec<Self> {
         if n == 0 {
             return Vec::new();

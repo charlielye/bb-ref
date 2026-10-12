@@ -96,6 +96,10 @@ impl<F: NativeField, const N: usize> Mul<&Graded<F, N>> for Graded<F, N> {
     type Output = Graded<F, N>;
     fn mul(self, rhs: &Graded<F, N>) -> Graded<F, N> {
         let (l1, l2) = (self.len as usize, rhs.len as usize);
+        // A product with an edge-constant zero (an absent gate type's selector) is a constant zero.
+        if (l1 == 1 && self.c[0].is_zero()) || (l2 == 1 && rhs.c[0].is_zero()) {
+            return Graded::constant(F::ZERO);
+        }
         let out_len = l1 + l2 - 1;
         assert!(out_len <= N, "graded univariate degree overflow");
         // Karatsuba for the two shapes the relation bodies produce most — a product of two edge
@@ -225,6 +229,9 @@ impl<F: NativeField, const N: usize> FieldLike for Graded<F, N> {
         Graded::constant(self.c[0].inverse().unwrap_or(F::ZERO))
     }
     fn assert_equal(&self, _other: &Self) {}
+    fn as_const(&self) -> Option<F> {
+        (self.len == 1).then_some(self.c[0])
+    }
 }
 
 /// The relation parameters lifted to constants in the round variable.

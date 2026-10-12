@@ -187,6 +187,17 @@ fn arithmetic<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: &T) {
     // -1/2 in T's native field, computed once (an inversion per call dominated the relation)
     static NEG_HALF_FR: std::sync::LazyLock<crate::base::Fr> =
         std::sync::LazyLock::new(|| -(crate::base::Fr::from(2u64)).inverse().unwrap());
+    // Prover fast path for q_arith ≡ 1 on the edge (bb's common arithmetic gate): subrelation 1
+    // carries q_arith − 1 and vanishes, (q_arith − 3)·(−1/2) = 1 and the w_4 shift term drops.
+    if T::IS_PROVER && r.e(q_arith).as_const() == Some(T::Native::small(1)) {
+        let mut id = r.e(q_m).clone() * r.e(w_r) * r.e(w_l) + &(r.e(q_l).clone() * r.e(w_l));
+        id += &(r.e(q_r).clone() * r.e(w_r));
+        id += &(r.e(q_o).clone() * r.e(w_o));
+        id += &(r.e(q_4).clone() * r.e(w_4));
+        id += r.e(q_c);
+        acc[0] += &(id * scaling);
+        return;
+    }
     let neg_half = k::<T>(*NEG_HALF_FR);
     let q_arith_sub_1 = r.e(q_arith).clone() - &c(1);
     let scaled_q_arith = r.e(q_arith).clone() * scaling;
