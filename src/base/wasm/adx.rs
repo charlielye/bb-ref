@@ -22,11 +22,11 @@ use core::arch::asm;
 macro_rules! row {
     ($off:literal, $t0:literal, $t1:literal, $t2:literal, $t3:literal, $t4:literal) => {
         concat!(
-            "xor {z:e}, {z:e}\n mov ", $off, "({a}), %rdx\n",
+            "xor {lo:e}, {lo:e}\n mov ", $off, "({a}), %rdx\n",
             "mulx 0({b}), {lo}, {hi}\n adcx {lo}, ", $t0, "\n adox {hi}, ", $t1, "\n",
             "mulx 8({b}), {lo}, {hi}\n adcx {lo}, ", $t1, "\n adox {hi}, ", $t2, "\n",
             "mulx 16({b}), {lo}, {hi}\n adcx {lo}, ", $t2, "\n adox {hi}, ", $t3, "\n",
-            "mulx 24({b}), {lo}, ", $t4, "\n adcx {lo}, ", $t3, "\n adox {z}, ", $t4, "\n adcx {z}, ", $t4,
+            "mulx 24({b}), {lo}, ", $t4, "\n adcx {lo}, ", $t3, "\n adox 40({p}), ", $t4, "\n adcx 40({p}), ", $t4,
         )
     };
 }
@@ -36,11 +36,11 @@ macro_rules! row {
 macro_rules! red {
     ($t0:literal, $t1:literal, $t2:literal, $t3:literal, $t4:literal) => {
         concat!(
-            "mov ", $t0, ", %rdx\n imul 32({p}), %rdx\n xor {z:e}, {z:e}\n",
+            "mov ", $t0, ", %rdx\n imul 32({p}), %rdx\n xor {lo:e}, {lo:e}\n",
             "mulx 0({p}), {lo}, {hi}\n adcx {lo}, ", $t0, "\n adox {hi}, ", $t1, "\n",
             "mulx 8({p}), {lo}, {hi}\n adcx {lo}, ", $t1, "\n adox {hi}, ", $t2, "\n",
             "mulx 16({p}), {lo}, {hi}\n adcx {lo}, ", $t2, "\n adox {hi}, ", $t3, "\n",
-            "mulx 24({p}), {lo}, {hi}\n adcx {lo}, ", $t3, "\n adox {hi}, ", $t4, "\n adcx {z}, ", $t4,
+            "mulx 24({p}), {lo}, {hi}\n adcx {lo}, ", $t3, "\n adox {hi}, ", $t4, "\n adcx 40({p}), ", $t4,
         )
     };
 }
@@ -73,13 +73,14 @@ macro_rules! csub {
     };
 }
 
-/// a·b/2^256 mod p for a, b < p; `p` is the modulus limbs then `-p⁻¹ mod 2^64`.
+/// a·b/2^256 mod p for a, b < p; `p` is the modulus limbs, `-p⁻¹ mod 2^64`, then a zero (the carry
+/// flushes add it from memory, which keeps the block to 10 registers so it builds with frame pointers).
 #[inline(always)]
-fn mul(a: &[u64; 4], b: &[u64; 4], p: &[u64; 5]) -> [u64; 4] {
+fn mul(a: &[u64; 4], b: &[u64; 4], p: &[u64; 6]) -> [u64; 4] {
     let (t0, t1, t2, t4): (u64, u64, u64, u64);
     unsafe {
         asm!(
-            "xor {z:e}, {z:e}",
+            "xor {lo:e}, {lo:e}",
             "mov 0({a}), %rdx",
             "mulx 0({b}), {t0}, {t1}",
             "mulx 8({b}), {lo}, {t2}",
@@ -88,7 +89,7 @@ fn mul(a: &[u64; 4], b: &[u64; 4], p: &[u64; 5]) -> [u64; 4] {
             "adcx {lo}, {t2}",
             "mulx 24({b}), {lo}, {t4}",
             "adcx {lo}, {t3}",
-            "adcx {z}, {t4}",
+            "adcx 40({p}), {t4}",
             red!("{t0}", "{t1}", "{t2}", "{t3}", "{t4}"),
             row!("8", "{t1}", "{t2}", "{t3}", "{t4}", "{t0}"),
             red!("{t1}", "{t2}", "{t3}", "{t4}", "{t0}"),
@@ -96,12 +97,12 @@ fn mul(a: &[u64; 4], b: &[u64; 4], p: &[u64; 5]) -> [u64; 4] {
             red!("{t2}", "{t3}", "{t4}", "{t0}", "{t1}"),
             row!("24", "{t3}", "{t4}", "{t0}", "{t1}", "{t2}"),
             red!("{t3}", "{t4}", "{t0}", "{t1}", "{t2}"),
-            csub!("{t4}", "{t0}", "{t1}", "{t2}", "{lo}", "{hi}", "{z}", "{t3}"),
+            csub!("{t4}", "{t0}", "{t1}", "{t2}", "{lo}", "{hi}", "{b}", "{t3}"),
             a = in(reg) a.as_ptr(),
-            b = in(reg) b.as_ptr(),
+            b = inout(reg) b.as_ptr() => _,
             p = in(reg) p.as_ptr(),
             t0 = out(reg) t0, t1 = out(reg) t1, t2 = out(reg) t2, t3 = out(reg) _, t4 = out(reg) t4,
-            lo = out(reg) _, hi = out(reg) _, z = out(reg) _, out("rdx") _,
+            lo = out(reg) _, hi = out(reg) _, out("rdx") _,
             options(att_syntax, pure, readonly, nostack),
         );
     }
@@ -110,7 +111,7 @@ fn mul(a: &[u64; 4], b: &[u64; 4], p: &[u64; 5]) -> [u64; 4] {
 
 /// a²/2^256 mod p for a < p.
 #[inline(always)]
-fn sqr(a: &[u64; 4], p: &[u64; 5]) -> [u64; 4] {
+fn sqr(a: &[u64; 4], p: &[u64; 6]) -> [u64; 4] {
     let (r12, r13, r14, r15): (u64, u64, u64, u64);
     unsafe {
         asm!(
@@ -186,7 +187,7 @@ fn sqr(a: &[u64; 4], p: &[u64; 5]) -> [u64; 4] {
 
 /// a + b mod p (a, b < p), or 2a with `b = a`.
 #[inline(always)]
-fn add(a: [u64; 4], b: [u64; 4], p: &[u64; 5]) -> [u64; 4] {
+fn add(a: [u64; 4], b: [u64; 4], p: &[u64; 6]) -> [u64; 4] {
     let [mut t0, mut t1, mut t2, mut t3] = a;
     unsafe {
         asm!(
@@ -206,7 +207,7 @@ fn add(a: [u64; 4], b: [u64; 4], p: &[u64; 5]) -> [u64; 4] {
 
 /// a − b mod p (a, b < p): p is added back under a borrow mask.
 #[inline(always)]
-fn sub(a: [u64; 4], b: [u64; 4], p: &[u64; 5]) -> [u64; 4] {
+fn sub(a: [u64; 4], b: [u64; 4], p: &[u64; 6]) -> [u64; 4] {
     let [mut t0, mut t1, mut t2, mut t3] = a;
     unsafe {
         asm!(
@@ -339,8 +340,8 @@ mod safegcd {
         x
     }
 
-    /// a⁻¹ mod p for 0 < a < p; `p` is the modulus limbs then `−p⁻¹ mod 2^64`.
-    pub(super) fn inverse(a: &[u64; 4], p: &[u64; 5]) -> [u64; 4] {
+    /// a⁻¹ mod p for 0 < a < p; `p` as for `mul`.
+    pub(super) fn inverse(a: &[u64; 4], p: &[u64; 6]) -> [u64; 4] {
         let pinv = p[4].wrapping_neg() & MASK;
         let p: S = [p[0], p[1], p[2], p[3], 0];
         let (mut f, mut g, mut d, mut e) = (p, [a[0], a[1], a[2], a[3], 0], [0; 5], [1, 0, 0, 0, 0]);
@@ -371,9 +372,9 @@ macro_rules! adx_config {
         pub struct $name;
 
         impl $name {
-            const P: [u64; 5] = {
+            const P: [u64; 6] = {
                 let m = <$ark as MontConfig<4>>::MODULUS.0;
-                [m[0], m[1], m[2], m[3], <$ark as MontConfig<4>>::INV]
+                [m[0], m[1], m[2], m[3], <$ark as MontConfig<4>>::INV, 0]
             };
             /// R³ mod p: the safegcd inverse of the stored a·R is a⁻¹·R⁻¹, and one multiply by R³
             /// takes it to the stored a⁻¹·R.
