@@ -41,6 +41,28 @@ static CRT_BOUNDS: std::sync::LazyLock<CrtBounds> = std::sync::LazyLock::new(|| 
     }
 });
 
+/// `Σ limbs[i] · 2^(68 i)` in one fixed-width accumulator rather than four shifted BigUints (golf 0046).
+fn combine_limbs<I: IntoIterator<Item = u64>>(limbs: [I; NUM_LIMBS]) -> BigUint {
+    let mut acc = [0u64; 16];
+    for (i, limb) in limbs.into_iter().enumerate() {
+        let (w, b) = ((NUM_LIMB_BITS as usize * i) / 64, (NUM_LIMB_BITS as usize * i) % 64);
+        let mut shifted = [0u64; 16];
+        for (j, d) in limb.into_iter().enumerate() {
+            shifted[w + j] |= d << b;
+            if b > 0 {
+                shifted[w + j + 1] |= d >> (64 - b);
+            }
+        }
+        let mut carry = 0u128;
+        for (a, s) in acc.iter_mut().zip(shifted) {
+            let t = *a as u128 + s as u128 + carry;
+            *a = t as u64;
+            carry = t >> 64;
+        }
+    }
+    BigUint::new(acc.iter().flat_map(|d| [*d as u32, (d >> 32) as u32]).collect())
+}
+
 fn big(f: &Fr) -> BigUint {
     f.into_bigint().into()
 }
@@ -228,18 +250,11 @@ impl<N: PrimeField> BigField<N> {
     }
     /// The integer the limbs encode (not reduced).
     pub fn get_value(&self) -> BigUint {
-        let mut v = BigUint::from(0u64);
-        for i in 0..NUM_LIMBS {
-            v += big(&self.limb_element(i).get_value()) << (NUM_LIMB_BITS * i as u64);
-        }
-        v
+        combine_limbs(std::array::from_fn(|i| self.limb_element(i).get_value().into_bigint().0))
     }
     pub fn get_maximum_value(&self) -> BigUint {
-        let mut v = BigUint::from(0u64);
-        for i in 0..NUM_LIMBS {
-            v += self.limb_max(i) << (NUM_LIMB_BITS * i as u64);
-        }
-        v
+        let s = self.state.borrow();
+        combine_limbs(std::array::from_fn(|i| s.limbs[i].maximum_value.iter_u64_digits()))
     }
     /// The value reduced into the target field.
     pub fn get_native_value(&self) -> N {
