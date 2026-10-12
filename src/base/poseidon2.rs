@@ -53,7 +53,7 @@ pub fn matrix_multiplication_internal(s: &mut [Fr; 4]) {
 }
 
 pub fn sbox(x: &mut Fr) {
-    let x4 = x.sqr().sqr();
+    let x4 = ark_ff::Field::square(&ark_ff::Field::square(x));
     *x *= x4;
 }
 
