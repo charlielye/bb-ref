@@ -17,6 +17,12 @@ test suite: none of it changes an output bit.
 
 ## Where it stands (2026-09-06)
 
+> **2026-10-12, branch `golf-port` (LADDER Update 66):** the chonk-golf patch series ported — native
+> chonk on bbbench is **22.98 s** over the 11 flows against pin bb's 44.74 s (0.51×) and the
+> golf-patched bb's 23.49 s (0.98×), proofs byte-identical; the largest levers were an AVX-512 IFMA
+> MSM drain, ADX field kernels and a Bernstein–Yang inverse. Table of record:
+> `bench-results/chonk-golf.txt`. wasm is not yet re-measured on that branch.
+
 > The tables below are def1d24's (2026-09-06). At a78054c bbbench measures native 0.97x/1.01x
 > (fixed back to 0.92x/0.95x by the `-inline-threshold=1000` rustflag) and wasm 0.96x/1.00x, the
 > wasm loss being the removed C drains (Update 63). The tables are regenerated once the wasm path

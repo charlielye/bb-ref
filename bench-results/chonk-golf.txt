@@ -1,0 +1,18 @@
+threads 8, reps 3, flows 11, binaries ['base', 'port-5b4b898', 'golf', 'bbbase']
+deploy_ecdsar1+sponsored_fpc                               base   2.93/  2.94 0.36G  port-5b4b898   1.62/  1.63 0.35G  golf   1.64/  1.64 0.24G  bbbase   3.04/  3.05 0.30G
+deploy_schnorr+sponsored_fpc                               base   2.70/  2.71 0.34G  port-5b4b898   1.48/  1.49 0.34G  golf   1.49/  1.49 0.23G  bbbase   2.82/  2.83 0.29G
+ecdsar1+amm_add_liquidity_1_recursions+sponsored_fpc       base   4.49/  4.49 0.37G  port-5b4b898   2.54/  2.54 0.36G  golf   2.58/  2.59 0.24G  bbbase   4.65/  4.66 0.34G
+ecdsar1+deploy_tokenContract_with_registration+sponsored_f base   3.50/  3.54 0.39G  port-5b4b898   1.97/  1.98 0.36G  golf   2.00/  2.00 0.24G  bbbase   3.57/  3.65 0.32G
+ecdsar1+storage_proof_7_layers+sponsored_fpc               base   8.10/  8.12 1.04G  port-5b4b898   4.54/  4.56 0.97G  golf   4.65/  4.73 0.59G  bbbase  10.26/ 10.28 0.85G
+ecdsar1+token_bridge_claim_private+sponsored_fpc           base   2.94/  2.94 0.34G  port-5b4b898   1.63/  1.65 0.34G  golf   1.67/  1.68 0.23G  bbbase   3.11/  3.12 0.31G
+ecdsar1+transfer_0_recursions+private_fpc                  base   3.85/  3.86 0.36G  port-5b4b898   2.15/  2.16 0.36G  golf   2.23/  2.24 0.23G  bbbase   4.04/  4.05 0.33G
+ecdsar1+transfer_0_recursions+sponsored_fpc                base   2.56/  2.57 0.32G  port-5b4b898   1.42/  1.43 0.33G  golf   1.46/  1.46 0.23G  bbbase   2.70/  2.70 0.29G
+ecdsar1+transfer_1_recursions+private_fpc                  base   4.08/  4.10 0.36G  port-5b4b898   2.30/  2.30 0.35G  golf   2.38/  2.38 0.23G  bbbase   4.24/  4.29 0.34G
+ecdsar1+transfer_1_recursions+sponsored_fpc                base   2.84/  2.85 0.33G  port-5b4b898   1.57/  1.59 0.33G  golf   1.60/  1.61 0.23G  bbbase   2.95/  2.97 0.30G
+schnorr+deploy_tokenContract_with_registration+sponsored_f base   3.23/  3.23 0.37G  port-5b4b898   1.76/  1.76 0.36G  golf   1.79/  1.80 0.23G  bbbase   3.36/  3.37 0.33G
+
+every non-bb proof equal to the single-threaded bb golden on every run
+          base: sum of per-flow min wall    41.22s
+  port-5b4b898: sum of per-flow min wall    22.98s  ratio vs base: 0.557 (min-sum), paired median 0.558, wins 33/33
+          golf: sum of per-flow min wall    23.49s  ratio vs base: 0.570 (min-sum), paired median 0.569, wins 33/33
+        bbbase: sum of per-flow min wall    44.74s  ratio vs base: 1.085 (min-sum), paired median 1.046, wins 0/33

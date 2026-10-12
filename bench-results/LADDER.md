@@ -1811,3 +1811,80 @@ order: bb's objects compiled from its C++ (at build time, or frozen into the rep
 write and own for the inner kernels; (3) it is a baseline-tier (first-proof) effect — under
 `--no-liftoff` the drains tie — so a warm column belongs in the tables next to the cold one.
 
+
+## Update 66: chonk-golf ported — native parity with a 0.53×-of-bb C++ prover (2026-10-12)
+
+[chonk-golf](https://github.com/olehmisar/chonk-golf) (`sources/final2/patches`) is a 75-patch,
+proof-preserving speedup series for bb's C++ chonk prover, written against bb15fcb (5 weeks past our
+pin; 19 bb-source commits apart, none in the prover). Rebased onto the pin (71/73 clean; the two
+conflicts are IPC plumbing off the `prove` path; harness 0002 ported so its seeded proofs are
+thread-independent) it measures **0.525× pin bb** natively on bbbench (0.680× with its AVX-512
+IFMA paths disabled). Goal: take the learnings into bb-ref, A/B each, reach parity with that binary.
+Branch `golf-port`; table of record `bench-results/chonk-golf.txt`.
+
+**Result** (bbbench, 8t, 11 flows × 3 interleaved reps, sum of per-flow min wall; every bb-ref and
+golf-bb proof equal to the single-threaded pin-bb golden on every run):
+
+| binary | wall | vs bb-ref c96126d |
+|---|---|---|
+| pin bb (same build config as golf-bb) | 44.74 s | 1.085 |
+| bb-ref c96126d | 41.22 s | 1.000 |
+| golf-bb | 23.49 s | 0.570 |
+| **bb-ref golf-port 5b4b898** | **22.98 s** | **0.558** (33/33) |
+
+bb-ref is 0.978× golf-bb wall and ahead on all 11 flows; golf's wall carries a ~34 ms self-verify,
+so proving-only is ≈ parity. Peak RSS did not move (0.33–0.36 G, storage 0.97 G) and is now
+~1.5× golf's (0.23 G, 0.59 G) — golf's memory patches are mostly C++ object lifetimes Rust already
+had; the rest is open. Cost: +2,531/−650 lines in `src/` (48 commits).
+
+**Method.** Four triage agents classified every patch against bb-ref's code and this file; six
+workstreams ported by area in worktrees, each change gated on the full test suite plus
+`tools/ab_chonk.sh` (new: paired-median/win-count A/B on bbbench with the golden byte gate,
+flock-serialized, content-addressed remote binaries) and phase scopes for anything under flow noise.
+A phase-tree comparison against golf-bb (`--print_bench`) and a `perf` gap audit replaced triage estimates once the first ports landed: golf ran ~0.55× pin bb in
+*every* phase, which pointed at shared foundations (field, MSM, IFMA) rather than hot spots.
+
+**What paid** (3-flow paired medians on the branch where it landed, before merging):
+
+| change | golf | effect |
+|---|---|---|
+| IFMA batch-affine MSM drain (8×52-bit lanes, `base/ifma.rs`) + Stage 6b on it | 0031/0037/0038 | **0.821**; MSM 2^18 133→70 ms; drain 35%→15% of CPU |
+| ADX Montgomery mul/square (own native `MontConfig`, `base/wasm/adx.rs`) | 0036 | **0.963**; mul 20.3→16.1 ns |
+| branchless asm add/sub/double | — | **0.949** |
+| Bernstein–Yang safegcd inverse (`MontConfig::inverse`) | 0007 | **0.941**; 4.24→1.18 µs; inverse was 8.4% of samples |
+| sumcheck: identical-pair fold skip, databus column skip, q_arith==1 path, memory-relation gate-type skip, Poseidon2 separator folding (all prover-only via `IS_PROVER`/`as_const`) | 0006/0009/0047/0022/0008 | 0.963; folding sumcheck 606→486 ms |
+| IFMA sumcheck fold, `add_scaled_batch` tiles, IPA two-round SRS fold, mlb/Gemini folds | 0061/0062/0064 | 0.963 + 0.992 |
+| prover instance: parallel copy cycles, read counts, grand product as running ratios, translator GP 12 columns, logderiv columns | 0058/0057/0060/0005/0059 | 0.985 |
+| PCS: zero/unit skips in `add_scaled_batch`, one-pass Gemini A₀, parallel Shplonk/KZG quotients, joint folds joined | 0018/0043/0029/0040/0028/0027 | 0.984 |
+| ECCVM: parallel transcript muls + `get_msms` + MSM rows; zero-tail GP/inverses | 0035/0034 | 0.989; trace 80→39 ms |
+| MSM: gather prefetch, GLV crossover 2^12, no GLV ≤128-bit scalars; batched-affine dedup clusters (bb Phase A — R25 revisited) | — | 0.980; Oink 533→496 (golf 606) |
+| multilinear batching: half-width eq product, ρ⁰ start, one-pass columns | 0030-adjacent | 0.976 with the fold routing; now ahead of golf |
+| decode/build: witness and constants straight to Fr, per-step just-in-time decode (−100 MB on storage), RNG without 256-step pow, bigfield/secp256r1 fixed-width, field division reuses inverse, fewer Montgomery conversions | 0011/0066/0071/0032/0024/0045/0046 | 0.986 + 0.988 + 0.994; create_circuit 378→322 ms |
+| sumcheck edge prefetch (2 ahead), SmallSubgroupIPA parallel, decider frees accumulator | 0073 | 0.989, joint 511→496 ms |
+
+**Rejected, measured** (so they are not retried): golf 0039 (Shplonk recurrence interleave, 150→151
+ms), 0044 (two Horner chains: 0% at parallel sizes), 0034's narrow rows (1 ms for 40–70 lines),
+0016/0033 Poseidon2 round restructure (11.66→11.96 µs), asm negation, `sum_of_products` override
+(0.05%), parallel zeroing / allocation of `from_builder` columns (+37 ms / mixed), sort-based dedup,
+tiled digit scatter, second-line point prefetch, 64-byte packed gather, window ±1, looser dedup gate,
+gunzip pre-sizing, six `Graded` copy-traffic variants (`MaybeUninit`, in-place `mul`, capacity 7,
+`+avx2`: memmove is 8.7% of samples but AVX-512 memmove makes it cheap in wall), program prefetch of
+step k+1 (−2% wall, +23 MB on deploy_schnorr — held for the owner), witness prefetch (+60 MB for 10
+ms). golf 0069/0074 analysed and declined (0074 adds ~66 muls/edge in round 1). Not attempted: 0065
+(IFMA short-univariate products) — needs 8-edge batched relation evaluation, the likely owner of
+the remaining later-round sumcheck gap (~90 ms/flow vs golf). Not applicable (C++ only): 0003,
+0010, 0012–0015, 0017, 0019–0021, 0023, 0025, 0026, 0052, 0055, 0056, 0067, 0068, 0070, 0072, 0075.
+
+**Traps learned.** (1) **pin bb's seeded chonk proof is not deterministic above one thread**
+(parallel `Polynomial::random` draws race on the engine); bb-ref's is, and equals single-threaded
+bb's — gate on single-threaded goldens. (2) Two concurrent A/Bs sharing a remote binary name
+(`~/ab-bin/port`) swapped binaries mid-run and showed a phantom 4% regression; remote names are
+now content-addressed. (3) Triage estimates under-called the work by ~3× — the decisive levers
+(field, MSM, IFMA, inverse) were pervasive, and two gaps (startup decode, Graded copies) were found
+only by profiling against golf-bb. (4) `adx.rs` once needed 11 GPRs and broke frame-pointer builds;
+the 10-register mul fixed it at no cost.
+
+**Platform caveat.** The four largest wins need x86-64 ADX (all x86 since Broadwell/Zen) or AVX-512
+IFMA (Zen 4, Ice Lake+), both runtime- or compile-gated with scalar fallbacks (`BBREF_NO_IFMA=1`
+forces the fallback). wasm and ARM get only the algorithmic ports and are not yet measured on this
+branch; one MSM rule (no GLV for ≤128-bit scalars) also changes the wasm path unmeasured.
