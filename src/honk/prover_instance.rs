@@ -154,54 +154,99 @@ impl ProverInstance {
         let has = |e: Ent| layout.has(e);
         let wires = [Ent::w_l, Ent::w_r, Ent::w_o, Ent::w_4];
 
-        // Wires, non-gate selectors, gate selectors, and copy cycles in (block, row, wire) order.
-        // The cycles are a CSR layout — counts, prefix sum, scatter — rather than one Vec per
-        // variable: a vector per variable is millions of small allocations on a rollup circuit.
-        let mut cycle_start: Vec<u32> = vec![0; builder.num_variables() + 1];
-        for (_, block) in blocks.iter() {
-            for row in block.rows.iter() {
-                for w in 0..NUM_WIRES {
-                    cycle_start[builder.real_variable_index[row.wires[w] as usize] as usize + 1] += 1;
+        // Wires, non-gate selectors, gate selectors, and each wire cell's real variable, over row
+        // chunks of all blocks in parallel (the arithmetic block dominates). Rows are disjoint, so
+        // the columns are written through raw pointers. Blocks are contiguous from `base`, so the
+        // cells are in (block, row, wire) order.
+        let base = trace_offset + NUM_ZERO_ROWS;
+        let mut cell_real: Vec<u32> = vec![0; NUM_WIRES * blocks.total_content_size()];
+        {
+            use crate::base::msm::SendPtr;
+            let cols: Vec<SendPtr<Fr>> = polys.iter_mut().map(|p| SendPtr(p.coeffs.as_mut_ptr())).collect();
+            let col = |e: Ent| cols[idx(e)].0;
+            let cells = SendPtr(cell_real.as_mut_ptr());
+            let cells = &cells;
+            let (vars, real_index) = (&builder.variables, &builder.real_variable_index);
+            let tasks: Vec<_> = blocks
+                .iter()
+                .flat_map(|(d, b)| {
+                    b.rows
+                        .chunks(1 << 12)
+                        .enumerate()
+                        .map(move |(k, rows)| (d, b.trace_offset + (k << 12), rows))
+                })
+                .collect();
+            tasks.par_iter().for_each(|&(desc, start, rows)| {
+                for (r, row) in rows.iter().enumerate() {
+                    let i = start + r;
+                    unsafe {
+                        for (w, ent) in wires.iter().enumerate() {
+                            let real = real_index[row.wires[w] as usize];
+                            *col(*ent).add(i) = vars[real as usize];
+                            *cells.0.add(NUM_WIRES * (i - base) + w) = real;
+                        }
+                        for (ent, v) in [
+                            (Ent::q_m, row.q_m),
+                            (Ent::q_c, row.q_c),
+                            (Ent::q_l, row.q_1),
+                            (Ent::q_r, row.q_2),
+                            (Ent::q_o, row.q_3),
+                            (Ent::q_4, row.q_4),
+                            (Ent::q_5, row.q_5),
+                        ] {
+                            if has(ent) {
+                                *col(ent).add(i) = v;
+                            }
+                        }
+                        for kind in desc.kinds {
+                            let ent = gate_selector_entity(*kind);
+                            if has(ent) {
+                                *col(ent).add(i) = row.gate_selector(*kind);
+                            }
+                        }
+                    }
                 }
-            }
+            });
         }
+        // Copy cycles in CSR layout (counts, prefix sum, scatter) rather than one Vec per variable:
+        // a vector per variable is millions of small allocations on a rollup circuit. Count and
+        // scatter split the variables into one range per thread; each scans every cell in order,
+        // so each cycle's nodes keep the serial (block, row, wire) order the sigmas depend on.
+        let num_vars = builder.num_variables();
+        let per = num_vars.div_ceil(rayon::current_num_threads()).max(1);
+        let mut cycle_start: Vec<u32> = vec![0; num_vars + 1];
+        cycle_start[1..]
+            .par_chunks_mut(per)
+            .enumerate()
+            .for_each(|(t, counts)| {
+                let lo = (t * per) as u32;
+                for v in &cell_real {
+                    if let Some(c) = counts.get_mut(v.wrapping_sub(lo) as usize) {
+                        *c += 1;
+                    }
+                }
+            });
         for v in 1..cycle_start.len() {
             cycle_start[v] += cycle_start[v - 1];
         }
         let mut cycle_flat: Vec<u32> = vec![0; *cycle_start.last().unwrap() as usize];
-        let mut cursor = cycle_start.clone();
-        for (desc, block) in blocks.iter() {
-            for (r, row) in block.rows.iter().enumerate() {
-                let i = block.trace_offset + r;
-                for (w, ent) in wires.iter().enumerate() {
-                    let var = row.wires[w];
-                    let real = builder.real_variable_index[var as usize];
-                    polys[idx(*ent)].coeffs[i] = builder.get_variable(var);
-                    let c = &mut cursor[real as usize];
-                    cycle_flat[*c as usize] = (i as u32) << 2 | w as u32;
-                    *c += 1;
-                }
-                for (ent, v) in [
-                    (Ent::q_m, row.q_m),
-                    (Ent::q_c, row.q_c),
-                    (Ent::q_l, row.q_1),
-                    (Ent::q_r, row.q_2),
-                    (Ent::q_o, row.q_3),
-                    (Ent::q_4, row.q_4),
-                    (Ent::q_5, row.q_5),
-                ] {
-                    if has(ent) {
-                        polys[idx(ent)].coeffs[i] = v;
-                    }
-                }
-                for kind in desc.kinds {
-                    let ent = gate_selector_entity(*kind);
-                    if has(ent) {
-                        polys[idx(ent)].coeffs[i] = row.gate_selector(*kind);
-                    }
+        let mut parts = Vec::new();
+        let mut rest = cycle_flat.as_mut_slice();
+        for lo in (0..num_vars).step_by(per) {
+            let hi = (lo + per).min(num_vars);
+            let (part, tail) = std::mem::take(&mut rest).split_at_mut((cycle_start[hi] - cycle_start[lo]) as usize);
+            parts.push((lo, hi, part));
+            rest = tail;
+        }
+        parts.into_par_iter().for_each(|(lo, hi, part)| {
+            let mut cursor: Vec<u32> = cycle_start[lo..hi].iter().map(|s| s - cycle_start[lo]).collect();
+            for (c, v) in cell_real.iter().enumerate() {
+                if let Some(k) = cursor.get_mut(v.wrapping_sub(lo as u32) as usize) {
+                    part[*k as usize] = (NUM_WIRES * base + c) as u32;
+                    *k += 1;
                 }
             }
-        }
+        });
 
         crate::base::timing::phase("      inst: wires+selectors+cycles");
         drop(_g_inst);

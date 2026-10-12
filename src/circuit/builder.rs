@@ -139,7 +139,7 @@ pub fn trace_phase(label: &str) {
 }
 
 pub struct Builder {
-    variables: Vec<Fr>,
+    pub(crate) variables: Vec<Fr>,
     pub real_variable_index: Vec<u32>,
     next_var_index: Vec<u32>,
     prev_var_index: Vec<u32>,
