@@ -674,14 +674,30 @@ fn try_filter_pair<P: SWCurveConfig>(
 
 /// bb `batch_affine_add_indexed_scalar`: `buckets[dst] += buckets[src]` over the column view for
 /// every pair, one field inversion for the batch (Montgomery's trick). Pairs are pre-filtered:
-/// distinct x, distinct dsts disjoint from srcs.
+/// distinct x, distinct dsts disjoint from srcs. With `chords` (AVX-512 IFMA) the pairs are
+/// gathered into the eight-lane drain and the sums scattered back.
 fn batch_affine_add_indexed<P: SWCurveConfig>(
     dx: &mut [P::BaseField],
     dy: &mut [P::BaseField],
     pairs: &[(u32, u32)],
     scratch: &mut Vec<P::BaseField>,
-) {
+    chords: Option<&mut crate::base::ifma::Chords<P::BaseField>>,
+) where
+    P::BaseField: crate::base::field::NativeField,
+{
     if pairs.is_empty() {
+        return;
+    }
+    if let Some(q) = chords {
+        q.clear();
+        for &(d, sidx) in pairs {
+            let (d, sidx) = (d as usize, sidx as usize);
+            q.push(dx[sidx], dy[sidx], dx[d], dy[d]);
+        }
+        q.run();
+        for (k, &(d, _)) in pairs.iter().enumerate() {
+            (dx[d as usize], dy[d as usize]) = (q.ax[k], q.ay[k]);
+        }
         return;
     }
     scratch.clear();
@@ -749,7 +765,10 @@ fn recursive_affine_bucket_reduce<P: SWCurveConfig>(
     present: &mut [u8],
     stride: usize,
     infos: &[BucketChunkInfo],
-) -> (Vec<Projective<P>>, Vec<Projective<P>>) {
+) -> (Vec<Projective<P>>, Vec<Projective<P>>)
+where
+    P::BaseField: crate::base::field::NativeField,
+{
     let nw = infos.len();
     let mut rs = vec![Projective::<P>::zero(); nw];
     let mut ls = vec![Projective::<P>::zero(); nw];
@@ -780,6 +799,7 @@ fn recursive_affine_bucket_reduce<P: SWCurveConfig>(
     let mut reals: Vec<(u32, u32)> = Vec::new();
     let mut dbls: Vec<u32> = Vec::new();
     let mut scratch: Vec<P::BaseField> = Vec::new();
+    let mut chords = crate::base::ifma::available::<P::BaseField>().then(crate::base::ifma::Chords::default);
     // Phase A: per-sub-partition suffix sums.
     for l in (1..l0).rev() {
         reals.clear();
@@ -798,7 +818,7 @@ fn recursive_affine_bucket_reduce<P: SWCurveConfig>(
                 }
             }
         }
-        batch_affine_add_indexed::<P>(dx, dy, &reals, &mut scratch);
+        batch_affine_add_indexed::<P>(dx, dy, &reals, &mut scratch, chords.as_mut());
     }
     // Phase B: log-recombine sub-partition sums into slot 0.
     let mut l1 = l0;
@@ -814,7 +834,7 @@ fn recursive_affine_bucket_reduce<P: SWCurveConfig>(
                 try_filter_pair::<P>(dx, dy, present, base + 2 * d * l1, base + (2 * d + 1) * l1, &mut reals);
             }
         }
-        batch_affine_add_indexed::<P>(dx, dy, &reals, &mut scratch);
+        batch_affine_add_indexed::<P>(dx, dy, &reals, &mut scratch, chords.as_mut());
         l1 *= 2;
     }
     for w in 0..nw {
@@ -878,7 +898,7 @@ fn recursive_affine_bucket_reduce<P: SWCurveConfig>(
                 pos += step;
             }
         }
-        batch_affine_add_indexed::<P>(dx, dy, &reals, &mut scratch);
+        batch_affine_add_indexed::<P>(dx, dy, &reals, &mut scratch, chords.as_mut());
         m *= 2;
     }
     for w in 0..nw {
