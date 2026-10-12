@@ -1191,6 +1191,13 @@ fn accumulate_edge<F: NativeField>(
             }
         }
     }
+    // Prefetch the edge two ahead: its ~40 interleaved column streams outrun the hardware prefetchers.
+    #[cfg(target_arch = "x86_64")]
+    for &j in s.cols.iter().chain(&s.skip_cols) {
+        if let Some(r) = column_ref(table, j, 2 * e + 4) {
+            unsafe { std::arch::x86_64::_mm_prefetch(r as *const F as *const i8, std::arch::x86_64::_MM_HINT_T0) };
+        }
+    }
     for &j in &s.cols {
         s.mark[j] = false;
         if !s.in_skip[j] {
@@ -1389,13 +1396,18 @@ pub enum Column<'a, F> {
     Own(Vec<F>),
 }
 
+/// Column `j` at row `i` (`None` past the column's end).
+fn column_ref<'t, F>(table: &'t [Column<F>], j: usize, i: usize) -> Option<&'t F> {
+    match &table[j] {
+        Column::Borrowed(s) => s.get(i),
+        Column::Own(v) => v.get(i),
+        Column::ShiftOf(k) => column_ref(table, *k, i + 1),
+    }
+}
+
 /// Value of column `j` at row `i` (zero past the column's end).
 fn column_value<F: FieldLike + Copy>(table: &[Column<F>], j: usize, i: usize) -> F {
-    match &table[j] {
-        Column::Borrowed(s) => s.get(i).copied().unwrap_or_else(F::zero),
-        Column::Own(v) => v.get(i).copied().unwrap_or_else(F::zero),
-        Column::ShiftOf(k) => column_value(table, *k, i + 1),
-    }
+    column_ref(table, j, i).copied().unwrap_or_else(F::zero)
 }
 
 /// Rounds past `log_n` are virtual (zero-extension) rounds.
