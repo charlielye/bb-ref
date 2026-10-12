@@ -6,23 +6,50 @@ use crate::base::field::from_bytes_be;
 use crate::base::rng::Rng;
 use crate::base::Fr;
 use base64::Engine;
-use serde::de::IgnoredAny;
+use serde::de::{Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::Deserialize;
 use std::io::Read;
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Witness(pub u32);
 
+/// A field constant, decoded from its 32 big-endian bytes (msgpack `bin`) straight to `Fr`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Const(pub Fr);
+
+impl<'de> Deserialize<'de> for Const {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = Const;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a 32-byte field element")
+            }
+            fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> Result<Const, E> {
+                Ok(Const(field(v)))
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Const, A::Error> {
+                let mut v = Vec::with_capacity(32);
+                while let Some(b) = seq.next_element::<u8>()? {
+                    v.push(b);
+                }
+                Ok(Const(field(&v)))
+            }
+        }
+        d.deserialize_bytes(V)
+    }
+}
+
 #[derive(Deserialize, Debug, Clone)]
 pub struct Expression {
-    pub mul_terms: Vec<(Vec<u8>, Witness, Witness)>,
-    pub linear_combinations: Vec<(Vec<u8>, Witness)>,
-    pub q_c: Vec<u8>,
+    pub mul_terms: Vec<(Const, Witness, Witness)>,
+    pub linear_combinations: Vec<(Const, Witness)>,
+    pub q_c: Const,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 pub enum FunctionInput {
-    Constant(Vec<u8>),
+    Constant(Const),
     Witness(Witness),
 }
 
@@ -189,33 +216,17 @@ struct StackItem {
 struct WitnessMap(Vec<(u32, Fr)>);
 
 impl<'de> Deserialize<'de> for WitnessMap {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        struct FieldBytes(Fr);
-        impl<'de> Deserialize<'de> for FieldBytes {
-            fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-                struct V;
-                impl<'de> serde::de::Visitor<'de> for V {
-                    type Value = FieldBytes;
-                    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                        f.write_str("32 field bytes")
-                    }
-                    fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> Result<FieldBytes, E> {
-                        Ok(FieldBytes(field(v)))
-                    }
-                }
-                d.deserialize_bytes(V)
-            }
-        }
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         struct V;
-        impl<'de> serde::de::Visitor<'de> for V {
+        impl<'de> Visitor<'de> for V {
             type Value = WitnessMap;
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
                 f.write_str("witness map")
             }
-            fn visit_map<A: serde::de::MapAccess<'de>>(self, mut m: A) -> Result<WitnessMap, A::Error> {
+            fn visit_map<A: MapAccess<'de>>(self, mut m: A) -> Result<WitnessMap, A::Error> {
                 let mut v = Vec::with_capacity(m.size_hint().unwrap_or(0));
-                while let Some((k, FieldBytes(x))) = m.next_entry::<u32, FieldBytes>()? {
-                    v.push((k, x));
+                while let Some((k, c)) = m.next_entry::<u32, Const>()? {
+                    v.push((k, c.0));
                 }
                 // bb writes a `std::map`, so the keys already ascend; the sort only guards that.
                 if !v.is_sorted_by_key(|e| e.0) {

@@ -5,7 +5,7 @@
 //! verify nothing.
 
 use super::format::{
-    field, BlackBoxFuncCall, BlockType, Circuit, EmbeddedCurveAdd, FunctionInput, Logic, MultiScalarMul, Opcode,
+    BlackBoxFuncCall, BlockType, Circuit, EmbeddedCurveAdd, FunctionInput, Logic, MultiScalarMul, Opcode,
     Witness,
 };
 use super::mock::mock_chonk_from_constraints;
@@ -163,7 +163,7 @@ impl Constraints {
 fn linear_terms(e: &super::format::Expression) -> BTreeMap<u32, Fr> {
     let mut m = BTreeMap::new();
     for (c, w) in &e.linear_combinations {
-        *m.entry(w.0).or_insert(Fr::zero()) += field(c);
+        *m.entry(w.0).or_insert(Fr::zero()) += c.0;
     }
     m
 }
@@ -215,7 +215,7 @@ fn split_into_mul_quad_gates(e: &super::format::Expression, lin: &mut BTreeMap<u
         let mut q = MulQuad {
             a: a.0,
             b: b.0,
-            mul_scaling: field(c),
+            mul_scaling: c.0,
             ..empty_quad()
         };
         if let Some(c) = lin.remove(&q.a) {
@@ -232,7 +232,7 @@ fn split_into_mul_quad_gates(e: &super::format::Expression, lin: &mut BTreeMap<u
             take(&mut q.c, &mut q.c_scaling, lin);
         }
         if first {
-            q.const_scaling = field(&e.q_c);
+            q.const_scaling = e.q_c.0;
             if !lin.is_empty() {
                 take(&mut q.d, &mut q.d_scaling, lin);
             }
@@ -251,7 +251,7 @@ fn split_into_mul_quad_gates(e: &super::format::Expression, lin: &mut BTreeMap<u
             }
         }
         if first {
-            q.const_scaling = field(&e.q_c);
+            q.const_scaling = e.q_c.0;
             if !lin.is_empty() {
                 take(&mut q.d, &mut q.d_scaling, lin);
             }
@@ -302,9 +302,9 @@ fn build_bilinear(e: &super::format::Expression, lin: &BTreeMap<u32, Fr>) -> Bil
         q_r: Fr::zero(),
         q_o: Fr::zero(),
         q_4: Fr::zero(),
-        q_c: field(&e.q_c),
-        q_m: field(&e.mul_terms[0].0),
-        q_5: field(&e.mul_terms[1].0),
+        q_c: e.q_c.0,
+        q_m: e.mul_terms[0].0 .0,
+        q_5: e.mul_terms[1].0 .0,
     };
     for (w, c) in lin {
         if *w == w_l {
@@ -331,7 +331,7 @@ fn batched_eq_entry(e: &super::format::Expression, lin: &BTreeMap<u32, Fr>) -> B
         w2,
         c1: *c1,
         c2,
-        q_c: field(&e.q_c),
+        q_c: e.q_c.0,
     }
 }
 
@@ -381,7 +381,7 @@ fn classify(circuit: &Circuit, is_mega: bool) -> (Constraints, Vec<u32>) {
                 }
                 let mut lin = linear_terms(e);
                 if e.mul_terms.is_empty() && lin.is_empty() {
-                    assert!(field(&e.q_c).is_zero(), "unsatisfiable constant AssertZero");
+                    assert!(e.q_c.0.is_zero(), "unsatisfiable constant AssertZero");
                 }
                 if is_mega && is_bilinear(e, &lin) {
                     c.bilinear.push(build_bilinear(e, &lin));
@@ -547,7 +547,7 @@ fn classify(circuit: &Circuit, is_mega: bool) -> (Constraints, Vec<u32>) {
                         continue;
                     }
                     match &r.predicate {
-                        FunctionInput::Constant(p) if field(p).is_zero() => continue,
+                        FunctionInput::Constant(p) if p.0.is_zero() => continue,
                         FunctionInput::Constant(_) => {}
                         FunctionInput::Witness(w) => {
                             c.note(*w);
@@ -706,7 +706,7 @@ fn create_block_constraints(ctx: &Ctx, block: &BlockConstraint) {
 /// bb `to_field_ct`.
 fn to_field_ct(ctx: &Ctx, input: &FunctionInput) -> FieldT {
     match input {
-        FunctionInput::Constant(v) => FieldT::constant(field(v)),
+        FunctionInput::Constant(v) => FieldT::constant(v.0),
         FunctionInput::Witness(w) => FieldT::from_witness_index(ctx, w.0),
     }
 }

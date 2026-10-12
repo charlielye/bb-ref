@@ -108,7 +108,9 @@ pub fn prove_steps(
     for step in steps {
         let step = &step;
         crate::base::timing::phase(&format!("== {} ({:?})", step.name, step.kind));
+        let _gp = crate::base::bench::Scope::new("decode_program");
         let program = step.circuit();
+        drop(_gp);
         let _gc = crate::base::bench::Scope::new("create_circuit");
         let _gw = crate::base::bench::Scope::new("create_circuit/decode_witness");
         let witness = step.decode_witness(rng);

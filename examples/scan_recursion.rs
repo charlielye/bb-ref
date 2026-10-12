@@ -15,7 +15,7 @@ fn main() {
         for op in &circuit.opcodes {
             if let Opcode::BlackBoxFuncCall(BlackBoxFuncCall::RecursiveAggregation(r)) = op {
                 let pred = match &r.predicate {
-                    FunctionInput::Constant(c) => format!("const:{:?}", &c[..4]),
+                    FunctionInput::Constant(c) => format!("const:{}", c.0),
                     FunctionInput::Witness(_) => "witness".to_string(),
                 };
                 lines.push(format!(
