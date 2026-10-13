@@ -47,28 +47,26 @@ pub fn mlb_prove(claims: Vec<ProverClaim>, t: &mut NativeTranscript) -> ProverCl
     assert!(n >= 2);
     let circuit_size = claims.iter().map(|c| c.dyadic_size).max().unwrap();
     let log_n = circuit_size.trailing_zeros() as usize;
+    assert!(log_n >= 1);
     let gamma: Fr = t.challenge("claim_batching_challenge");
     let gamma_powers = powers(&gamma, n);
     let alpha: Fr = t.challenge("Sumcheck:alpha");
 
     use std::borrow::Cow;
-    // Columns: [non_shifted_i, shifted_i, eq_i]; the shifted columns are the shifts of the pre-shift
-    // polynomials. Round 0 reads the claims' own coefficient vectors where they already have the
-    // full size (the first fold writes a fresh vector regardless), so no up-front copies.
-    // `src` from `off` on, zero-extended to the circuit size, filled on the pool.
-    let window = |src: &[Fr], off: usize| -> Vec<Fr> {
-        (0..circuit_size)
-            .into_par_iter()
-            .map(|i| src.get(i + off).copied().unwrap_or_default())
-            .collect()
-    };
-    let mut non_shifted: Vec<Cow<[Fr]>> = claims
-        .iter()
-        .map(|c| match &c.non_shifted_polynomial.coeffs {
-            p if p.len() == circuit_size => Cow::Borrowed(&p[..]),
-            p => Cow::Owned(window(p, 0)),
-        })
-        .collect();
+    // Columns borrow each claim's coefficients up to its last non-zero entry (at least one entry);
+    // the shift is the same vector one row ahead. Past a column's end it reads zero, so a claim's
+    // edges past its support add nothing and are skipped, and its folds stay support-sized.
+    // eq(x, r_i) is never materialised at full width: with round k's variable split off,
+    // eq[2e + b] = c_i · (b ? r_k : 1 − r_k) · H_i[e], where H_i is the table over the remaining
+    // variables (half width, built once) and c_i the product of the factors bound so far. Binding a
+    // variable is then a scalar update of c_i plus pairwise sums of H_i (the two factors sum to 1).
+    fn lean(p: &[Fr], off: usize) -> Cow<'_, [Fr]> {
+        match p.iter().rposition(|x| !x.is_zero()) {
+            Some(e) if e >= off => Cow::Borrowed(&p[off..=e]),
+            _ => Cow::Owned(vec![Fr::zero()]),
+        }
+    }
+    let mut non_shifted: Vec<Cow<[Fr]>> = claims.iter().map(|c| lean(&c.non_shifted_polynomial.coeffs, 0)).collect();
     let mut shifted: Vec<Cow<[Fr]>> = claims
         .iter()
         .map(|c| {
@@ -77,53 +75,48 @@ pub fn mlb_prove(claims: Vec<ProverClaim>, t: &mut NativeTranscript) -> ProverCl
                 p.first().map_or(true, Fr::is_zero),
                 "shifting a polynomial with non-zero constant term"
             );
-            Cow::Owned(window(p, 1))
+            lean(p, 1)
         })
         .collect();
-    let mut eq: Vec<Cow<[Fr]>> = claims.iter().map(|c| Cow::Owned(eq_table(&c.challenge, log_n))).collect();
+    let mut half_eq: Vec<Vec<Fr>> = claims.iter().map(|c| eq_table(&c.challenge[1..], log_n - 1)).collect();
+    let mut eq_scale = vec![Fr::one(); n];
+    let mut eq: Vec<[Fr; 2]> = Vec::new();
 
     let mut challenge = Vec::with_capacity(VIRTUAL_LOG_N);
-    // `Fr::small` is a table lookup; `Fr::from(u64)` is a Montgomery multiplication, and this
-    // runs three times per point of every edge.
+    // `Fr::small` is a table lookup; `Fr::from(u64)` is a Montgomery multiplication.
     let linear = |v0: Fr, v1: Fr, k: usize| v0 + Fr::small(k as u64) * (v1 - v0);
+    let at = |c: &[Fr], i: usize| c.get(i).copied().unwrap_or_default();
     drop(_g_setup);
     let _g_sc = crate::base::bench::Scope::new("mlb/sumcheck");
     for round in 0..VIRTUAL_LOG_N {
         let mut univariate = vec![Fr::zero(); UNIVARIATE_LENGTH];
         if round < log_n {
-            let half = circuit_size >> (round + 1);
-            // Per (claim, edge): γ-scale eq's endpoints once, then step all three linear factors
-            // by addition across the evaluation points — 8 multiplications instead of 18 — and
-            // batch the α-weighting once per round outside the loop.
-            let zeros = || vec![Fr::zero(); 2 * UNIVARIATE_LENGTH];
-            let edges = (0..half)
+            // Per claim: A = Σ_e H[e]·(P + αS)(2e), B = Σ_e H[e]·Δ(P + αS)(2e), so the claim's
+            // round polynomial is γ^i c_i ((1 − r_k) + X(2r_k − 1))(A + X B): 4 multiplications
+            // per (claim, edge).
+            let ends: Vec<usize> = (0..n).map(|i| non_shifted[i].len().max(shifted[i].len())).collect();
+            let zeros = || vec![Fr::zero(); 2 * n];
+            let ab = (0..ends.iter().max().unwrap().div_ceil(2))
                 .into_par_iter()
                 .with_min_len(64)
                 .fold(zeros, |mut acc, e| {
-                    for i in 0..n {
-                        let eq0 = eq[i][2 * e];
-                        let eqg = eq0 * gamma_powers[i];
-                        let eqdg = (eq[i][2 * e + 1] - eq0) * gamma_powers[i];
-                        let ns0 = non_shifted[i][2 * e];
-                        let nsd = non_shifted[i][2 * e + 1] - ns0;
-                        let sh0 = shifted[i][2 * e];
-                        let shd = shifted[i][2 * e + 1] - sh0;
-                        let (mut eqk, mut nsk, mut shk) = (eqg, ns0, sh0);
-                        for k in 0..UNIVARIATE_LENGTH {
-                            if k > 0 {
-                                eqk += eqdg;
-                                nsk += nsd;
-                                shk += shd;
-                            }
-                            acc[k] += nsk * eqk;
-                            acc[UNIVARIATE_LENGTH + k] += shk * eqk;
-                        }
+                    for i in (0..n).filter(|&i| 2 * e < ends[i]) {
+                        let h = half_eq[i][e];
+                        let t0 = at(&non_shifted[i], 2 * e) + alpha * at(&shifted[i], 2 * e);
+                        let t1 = at(&non_shifted[i], 2 * e + 1) + alpha * at(&shifted[i], 2 * e + 1);
+                        acc[i] += h * t0;
+                        acc[n + i] += h * (t1 - t0);
                     }
                     acc
                 })
                 .reduce(zeros, |a, b| a.iter().zip(&b).map(|(x, y)| *x + *y).collect());
-            for k in 0..UNIVARIATE_LENGTH {
-                univariate[k] += edges[k] + alpha * edges[UNIVARIATE_LENGTH + k];
+            for i in 0..n {
+                let rk = claims[i].challenge[round];
+                let s = gamma_powers[i] * eq_scale[i];
+                for k in 0..UNIVARIATE_LENGTH {
+                    let x = Fr::small(k as u64);
+                    univariate[k] += s * (Fr::one() - rk + x * (rk + rk - Fr::one())) * (ab[i] + x * ab[n + i]);
+                }
             }
         } else {
             // Virtual round: the polynomials are extended by zero; eq needs its true value at 1.
@@ -131,8 +124,7 @@ pub fn mlb_prove(claims: Vec<ProverClaim>, t: &mut NativeTranscript) -> ProverCl
             point[..round].copy_from_slice(&challenge);
             point[round] = Fr::one();
             for i in 0..n {
-                let e1 = eq_eval(&claims[i].challenge, &point);
-                eq[i] = Cow::Owned(vec![eq[i][0], e1]);
+                eq[i][1] = eq_eval(&claims[i].challenge, &point);
             }
             for k in 0..UNIVARIATE_LENGTH {
                 let (mut s0, mut s1) = (Fr::zero(), Fr::zero());
@@ -146,33 +138,49 @@ pub fn mlb_prove(claims: Vec<ProverClaim>, t: &mut NativeTranscript) -> ProverCl
         }
         t.send_vec(&format!("Sumcheck:univariate_{round}"), &univariate);
         let u: Fr = t.challenge(&format!("Sumcheck:u_{round}"));
-        // With two or three claims there are only 3n columns, so each column's fold runs on the pool.
-        let fold = |col: &mut Cow<[Fr]>| *col = Cow::Owned(crate::base::poly::fold_par(col, &u));
         if round < log_n {
-            for col in non_shifted.iter_mut().chain(shifted.iter_mut()).chain(eq.iter_mut()) {
-                fold(col);
+            // With two or three claims there are only 2n columns, so each column's fold runs on the
+            // pool; an odd end's last pair is (a, 0), which folds to a·(1 − u).
+            for col in non_shifted.iter_mut().chain(shifted.iter_mut()) {
+                let len = col.len();
+                let mut out = crate::base::poly::fold_par(&col[..len & !1], &u);
+                if len % 2 == 1 {
+                    out.push(col[len - 1] * (Fr::one() - u));
+                }
+                *col = Cow::Owned(out);
+            }
+            for i in 0..n {
+                let rk = claims[i].challenge[round];
+                eq_scale[i] *= Fr::one() - rk + u * (rk + rk - Fr::one());
+                let h = &mut half_eq[i];
+                let m = h.len() / 2;
+                for j in 0..m {
+                    h[j] = h[2 * j] + h[2 * j + 1];
+                }
+                h.truncate(m.max(1));
+            }
+            if round == log_n - 1 {
+                eq = (0..n).map(|i| [eq_scale[i] * half_eq[i][0], Fr::zero()]).collect();
             }
         } else {
             for col in non_shifted.iter_mut().chain(shifted.iter_mut()) {
                 col.to_mut()[0] *= Fr::one() - u;
             }
-            for col in eq.iter_mut() {
-                let v = col.to_mut();
-                v[0] = v[0] * (Fr::one() - u) + v[1] * u;
-                col.to_mut()[1] = Fr::zero();
+            for v in eq.iter_mut() {
+                *v = [v[0] * (Fr::one() - u) + v[1] * u, Fr::zero()];
             }
         }
         challenge.push(u);
     }
     drop(_g_sc);
     let _g_post = crate::base::bench::Scope::new("mlb/post");
-    let evals: Vec<Fr> = non_shifted.iter().chain(&shifted).chain(&eq).map(|c| c[0]).collect();
+    let evals: Vec<Fr> = non_shifted.iter().chain(&shifted).map(|c| c[0]).chain(eq.iter().map(|v| v[0])).collect();
     t.send_vec("Sumcheck:evaluations", &evals);
 
     // Merge with powers of ρ, drawn after the evaluations are bound.
     let rho: Fr = t.challenge("claim_merge_challenge");
     let scalars = powers(&rho, n);
-    drop((non_shifted, shifted, eq));
+    drop((non_shifted, shifted, half_eq));
     // ρ^0 = 1: the first claim's polynomials start the sums, moved rather than added to zeros.
     let mut claims = claims;
     let take = |p: &mut Poly| {
