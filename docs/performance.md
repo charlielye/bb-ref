@@ -518,6 +518,13 @@ What it does not cover is a thread bulk-copying into pages it never allocated wi
 window, e.g. a buffer another thread grew the memory for a moment earlier. Any heap op on that
 thread closes the gap.
 
+The same hunt also turned up a rare silent hang, the GLV φ table's lazy build in `Ck::commit`
+(`base/srs.rs`). The table is built with rayon inside a once-cell, and commits are themselves
+rayon jobs. So the builder could steal a sibling commit while waiting on its own `par_iter`, then
+block on the cell it was filling. The cell no longer blocks: a commit that finds the table
+unbuilt runs without it. Both bugs reproduced on golf-port b9806c6 at 16 threads under load
+(one trap and one hang in 65 runs) and in none of 80 runs with the fixes.
+
 ### Why ark-ff was vendored, and how the fork was retired
 
 Until 2026-09-07 `vendor/ark-ff` was upstream 0.6.0 (10,274 lines) plus 1,441 lines of ours behind
