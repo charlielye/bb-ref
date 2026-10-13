@@ -9,6 +9,18 @@
 [target.'cfg(target_arch = "x86_64")']
 rustflags = ["-C", "target-feature=+bmi2,+adx", "-C", "llvm-args=-inline-threshold=1000"]
 
+# wasm: simd128 for the packed kernels (`src/base/wasm/`), 4 GiB of addressable memory (the biggest
+# flow needs >1 GiB), and inline expansion of constant-size memcpy/memset up to 48 stores. V8 lowers
+# every `memory.copy`/`memory.fill` to a C call (13 ns for 264 B against 5 ns inline), and LLVM's
+# default limit leaves every by-value move of a 264-byte `Graded<Fr, 8>` as one; 48 takes the
+# relation bodies to none (24 changes nothing). A RUSTFLAGS variable replaces this list entirely,
+# so build wasm without one; `tools/wasm_check.sh` fails a module built without these flags.
+[target.wasm32-wasip1-threads]
+rustflags = [
+    "-C", "target-feature=+simd128", "-C", "link-arg=--max-memory=4294967296",
+    "-C", "llvm-args=-max-store-memcpy=48", "-C", "llvm-args=-max-store-memset=48",
+]
+
 # Test binaries otherwise run one rayon pool per process at the machine's core count while cargo
 # runs binaries and tests concurrently; on large machines that oversubscribes by orders of magnitude.
 [env]

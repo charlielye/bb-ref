@@ -29,6 +29,7 @@ BB_WASM_BENCH=${BB_WASM_BENCH:-}
 export BB_RNG_SEED HARDWARE_CONCURRENCY=$THREADS RAYON_NUM_THREADS=$THREADS CRS_PATH=$HOME/.bb-crs
 # bb-ref.wasm is linked with --max-memory=4GB (the biggest flow needs >1GB linear memory).
 export WASM_MAX_PAGES=${WASM_MAX_PAGES:-65536}
+tools/wasm_check.sh "$REF_WASM"
 
 if [ $# -gt 0 ]; then FLOWS=("$@"); else
     FLOWS=()
