@@ -1888,3 +1888,74 @@ the 10-register mul fixed it at no cost.
 IFMA (Zen 4, Ice Lake+), both runtime- or compile-gated with scalar fallbacks (`BBREF_NO_IFMA=1`
 forces the fallback). wasm and ARM get only the algorithmic ports and are not yet measured on this
 branch; one MSM rule (no GLV for ≤128-bit scalars) also changes the wasm path unmeasured.
+
+## Update 67: wasm golfed to parity with the golf-patched bb (2026-10-13)
+
+Branch `wasm-golf` (off `golf-port`). Table of record `bench-results/chonk-golf-wasm.txt`: wasm chonk,
+11 flows × 3 interleaved reps on the bench boxes, node 24 production tiering, 8 threads, every bb-ref
+proof equal to the single-threaded pin-bb golden (396 runs).
+
+| module | wall | proving | peak memory (Σ flows) | vs golf-bb wasm (wall / proving / memory) |
+|---|---|---|---|---|
+| wasm-golf base (golf-port + fixes) | 71.36 s | 67.91 s | 3,753 MiB | 1.170 / 1.208 / 1.304 |
+| **wasm-golf 26d57dc** | **60.07 s** | **56.74 s** | **3,210 MiB** | **0.985 / 1.009 / 1.116** |
+| golf-bb wasm | 61.01 s | 56.24 s | 2,878 MiB | 1 / 1 / 1 |
+
+Faster wall than golf-bb on 10 of 11 flows (storage_proof 11.47 vs 11.05 s); proving within 1%;
+memory at golf's level on the small flows except a 25–45 MiB tail on several, and storage_proof
+748 vs 601 MiB. Native also gained: the shared-code commits make native chonk 0.983× golf-port
+(11 flows × 3 reps, 31/33 wins, proofs golden) with peak RSS down on every flow (storage 1.00 → 0.88 GB).
+Full `cargo test --release` and `tools/check.sh` pass. Cost: +712/−253 in `src/` (12 commits).
+
+**How.** Phase 0 measured the wasm baseline and profiles against golf-bb; Phase 1 fanned nine
+analysis agents over angles (field, MSM, sumcheck, streaming/IPA, toolchain, runtime, serial path,
+live-peak memory, allocator), each probing its top ideas on the bench boxes; the ranked shortlist was
+then ported as production commits, each measured on its own and the stack measured together (the
+per-item numbers composed almost exactly).
+
+| commit(s) | change | proving Δ (transfer_1 / storage), alone |
+|---|---|---|
+| 00bd871 | Bernstein–Yang inverse for the wasm 2^261 field (divstep kernel shared with the native one) | −5.6% / −5.0% |
+| 0e6ef7d, d8b6ef5, 07b7cdb | packed-path skips that native golf-port had and wasm lacked (zero axpy groups, identical fold pairs — golf 0053 — packed `fold_par`); packed IPA SRS fold (golf 0054's idea); multilinear batching on each claim's support with the eq table factored | −6.5% / −8.0%; storage −29 MiB |
+| 1e109c6, 6df52ef, 1a55d7f | one inversion per MSM tree level + 4096 subchunk (wasm only — natively 4096 raised RSS); φ table only to the GLV threshold; MSM scratch freed at last use | −2.4% / −2.6%; −10 / −29 MiB |
+| bf357d7, 46d6d1c | inline memcpy/memset up to 48 B (V8 lowers every `memory.copy` to a C call; every `Graded` temporary moves 264 B) — flags in `.cargo/config.toml`, guarded by `tools/wasm_check.sh`; parallel zeroing of large columns (respecting the allocator's stale-bounds guard), 1 MiB pool stacks, hoisted row counter | −2.9% / −3.7%; −8 MiB |
+| 49ed864 | `#[inline(always)]` on the scalar multiply (store-to-load forwarding stall on the out-of-line result) | −1.0% / −0.6% |
+| 91ab535, 26d57dc | free the folded instance before multilinear batching; free the joint sumcheck tables before the joint PCS | ±0 over 11 flows; −276 MiB summed (small flows −11%) |
+
+**Harness fix that changed the memory story.** The node runners created shared memory with 1,200
+initial pages (75 MiB) where the modules declare 22–37 and bb.js uses 37; the allocators never use the
+slack, so every reported peak carried ~73 MiB (5991e08 now reads the declared limits from the
+import section). Without it our memory ratio looked 1.25×; on the fair basis the base was 1.30×.
+
+**Bugs found on the way (fixed on golf-port; present on master).** (1) V8 bounds-checks
+`memory.fill`/`memory.copy` against a per-thread cached memory size that another thread's
+`memory.grow` updates asynchronously (~0.1–1 ms): a thread memsetting freshly grown pages traps
+"memory access out of bounds" (`src/base/wasm/alloc.rs` refreshes the view with `memory.grow(0)`;
+reproduces in a few lines of raw wasm on node 24 — reportable upstream). (2) The lazily built φ table
+was built under `OnceLock::get_or_init` with rayon inside it; a building thread could steal a sibling
+commit job that then blocked on the same cell — a silent deadlock (now non-blocking, with a test).
+
+**Measured and rejected** (do not retry without new evidence): f64/FMA field multiply (Emmart et al.;
+bit-exact, 18.5% faster only while data stays in its form, ties at the stored-form boundaries every
+call site has, +46% at scalar sites, needs relaxed SIMD which Safari lacks); turning auto-vectorisation
+off (exactly neutral — golf 0052's lesson doesn't apply); Rust reorderings of the 4-lane multiply to
+recover the C drains (2.0–2.3× slower); golf's 5-wide kernel shape; branchless add/sub on wasm
+(neutral; −5% natively); Yuval reduction + dedicated square (neutral in flow); `-pre-RA-sched=source`
+(no gain on top of inlining); force-inlining `Graded` ops (+0.3–0.45 s TurboFan compile); talc
+(+18 MiB, slower); spin-before-sleep / pool replacement (≤0.9%); GLV threshold changes, fewer
+concurrent MSMs, v128 point copies, wasm-opt, inline/unroll thresholds, opt-level 2. Not taken:
+skipping the gzip CRC (owner: keep the integrity check). Threading is not the wasm gap: rayon is
+1.2–2.5% of on-CPU time; the 26–30% "wait" in V8 profiles is idle threads sampled, and ~a quarter of
+wall is serial circuit construction in both provers.
+
+**Traps.** Setting `RUSTFLAGS` in the environment silently replaces `.cargo/config.toml`'s target
+rustflags — the wasm flags now live there, so wasm builds must not set it (`tools/wasm_check.sh`
+catches a lost memcpy flag). Storage_proof's wasm peak varies ±30 MiB between identical runs: use ≥3
+runs and medians. `pgrep -f <pattern>` matches the calling shell's own command line.
+
+**Open.** Memory on storage_proof (748 vs 601 MiB): M4 (builder rows freed before columns, branch
+`wg-i5-m4`, −16% native RSS on storage) and M6/M7 (sumcheck tables after round 1, selector start
+windows) are the measured candidates; the 4-lane multiply at `Graded`/batch-affine call sites
+(≈ −4% estimated) and cross-step pipelining of circuit construction (−3 to −9% estimated, memory-
+gated) are the larger unbuilt time ideas. Wasm unit tests that catch panics (`catch_unwind`) abort
+under wasip1's panic=abort; `codec::tests::keccak_scalar_canonicity` fails that way on master too.
