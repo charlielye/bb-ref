@@ -187,6 +187,8 @@ pub fn joint_prove(
     t.send_vec("Sumcheck:evaluations_translator", &trans_full);
     let libra_evaluation = zk.claimed_evaluation();
     t.send("Libra:claimed_evaluation", &libra_evaluation);
+    // In-place folding keeps the round-0 capacity of every table; free them before the PCS.
+    drop((mega_state, trans_state));
 
     // --- joint PCS ---
     let libra = small_subgroup_ipa_prove::<Bn254>(&zk, &challenge, &libra_evaluation, ck, t, rng);
