@@ -162,7 +162,30 @@ pub struct Ck<G: AffineRepr> {
     pub points: PointsView<G>,
     /// GLV companion points `(beta * x, -y)`, built once per key on wasm (where the per-entry
     /// multiply at gather is the visible cost) and shared by every commit through this key.
-    phi: std::sync::OnceLock<Vec<G>>,
+    phi: PhiTable<G>,
+}
+
+/// The lazily built φ table, never waited on. Commits run inside rayon jobs and the table is
+/// built with rayon, so a thread blocked on the build can be the builder itself: while its
+/// `par_iter` waits it steals a sibling commit job, which would block on the cell it is filling
+/// — a deadlock (seen on wasm as every thread parked in `Once::call`/`wait_until_cold` during
+/// `batch_commit`). So one thread builds and every other commit, re-entrant ones included, runs
+/// without the table until it is ready; the MSM computes φ at gather time then, same result.
+#[derive(Default)]
+struct PhiTable<G> {
+    cell: std::sync::OnceLock<Vec<G>>,
+    building: std::sync::atomic::AtomicBool,
+}
+
+impl<G> PhiTable<G> {
+    fn get_or_build(&self, build: impl FnOnce() -> Vec<G>) -> Option<&[G]> {
+        use std::sync::atomic::Ordering;
+        if self.cell.get().is_none() && !self.building.swap(true, Ordering::Acquire) {
+            // Sole builder: `set` cannot block or lose.
+            let _ = self.cell.set(build());
+        }
+        self.cell.get().map(Vec::as_slice)
+    }
 }
 
 /// The SRS pools a long-lived server loads once at startup and hands to its handler (bb memoizes
@@ -203,7 +226,7 @@ impl Srs {
                     pool: self.bn254.clone(),
                     len: n,
                 },
-                phi: std::sync::OnceLock::new(),
+                phi: PhiTable::default(),
             }
         } else {
             CommitmentKey::new(num_points)
@@ -217,7 +240,7 @@ impl Srs {
                     pool: self.grumpkin.clone(),
                     len: num_points,
                 },
-                phi: std::sync::OnceLock::new(),
+                phi: PhiTable::default(),
             }
         } else {
             GrumpkinKey::new(num_points)
@@ -328,7 +351,7 @@ where
             self.commit_dedup(&p.coeffs[..k]).into_affine()
         } else {
             let phi = if crate::base::wasm::GLV_PHI_TABLE {
-                Some(&self.phi.get_or_init(|| G::phi_table(&self.points))[..k])
+                self.phi.get_or_build(|| G::phi_table(&self.points)).map(|t| &t[..k])
             } else {
                 None
             };
@@ -427,7 +450,7 @@ impl CommitmentKey {
                 pool: std::sync::Arc::new(load_bn254_g1(n)),
                 len: n,
             },
-            phi: std::sync::OnceLock::new(),
+            phi: PhiTable::default(),
         }
     }
     /// A key that cannot commit (for IVC state that is only ever verified against, never proven).
@@ -437,7 +460,7 @@ impl CommitmentKey {
                 pool: std::sync::Arc::new(vec![]),
                 len: 0,
             },
-            phi: std::sync::OnceLock::new(),
+            phi: PhiTable::default(),
         }
     }
 }
@@ -451,7 +474,7 @@ impl GrumpkinKey {
                 pool: std::sync::Arc::new(load_grumpkin_g1(num_points)),
                 len: num_points,
             },
-            phi: std::sync::OnceLock::new(),
+            phi: PhiTable::default(),
         }
     }
 }
@@ -459,6 +482,19 @@ impl GrumpkinKey {
 #[cfg(test)]
 mod pool_tests {
     use super::*;
+
+    /// A commit re-entering the φ build (rayon work stealing inside the build's `par_iter`) gets
+    /// no table instead of blocking on the cell its own thread is filling.
+    #[test]
+    fn phi_build_reentry_does_not_block() {
+        let t = PhiTable::<u64>::default();
+        let got = t.get_or_build(|| {
+            assert!(t.get_or_build(|| unreachable!()).is_none());
+            vec![7]
+        });
+        assert_eq!(got, Some(&[7u64][..]));
+        assert_eq!(t.get_or_build(|| unreachable!()), Some(&[7u64][..]));
+    }
 
     /// Server-loaded pools hand out Arc views (rounded up to even, as bb sizes its keys); a
     /// request past the pool falls back to an exact private load instead of failing.
