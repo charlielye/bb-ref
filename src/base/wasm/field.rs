@@ -5,11 +5,11 @@
 //! The 2^261 domain appears in exactly four constants, all here: `R` (the stored form of one),
 //! `R2 = 2^517 mod p` — what arkworks' const-context constructor (`Fp::new`, hence every `MontFp!`)
 //! multiplies by while dividing by 2^256, so constants land in the 2^261 form — the runtime
-//! `R'^2 = 2^522 mod p` that `from_bigint` and `inverse` use through the /2^261 multiply, and the
-//! 29-bit modulus image. Everything arkworks derives from `MODULUS` alone (`INV`, the no-carry
+//! `R'^2 = 2^522 mod p` that `from_bigint` uses through the /2^261 multiply (and `inverse`, cubed),
+//! and the 29-bit modulus image. Inversion is Bernstein–Yang (`by29.rs`). Everything arkworks derives from `MODULUS` alone (`INV`, the no-carry
 //! flags, the square-root precomputation) keeps its default.
 
-use super::mont29;
+use super::{by29, mont29};
 use ark_ff::{BigInt, BigInteger, Fp, MontBackend, MontConfig, MontFp, Zero};
 
 macro_rules! bn254_wasm_config {
@@ -24,6 +24,10 @@ macro_rules! bn254_wasm_config {
             /// `R'^2 = 2^522 mod p`: multiplying by it through the /2^261 kernel is the canonical
             /// → stored conversion.
             const R2_RUNTIME: [u64; 4] = $r2_runtime;
+            const PINV58: u64 = by29::pinv58($modulus[0]);
+            /// `R'^3 = 2^783 mod p` (the const constructor multiplies by 2^261): the inverse of the
+            /// stored `a·R'` is `a⁻¹·R'⁻¹`, and one multiply by `R'^3` takes it to the stored `a⁻¹·R'`.
+            const R3: [u64; 4] = Fp::<MontBackend<Self, 4>, 4>::new(BigInt::new($r2_runtime)).0 .0;
             #[inline(always)]
             fn mul(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
                 mont29::mont_mul_261(a, b, &$modulus, &Self::P29, Self::INV29)
@@ -63,44 +67,8 @@ macro_rules! bn254_wasm_config {
             }
 
             fn inverse(a: &Fp<MontBackend<Self, 4>, 4>) -> Option<Fp<MontBackend<Self, 4>, 4>> {
-                // Binary EEA (arkworks' own), R-agnostic except for the seed: R'^2 takes `a·R'` in
-                // to `a^-1·R'` out.
-                if a.is_zero() {
-                    return None;
-                }
-                let one = BigInt::from(1u64);
-                let mut u = a.0;
-                let mut v = Self::MODULUS;
-                let mut b = Fp::<MontBackend<Self, 4>, 4>::new_unchecked(BigInt::new(Self::R2_RUNTIME));
-                let mut c = Fp::<MontBackend<Self, 4>, 4>::zero();
-                while u != one && v != one {
-                    while u.is_even() {
-                        u.div2();
-                        if b.0.is_even() {
-                            b.0.div2();
-                        } else {
-                            let _ = b.0.add_with_carry(&Self::MODULUS);
-                            b.0.div2();
-                        }
-                    }
-                    while v.is_even() {
-                        v.div2();
-                        if c.0.is_even() {
-                            c.0.div2();
-                        } else {
-                            let _ = c.0.add_with_carry(&Self::MODULUS);
-                            c.0.div2();
-                        }
-                    }
-                    if v < u {
-                        u.sub_with_borrow(&v);
-                        b -= &c;
-                    } else {
-                        v.sub_with_borrow(&u);
-                        c -= &b;
-                    }
-                }
-                Some(if u == one { b } else { c })
+                let x = (!a.is_zero()).then(|| by29::inverse(&a.0 .0, &$modulus, Self::PINV58))?;
+                Some(Fp::new_unchecked(BigInt::new(Self::mul(&x, &Self::R3))))
             }
 
             fn from_bigint(r: BigInt<4>) -> Option<Fp<MontBackend<Self, 4>, 4>> {

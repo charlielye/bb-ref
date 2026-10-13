@@ -24,6 +24,16 @@ pub const fn to29(a: &[u64; 4]) -> [u64; 9] {
     out
 }
 
+/// Nine 29-bit limbs (the top one up to 40 bits) back to 4x64.
+pub fn from29(l: &[u64; 9]) -> [u64; 4] {
+    [
+        l[0] | (l[1] << 29) | (l[2] << 58),
+        (l[2] >> 6) | (l[3] << 23) | (l[4] << 52),
+        (l[4] >> 12) | (l[5] << 17) | (l[6] << 46),
+        (l[6] >> 18) | (l[7] << 11) | (l[8] << 40),
+    ]
+}
+
 /// -p^-1 mod 2^29 (Newton lift from the 64-bit INV would also work; direct is clearer).
 pub const fn inv29(p0: u64) -> u64 {
     // Newton iteration for the inverse of p mod 2^29, then negate.
@@ -247,11 +257,7 @@ pub fn mont_mul_261(a: &[u64; 4], b: &[u64; 4], modulus: &[u64; 4], p: &[u64; 9]
     t15 &= MASK29;
     t17 = t17.wrapping_add(t16 >> 29);
     t16 &= MASK29;
-    let w0 = t9 | (t10 << 29) | (t11 << 58);
-    let w1 = (t11 >> 6) | (t12 << 23) | (t13 << 52);
-    let w2 = (t13 >> 12) | (t14 << 17) | (t15 << 46);
-    let w3 = (t15 >> 18) | (t16 << 11) | (t17 << 40);
-    let wide = [w0, w1, w2, w3];
+    let wide = from29(&[t9, t10, t11, t12, t13, t14, t15, t16, t17]);
     let mut borrow = 0u64;
     let mut d = [0u64; 4];
     let mut i = 0;

@@ -17,11 +17,18 @@ mod alloc;
 pub use alloc::alloc_zeroed_par as alloc_zeroed;
 #[cfg(not(all(target_arch = "wasm32", not(feature = "heap-profile"))))]
 pub use std::alloc::alloc_zeroed;
+#[cfg(target_family = "wasm")]
+mod by29;
 #[cfg(any(
     target_family = "wasm",
     all(target_arch = "x86_64", target_feature = "adx", target_feature = "bmi2")
 ))]
 mod curves;
+#[cfg(any(
+    target_family = "wasm",
+    all(target_arch = "x86_64", target_feature = "adx", target_feature = "bmi2")
+))]
+mod divsteps;
 #[cfg(target_family = "wasm")]
 mod field;
 #[cfg(target_family = "wasm")]

@@ -240,48 +240,15 @@ fn sub(a: [u64; 4], b: [u64; 4], p: &[u64; 6]) -> [u64; 4] {
 
 /// Bernstein–Yang safegcd inverse (bb's `bernstein_yang_inverse.hpp`, with golf 0007's batched
 /// variable-time divsteps): (f, g) start at (p, a) with Bézout coefficients (d, e), d·a ≡ f and
-/// e·a ≡ g (mod p). Each round runs 62 divsteps on the low limbs of f and g alone, collecting them
-/// in a 2×2 matrix, and then applies the matrix to the full state with an exact /2^62 (plus k·p on
-/// the (d, e) side to make it exact); 12 rounds cover the 735-divstep bound for 254-bit inputs.
-/// When g reaches 0, f = ±1 and a⁻¹ = ±d. Integers are 5 limbs, the top one signed.
+/// e·a ≡ g (mod p). Each round runs 62 divsteps (`divsteps.rs`) on the low limbs of f and g alone,
+/// collecting them in a 2×2 matrix, and then applies the matrix to the full state with an exact
+/// /2^62 (plus k·p on the (d, e) side to make it exact); 12 rounds cover the 735-divstep bound for
+/// 254-bit inputs. When g reaches 0, f = ±1 and a⁻¹ = ±d. Integers are 5 limbs, the top one signed.
 mod safegcd {
+    use super::super::divsteps::divsteps;
+
     type S = [u64; 5];
     const MASK: u64 = (1 << 62) - 1;
-
-    /// 62 divsteps on the low bits of (f, g): the matrix [u v; q r] (scaled by 2^62), δ updated.
-    /// Runs of even g are taken at once (count trailing zeros), and consecutive g ← (g + f)/2
-    /// steps collapse into g ← g + w·f with w = −g/f mod 2^4 (2^6 right after a swap).
-    fn divsteps(delta: &mut i64, mut f: u64, mut g: u64) -> [i64; 4] {
-        let (mut u, mut v, mut q, mut r) = (1u64, 0u64, 0u64, 1u64);
-        let (mut eta, mut i) = (-*delta, 62u32);
-        loop {
-            // The sentinel bit at i caps the run at the divsteps left.
-            let zeros = (g | (!0u64 << i)).trailing_zeros();
-            (g, u, v) = (g >> zeros, u << zeros, v << zeros);
-            eta -= zeros as i64;
-            i -= zeros;
-            if i == 0 {
-                break;
-            }
-            let limit = (eta.unsigned_abs() + 1).min(i as u64) as u32;
-            let w = if eta < 0 {
-                // δ > 0: (f, g) ← (g, −f), (u, v, q, r) ← (q, r, −u, −v).
-                eta = -eta;
-                (f, g) = (g, f.wrapping_neg());
-                (u, q) = (q, u.wrapping_neg());
-                (v, r) = (r, v.wrapping_neg());
-                f.wrapping_mul(g).wrapping_mul(f.wrapping_mul(f).wrapping_sub(2)) & (!0u64 >> (64 - limit)) & 63
-            } else {
-                let w = f.wrapping_add((f.wrapping_add(1) & 4) << 1);
-                w.wrapping_mul(g).wrapping_neg() & (!0u64 >> (64 - limit)) & 15
-            };
-            g = g.wrapping_add(f.wrapping_mul(w));
-            q = q.wrapping_add(u.wrapping_mul(w));
-            r = r.wrapping_add(v.wrapping_mul(w));
-        }
-        *delta = -eta;
-        [u as i64, v as i64, q as i64, r as i64]
-    }
 
     /// a·x + b·y as a 6-limb signed integer.
     fn lincomb(a: i64, x: &S, b: i64, y: &S) -> [u64; 6] {
@@ -347,7 +314,7 @@ mod safegcd {
         let (mut f, mut g, mut d, mut e) = (p, [a[0], a[1], a[2], a[3], 0], [0; 5], [1, 0, 0, 0, 0]);
         let mut delta = 1;
         for i in 0..12 {
-            let [u, v, q, r] = divsteps(&mut delta, f[0], g[0]);
+            let [u, v, q, r] = divsteps::<62>(&mut delta, f[0], g[0]);
             (f, g) = (shift(&lincomb(u, &f, v, &g)), shift(&lincomb(q, &f, r, &g)));
             (d, e) = (row(u, &d, v, &e, &p, pinv), row(q, &d, r, &e, &p, pinv));
             if g == [0; 5] {
