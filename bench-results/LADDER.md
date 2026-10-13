@@ -1959,3 +1959,24 @@ windows) are the measured candidates; the 4-lane multiply at `Graded`/batch-affi
 (≈ −4% estimated) and cross-step pipelining of circuit construction (−3 to −9% estimated, memory-
 gated) are the larger unbuilt time ideas. Wasm unit tests that catch panics (`catch_unwind`) abort
 under wasip1's panic=abort; `codec::tests::keccak_scalar_canonicity` fails that way on master too.
+
+## Update 68: wasm small-flow memory floor removed (2026-10-13)
+
+Branch `wasm-golf`. Every small flow peaked at the same fixed-size point: the first fold of the joint
+MegaZK + Translator sumcheck (~240–256 MiB regardless of flow). Two commits, each measured with 5
+interleaved reps (medians) against its predecessor, proofs golden:
+
+| commit | change | peak memory Δ (transfer_0+sponsored / token_bridge / transfer_1+sponsored / transfer_1+private / storage) | proving Δ |
+|---|---|---|---|
+| 5630a7f | joint sumcheck materializes its owned tables after round 1 at quarter size; round 1 reads the round-0 columns folded on access (golf 0074) | −23.0 / −24.1 / −21.2 / −14.7 / noise | within ±0.4% (storage −1.6%, noise) |
+| 6dfd68f | `batch_commit` caps in-flight MSM scratch at bb's 32 MiB budget (8 MSMs to 2^16, 4 at 2^17, 1 from 2^19) | −15.8 / −17.7 / −17.5 / +0.5 / noise | ≤ +0.4% |
+
+All 11 flows × 3 reps: peak memory Σ 3,210 → 3,007 MiB (golf-bb 2,878; ratio 1.116 → 1.045), proving
+56.82 → 57.00 s (+0.3%, noise). bb-ref now uses less memory than golf-bb on 6 of the 10 small flows.
+Native: 1.000× (5 flows × 5 reps), storage RSS 0.90 → 0.87 GB.
+
+Rejected: late tables in every sumcheck (−6 MiB on transfer_1+private for +1.1–1.4% proving); a
+16 MiB MSM budget (next stair binds; +0.3–1.5% proving). Remaining above golf: deploy_tokenContract
+(248/244 vs 228/223), amm and transfer_0+private (~+4 MiB), storage_proof. Next candidates: skip each
+column's leading zeros in the sumcheck tables (golf 0069), start-offset polynomials for the three
+tail Lagrange columns (12 MiB at every final-proof stair; design change).
