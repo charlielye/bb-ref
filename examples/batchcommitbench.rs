@@ -13,7 +13,7 @@ fn main() {
     let ck = CommitmentKey::new(n);
     let mut rng = ark_std::test_rng();
     let polys: Vec<Polynomial<Fr>> =
-        (0..k).map(|_| Polynomial { coeffs: (0..n).map(|_| Fr::rand(&mut rng)).collect() }).collect();
+        (0..k).map(|_| Polynomial::from_coeffs((0..n).map(|_| Fr::rand(&mut rng)).collect())).collect();
     let refs: Vec<&Polynomial<Fr>> = polys.iter().collect();
     for _ in 0..2 {
         let _ = ck.batch_commit(&refs);

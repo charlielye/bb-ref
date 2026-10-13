@@ -62,7 +62,7 @@ fn main() {
                     *c = Fr::from(i as u64 + 3);
                 }
             }
-            Polynomial { coeffs }
+            Polynomial::from_coeffs(coeffs)
         })
         .collect();
     let shifted: Vec<usize> = layout.shifted.iter().map(|e| layout.idx(*e)).collect();

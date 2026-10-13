@@ -12,7 +12,7 @@ fn main() {
     let n = 1usize << log_n;
     let ck = GrumpkinKey::new(n);
     let mut rng = ark_std::test_rng();
-    let poly = Polynomial { coeffs: (0..n).map(|_| Fq::rand(&mut rng)).collect() };
+    let poly = Polynomial::from_coeffs((0..n).map(|_| Fq::rand(&mut rng)).collect());
     let x = Fq::rand(&mut rng);
     let mut b = Vec::with_capacity(n);
     let mut p = Fq::from(1u64);

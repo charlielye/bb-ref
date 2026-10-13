@@ -1398,11 +1398,12 @@ fn mul_linear<F: FieldLike + Copy>(p: &mut Vec<F>, l: &[F; 2]) {
 /// ahead), the folded values of rows `start..` once a round has been evaluated (the rows below
 /// `start` are zero; golf 0069), or — in round 1 only — the round-0 column (shift applied) read
 /// folded at `u_0` on access.
+/// `Borrowed` and `Folded` hold rows `start..` of the polynomial (its window, `Polynomial::start`).
 pub enum Column<'a, F> {
-    Borrowed(&'a [F]),
+    Borrowed(usize, &'a [F]),
     ShiftOf(usize),
     Own(usize, Vec<F>),
-    Folded(&'a [F], F),
+    Folded(usize, &'a [F], F),
 }
 
 /// The owned tables skip each column's leading zeros (selectors of the gate blocks placed late in
@@ -1420,7 +1421,7 @@ fn window_start<F: FieldLike>(s: &[F]) -> usize {
 #[cfg(target_arch = "x86_64")]
 fn column_ref<'t, F>(table: &'t [Column<F>], j: usize, i: usize) -> Option<&'t F> {
     match &table[j] {
-        Column::Borrowed(s) => s.get(i),
+        Column::Borrowed(st, s) => s.get(i.wrapping_sub(*st)),
         Column::Own(st, v) => v.get(i.wrapping_sub(*st)),
         Column::ShiftOf(k) => column_ref(table, *k, i + 1),
         Column::Folded(..) => None,
@@ -1430,18 +1431,19 @@ fn column_ref<'t, F>(table: &'t [Column<F>], j: usize, i: usize) -> Option<&'t F
 /// Value of column `j` at row `i` (zero past the column's end).
 fn column_value<F: FieldLike + Copy>(table: &[Column<F>], j: usize, i: usize) -> F {
     match &table[j] {
-        Column::Borrowed(s) => s.get(i).copied().unwrap_or_else(F::zero),
+        Column::Borrowed(st, s) => s.get(i.wrapping_sub(*st)).copied().unwrap_or_else(F::zero),
         Column::Own(st, v) => v.get(i.wrapping_sub(*st)).copied().unwrap_or_else(F::zero),
         Column::ShiftOf(k) => column_value(table, *k, i + 1),
-        Column::Folded(s, u) => folded_value(s, u, i),
+        Column::Folded(st, s, u) => folded_value(*st, s, u, i),
     }
 }
 
-/// Row `i` of `s` folded at `u`. Out of line: the multiply would otherwise be inlined into every
-/// table read, which slows the rounds that never see a `Folded` column.
+/// Row `i` of the window `s` (from row `st`, even) folded at `u`. Out of line: the multiply would
+/// otherwise be inlined into every table read, which slows the rounds that never see a `Folded`
+/// column.
 #[inline(never)]
-fn folded_value<F: FieldLike + Copy>(s: &[F], u: &F, i: usize) -> F {
-    let at = |k: usize| s.get(k).copied().unwrap_or_else(F::zero);
+fn folded_value<F: FieldLike + Copy>(st: usize, s: &[F], u: &F, i: usize) -> F {
+    let at = |k: usize| s.get(k.wrapping_sub(st)).copied().unwrap_or_else(F::zero);
     let (a, b) = (at(2 * i), at(2 * i + 1));
     if a == b { a } else { a + *u * (b - a) }
 }
@@ -1518,7 +1520,7 @@ where
         debug_assert!(n.is_power_of_two() && polys.iter().all(|p| p.len() <= n));
         let trim = |p: &'a Polynomial<F>| {
             let end = p.coeffs.iter().rposition(|c| !c.is_zero()).map_or(0, |i| i + 1);
-            Column::Borrowed(&p.coeffs[..end])
+            Column::Borrowed(p.start, &p.coeffs[..end])
         };
         let table = {
             // The trailing-zero scans stream every column once; sequential they cost a visible
@@ -1748,15 +1750,18 @@ where
                 // on access, and the owned tables are first built after it at a quarter of the size,
                 // so no half-size copy of every column ever sits next to the polynomials.
                 let src = |c: &Column<'a, F>| match c {
-                    Column::Borrowed(s) => *s,
+                    Column::Borrowed(st, s) => (*st, *s),
                     _ => unreachable!("round 0 reads borrowed columns"),
                 };
                 let folded = (self.table.iter())
                     .map(|c| match c {
-                        Column::ShiftOf(k) => src(&self.table[*k]).get(1..).unwrap_or(&[]),
+                        Column::ShiftOf(k) => match src(&self.table[*k]) {
+                            (0, s) => (0, s.get(1..).unwrap_or(&[])),
+                            _ => unreachable!("windowed columns are not shifted"),
+                        },
                         c => src(c),
                     })
-                    .map(|s| Column::Folded(s, *u))
+                    .map(|(st, s)| Column::Folded(st, s, *u))
                     .collect();
                 self.table = folded;
             } else {
@@ -1764,28 +1769,28 @@ where
                 let folded: Vec<Column<F>> = (0..table.len())
                     .into_par_iter()
                     .map(|j| {
-                        let src: &[F] = match &table[j] {
-                            Column::Borrowed(s) => s,
+                        let (st, src): (usize, &[F]) = match &table[j] {
+                            Column::Borrowed(st, s) => (*st, s),
                             Column::ShiftOf(k) => match &table[*k] {
-                                Column::Borrowed(s) => &s[1.min(s.len())..],
-                                _ => unreachable!("the first fold reads borrowed columns"),
+                                Column::Borrowed(0, s) => (0, &s[1.min(s.len())..]),
+                                _ => unreachable!("the first fold reads unwindowed borrowed columns"),
                             },
-                            Column::Folded(s, u0) => {
+                            Column::Folded(st, s, u0) => {
                                 // Both folds block by block: the half-size intermediate stays small.
-                                let st = window_start(s);
-                                let s = &s[st..];
+                                let w = window_start(s);
+                                let s = &s[w..];
                                 let mut out = Vec::with_capacity(s.len().div_ceil(4));
                                 for block in s.chunks(1 << 12) {
                                     let mut h = fold_vec(block, u0);
                                     fold_halve(&mut h, u);
                                     out.extend_from_slice(&h);
                                 }
-                                return Column::Own(st / 4, out);
+                                return Column::Own((st + w) / 4, out);
                             }
                             Column::Own(..) => unreachable!("owned columns fold in place"),
                         };
-                        let st = window_start(src);
-                        Column::Own(st / 2, fold_vec(&src[st..], u))
+                        let w = window_start(src);
+                        Column::Own((st + w) / 2, fold_vec(&src[w..], u))
                     })
                     .collect();
                 self.table = folded;
@@ -1880,7 +1885,7 @@ where
                 *c += &(*b * e);
             }
         }
-        let monomial = Polynomial { coeffs };
+        let monomial = Polynomial::from_coeffs(coeffs);
         let commitment = ck.commit(&monomial);
         t.send(&format!("Sumcheck:univariate_comm_{round}"), &commitment);
         self.commitments.push(commitment);

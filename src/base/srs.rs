@@ -351,25 +351,26 @@ where
             "polynomial needs {k} SRS points, key has {}",
             self.points.len()
         );
+        let (s, coeffs) = (p.start.min(k), &p.coeffs[..k.saturating_sub(p.start)]);
         let t0 = std::env::var_os("BBREF_COMMIT_TIMING").map(|_| std::time::Instant::now());
-        let c = if dedup_enabled() && k >= dedup_min_len() && duplicate_heavy(&p.coeffs[..k]) {
-            self.commit_dedup(&p.coeffs[..k]).into_affine()
+        let c = if s == 0 && dedup_enabled() && k >= dedup_min_len() && duplicate_heavy(coeffs) {
+            self.commit_dedup(coeffs).into_affine()
         } else {
             let phi = if crate::base::wasm::GLV_PHI_TABLE {
                 // Only a GLV MSM (at most the threshold's points) reads the table.
                 let n = self.points.len().min(crate::base::msm::glv_threshold());
-                self.phi.get_or_build(|| G::phi_table(&self.points[..n])).and_then(|t| t.get(..k))
+                self.phi.get_or_build(|| G::phi_table(&self.points[..n])).and_then(|t| t.get(s..k))
             } else {
                 None
             };
-            G::batch_msm_with_phi(&self.points[..k], &p.coeffs[..k], phi).into_affine()
+            G::batch_msm_with_phi(&self.points[s..k], coeffs, phi).into_affine()
         };
         if let Some(t0) = t0 {
             use ark_ff::{BigInteger, PrimeField};
             let ms = t0.elapsed().as_secs_f64() * 1e3;
             let mut nnz = 0usize;
             let mut hist = [0usize; 5]; // <=32, <=64, <=128, <=192, <=254 bits
-            for s in &p.coeffs[..k] {
+            for s in coeffs {
                 if s.is_zero() {
                     continue;
                 }

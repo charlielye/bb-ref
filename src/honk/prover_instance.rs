@@ -79,7 +79,9 @@ impl ProverInstance {
     }
 
     /// `from_builder` for a builder that is dropped afterwards: its slack and gate rows are freed
-    /// as soon as they are consumed, so they never coexist with the whole instance.
+    /// as soon as they are consumed, so they never coexist with the whole instance. The gate
+    /// selectors are also stored from their first block only (`Polynomial::start`; most are zero
+    /// until a block placed late in the trace).
     pub fn from_circuit(flavor: &'static FlavorDesc, mut builder: Builder, rng: &mut dyn Rng) -> Self {
         Self::build(flavor, &mut builder, rng, true)
     }
@@ -118,11 +120,14 @@ impl ProverInstance {
             0
         };
         let mut derived_end: std::collections::HashMap<Ent, usize> = std::collections::HashMap::new();
+        let mut window: std::collections::HashMap<Ent, usize> = std::collections::HashMap::new();
         for (desc, block) in blocks.iter() {
             for kind in desc.kinds {
                 let e = gate_selector_entity(*kind);
                 let end = derived_end.entry(e).or_insert(0);
                 *end = (*end).max(block.trace_offset + block.rows.len());
+                let start = window.entry(e).or_insert(usize::MAX);
+                *start = (*start).min(if release { block.trace_offset } else { 0 });
             }
         }
         let mut max_bus_len = 0;
@@ -173,7 +178,11 @@ impl ProverInstance {
             .map(|e| !cfg!(target_family = "wasm") || selectors.contains(e) || blocks.iter().any(|(d, _)| d.kinds.iter().any(|k| gate_selector_entity(*k) == *e)))
             .collect();
         let mut polys: Vec<Poly> = (layout.unshifted.iter().zip(&from_rows))
-            .map(|(e, early)| Poly::zero(if *early { len_of(*e) } else { 0 }))
+            .map(|(e, early)| match (early, window.get(e)) {
+                (false, _) => Poly::zero(0),
+                (true, Some(start)) => Poly::zero_window(*start, len_of(*e)),
+                (true, None) => Poly::zero(len_of(*e)),
+            })
             .collect();
         let idx = |e: Ent| layout.idx(e);
         let has = |e: Ent| layout.has(e);
@@ -187,8 +196,13 @@ impl ProverInstance {
         let mut cell_real: Vec<u32> = vec![0; NUM_WIRES * blocks.total_content_size()];
         {
             use crate::base::msm::SendPtr;
-            let cols: Vec<SendPtr<Fr>> = polys.iter_mut().map(|p| SendPtr(p.coeffs.as_mut_ptr())).collect();
-            let col = |e: Ent| cols[idx(e)].0;
+            let cols: Vec<(SendPtr<Fr>, usize)> =
+                polys.iter_mut().map(|p| (SendPtr(p.coeffs.as_mut_ptr()), p.start)).collect();
+            // Row `i` of column `e`.
+            let at = |e: Ent, i: usize| {
+                let (p, start) = &cols[idx(e)];
+                unsafe { p.0.add(i - start) }
+            };
             let cells = SendPtr(cell_real.as_mut_ptr());
             let cells = &cells;
             let real_index = &builder.real_variable_index;
@@ -218,13 +232,13 @@ impl ProverInstance {
                             (Ent::q_5, row.q_5),
                         ] {
                             if has(ent) {
-                                *col(ent).add(i) = v;
+                                *at(ent, i) = v;
                             }
                         }
                         for kind in desc.kinds {
                             let ent = gate_selector_entity(*kind);
                             if has(ent) {
-                                *col(ent).add(i) = row.gate_selector(*kind);
+                                *at(ent, i) = row.gate_selector(*kind);
                             }
                         }
                     }
@@ -493,10 +507,10 @@ impl ProverInstance {
                 );
             }
             for (k, p) in polys.iter().enumerate() {
-                let start = p.coeffs.iter().position(|c| !c.is_zero()).unwrap_or(0);
-                let end = p.coeffs.iter().rposition(|c| !c.is_zero()).map_or(0, |i| i + 1);
+                let start = p.start + p.coeffs.iter().position(|c| !c.is_zero()).unwrap_or(0);
+                let end = p.end_index();
                 used += end.saturating_sub(start);
-                alloc += p.len();
+                alloc += p.coeffs.len();
                 eprintln!(
                     "[col stats]   {:>28} start={start} end={end}",
                     format!("{:?}", layout.unshifted[k])

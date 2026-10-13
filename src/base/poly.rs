@@ -1,5 +1,5 @@
 //! Dense univariate/multilinear polynomials (bb `Polynomial<Fr>` without the shifted-virtual-zero
-//! window: a plain coefficient vector of the dyadic size).
+//! window: a coefficient vector, zero past its end).
 
 use super::field::{FieldLike, Fr};
 use rayon::prelude::*;
@@ -7,7 +7,15 @@ use rayon::prelude::*;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Polynomial<F: FieldLike> {
     pub coeffs: Vec<F>,
+    /// Row of `coeffs[0]`; the rows below are zero and not stored (bb `start_index`). Non-zero
+    /// only for the gate selectors of a folded instance (`ProverInstance::from_circuit`), whose
+    /// consumers (`at`, `end_index`, `add_scaled_batch`, `commit`, the sumcheck tables) honour it.
+    pub start: usize,
 }
+
+/// Window starts are multiples of this (`add_scaled_batch`'s chunk), so a chunk is either wholly
+/// below a window or reads it from its own first row.
+pub const WINDOW_ALIGN: usize = 1 << 12;
 
 /// Polynomials over bn254 Fr, the field of every Honk flavor but the ECCVM's.
 pub type Poly = Polynomial<Fr>;
@@ -27,26 +35,30 @@ impl<F: FieldLike + Send + Sync> Polynomial<F> {
 
 impl<F: FieldLike> Polynomial<F> {
     pub fn zero(size: usize) -> Self {
-        Self {
-            coeffs: F::zeroed(size),
-        }
+        Self::from_coeffs(F::zeroed(size))
+    }
+    /// Zero on rows `start..end`, with `start` rounded down to `WINDOW_ALIGN`.
+    pub fn zero_window(start: usize, end: usize) -> Self {
+        let start = start.min(end) & !(WINDOW_ALIGN - 1);
+        Self { coeffs: F::zeroed(end - start), start }
     }
     pub fn from_coeffs(coeffs: Vec<F>) -> Self {
-        Self { coeffs }
+        Self { coeffs, start: 0 }
     }
+    /// The end of the stored rows.
     pub fn len(&self) -> usize {
-        self.coeffs.len()
+        self.start + self.coeffs.len()
     }
     pub fn is_empty(&self) -> bool {
         self.coeffs.is_empty()
     }
     /// The coefficient at `i`, zero past the allocated end (columns are sized to their content).
     pub fn at(&self, i: usize) -> F {
-        self.coeffs.get(i).cloned().unwrap_or_else(F::zero)
+        self.coeffs.get(i.wrapping_sub(self.start)).cloned().unwrap_or_else(F::zero)
     }
     /// Index of the last non-zero coefficient plus one.
     pub fn end_index(&self) -> usize {
-        self.coeffs.iter().rposition(|c| !c.is_zero()).map_or(0, |i| i + 1)
+        self.coeffs.iter().rposition(|c| !c.is_zero()).map_or(0, |i| self.start + i + 1)
     }
     /// The left shift `p(X) / X`, valid only when `coeffs[0] == 0` (bb "shiftable" polynomials).
     pub fn shifted(&self) -> Self {
@@ -54,15 +66,14 @@ impl<F: FieldLike> Polynomial<F> {
             self.coeffs.first().map_or(true, FieldLike::is_zero),
             "shifting a polynomial with non-zero constant term"
         );
+        assert_eq!(self.start, 0);
         let mut c = self.coeffs[1..].to_vec();
         c.push(F::zero());
-        Self { coeffs: c }
+        Self::from_coeffs(c)
     }
     /// Coefficients in reverse order over the full length: `X^{n-1} p(1/X)` (bb `Polynomial::reverse`).
     pub fn reverse(&self) -> Self {
-        Self {
-            coeffs: self.coeffs.iter().rev().cloned().collect(),
-        }
+        Self::from_coeffs(self.coeffs.iter().rev().cloned().collect())
     }
     /// Horner evaluation of the univariate `sum_i coeffs[i] X^i`.
     pub fn evaluate(&self, z: &F) -> F {
@@ -98,19 +109,24 @@ impl<F: FieldLike> Polynomial<F> {
     where
         F: Send + Sync + 'static,
     {
+        assert_eq!(self.start, 0);
         for (p, _) in terms {
             assert!(p.len() <= self.len(), "add_scaled_batch: term is longer");
         }
-        const CHUNK: usize = 1 << 12;
+        const CHUNK: usize = WINDOW_ALIGN;
         self.coeffs.par_chunks_mut(CHUNK).enumerate().for_each(|(c, chunk)| {
             let start = c * CHUNK;
-            let srcs: Vec<(&[F], F)> =
-                terms.iter().map(|(p, s)| (&p.coeffs[start.min(p.coeffs.len())..], s.clone())).collect();
+            // A term's rows from `start`: empty below its window (window starts are chunk-aligned).
+            let srcs: Vec<(&[F], F)> = (terms.iter())
+                .map(|(p, s)| match start.checked_sub(p.start) {
+                    Some(k) => (&p.coeffs[k.min(p.coeffs.len())..], s.clone()),
+                    None => (&[][..], s.clone()),
+                })
+                .collect();
             if crate::base::ifma::try_axpy_batch(chunk, &srcs) {
                 return;
             }
-            for (p, s) in terms {
-                let src = &p.coeffs[start.min(p.coeffs.len())..];
+            for &(src, ref s) in &srcs {
                 let overlap = chunk.len().min(src.len());
                 // Unit scalars (Shplonk's quotient sum, rho^0) need no multiplication.
                 if s.value() == <F::Native as ark_ff::Field>::ONE {
@@ -176,7 +192,7 @@ impl<F: FieldLike> Polynomial<F> {
                 result[k] += &(num[k].clone() * &scale);
             }
         }
-        Self { coeffs: result }
+        Self::from_coeffs(result)
     }
 }
 
