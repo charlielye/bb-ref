@@ -343,6 +343,7 @@ where
     // overflow list that one tree reduce per window folds back in. Output: per-(thread, window)
     // dense partials with a presence bitmap — no second survivor tree per job or per window.
     const SUBCHUNK: usize = 2048;
+    #[cfg(target_arch = "x86_64")]
     const GATHER_PREFETCH: usize = 16;
     struct Partial<P: SWCurveConfig> {
         lo: usize,
