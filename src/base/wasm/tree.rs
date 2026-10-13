@@ -114,21 +114,20 @@ where
         }
     }
 
-    /// Apply the level's queued additions: packed lane groups of four chords, then the scalar
-    /// tail (chord stragglers + doublings) through one shared scalar batched inversion.
+    /// Apply the level's queued additions: packed lane groups of four chords and the scalar tail
+    /// (chord stragglers + doublings), all through one scalar batched inversion per level.
     fn drain(&mut self, ps: &mut [Affine<P>], dens: &mut Vec<P::BaseField>, prod: &mut Vec<P::BaseField>) {
         let p = self;
         let groups = p.ax.len() / 4;
+        // The wasm stored form is the 2^261 Montgomery domain, which the quad261 multiply is
+        // closed over — the packed groups are plain Montgomery arithmetic on packed stored bytes.
+        let kc = <P::BaseField as QuadConsts>::kc();
+        #[inline(always)]
+        fn pack4<F>(v: &[F], g: usize) -> QuadFp {
+            // Fp<_, 4> is repr-equivalent to its 4x64 stored limbs.
+            QuadFp::pack(unsafe { &*(v.as_ptr().add(4 * g) as *const [[u64; 4]; 4]) })
+        }
         if groups > 0 {
-            // The wasm stored form is the 2^261 Montgomery domain, which the quad261 multiply
-            // is closed over — the whole level is plain Montgomery arithmetic on packed stored
-            // bytes, one scalar batched inversion per level.
-            let kc = <P::BaseField as QuadConsts>::kc();
-            #[inline(always)]
-            fn pack4<F>(v: &[F], g: usize) -> QuadFp {
-                // Fp<_, 4> is repr-equivalent to its 4x64 stored limbs.
-                QuadFp::pack(unsafe { &*(v.as_ptr().add(4 * g) as *const [[u64; 4]; 4]) })
-            }
             p.qax.clear();
             p.qbx.clear();
             p.qden.clear();
@@ -145,29 +144,27 @@ where
                 p.qax.push(qax);
                 p.qbx.push(qbx);
             }
-            // One scalar batched inversion for the level: the four lanes of the total product,
-            // inverted together, each scaled by 2^10 to seed the constant-exponent unwind.
-            let seed = {
-                let total = p.qprod[groups - 1].unpack(&kc.modulus);
-                let mut lanes: [P::BaseField; 4] =
-                    core::array::from_fn(|l| unsafe { core::mem::transmute_copy(&total[l]) });
-                let mut acc = lanes[0];
-                let mut pref = [acc; 4];
-                for l in 1..4 {
-                    acc *= lanes[l];
-                    pref[l] = acc;
-                }
-                let mut inv = acc.inverse().expect("zero denominator in packed tree inversion");
-                for l in (1..4).rev() {
-                    let prev = lanes[l];
-                    lanes[l] = inv * pref[l - 1];
-                    inv *= prev;
-                }
-                lanes[0] = inv;
-                let stored: [[u64; 4]; 4] = core::array::from_fn(|l| unsafe { core::mem::transmute_copy(&lanes[l]) });
-                QuadFp::pack(&stored)
-            };
-            let mut inv = seed;
+        }
+        // One scalar batched inversion for the whole level (an inversion costs ~130 muls on
+        // wasm): the tail's denominators followed by the four lanes of the packed total product.
+        // The doubling slots are never packed destinations, so reading them here is unaffected
+        // by the packed write-back below.
+        dens.clear();
+        for t in groups * 4..p.ax.len() {
+            dens.push(p.bx[t] - p.ax[t]);
+        }
+        for &d in &p.dbl_dest {
+            dens.push(ps[d as usize].y.double());
+        }
+        let tail = dens.len();
+        if groups > 0 {
+            let total = p.qprod[groups - 1].unpack(&kc.modulus);
+            dens.extend((0..4).map(|l| unsafe { core::mem::transmute_copy::<_, P::BaseField>(&total[l]) }));
+        }
+        batch_invert_nonzero(dens, prod);
+        if groups > 0 {
+            let stored: [[u64; 4]; 4] = core::array::from_fn(|l| unsafe { core::mem::transmute_copy(&dens[tail + l]) });
+            let mut inv = QuadFp::pack(&stored);
             for g in (1..groups).rev() {
                 let d = quad261::mont_mul(&inv, &p.qprod[g - 1], &kc.c);
                 inv = quad261::mont_mul(&inv, &p.qden[g], &kc.c);
@@ -198,18 +195,7 @@ where
                 }
             }
         }
-        // Scalar tail: leftover chords and all doublings, one shared batched inversion.
-        dens.clear();
-        for t in groups * 4..p.ax.len() {
-            dens.push(p.bx[t] - p.ax[t]);
-        }
-        for &d in &p.dbl_dest {
-            dens.push(ps[d as usize].y.double());
-        }
-        if dens.is_empty() {
-            return;
-        }
-        batch_invert_nonzero(dens, prod);
+        // Scalar tail: leftover chords and all doublings.
         let mut inv = dens.iter();
         for t in groups * 4..p.ax.len() {
             let d = *inv.next().unwrap();

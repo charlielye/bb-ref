@@ -342,7 +342,7 @@ where
     // A slot already populated by an earlier sub-chunk (the digit's run was split) goes to an
     // overflow list that one tree reduce per window folds back in. Output: per-(thread, window)
     // dense partials with a presence bitmap — no second survivor tree per job or per window.
-    const SUBCHUNK: usize = 2048;
+    const SUBCHUNK: usize = crate::base::wasm::MSM_SUBCHUNK;
     #[cfg(target_arch = "x86_64")]
     const GATHER_PREFETCH: usize = 16;
     struct Partial<P: SWCurveConfig> {

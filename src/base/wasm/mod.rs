@@ -51,6 +51,11 @@ pub const GLV_PHI_TABLE: bool = cfg!(target_family = "wasm");
 /// Default `log2` of the Pippenger chunk (`BBREF_GLV_LOG2` overrides).
 pub const MSM_DEFAULT_LOG2: u32 = if cfg!(target_family = "wasm") { 16 } else { 12 };
 
+/// Pippenger stage-6a sub-chunk (schedule entries tree-reduced together). Each tree level pays one
+/// field inversion, ~130 muls on wasm, so wasm amortizes it over twice bb's 2048 (measured −1.5%
+/// proving); natively 4096 measured −0.6% wall but +6% storage peak RSS, so it keeps bb's value.
+pub const MSM_SUBCHUNK: usize = if cfg!(target_family = "wasm") { 4096 } else { 2048 };
+
 /// The shared SRS cache holds 2^256-domain Montgomery limbs. The multiplier that takes such a limb
 /// set, reinterpreted as a stored element, to the value it encodes: `Some(2^5)` where the stored
 /// domain is 2^261, `None` where the domains coincide.
