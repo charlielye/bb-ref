@@ -228,7 +228,7 @@ pub fn add_linear_quotients<F: FieldLike + Copy + Send + Sync>(q: &mut [F], term
 }
 
 /// The fold `out[k] = src[2k] + u (src[2k+1] - src[2k])` of an even-length table (sumcheck, Gemini),
-/// in chunks on the pool, each through the IFMA kernel where available.
+/// in chunks on the pool, each through the IFMA or simd128 kernel where available.
 pub fn fold_par<F: FieldLike + Copy + Send + Sync + 'static>(src: &[F], u: &F) -> Vec<F> {
     const CHUNK: usize = 1 << 12;
     assert!(src.len() % 2 == 0);
@@ -236,7 +236,7 @@ pub fn fold_par<F: FieldLike + Copy + Send + Sync + 'static>(src: &[F], u: &F) -
     let mut out = Vec::with_capacity(half);
     let dst = &mut out.spare_capacity_mut()[..half];
     dst.par_chunks_mut(CHUNK).zip(src.par_chunks(2 * CHUNK)).for_each(|(d, s)| {
-        if !crate::base::ifma::try_fold_into(s, d, u) {
+        if !crate::base::wasm::try_fold_into(s, d, u) {
             for (o, p) in d.iter_mut().zip(s.chunks(2)) {
                 o.write(p[0] + *u * (p[1] - p[0]));
             }

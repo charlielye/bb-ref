@@ -80,11 +80,11 @@ mod quad261;
 mod tree;
 #[cfg(all(target_family = "wasm", target_feature = "simd128"))]
 pub use {
-    packed::{try_axpy, try_fold_from, try_fold_halve, Kc, QuadConsts},
+    packed::{try_axpy, try_fold_from, try_fold_halve, try_fold_into, Kc, QuadConsts},
     tree::PackedTree,
 };
 
 #[cfg(not(all(target_family = "wasm", target_feature = "simd128")))]
 mod fallback;
 #[cfg(not(all(target_family = "wasm", target_feature = "simd128")))]
-pub use fallback::{try_axpy, try_fold_from, try_fold_halve, PackedTree, QuadConsts};
+pub use fallback::{try_axpy, try_fold_from, try_fold_halve, try_fold_into, PackedTree, QuadConsts};

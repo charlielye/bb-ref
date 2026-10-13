@@ -8,6 +8,7 @@ use super::quad261::{self, QuadFp};
 use crate::base::field::NativeField;
 use crate::base::{Fq, Fr};
 use core::any::TypeId;
+use core::mem::MaybeUninit;
 use std::sync::LazyLock;
 
 /// Prepared per-field kernel constants.
@@ -113,6 +114,11 @@ fn axpy<F: QuadConsts>(dst: &mut [F], src: &[F], s: &F) {
     let n = dst.len().min(src.len());
     let groups = n / 4;
     for g in 0..groups {
+        // Selector columns are mostly zero inside their backing range: skip all-zero groups.
+        let w = unsafe { &*(src.as_ptr().add(4 * g) as *const [u64; 16]) };
+        if w.iter().fold(0, |a, b| a | b) == 0 {
+            continue;
+        }
         let acc = pack4(dst, 4 * g);
         let t = quad261::mont_mul(&pack4(src, 4 * g), &splat, &kc.c);
         unpack4(&quad261::add(&acc, &t, &kc.c), dst, 4 * g);
@@ -142,8 +148,23 @@ fn stored_as<F: 'static, G: 'static>(x: &F) -> G {
     unsafe { core::mem::transmute_copy::<F, G>(x) }
 }
 
-fn fold_halve<F: QuadConsts>(v: &mut Vec<F>, u: &F) {
+/// The fold of the 8 values at `base..base + 8` into 4: `a + u·(b − a)` per pair, or the evens
+/// unchanged when every pair is bit-identical (constant selector runs, zero padding; golf 0053).
+#[inline(always)]
+fn fold4<F: QuadConsts>(v: &[F], base: usize, usplat: &QuadFp) -> [F; 4] {
+    let w = unsafe { &*(v.as_ptr().add(base) as *const [[u64; 8]; 4]) };
+    if w.iter().all(|p| p[..4] == p[4..]) {
+        return core::array::from_fn(|l| v[base + 2 * l]);
+    }
     let kc = F::kc();
+    let even = pack4_stride2(v, base);
+    let odd = pack4_stride2(v, base + 1);
+    let d = quad261::sub(&odd, &even, &kc.c);
+    let s = quad261::add(&even, &quad261::mont_mul(&d, usplat, &kc.c), &kc.c).unpack(&kc.modulus);
+    s.map(|x| unsafe { core::mem::transmute_copy::<[u64; 4], F>(&x) })
+}
+
+fn fold_halve<F: QuadConsts>(v: &mut Vec<F>, u: &F) {
     let usplat = QuadFp::pack(&[stored(u); 4]);
     let len = v.len();
     let half = len.div_ceil(2);
@@ -153,12 +174,8 @@ fn fold_halve<F: QuadConsts>(v: &mut Vec<F>, u: &F) {
         half.saturating_sub(1) / 4
     };
     for g in 0..full {
-        let base = 8 * g;
-        let even = pack4_stride2(v, base);
-        let odd = pack4_stride2(v, base + 1);
-        let d = quad261::sub(&odd, &even, &kc.c);
-        let r = quad261::add(&even, &quad261::mont_mul(&d, &usplat, &kc.c), &kc.c);
-        unpack4(&r, v, 4 * g);
+        let r = fold4(v, 8 * g, &usplat);
+        v[4 * g..4 * g + 4].copy_from_slice(&r);
     }
     for k in 4 * full..half {
         let a = v[2 * k];
@@ -169,22 +186,15 @@ fn fold_halve<F: QuadConsts>(v: &mut Vec<F>, u: &F) {
 }
 
 fn fold_from<F: QuadConsts>(src: &[F], len: usize, u: &F) -> Vec<F> {
-    let kc = F::kc();
     let usplat = QuadFp::pack(&[stored(u); 4]);
     let half = len.div_ceil(2);
     debug_assert!(len >= src.len());
-    let mut out = Vec::with_capacity(half);
     // Packed over groups whose 8 source elements are all inside `src`; `len >= src.len()` makes
     // `4 * full <= half`.
     let full = src.len() / 8;
-    unsafe { out.set_len(4 * full) };
+    let mut out = Vec::with_capacity(half);
     for g in 0..full {
-        let base = 8 * g;
-        let even = pack4_stride2(src, base);
-        let odd = pack4_stride2(src, base + 1);
-        let d = quad261::sub(&odd, &even, &kc.c);
-        let r = quad261::add(&even, &quad261::mont_mul(&d, &usplat, &kc.c), &kc.c);
-        unpack4(&r, &mut out, 4 * g);
+        out.extend_from_slice(&fold4(src, 8 * g, &usplat));
     }
     let at = |i: usize| if i < src.len() { src[i] } else { F::ZERO };
     for k in out.len()..half {
@@ -192,6 +202,34 @@ fn fold_from<F: QuadConsts>(src: &[F], len: usize, u: &F) -> Vec<F> {
         out.push(a + (at(2 * k + 1) - a) * *u);
     }
     out
+}
+
+/// The fold of `src` (even length) into `dst` (half its length); false if `F` has no packed form.
+pub fn try_fold_into<F: 'static>(src: &[F], dst: &mut [MaybeUninit<F>], u: &F) -> bool {
+    fn go<G: QuadConsts>(src: &[G], dst: &mut [MaybeUninit<G>], u: &G) {
+        let usplat = QuadFp::pack(&[stored(u); 4]);
+        let full = dst.len() / 4;
+        for g in 0..full {
+            for (d, x) in dst[4 * g..4 * g + 4].iter_mut().zip(fold4(src, 8 * g, &usplat)) {
+                d.write(x);
+            }
+        }
+        for k in 4 * full..dst.len() {
+            let a = src[2 * k];
+            dst[k].write(a + (src[2 * k + 1] - a) * *u);
+        }
+    }
+    assert_eq!(src.len(), 2 * dst.len());
+    let dst = dst as *mut [MaybeUninit<F>];
+    if TypeId::of::<F>() == TypeId::of::<Fr>() {
+        go::<Fr>(reslice_ref(src), unsafe { &mut *(dst as *mut [MaybeUninit<Fr>]) }, &stored_as(u));
+        return true;
+    }
+    if TypeId::of::<F>() == TypeId::of::<Fq>() {
+        go::<Fq>(reslice_ref(src), unsafe { &mut *(dst as *mut [MaybeUninit<Fq>]) }, &stored_as(u));
+        return true;
+    }
+    false
 }
 
 /// One fold of a borrowed column (`src` plus virtual zeros up to logical length `len`):
@@ -233,8 +271,9 @@ mod tests {
     fn axpy_and_fold_match_scalar() {
         let mut rng = ark_std::test_rng();
         for n in [1usize, 3, 8, 33, 257] {
+            // Zero groups and identical pairs in the first rows take the skips.
             let mut a: Vec<Fr> = (0..n).map(|_| Fr::rand(&mut rng)).collect();
-            let b: Vec<Fr> = (0..n).map(|_| Fr::rand(&mut rng)).collect();
+            let b: Vec<Fr> = (0..n).map(|i| if i < 8 { Fr::ZERO } else { Fr::rand(&mut rng) }).collect();
             let s = Fr::rand(&mut rng);
             let mut expect = a.clone();
             for i in 0..n {
@@ -244,17 +283,21 @@ mod tests {
             assert_eq!(a, expect, "axpy n={n}");
 
             let mut v: Vec<Fr> = (0..n).map(|_| Fr::rand(&mut rng)).collect();
+            for k in 0..(n / 2).min(4) {
+                v[2 * k + 1] = v[2 * k];
+            }
             let u = Fr::rand(&mut rng);
-            let mut expect: Vec<Fr> = (0..n.div_ceil(2))
-                .map(|k| {
-                    let x = v[2 * k];
-                    let y = if 2 * k + 1 < n { v[2 * k + 1] } else { Fr::ZERO };
-                    x + (y - x) * u
-                })
-                .collect();
+            let at = |i: usize| if i < n { v[i] } else { Fr::ZERO };
+            let expect: Vec<Fr> = (0..n.div_ceil(2)).map(|k| at(2 * k) + (at(2 * k + 1) - at(2 * k)) * u).collect();
+            assert_eq!(try_fold_from(&v, n, &u).unwrap(), expect, "fold_from n={n}");
+            if n % 2 == 0 {
+                let mut out = Vec::with_capacity(n / 2);
+                assert!(try_fold_into(&v, &mut out.spare_capacity_mut()[..n / 2], &u));
+                unsafe { out.set_len(n / 2) };
+                assert_eq!(out, expect, "fold_into n={n}");
+            }
             assert!(try_fold_halve(&mut v, &u));
             assert_eq!(v, expect, "fold n={n}");
-            expect.clear();
         }
     }
 }
