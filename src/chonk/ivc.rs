@@ -196,6 +196,8 @@ impl Chonk {
             .accumulate_instance(&mut inst, &vk, &self.ck, rng);
         drop(_g);
         timing::phase("instance to accumulator (oink + sumcheck)");
+        // Its polynomials now live in the claim; free them before the batching sumcheck allocates.
+        drop(inst);
         self.verification_queue.push(VerifierInputs { proof, vk, kind });
         if matches!(next, Some(CircuitKind::Kernel) | Some(CircuitKind::HidingKernel)) {
             let _gm = crate::base::bench::Scope::new("Chonk::prove_multilinear_batching");
