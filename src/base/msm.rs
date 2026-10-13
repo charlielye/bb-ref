@@ -304,6 +304,8 @@ where
 
     mark("3 scatter");
     drop(sched_scope);
+    // Digits, histograms and cursors are dead once scattered; only the schedules feed the tree.
+    drop((full, subs, counts));
     let bucket_scope = crate::base::bench::Scope::new("MSM::batch_accumulate_into_buckets");
     if std::env::var_os("BBREF_MSM_STATS").is_some() {
         let entries: usize = schedules.iter().map(|s| s.len()).sum();
@@ -517,6 +519,8 @@ where
     }
     mark("4 tree");
     drop(bucket_scope);
+    // Stage 6b reads only the partials: free the schedules before it allocates its columns.
+    drop((schedules, chunks, bucket_starts));
     let reduce_scope = crate::base::bench::Scope::new("MSM::accumulate_buckets");
     // bb Stage 6b: rebalanced tasks own uniform digit ranges [lo_d, hi_d] over 1..=half. Each task
     // gathers the contributing threads' partials for every window into a column (SoA) layout with a
