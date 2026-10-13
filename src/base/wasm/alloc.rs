@@ -87,3 +87,26 @@ unsafe impl GlobalAlloc for GrowSyncAlloc {
 
 #[global_allocator]
 static ALLOC: GrowSyncAlloc = GrowSyncAlloc;
+
+/// `std::alloc::alloc_zeroed`, with blocks of 1 MiB and more memset on the rayon pool: wasi-libc
+/// cannot know that recycled linear memory is clean, so every zeroed block is memset, and serially
+/// on the calling thread (~0.2 s of main-only time building a large instance's columns). Each
+/// worker first brings its own view up to the end of its chunk: the block may lie in pages the
+/// allocating thread has just grown.
+pub unsafe fn alloc_zeroed_par(layout: Layout) -> *mut u8 {
+    use rayon::prelude::*;
+    const CHUNK: usize = 1 << 16;
+    if layout.size() < 1 << 20 {
+        return std::alloc::alloc_zeroed(layout);
+    }
+    let p = std::alloc::alloc(layout);
+    if !p.is_null() {
+        let (start, end) = (p as usize, p as usize + layout.size());
+        (start..end).into_par_iter().step_by(CHUNK).for_each(|a| {
+            let e = (a + CHUNK).min(end);
+            cover(e);
+            core::ptr::write_bytes(a as *mut u8, 0, e - a);
+        });
+    }
+    p
+}

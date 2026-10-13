@@ -200,7 +200,7 @@ impl<F: NativeField> FieldLike for F {
         // allocation of `n` elements is a valid `Vec<F>` of zeros; the allocation is owned by the
         // returned Vec with the same layout the global allocator will free it with.
         unsafe {
-            let ptr = std::alloc::alloc_zeroed(layout) as *mut F;
+            let ptr = crate::base::wasm::alloc_zeroed(layout) as *mut F;
             if ptr.is_null() {
                 std::alloc::handle_alloc_error(layout);
             }

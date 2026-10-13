@@ -262,7 +262,7 @@ impl ProverInstance {
             let mut cur = Fr::from(0u64);
             for _ in 0..active_size {
                 v.push(cur);
-                cur += Fr::from(1u64);
+                cur += Fr::one();
             }
             v
         };

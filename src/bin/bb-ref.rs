@@ -218,14 +218,19 @@ fn main() {
     let _profiler = dhat::Profiler::new_heap();
 
     // Beyond ~48 threads the MSM-heavy phases slow down (arkworks' parallel MSM splits into few
-    // windows; oversubscription costs more than it gains); RAYON_NUM_THREADS still overrides.
+    // windows; oversubscription costs more than it gains); RAYON_NUM_THREADS still overrides
+    // (`num_threads(0)` reads it). On wasm the workers' stacks are heap blocks that every
+    // linear-memory high-water includes: 1 MiB (as bb) instead of std's 2 MiB saves 8 MiB at 8
+    // threads. wasm stacks have no guard page and an overflow silently corrupts the heap below; the
+    // deepest worker stack measured is ~158 KB (ECCVM relations, sumcheck round, accumulate_edge).
+    let mut pool = rayon::ThreadPoolBuilder::new();
     if std::env::var_os("RAYON_NUM_THREADS").is_none() {
-        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(48);
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(threads)
-            .build_global()
-            .expect("rayon pool");
+        pool = pool.num_threads(std::thread::available_parallelism().map_or(1, |n| n.get()).min(48));
     }
+    if cfg!(target_family = "wasm") {
+        pool = pool.stack_size(1 << 20);
+    }
+    pool.build_global().expect("rayon pool");
     // bb keeps ONE global engine: witness gap-fills, in-circuit masking and the prover all draw
     // from it, so `BB_RNG_SEED` must seed the global source, not just the explicit prover rng.
     bb_ref::base::rng::set_global_from_env();

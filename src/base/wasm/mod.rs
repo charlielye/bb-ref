@@ -13,6 +13,10 @@ use crate::base::Fq;
 mod adx;
 #[cfg(all(target_arch = "wasm32", not(feature = "heap-profile")))]
 mod alloc;
+#[cfg(all(target_arch = "wasm32", not(feature = "heap-profile")))]
+pub use alloc::alloc_zeroed_par as alloc_zeroed;
+#[cfg(not(all(target_arch = "wasm32", not(feature = "heap-profile"))))]
+pub use std::alloc::alloc_zeroed;
 #[cfg(any(
     target_family = "wasm",
     all(target_arch = "x86_64", target_feature = "adx", target_feature = "bmi2")
