@@ -1395,25 +1395,72 @@ fn mul_linear<F: FieldLike + Copy>(p: &mut Vec<F>, l: &[F; 2]) {
 /// `PartiallyEvaluatedMultivariates`): the table being folded and the row-disabling bookkeeping.
 /// A column of the round table: the prover's polynomial itself until the first fold (trimmed to
 /// its last non-zero coefficient, bb `end_index`), the shift of another column (read one row
-/// ahead), or the folded values once a round has been evaluated.
+/// ahead), the folded values once a round has been evaluated, or — in round 1 only — the
+/// round-0 column (shift applied) read folded at `u_0` on access.
 pub enum Column<'a, F> {
     Borrowed(&'a [F]),
     ShiftOf(usize),
     Own(Vec<F>),
+    Folded(&'a [F], F),
 }
 
-/// Column `j` at row `i` (`None` past the column's end).
+/// Address of column `j` at row `i`, for the prefetch (`None` past the column's end, and for a
+/// `Folded` column).
+#[cfg(target_arch = "x86_64")]
 fn column_ref<'t, F>(table: &'t [Column<F>], j: usize, i: usize) -> Option<&'t F> {
     match &table[j] {
         Column::Borrowed(s) => s.get(i),
         Column::Own(v) => v.get(i),
         Column::ShiftOf(k) => column_ref(table, *k, i + 1),
+        Column::Folded(..) => None,
     }
 }
 
 /// Value of column `j` at row `i` (zero past the column's end).
 fn column_value<F: FieldLike + Copy>(table: &[Column<F>], j: usize, i: usize) -> F {
-    column_ref(table, j, i).copied().unwrap_or_else(F::zero)
+    match &table[j] {
+        Column::Borrowed(s) => s.get(i).copied().unwrap_or_else(F::zero),
+        Column::Own(v) => v.get(i).copied().unwrap_or_else(F::zero),
+        Column::ShiftOf(k) => column_value(table, *k, i + 1),
+        Column::Folded(s, u) => folded_value(s, u, i),
+    }
+}
+
+/// Row `i` of `s` folded at `u`. Out of line: the multiply would otherwise be inlined into every
+/// table read, which slows the rounds that never see a `Folded` column.
+#[inline(never)]
+fn folded_value<F: FieldLike + Copy>(s: &[F], u: &F, i: usize) -> F {
+    let at = |k: usize| s.get(k).copied().unwrap_or_else(F::zero);
+    let (a, b) = (at(2 * i), at(2 * i + 1));
+    if a == b { a } else { a + *u * (b - a) }
+}
+
+/// One fold of `src` (zero-padded to even length): `a[2k] + u * (a[2k+1] - a[2k])`.
+fn fold_vec<F: FieldLike + Copy + 'static>(src: &[F], u: &F) -> Vec<F> {
+    if let Some(v) = crate::base::wasm::try_fold_from(src, src.len(), u) {
+        return v;
+    }
+    src.chunks(2)
+        .map(|p| {
+            let (a, b) = (p[0], p.get(1).copied().unwrap_or_else(F::zero));
+            if a == b { a } else { a + *u * (b - a) }
+        })
+        .collect()
+}
+
+/// `fold_vec` in place, halving `v`.
+fn fold_halve<F: FieldLike + Copy + 'static>(v: &mut Vec<F>, u: &F) {
+    if crate::base::wasm::try_fold_halve(v, u) {
+        return;
+    }
+    let half = v.len().div_ceil(2);
+    for k in 0..half {
+        let a = v[2 * k];
+        let b = if 2 * k + 1 < v.len() { v[2 * k + 1] } else { F::zero() };
+        // Equal neighbours (constant selector runs, zero padding) fold to themselves.
+        v[k] = if a == b { a } else { a + *u * (b - a) };
+    }
+    v.truncate(half);
 }
 
 /// Rounds past `log_n` are virtual (zero-extension) rounds.
@@ -1435,6 +1482,9 @@ pub struct RoundProver<'a, F> {
     pows0: Vec<F>,
     /// The relation parameters with the separator-folding constants (`fold_separators`), if any.
     folded: Option<RelationParams<F>>,
+    /// Build the owned tables after round 1 rather than round 0 (see `partially_evaluate`): a
+    /// quarter of the columns' size instead of half, for an extra multiply per round-1 read.
+    pub late_tables: bool,
 }
 
 impl<'a, F: NativeField> RoundProver<'a, F>
@@ -1480,6 +1530,7 @@ where
             used: vec![],
             pows0: vec![],
             folded: None,
+            late_tables: false,
         }
     }
     /// Extension weights for this relation set and univariate length (built once, on the first round).
@@ -1668,17 +1719,7 @@ where
                     .sum();
                 let fold_col = |col: &mut Column<F>| {
                     let Column::Own(v) = col else { unreachable!() };
-                    if crate::base::wasm::try_fold_halve(v, u) {
-                        return;
-                    }
-                    let half = v.len().div_ceil(2);
-                    for k in 0..half {
-                        let a = v[2 * k];
-                        let b = if 2 * k + 1 < v.len() { v[2 * k + 1] } else { F::zero() };
-                        // Equal neighbours (constant selector runs, zero padding) fold to themselves.
-                        v[k] = if a == b { a } else { a + *u * (b - a) };
-                    }
-                    v.truncate(half);
+                    fold_halve(v, u);
                 };
                 // Late rounds hold a few elements per column; the pool dispatch outweighs the fold.
                 if elems < 4096 {
@@ -1686,6 +1727,22 @@ where
                 } else {
                     self.table.par_iter_mut().for_each(fold_col);
                 }
+            } else if round == 0 && self.late_tables && self.log_n >= 2 {
+                // Late materialization (golf 0074): round 1 reads the round-0 columns folded at u_0
+                // on access, and the owned tables are first built after it at a quarter of the size,
+                // so no half-size copy of every column ever sits next to the polynomials.
+                let src = |c: &Column<'a, F>| match c {
+                    Column::Borrowed(s) => *s,
+                    _ => unreachable!("round 0 reads borrowed columns"),
+                };
+                let folded = (self.table.iter())
+                    .map(|c| match c {
+                        Column::ShiftOf(k) => src(&self.table[*k]).get(1..).unwrap_or(&[]),
+                        c => src(c),
+                    })
+                    .map(|s| Column::Folded(s, *u))
+                    .collect();
+                self.table = folded;
             } else {
                 let table = &self.table;
                 let folded: Vec<Column<F>> = (0..table.len())
@@ -1697,20 +1754,20 @@ where
                             Column::ShiftOf(k) => match &table[*k] {
                                 Column::Borrowed(s) => &s[1.min(s.len())..],
                                 Column::Own(v) => &v[1.min(v.len())..],
-                                Column::ShiftOf(_) => unreachable!("nested shift"),
+                                _ => unreachable!("nested shift"),
                             },
+                            Column::Folded(s, u0) => {
+                                // Both folds block by block: the half-size intermediate stays small.
+                                let mut out = Vec::with_capacity(s.len().div_ceil(4));
+                                for block in s.chunks(1 << 12) {
+                                    let mut h = fold_vec(block, u0);
+                                    fold_halve(&mut h, u);
+                                    out.extend_from_slice(&h);
+                                }
+                                return Column::Own(out);
+                            }
                         };
-                        if let Some(v) = crate::base::wasm::try_fold_from(src, src.len(), u) {
-                            return Column::Own(v);
-                        }
-                        Column::Own(
-                            src.chunks(2)
-                                .map(|p| {
-                                    let (a, b) = (p[0], p.get(1).copied().unwrap_or_else(F::zero));
-                                    if a == b { a } else { a + *u * (b - a) }
-                                })
-                                .collect(),
-                        )
+                        Column::Own(fold_vec(src, u))
                     })
                     .collect();
                 self.table = folded;

@@ -145,6 +145,8 @@ pub fn joint_prove(
         usize::MAX,
         None,
     );
+    // The joint tables are the small flows' memory peak: materialize them after round 1.
+    (mega_state.late_tables, trans_state.late_tables) = (true, true);
     let mut committed = CommittedRounds::<Bn254>::new();
     let mut partial_eval = Fr::one();
     let mut challenge = Vec::with_capacity(JOINT_LOG_N);
