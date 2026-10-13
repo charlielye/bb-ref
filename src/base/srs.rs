@@ -161,7 +161,8 @@ impl<G> std::ops::Deref for PointsView<G> {
 pub struct Ck<G: AffineRepr> {
     pub points: PointsView<G>,
     /// GLV companion points `(beta * x, -y)`, built once per key on wasm (where the per-entry
-    /// multiply at gather is the visible cost) and shared by every commit through this key.
+    /// multiply at gather is the visible cost) and shared by every commit through this key;
+    /// only the first `glv_threshold()` points, the most a GLV MSM reads.
     phi: PhiTable<G>,
 }
 
@@ -351,7 +352,9 @@ where
             self.commit_dedup(&p.coeffs[..k]).into_affine()
         } else {
             let phi = if crate::base::wasm::GLV_PHI_TABLE {
-                self.phi.get_or_build(|| G::phi_table(&self.points)).map(|t| &t[..k])
+                // Only a GLV MSM (at most the threshold's points) reads the table.
+                let n = self.points.len().min(crate::base::msm::glv_threshold());
+                self.phi.get_or_build(|| G::phi_table(&self.points[..n])).and_then(|t| t.get(..k))
             } else {
                 None
             };
@@ -436,7 +439,8 @@ where
         if std::env::var_os("BBREF_COMMIT_TIMING").is_some() {
             eprintln!("[dedup] nnz={} distinct={} merged_clusters={}", cluster_of.len(), reps.len(), sums.len());
         }
-        let phi = crate::base::wasm::GLV_PHI_TABLE.then(|| G::phi_table(&points));
+        let phi = (crate::base::wasm::GLV_PHI_TABLE && points.len() <= crate::base::msm::glv_threshold())
+            .then(|| G::phi_table(&points));
         G::batch_msm_with_phi(&points, &scalars, phi.as_deref())
     }
 }

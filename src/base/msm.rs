@@ -68,6 +68,23 @@ where
     msm_with_phi(points, scalars, None)
 }
 
+/// bb `GLV_SMALL_N_THRESHOLD`: above this many points the doubled point count (2n gathers, 2n
+/// schedule entries) outweighs halving the windows, so the MSM runs on full-width scalars
+/// instead (and never reads a φ table). The crossover is platform-specific: measured at 2^16 on
+/// wasm; natively at 2^12 (8t, bbbench: full-width 2^13 3.59 -> 3.41 ms and 2^15 10.3 -> 9.2 ms
+/// without GLV on the IFMA drain, neutral without IFMA). bb's own constants are 2^16 / 2^13.
+/// BBREF_GLV_LOG2 overrides.
+pub fn glv_threshold() -> usize {
+    static GLV_LOG2: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    1usize
+        << *GLV_LOG2.get_or_init(|| {
+            std::env::var("BBREF_GLV_LOG2")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(crate::base::wasm::MSM_DEFAULT_LOG2)
+        })
+}
+
 /// `msm` with an optional precomputed endomorphism table `phi[i] = (beta * x_i, -y_i)` covering
 /// `points` (an SRS-backed caller amortizes it across many MSMs); without it the phi point is
 /// formed at gather, one base-field multiply per schedule entry.
@@ -109,22 +126,9 @@ where
     // sub-scalars: half the windows, half the schedule entries. Entry bit 30 marks the
     // endomorphism half, bit 31 the Booth digit sign.
     const PHI: u32 = 1 << 30;
-    // bb `GLV_SMALL_N_THRESHOLD`: above this the doubled point count (2n gathers, 2n schedule
-    // entries) outweighs halving the windows, so the MSM runs on full-width scalars instead.
-    // The crossover is platform-specific: measured at 2^16 on wasm; natively at 2^12 (8t,
-    // bbbench: full-width 2^13 3.59 -> 3.41 ms and 2^15 10.3 -> 9.2 ms without GLV on the IFMA
-    // drain, neutral without IFMA). bb's own constants are 2^16 / 2^13. BBREF_GLV_LOG2 overrides.
-    static GLV_LOG2: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-    let glv_threshold = 1usize
-        << *GLV_LOG2.get_or_init(|| {
-            std::env::var("BBREF_GLV_LOG2")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(crate::base::wasm::MSM_DEFAULT_LOG2)
-        });
     let full: Vec<[u64; 4]> = scalars[..n].par_iter().map(|s| s.into_bigint().0).collect();
     // Scalars of at most 128 bits already have GLV's window count: splitting only doubles the points.
-    let use_glv = n <= glv_threshold && full.iter().any(|k| k[2] | k[3] != 0);
+    let use_glv = n <= glv_threshold() && full.iter().any(|k| k[2] | k[3] != 0);
     // Working sub-scalars: GLV gives two 128-bit halves per point (k1 against P, k2 against the
     // endomorphism image), otherwise one full-width scalar per point.
     let subs: Vec<([u64; 2], [u64; 2])> = if use_glv {
