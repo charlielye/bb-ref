@@ -11,6 +11,8 @@ use crate::base::Fq;
 
 #[cfg(all(target_arch = "x86_64", target_feature = "adx", target_feature = "bmi2"))]
 mod adx;
+#[cfg(all(target_arch = "wasm32", not(feature = "heap-profile")))]
+mod alloc;
 #[cfg(any(
     target_family = "wasm",
     all(target_arch = "x86_64", target_feature = "adx", target_feature = "bmi2")

@@ -505,6 +505,19 @@ conditionals in the prover; callers ask `try_*` and take the scalar path on `fal
 path (`bbkernel`, #4) was removed in Update 60 after measuring at ~1% of the flow, and the vendored
 ark-ff in Update 62.
 
+`alloc.rs` is the wasm global allocator, a correctness fix rather than a speedup. V8 bounds-checks
+`memory.fill`/`memory.copy` against a per-thread cached memory size that another thread's
+`memory.grow` updates only asynchronously (~0.1–1 ms later). So a worker that `malloc`s pages
+another thread just grew and memsets them traps with "memory access out of bounds" even though
+plain loads and stores there succeed. golf-port hit this once in Stage 6a's `dense` vec in
+`msm_with_phi`; any build can. The allocator refreshes the thread's view with `memory.grow(0)`
+whenever a block ends beyond it, or another thread has published a larger size.
+`examples/growstress.rs` is the regression test: under `tools/runwasi_threads.mjs` it trapped
+in 36 of 44 runs on the plain system allocator (2–16 threads) and in none of 44 with `alloc.rs`.
+What it does not cover is a thread bulk-copying into pages it never allocated within that
+window, e.g. a buffer another thread grew the memory for a moment earlier. Any heap op on that
+thread closes the gap.
+
 ### Why ark-ff was vendored, and how the fork was retired
 
 Until 2026-09-07 `vendor/ark-ff` was upstream 0.6.0 (10,274 lines) plus 1,441 lines of ours behind
