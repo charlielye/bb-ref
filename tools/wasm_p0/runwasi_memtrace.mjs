@@ -56,31 +56,38 @@ function minimalWasi(memory) {
   };
 }
 
+// The memory import's declared limits, read from the module's import section (the JS API does not
+// expose them). Memory is created at the declared minimum, as bb.js does, so the reported peak is
+// the module's own: a larger `initial` is space the module's allocator never uses.
+function memoryLimits(bytes) {
+  let p = 8;
+  const u8 = () => bytes[p++];
+  const leb = () => { let r = 0, s = 0, b; do { b = u8(); r += (b & 0x7f) * 2 ** s; s += 7; } while (b & 0x80); return r; };
+  const name = () => { const n = leb(); p += n; };
+  const limits = () => { const f = u8(); const min = leb(); return { min, max: f & 1 ? leb() : undefined }; };
+  while (p < bytes.length) {
+    const id = u8(), size = leb(), end = p + size;
+    if (id !== 2) { p = end; continue; }
+    for (let n = leb(); n > 0; n--) {
+      name(); name();
+      const kind = u8();
+      if (kind === 2) return limits();
+      if (kind === 0) leb();
+      else if (kind === 1) { u8(); limits(); }
+      else if (kind === 3) p += 2;
+      else if (kind === 4) { u8(); leb(); }
+    }
+    p = end;
+  }
+  throw new Error('module does not import memory (not a threads build?)');
+}
+
 if (isMainThread) {
   const wasmPath = argv[2];
-  const module = await WebAssembly.compile(await readFile(wasmPath));
-  if (!WebAssembly.Module.imports(module).some((i) => i.kind === 'memory')) {
-    throw new Error('module does not import memory (not a threads build?)');
-  }
-  // The provided maximum must not exceed the module's declared maximum, which the JS API
-  // doesn't expose — probe downward from WASM_MAX_PAGES until instantiation-by-limits works.
-  const probe = (pages) => new WebAssembly.Memory({ initial: 1200, maximum: pages, shared: true });
-  let maxPages = Number(env.WASM_MAX_PAGES ?? 65536);
-  let memory = probe(maxPages);
-  const limitOk = async (mem) => {
-    try {
-      // A dry instantiate just to validate the memory import; aborts on missing functions is
-      // fine — LinkError mentioning "maximum" is the only signal we probe for.
-      await WebAssembly.instantiate(module, { env: { memory: mem } });
-      return true;
-    } catch (e) {
-      return !(e instanceof WebAssembly.LinkError && String(e).includes('maximum'));
-    }
-  };
-  while (maxPages > 1200 && !(await limitOk(memory))) {
-    maxPages = maxPages / 2;
-    memory = probe(maxPages);
-  }
+  const bytes = await readFile(wasmPath);
+  const module = await WebAssembly.compile(bytes);
+  const { min, max } = memoryLimits(bytes);
+  const memory = new WebAssembly.Memory({ initial: Number(env.WASM_INITIAL_PAGES ?? min), maximum: max ?? 65536, shared: true });
   const ctl = new Int32Array(new SharedArrayBuffer(8));
   ctl[0] = 2; // next tid
   let spawned = 0;
