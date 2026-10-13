@@ -270,13 +270,20 @@ where
         .find(|&w| digits.iter().any(|d| d[w] != 0))
         .expect("all fold scalars zero");
 
-    let chunk = q.div_ceil(rayon::current_num_threads().max(1)).max(128);
+    // With simd128 each block is replayed packed (`wasm::try_fold_two_rounds`), in blocks small
+    // enough to keep every thread busy at q = 128; the scalar passes stay its exact fallback.
+    let per_thread = q.div_ceil(rayon::current_num_threads().max(1));
+    let chunk = if crate::base::wasm::PACKED { (per_thread.div_ceil(4) * 4).clamp(16, 512) } else { per_thread.max(128) };
     (0..q)
         .step_by(chunk)
         .collect::<Vec<_>>()
         .into_par_iter()
         .flat_map_iter(|s| {
             let m = chunk.min(q - s);
+            let block = [&p0[s..s + m], &p1[s..s + m], &p2[s..s + m], &p3[s..s + m]];
+            if let Some(out) = crate::base::wasm::try_fold_two_rounds(block, &digits, top, &endo.beta) {
+                return out;
+            }
             let mut dens: Vec<P::BaseField> = Vec::with_capacity(m);
             let mut kinds: Vec<u8> = Vec::with_capacity(m);
             let mut chords = crate::base::ifma::available::<P::BaseField>().then(Chords::default);
@@ -356,9 +363,9 @@ mod tests {
         let mut rng = ark_std::test_rng();
         type G = Projective<GrumpkinConfig>;
         let n = 1024usize;
-        let g = G::normalize_batch(&(0..n).map(|_| G::rand(&mut rng)).collect::<Vec<_>>());
+        let mut g = G::normalize_batch(&(0..n).map(|_| G::rand(&mut rng)).collect::<Vec<_>>());
         let endo = grumpkin_endo();
-        for _ in 0..4 {
+        for it in 0..4 {
             // 127-bit challenges, like the transcript's.
             let mask = |v: crate::base::Fq| {
                 let mut b = v.into_bigint();
@@ -369,9 +376,14 @@ mod tests {
             };
             let u1 = mask(crate::base::Fq::rand(&mut rng));
             let u2 = mask(crate::base::Fq::rand(&mut rng));
-            let folded = fold_points_two_rounds(&g, &u1, &u2, endo);
             let q = n / 4;
             let u12 = u1 * u2;
+            if it == 3 {
+                // A zero output (its final add is non-generic) sends its block on wasm from the
+                // packed replay to the exact scalar passes.
+                g[5 + 3 * q] = (-(g[5] * u12 + g[5 + q] * u1 + g[5 + 2 * q] * u2)).into_affine();
+            }
+            let folded = fold_points_two_rounds(&g, &u1, &u2, endo);
             for i in (0..q).step_by(29) {
                 let direct: G = g[i] * u12 + g[i + q] * u1 + g[i + 2 * q] * u2 + G::from(g[i + 3 * q]);
                 assert_eq!(G::from(folded[i]), direct, "output {i}");
