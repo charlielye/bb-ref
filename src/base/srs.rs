@@ -311,7 +311,9 @@ where
 {
     /// Commit to many polynomials with bounded MSM concurrency (bb `batch_commit`): each MSM is
     /// internally parallel, so a few at a time saturate the cores while capping the live
-    /// per-MSM scratch that an unbounded fan-out multiplies.
+    /// per-MSM scratch that an unbounded fan-out multiplies. The bound keeps that scratch (~64 B
+    /// per point: scalars, histograms, schedules) within bb's 32 MiB batch budget: 8 MSMs at once
+    /// up to 2^16 points, 4 at 2^17, one from 2^19.
     pub fn batch_commit(&self, polys: &[&Polynomial<G::ScalarField>]) -> Vec<G>
     where
         G: Send + Sync,
@@ -319,12 +321,14 @@ where
     {
         use std::sync::atomic::{AtomicUsize, Ordering};
         const CONCURRENT_MSMS: usize = 8;
+        let n = polys.iter().map(|p| p.end_index()).max().unwrap_or(0);
+        let concurrent = ((32 << 20) / (64 * n.max(1))).clamp(1, CONCURRENT_MSMS);
         let mut out: Vec<Option<G>> = vec![None; polys.len()];
         let slots = super::msm::SendPtr(out.as_mut_ptr());
         let slots = &slots; // capture the Sync wrapper, not the raw pointer field
         let next = AtomicUsize::new(0);
         rayon::scope(|s| {
-            for _ in 0..CONCURRENT_MSMS.min(polys.len()) {
+            for _ in 0..concurrent.min(polys.len()) {
                 s.spawn(|_| loop {
                     let i = next.fetch_add(1, Ordering::Relaxed);
                     if i >= polys.len() {
