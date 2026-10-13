@@ -1395,13 +1395,24 @@ fn mul_linear<F: FieldLike + Copy>(p: &mut Vec<F>, l: &[F; 2]) {
 /// `PartiallyEvaluatedMultivariates`): the table being folded and the row-disabling bookkeeping.
 /// A column of the round table: the prover's polynomial itself until the first fold (trimmed to
 /// its last non-zero coefficient, bb `end_index`), the shift of another column (read one row
-/// ahead), the folded values once a round has been evaluated, or — in round 1 only — the
-/// round-0 column (shift applied) read folded at `u_0` on access.
+/// ahead), the folded values of rows `start..` once a round has been evaluated (the rows below
+/// `start` are zero; golf 0069), or — in round 1 only — the round-0 column (shift applied) read
+/// folded at `u_0` on access.
 pub enum Column<'a, F> {
     Borrowed(&'a [F]),
     ShiftOf(usize),
-    Own(Vec<F>),
+    Own(usize, Vec<F>),
     Folded(&'a [F], F),
+}
+
+/// The owned tables skip each column's leading zeros (selectors of the gate blocks placed late in
+/// the trace) from a row aligned to this, so the window start stays even through the folds that
+/// matter; once a halving makes it odd the column is a few hundred rows and takes a zero.
+const WINDOW_ALIGN: usize = 1 << 10;
+
+/// First row of `s` the folded table must hold: its leading zeros, rounded down to `WINDOW_ALIGN`.
+fn window_start<F: FieldLike>(s: &[F]) -> usize {
+    s.iter().position(|c| !c.is_zero()).unwrap_or(s.len()) & !(WINDOW_ALIGN - 1)
 }
 
 /// Address of column `j` at row `i`, for the prefetch (`None` past the column's end, and for a
@@ -1410,7 +1421,7 @@ pub enum Column<'a, F> {
 fn column_ref<'t, F>(table: &'t [Column<F>], j: usize, i: usize) -> Option<&'t F> {
     match &table[j] {
         Column::Borrowed(s) => s.get(i),
-        Column::Own(v) => v.get(i),
+        Column::Own(st, v) => v.get(i.wrapping_sub(*st)),
         Column::ShiftOf(k) => column_ref(table, *k, i + 1),
         Column::Folded(..) => None,
     }
@@ -1420,7 +1431,7 @@ fn column_ref<'t, F>(table: &'t [Column<F>], j: usize, i: usize) -> Option<&'t F
 fn column_value<F: FieldLike + Copy>(table: &[Column<F>], j: usize, i: usize) -> F {
     match &table[j] {
         Column::Borrowed(s) => s.get(i).copied().unwrap_or_else(F::zero),
-        Column::Own(v) => v.get(i).copied().unwrap_or_else(F::zero),
+        Column::Own(st, v) => v.get(i.wrapping_sub(*st)).copied().unwrap_or_else(F::zero),
         Column::ShiftOf(k) => column_value(table, *k, i + 1),
         Column::Folded(s, u) => folded_value(s, u, i),
     }
@@ -1673,7 +1684,7 @@ where
             // virtual round: the table has one row and the edge is (P(u), 0)
             let mut acc = Accumulators::new(rels, d);
             let edge_table: Vec<Column<F>> = (0..self.table.len())
-                .map(|i| Column::Own(vec![self.current(i), F::zero()]))
+                .map(|i| Column::Own(0, vec![self.current(i), F::zero()]))
                 .collect();
             let params_uni = lift_params(params);
             let mut scratch = Scratch::new(rels, edge_table.len(), d);
@@ -1708,18 +1719,23 @@ where
             // The first fold must allocate (borrowed and shifted columns read across the table);
             // every later fold halves the owned columns in place, so the round-table footprint is
             // one owned copy rather than a fresh allocation per round.
-            if self.table.iter().all(|c| matches!(c, Column::Own(_))) {
+            if self.table.iter().all(|c| matches!(c, Column::Own(..))) {
                 let elems: usize = self
                     .table
                     .iter()
                     .map(|c| match c {
-                        Column::Own(v) => v.len(),
+                        Column::Own(_, v) => v.len(),
                         _ => 0,
                     })
                     .sum();
                 let fold_col = |col: &mut Column<F>| {
-                    let Column::Own(v) = col else { unreachable!() };
+                    let Column::Own(st, v) = col else { unreachable!() };
+                    if *st % 2 == 1 {
+                        v.insert(0, F::zero());
+                        *st -= 1;
+                    }
                     fold_halve(v, u);
+                    *st /= 2;
                 };
                 // Late rounds hold a few elements per column; the pool dispatch outweighs the fold.
                 if elems < 4096 {
@@ -1750,24 +1766,26 @@ where
                     .map(|j| {
                         let src: &[F] = match &table[j] {
                             Column::Borrowed(s) => s,
-                            Column::Own(v) => v,
                             Column::ShiftOf(k) => match &table[*k] {
                                 Column::Borrowed(s) => &s[1.min(s.len())..],
-                                Column::Own(v) => &v[1.min(v.len())..],
-                                _ => unreachable!("nested shift"),
+                                _ => unreachable!("the first fold reads borrowed columns"),
                             },
                             Column::Folded(s, u0) => {
                                 // Both folds block by block: the half-size intermediate stays small.
+                                let st = window_start(s);
+                                let s = &s[st..];
                                 let mut out = Vec::with_capacity(s.len().div_ceil(4));
                                 for block in s.chunks(1 << 12) {
                                     let mut h = fold_vec(block, u0);
                                     fold_halve(&mut h, u);
                                     out.extend_from_slice(&h);
                                 }
-                                return Column::Own(out);
+                                return Column::Own(st / 4, out);
                             }
+                            Column::Own(..) => unreachable!("owned columns fold in place"),
                         };
-                        Column::Own(fold_vec(src, u))
+                        let st = window_start(src);
+                        Column::Own(st / 2, fold_vec(&src[st..], u))
                     })
                     .collect();
                 self.table = folded;
@@ -1775,7 +1793,7 @@ where
         } else {
             for j in 0..self.table.len() {
                 let v = column_value(&self.table, j, 0) * (F::one() - *u);
-                self.table[j] = Column::Own(vec![v]);
+                self.table[j] = Column::Own(0, vec![v]);
             }
         }
         self.witness_end = self.witness_end.div_ceil(2);
