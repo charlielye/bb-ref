@@ -124,7 +124,7 @@ impl Chonk {
 
     /// bb `Chonk::accumulate`. The circuit must have been built on `self.op_queue`; `vk` is its
     /// precomputed verification key (computed here when absent).
-    pub fn accumulate(&mut self, mut circuit: Builder, vk: Option<Vk<Bn254>>, rng: &mut dyn Rng) {
+    pub fn accumulate(&mut self, circuit: Builder, vk: Option<Vk<Bn254>>, rng: &mut dyn Rng) {
         assert!(
             self.accumulated < self.kinds.len(),
             "Chonk: every circuit has already been accumulated"
@@ -133,8 +133,7 @@ impl Chonk {
         let next = self.next_kind();
         match kind {
             CircuitKind::HidingKernel => {
-                let inst = ProverInstance::from_builder(&MEGA_ZK, &mut circuit, rng);
-                drop(circuit);
+                let inst = ProverInstance::from_circuit(&MEGA_ZK, circuit, rng);
                 let vk = vk.unwrap_or_else(|| inst.compute_vk(&self.ck));
                 self.hiding = Some((inst, vk));
                 self.accumulated += 1;
@@ -164,7 +163,7 @@ impl Chonk {
 
     fn accumulate_and_fold(
         &mut self,
-        mut circuit: Builder,
+        circuit: Builder,
         vk: Option<Vk<Bn254>>,
         kind: CircuitKind,
         next: Option<CircuitKind>,
@@ -181,10 +180,8 @@ impl Chonk {
             self.folding_prover = Some(FoldingProver::new());
         }
         let _gi = crate::base::bench::Scope::new("ProverInstance::from_builder");
-        let mut inst = ProverInstance::from_builder(kind.flavor(), &mut circuit, rng);
+        let mut inst = ProverInstance::from_circuit(kind.flavor(), circuit, rng);
         drop(_gi);
-        // The builder is dead weight through the fold that follows (bb frees it here too).
-        drop(circuit);
         timing::phase("prover instance");
         let vk = vk.unwrap_or_else(|| inst.compute_vk(&self.ck));
         timing::phase("vk");

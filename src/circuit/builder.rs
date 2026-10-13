@@ -1030,6 +1030,21 @@ impl Builder {
         self.circuit_finalized = true;
     }
 
+    /// For a finalized builder about to be laid out and dropped: trim the growable vectors to
+    /// their length (an in-place shrink) and free the equivalence links only `assert_equal` reads.
+    pub fn release_slack(&mut self) {
+        for b in &mut self.blocks.blocks {
+            b.rows.shrink_to_fit();
+        }
+        for t in &mut self.lookup_tables {
+            t.lookup_gates.shrink_to_fit();
+        }
+        self.variables.shrink_to_fit();
+        self.real_variable_index.shrink_to_fit();
+        self.real_variable_tags.shrink_to_fit();
+        (self.next_var_index, self.prev_var_index) = (Vec::new(), Vec::new());
+    }
+
     /// The low 64 bits of a field element's integer representation (bb `uint256_t(fr).data[0]`).
     pub(crate) fn low_u64(v: &Fr) -> u64 {
         u256(v).0[0]

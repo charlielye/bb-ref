@@ -238,15 +238,14 @@ fn circuit_prove_impl(cmd: BbCircuitProve, srs: &Srs) -> Result<BbCircuitProveRe
     let mut rng = GlobalProxy;
     let witness = decode_witness_raw(&cmd.witness, &mut rng);
     crate::base::timing::phase("cmd: decode");
-    let mut builder = build_circuit_opts(&circuit, Some(&witness), ipa);
+    let builder = build_circuit_opts(&circuit, Some(&witness), ipa);
     crate::base::timing::phase("cmd: build");
     if let Some(msg) = &builder.failed {
         return Err(format!("circuit is not satisfied: {msg}"));
     }
-    let mut inst = ProverInstance::from_builder(flavor, &mut builder, &mut rng);
     // The builder and decoded witness are dead weight from here; the prover's peak working set
     // (instance + sumcheck tables + shplemini batches) is what remains, as in bb.
-    drop(builder);
+    let mut inst = ProverInstance::from_circuit(flavor, builder, &mut rng);
     drop(witness);
     crate::base::timing::phase("cmd: instance");
 

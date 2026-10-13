@@ -75,10 +75,23 @@ impl ProverInstance {
     /// `TraceToPolynomials::populate` + `compute_permutation_argument_polynomials`). `rng` supplies
     /// the ZK masking values written to rows 1..=3 of the witness polynomials.
     pub fn from_builder(flavor: &'static FlavorDesc, builder: &mut Builder, rng: &mut dyn Rng) -> Self {
+        Self::build(flavor, builder, rng, false)
+    }
+
+    /// `from_builder` for a builder that is dropped afterwards: its slack and gate rows are freed
+    /// as soon as they are consumed, so they never coexist with the whole instance.
+    pub fn from_circuit(flavor: &'static FlavorDesc, mut builder: Builder, rng: &mut dyn Rng) -> Self {
+        Self::build(flavor, &mut builder, rng, true)
+    }
+
+    fn build(flavor: &'static FlavorDesc, builder: &mut Builder, rng: &mut dyn Rng, release: bool) -> Self {
         let mut _g_inst = crate::base::bench::Scope::new("inst/wires_selectors_cycles");
         let layout = flavor.layout();
         let trace_offset = flavor.trace_offset;
         builder.finalize_circuit();
+        if release {
+            builder.release_slack();
+        }
         builder.blocks.compute_offsets(trace_offset);
         let blocks = &builder.blocks;
         // Lookup tables sit at the lookup block's offset; the trace must hold both.
@@ -149,14 +162,26 @@ impl ProverInstance {
                 _ => dyadic_size,
             }
         };
-        let mut polys: Vec<Poly> = layout.unshifted.iter().map(|e| Poly::zero(len_of(*e))).collect();
+        // Only the selectors are read from the gate rows; the other columns are written once the
+        // rows are consumed (and, when `release`, freed). On wasm, allocating commits memory, so
+        // they are also allocated only then; natively pages are committed when written, and an
+        // allocation after the free would have calloc zero the reused heap memory serially.
+        let selectors = [Ent::q_m, Ent::q_c, Ent::q_l, Ent::q_r, Ent::q_o, Ent::q_4, Ent::q_5];
+        let from_rows: Vec<bool> = layout
+            .unshifted
+            .iter()
+            .map(|e| !cfg!(target_family = "wasm") || selectors.contains(e) || blocks.iter().any(|(d, _)| d.kinds.iter().any(|k| gate_selector_entity(*k) == *e)))
+            .collect();
+        let mut polys: Vec<Poly> = (layout.unshifted.iter().zip(&from_rows))
+            .map(|(e, early)| Poly::zero(if *early { len_of(*e) } else { 0 }))
+            .collect();
         let idx = |e: Ent| layout.idx(e);
         let has = |e: Ent| layout.has(e);
         let wires = [Ent::w_l, Ent::w_r, Ent::w_o, Ent::w_4];
 
-        // Wires, non-gate selectors, gate selectors, and each wire cell's real variable, over row
-        // chunks of all blocks in parallel (the arithmetic block dominates). Rows are disjoint, so
-        // the columns are written through raw pointers. Blocks are contiguous from `base`, so the
+        // Non-gate selectors, gate selectors, and each wire cell's real variable, over row chunks
+        // of all blocks in parallel (the arithmetic block dominates). Rows are disjoint, so the
+        // columns are written through raw pointers. Blocks are contiguous from `base`, so the
         // cells are in (block, row, wire) order.
         let base = trace_offset + NUM_ZERO_ROWS;
         let mut cell_real: Vec<u32> = vec![0; NUM_WIRES * blocks.total_content_size()];
@@ -166,7 +191,7 @@ impl ProverInstance {
             let col = |e: Ent| cols[idx(e)].0;
             let cells = SendPtr(cell_real.as_mut_ptr());
             let cells = &cells;
-            let (vars, real_index) = (&builder.variables, &builder.real_variable_index);
+            let real_index = &builder.real_variable_index;
             let tasks: Vec<_> = blocks
                 .iter()
                 .flat_map(|(d, b)| {
@@ -180,10 +205,8 @@ impl ProverInstance {
                 for (r, row) in rows.iter().enumerate() {
                     let i = start + r;
                     unsafe {
-                        for (w, ent) in wires.iter().enumerate() {
-                            let real = real_index[row.wires[w] as usize];
-                            *col(*ent).add(i) = vars[real as usize];
-                            *cells.0.add(NUM_WIRES * (i - base) + w) = real;
+                        for w in 0..NUM_WIRES {
+                            *cells.0.add(NUM_WIRES * (i - base) + w) = real_index[row.wires[w] as usize];
                         }
                         for (ent, v) in [
                             (Ent::q_m, row.q_m),
@@ -208,6 +231,29 @@ impl ProverInstance {
                 }
             });
         }
+        if release {
+            for b in &mut builder.blocks.blocks {
+                b.rows = Vec::new();
+            }
+        }
+        for (k, e) in layout.unshifted.iter().enumerate() {
+            if !from_rows[k] {
+                polys[k] = Poly::zero(len_of(*e));
+            }
+        }
+        // Wires from the cells' real variables.
+        {
+            use crate::base::msm::SendPtr;
+            let cols: [SendPtr<Fr>; NUM_WIRES] = std::array::from_fn(|w| SendPtr(polys[idx(wires[w])].coeffs.as_mut_ptr()));
+            let (cols, vars) = (&cols, &builder.variables);
+            cell_real.par_chunks(NUM_WIRES << 12).enumerate().for_each(|(k, chunk)| {
+                for (c, real) in chunk.iter().enumerate() {
+                    let cell = k * (NUM_WIRES << 12) + c;
+                    unsafe { *cols[cell % NUM_WIRES].0.add(base + cell / NUM_WIRES) = vars[*real as usize] };
+                }
+            });
+        }
+        let blocks = &builder.blocks;
         // Copy cycles in CSR layout (counts, prefix sum, scatter) rather than one Vec per variable:
         // a vector per variable is millions of small allocations on a rollup circuit. Count and
         // scatter split the variables into one range per thread; each scans every cell in order,
@@ -290,7 +336,15 @@ impl ProverInstance {
             let (sig_ptrs, id_ptrs) = (&sig_ptrs, &id_ptrs);
             let (cycle_flat, cycle_start, row_val) = (&cycle_flat, &cycle_start, &row_val);
             let tags = &builder.real_variable_tags;
-            let tau = &builder.tau;
+            // Per-tag link values, so the loop does no Montgomery conversions or hash lookups.
+            let num_tags = builder.tau.iter().map(|(k, v)| *k.max(v) as usize + 1).max().unwrap_or(0);
+            let tag_val = |t: u32| tag_base + Fr::from(t as u64);
+            let mut tau_val = vec![Fr::zero(); num_tags];
+            for (k, v) in &builder.tau {
+                tau_val[*k as usize] = tag_val(*v);
+            }
+            let id_val: Vec<Fr> = (0..num_tags as u32).map(tag_val).collect();
+            let (tau_val, id_val) = (&tau_val, &id_val);
             (0..builder.num_variables()).into_par_iter().with_min_len(256).for_each(|var| {
                 let cycle = &cycle_flat[cycle_start[var] as usize..cycle_start[var + 1] as usize];
                 if cycle.is_empty() {
@@ -303,9 +357,9 @@ impl ProverInstance {
                 }
                 let tag = tags[var];
                 let (li, lw) = ent_of(*cycle.last().unwrap());
-                unsafe { *sig_ptrs[lw].0.add(li) = tag_base + Fr::from(tau[&tag] as u64) };
+                unsafe { *sig_ptrs[lw].0.add(li) = tau_val[tag as usize] };
                 let (fi, fw) = ent_of(cycle[0]);
-                unsafe { *id_ptrs[fw].0.add(fi) = tag_base + Fr::from(tag as u64) };
+                unsafe { *id_ptrs[fw].0.add(fi) = id_val[tag as usize] };
             });
         }
         let pub_inputs_offset = blocks.get(BlockId::PubInputs).trace_offset;
@@ -371,7 +425,7 @@ impl ProverInstance {
                 Ent::ecc_op_wire_3,
                 Ent::ecc_op_wire_4,
             ];
-            for i in 0..b.len() {
+            for i in 0..ecc_op_end - start {
                 for k in 0..NUM_WIRES {
                     polys[idx(op_wires[k])].coeffs[start + i] = polys[idx(wires[k])].coeffs[b.trace_offset + i];
                 }
