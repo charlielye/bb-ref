@@ -1980,3 +1980,20 @@ Rejected: late tables in every sumcheck (−6 MiB on transfer_1+private for +1.1
 (248/244 vs 228/223), amm and transfer_0+private (~+4 MiB), storage_proof. Next candidates: skip each
 column's leading zeros in the sumcheck tables (golf 0069), start-offset polynomials for the three
 tail Lagrange columns (12 MiB at every final-proof stair; design change).
+
+## Update 69: wasm memory below golf-bb on every flow (2026-10-13)
+
+Branch `wasm-golf`. storage_proof peaked while building its second 2^19 instance; the gap to golf-bb
+was gate selectors stored from row 0 although zero until their block (rows 218k–373k on 2^19 steps:
+~140 MB of zeros per instance), copied again by the sumcheck tables. Three commits, each 5 interleaved
+reps (medians) vs its predecessor, proofs golden:
+
+| commit | change | storage MiB | transfer_1+private MiB | proving Δ (storage / t1) |
+|---|---|---|---|---|
+| 5e9aac9 | free builder slack and gate rows before the wires are written (golf 0075) | −5.1 | +0.2 | −0.6 / +0.1% |
+| 33c1b3f | sumcheck owned tables skip each column's leading zeros (golf 0069) | −81 | −14.7 | −0.2 / −0.7% |
+| b0788e1 | `Polynomial::start` (bb `start_index`); folded instances store gate selectors from their first block (R13) | −124.9 | −17.1 | −0.6 / −0.1% |
+
+All 11 flows × 3 reps, golf-bb in the same run: peak memory Σ 3,012 → 2,554 MiB (golf-bb 2,885:
+**0.885×**), storage_proof 748 → 543 MiB (golf 602), proving Σ 56.88 → 56.22 s (−1.2%). Below golf-bb
+on all 11 flows. Native 0.994× (5 flows × 5 reps, 17/25 wins); storage RSS 0.87 → 0.74 GB.
