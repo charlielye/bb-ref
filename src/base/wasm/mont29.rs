@@ -47,8 +47,10 @@ pub const fn inv29(p0: u64) -> u64 {
 }
 
 /// `a * b / 2^261 mod p`, canonical in and out — the mul for the wasm 2^261 stored domain:
-/// nine full 29-bit Montgomery rounds, result repacked with no bit offset.
-#[inline]
+/// nine full 29-bit Montgomery rounds, result repacked with no bit offset. Always inlined: out of
+/// line, the `[u64; 4]` comes back through an sret slot whose 8-byte stores the caller re-reads as
+/// 16-byte loads, a store-forwarding stall on every dependent multiply (−1% wasm proving).
+#[inline(always)]
 #[allow(clippy::too_many_lines)]
 pub fn mont_mul_261(a: &[u64; 4], b: &[u64; 4], modulus: &[u64; 4], p: &[u64; 9], inv: u64) -> [u64; 4] {
     let l = to29(a);
