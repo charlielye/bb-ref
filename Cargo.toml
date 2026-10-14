@@ -56,3 +56,6 @@ heap-profile = ["dep:dhat"]
 # A/B reference: mimalloc instead of the system allocator.
 mimalloc = ["dep:mimalloc"]
 dhat = ["dep:dhat"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(wasm_wide)"] }

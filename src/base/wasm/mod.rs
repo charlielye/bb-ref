@@ -6,6 +6,10 @@
 //! stored form, bb's multiply and square) under the same curve configs; every other target uses
 //! arkworks' own bn254/grumpkin configs. Callers stay `cfg`-free: the same names exist on every
 //! target, and the native fallbacks answer `false`/`None` so the generic scalar paths run.
+//! The wide-arithmetic build (`--cfg wasm_wide`, target feature `wide-arithmetic`) replaces the
+//! 2^261 field and its four-lane kernels with `wide.rs`'s 4×64 field in arkworks' 2^256 domain
+//! and raw-limb loops (`widepacked.rs`, `widetree.rs`) for the folds, axpy, MSM tree and bucket
+//! reduction.
 
 use crate::base::Fq;
 
@@ -29,9 +33,14 @@ mod curves;
     all(target_arch = "x86_64", target_feature = "adx", target_feature = "bmi2")
 ))]
 mod divsteps;
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_family = "wasm", wasm_wide))]
+mod wide;
+#[cfg(all(target_family = "wasm", wasm_wide))]
+pub use wide::{FqConfig, FrConfig};
+#[cfg(all(target_family = "wasm", not(wasm_wide)))]
 mod field;
 #[cfg(target_family = "wasm")]
+#[cfg_attr(wasm_wide, allow(dead_code))]
 mod mont29;
 #[cfg(all(target_arch = "x86_64", target_feature = "adx", target_feature = "bmi2"))]
 pub use adx::{FqConfig, FrConfig};
@@ -40,7 +49,7 @@ pub use adx::{FqConfig, FrConfig};
     all(target_arch = "x86_64", target_feature = "adx", target_feature = "bmi2")
 ))]
 pub use curves::{G1Config, GrumpkinConfig};
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_family = "wasm", not(wasm_wide)))]
 pub use field::{FqConfig, FrConfig};
 #[cfg(not(any(
     target_family = "wasm",
@@ -53,10 +62,10 @@ pub use {
 
 /// Field elements are stored as `a·2^261 mod p` on wasm (`field.rs`) and as `a·2^256 mod p`
 /// elsewhere (arkworks' configs).
-pub const STORED_DOMAIN_261: bool = cfg!(target_family = "wasm");
+pub const STORED_DOMAIN_261: bool = cfg!(all(target_family = "wasm", not(wasm_wide)));
 
 /// The four-lane simd128 kernels exist (`packed.rs`, `ipafold.rs`, `tree.rs`).
-pub const PACKED: bool = cfg!(all(target_family = "wasm", target_feature = "simd128"));
+pub const PACKED: bool = cfg!(all(target_family = "wasm", target_feature = "simd128", not(wasm_wide)));
 
 /// The sumcheck's permutation relation runs on edge lanes: four on simd128 wasm (`perm4.rs`), eight
 /// on x86-64 where the CPU has AVX-512 IFMA (`ifma.rs`; `PermLanes::new` checks at run time).
@@ -86,17 +95,17 @@ pub fn stored_to_shared() -> Option<Fq> {
     STORED_DOMAIN_261.then(|| ark_ff::Field::inverse(&Fq::from(32u64)).unwrap())
 }
 
-#[cfg(all(target_family = "wasm", target_feature = "simd128"))]
+#[cfg(all(target_family = "wasm", target_feature = "simd128", not(wasm_wide)))]
 mod ipafold;
-#[cfg(all(target_family = "wasm", target_feature = "simd128"))]
+#[cfg(all(target_family = "wasm", target_feature = "simd128", not(wasm_wide)))]
 mod packed;
-#[cfg(all(target_family = "wasm", target_feature = "simd128"))]
+#[cfg(all(target_family = "wasm", target_feature = "simd128", not(wasm_wide)))]
 mod perm4;
-#[cfg(all(target_family = "wasm", target_feature = "simd128"))]
+#[cfg(all(target_family = "wasm", target_feature = "simd128", not(wasm_wide)))]
 mod quad261;
-#[cfg(all(target_family = "wasm", target_feature = "simd128"))]
+#[cfg(all(target_family = "wasm", target_feature = "simd128", not(wasm_wide)))]
 mod tree;
-#[cfg(all(target_family = "wasm", target_feature = "simd128"))]
+#[cfg(all(target_family = "wasm", target_feature = "simd128", not(wasm_wide)))]
 pub use {
     ipafold::try_fold_two_rounds,
     packed::{try_axpy, try_fold_from, try_fold_halve, try_fold_into, Kc, QuadConsts},
@@ -104,10 +113,35 @@ pub use {
     tree::PackedTree,
 };
 
-#[cfg(not(all(target_family = "wasm", target_feature = "simd128")))]
+#[cfg(not(all(target_family = "wasm", target_feature = "simd128", not(wasm_wide))))]
 mod fallback;
-#[cfg(not(all(target_family = "wasm", target_feature = "simd128")))]
-pub use fallback::{
-    try_axpy, try_fold_from, try_fold_halve, try_fold_into, try_fold_two_rounds, PackedTree, PermLanes, QuadConsts,
-    PERM_INPUTS, PERM_POINTS,
+#[cfg(not(all(target_family = "wasm", target_feature = "simd128", not(wasm_wide))))]
+pub use fallback::{try_fold_two_rounds, PermLanes, QuadConsts, PERM_INPUTS, PERM_POINTS};
+#[cfg(not(any(all(target_family = "wasm", target_feature = "simd128"), wasm_wide)))]
+pub use fallback::{try_axpy, try_fold_from, try_fold_halve, try_fold_into, PackedTree};
+
+// The wide-arithmetic build: raw-limb kernels in place of the 2^261 four-lane ones.
+#[cfg(wasm_wide)]
+mod widepacked;
+#[cfg(wasm_wide)]
+mod widetree;
+#[cfg(wasm_wide)]
+pub use {
+    widepacked::{try_axpy, try_fold_from, try_fold_halve, try_fold_into},
+    widetree::{try_batch_add_indexed, try_batch_double_indexed, PackedTree},
 };
+
+/// The bucket reduction's batched affine additions on raw limbs, where a kernel exists (`false`:
+/// the generic loop runs).
+#[cfg(not(wasm_wide))]
+#[inline(always)]
+pub fn try_batch_add_indexed<F>(_dx: &mut [F], _dy: &mut [F], _pairs: &[(u32, u32)]) -> bool {
+    false
+}
+
+/// As `try_batch_add_indexed`, for the doublings.
+#[cfg(not(wasm_wide))]
+#[inline(always)]
+pub fn try_batch_double_indexed<F>(_dx: &mut [F], _dy: &mut [F], _idx: &[u32]) -> bool {
+    false
+}

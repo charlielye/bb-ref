@@ -720,6 +720,9 @@ fn batch_affine_add_indexed<P: SWCurveConfig>(
         }
         return;
     }
+    if crate::base::wasm::try_batch_add_indexed(dx, dy, pairs) {
+        return;
+    }
     scratch.clear();
     scratch.resize(pairs.len(), P::BaseField::zero());
     let mut acc = <P::BaseField as ark_ff::One>::one();
@@ -749,8 +752,10 @@ fn batch_affine_double_indexed<P: SWCurveConfig>(
     dy: &mut [P::BaseField],
     idx: &[u32],
     scratch: &mut Vec<P::BaseField>,
-) {
-    if idx.is_empty() {
+) where
+    P::BaseField: crate::base::field::NativeField,
+{
+    if idx.is_empty() || crate::base::wasm::try_batch_double_indexed(dx, dy, idx) {
         return;
     }
     scratch.clear();

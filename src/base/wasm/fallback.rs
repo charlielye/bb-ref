@@ -4,18 +4,22 @@
 
 use crate::base::field::NativeField;
 use ark_ec::short_weierstrass::{Affine, SWCurveConfig};
+#[cfg(not(wasm_wide))]
 use core::marker::PhantomData;
 
 /// On simd128 wasm, the fields whose kernel constants exist (bn254 Fr/Fq); here, every field.
 pub trait QuadConsts: NativeField {}
 impl<F: NativeField> QuadConsts for F {}
 
+#[cfg(not(wasm_wide))]
 #[inline(always)]
 pub fn try_axpy<F: 'static>(_dst: &mut [F], _src: &[F], _s: &F) -> bool {
     false
 }
 
-pub use crate::base::ifma::{try_fold_from, try_fold_halve, try_fold_into, PermLanes, PERM_INPUTS, PERM_POINTS};
+#[cfg(not(wasm_wide))]
+pub use crate::base::ifma::{try_fold_from, try_fold_halve, try_fold_into};
+pub use crate::base::ifma::{PermLanes, PERM_INPUTS, PERM_POINTS};
 
 #[inline(always)]
 pub fn try_fold_two_rounds<P: SWCurveConfig>(
@@ -28,8 +32,10 @@ pub fn try_fold_two_rounds<P: SWCurveConfig>(
 }
 
 /// The packed MSM tree drain; absent here, so `try_reduce` hands every level to the scalar tree.
+#[cfg(not(wasm_wide))]
 pub struct PackedTree<P: SWCurveConfig>(PhantomData<P>);
 
+#[cfg(not(wasm_wide))]
 impl<P: SWCurveConfig> PackedTree<P> {
     #[inline(always)]
     pub fn with_capacity(_cap: usize) -> Self {

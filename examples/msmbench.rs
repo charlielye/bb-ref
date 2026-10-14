@@ -48,6 +48,7 @@ fn main() {
     let poly = bb_ref::base::poly::Polynomial::from_coeffs(scalars.clone());
 
     let skip_ark = std::env::var_os("BBREF_MSMBENCH_NO_ARK").is_some();
+    let want = bb_ref::base::G1Projective::msm_unchecked(points, &scalars);
     let runs: [(&str, Box<dyn Fn() -> bb_ref::base::G1Projective>); 3] = [
         ("msm   ", Box::new(|| bb_ref::base::msm::msm(points, &scalars))),
         ("commit", Box::new(|| ck.commit(&poly).into())),
@@ -68,6 +69,7 @@ fn main() {
             best = best.min(t.elapsed().as_secs_f64() * 1e3);
         }
         assert!(!r.is_zero());
+        assert_eq!(r, want, "{name} result differs from ark's");
         let _ = r.into_affine();
         println!("{name} {profile} {bits}b 2^{log_n}: {best:.2} ms");
     }
