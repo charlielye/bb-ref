@@ -149,6 +149,8 @@ impl<T> SubTables<T> {
 
 pub struct EccOpQueue {
     accumulator: crate::base::G1Projective,
+    /// The `mul_accumulate` terms not yet in `accumulator`: summed as one MSM at `eq_and_reset`.
+    pending: (Vec<G1Affine>, Vec<Fr>),
     pub eccvm_ops: SubTables<EccvmOp>,
     pub ultra_ops: SubTables<UltraOp>,
     /// The ZK prefix of the merged Ultra table (built once, at the end of an IVC).
@@ -167,6 +169,7 @@ impl EccOpQueue {
     pub fn new() -> Self {
         Self {
             accumulator: crate::base::G1Projective::default(),
+            pending: Default::default(),
             eccvm_ops: Default::default(),
             ultra_ops: Default::default(),
             zk_ops: vec![],
@@ -195,10 +198,6 @@ impl EccOpQueue {
         self.eccvm_ops.merge();
         self.ultra_ops.merge();
     }
-    pub fn get_accumulator(&self) -> G1Affine {
-        self.accumulator.into_affine()
-    }
-
     pub fn add_accumulate(&mut self, point: G1Affine) -> UltraOp {
         self.accumulator += point;
         self.eccvm_ops.current.push(EccvmOp {
@@ -211,7 +210,8 @@ impl EccOpQueue {
         self.construct_and_populate_ultra_op(EccOpCode::add(), point, Fr::zero())
     }
     pub fn mul_accumulate(&mut self, point: G1Affine, scalar: Fr) -> UltraOp {
-        self.accumulator += point * scalar;
+        self.pending.0.push(point);
+        self.pending.1.push(scalar);
         let op = self.construct_and_populate_ultra_op(EccOpCode::mul(), point, scalar);
         self.eccvm_ops.current.push(EccvmOp {
             op_code: EccOpCode::mul(),
@@ -223,8 +223,8 @@ impl EccOpQueue {
         op
     }
     pub fn eq_and_reset(&mut self) -> UltraOp {
-        let expected = self.get_accumulator();
-        self.accumulator = crate::base::G1Projective::default();
+        let (points, scalars) = std::mem::take(&mut self.pending);
+        let expected = (std::mem::take(&mut self.accumulator) + crate::base::msm::msm(&points, &scalars)).into_affine();
         self.eccvm_ops.current.push(EccvmOp {
             op_code: EccOpCode::eq_reset(),
             base_point: expected,
