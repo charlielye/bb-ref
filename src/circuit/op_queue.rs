@@ -188,10 +188,14 @@ impl EccOpQueue {
     /// its `eq_and_reset`s saw a zero accumulator, as they would have here.
     pub fn absorb_current(&mut self, other: EccOpQueue) {
         self.initialize_new_subtable();
-        assert!(self.accumulator == crate::base::G1Projective::default(), "accumulator not reset before a new circuit");
+        assert!(
+            self.accumulator == crate::base::G1Projective::default() && self.pending.0.is_empty(),
+            "accumulator not reset before a new circuit"
+        );
         assert!(other.ultra_ops.tables.is_empty() && other.zk_ops.is_empty());
         assert!(other.hiding_op.is_none() && other.fixed_append_offset.is_none());
         self.accumulator = other.accumulator;
+        self.pending = other.pending;
         self.ultra_ops.current = other.ultra_ops.current;
         self.eccvm_ops.current = other.eccvm_ops.current;
     }
