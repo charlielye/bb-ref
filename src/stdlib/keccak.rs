@@ -4,6 +4,7 @@
 
 use super::field::{Ctx, FieldT};
 use super::plookup::{get_lookup_accumulators, read_from_1_to_2_table};
+use crate::base::field::NativeField;
 use crate::base::Fr;
 use crate::circuit::keccak_tables::{pow11, rho_slices, BASE, LANE_BITS, ROTATIONS};
 use crate::circuit::plookup::{LookupEntry, MultiTableId, ReadData};
@@ -54,21 +55,6 @@ fn convert_to_sparse(input: u64) -> BigUint {
     }
     out
 }
-/// Keeps the parity of every base-11 digit.
-fn normalize_sparse(mut input: BigUint) -> BigUint {
-    let mut bits = vec![];
-    let base = BigUint::from(BASE);
-    while input > BigUint::from(0u64) {
-        let digit: u64 = (&input % &base).try_into().unwrap();
-        bits.push(digit & 1);
-        input /= &base;
-    }
-    let mut out = BigUint::from(0u64);
-    for bit in bits.iter().rev() {
-        out = out * BASE + *bit;
-    }
-    out
-}
 static SPARSE_RC: LazyLock<[Fr; NUM_ROUNDS]> =
     LazyLock::new(|| std::array::from_fn(|i| Fr::from(convert_to_sparse(RC[i]))));
 /// `Σ 11^i` for `i < 64`: one added to every digit before χ's `2a − b + c`.
@@ -87,40 +73,91 @@ struct KeccakState {
     twisted_state: [FieldT; NUM_LANES],
 }
 
+/// Little-endian base-11 digits of `v` (at least `LANE_BITS` of them): division by 11^9 on 32-bit
+/// pieces, so every step is a native 64-bit division.
+fn base11_digits(v: &Fr) -> Vec<u8> {
+    const D: u64 = 2_357_947_691; // 11^9
+    let l = v.into_bigint().0;
+    let mut w: [u32; 8] = std::array::from_fn(|i| (l[i / 2] >> (32 * (i % 2))) as u32);
+    let mut out = Vec::with_capacity(72);
+    while w.iter().any(|&x| x != 0) {
+        let mut rem = 0u64;
+        for x in w.iter_mut().rev() {
+            let cur = (rem << 32) | u64::from(*x);
+            *x = (cur / D) as u32;
+            rem = cur % D;
+        }
+        for _ in 0..9 {
+            out.push((rem % BASE) as u8);
+            rem /= BASE;
+        }
+    }
+    if out.len() < LANE_BITS {
+        out.resize(LANE_BITS, 0);
+    }
+    out
+}
+
+/// `Σ d[i]·11^i` over a digit run, optionally keeping only each digit's parity.
+fn pack11(d: &[u8], parity: bool) -> u64 {
+    d.iter().rev().fold(0u64, |acc, &x| acc * BASE + u64::from(if parity { x & 1 } else { x }))
+}
+
+/// `Fr` image of `Σ d[i]·11^i` (any length).
+fn fr11(d: &[u8], parity: bool) -> Fr {
+    let pow8 = Fr::from(pow11(8));
+    d.chunks(8).rev().fold(Fr::from(0u64), |acc, c| acc * pow8 + Fr::from(pack11(c, parity)))
+}
+
 /// bb `normalize_and_rotate<lane>`: renormalizes the lane's digits to bits and rotates left by
 /// `ROTATIONS[lane]` through the per-lane ρ multi-table; returns the lane and its new top bit.
+/// Works on the lane's base-11 digits: slice values are short digit runs and the accumulator
+/// columns are Horner sums from the top slice down.
 fn normalize_and_rotate(ctx: &Ctx, lane: usize, limb: &FieldT) -> (FieldT, FieldT) {
     let (right, left) = rho_slices(ROTATIONS[lane]);
-    let right_bits = LANE_BITS - ROTATIONS[lane];
-    let mut input = big(&limb.get_value());
-    let slice_divisor = pow11_big(right_bits);
-    let (left_value, right_value) = (&input / &slice_divisor, &input % &slice_divisor);
-    let mut left_normalized = normalize_sparse(left_value);
-    let mut right_normalized = normalize_sparse(right_value);
-    let mut lookup = ReadData::<Fr> {
-        columns: [vec![], vec![], vec![]],
-        lookup_entries: vec![],
-    };
-    let mut compute_lookup_witnesses = |slices: &[usize], normalized: &mut BigUint| {
-        for bits in slices {
-            lookup.columns[0].push(Fr::from(input.clone()));
-            lookup.columns[1].push(Fr::from(normalized.clone()));
-            let divisor = pow11_big(*bits);
-            let msb_divisor = pow11(*bits) / BASE;
-            let normalized_slice: u64 = (&*normalized % &divisor).try_into().unwrap();
-            let normalized_msb = normalized_slice / msb_divisor;
-            lookup.columns[2].push(Fr::from(normalized_msb));
-            let input_slice: u64 = (&input % &divisor).try_into().unwrap();
-            lookup.lookup_entries.push(LookupEntry {
-                key: [input_slice, 0],
-                value: [Fr::from(normalized_slice), Fr::from(normalized_msb)],
-            });
-            input /= &divisor;
-            *normalized /= &divisor;
+    let digits = base11_digits(&limb.get_value());
+    let n = right.len() + left.len();
+    // Slice digit ranges in order (right part, then left part).
+    let mut ranges = Vec::with_capacity(n);
+    let mut pos = 0;
+    for &bits in right.iter().chain(&left) {
+        ranges.push((pos, bits));
+        pos += bits;
+    }
+    let mut col0 = vec![Fr::from(0u64); n];
+    let mut col1 = vec![Fr::from(0u64); n];
+    let mut col2 = vec![Fr::from(0u64); n];
+    let mut entries = Vec::with_capacity(n);
+    // Column 0 runs over every digit above the slice; column 1 over the parities of its own part
+    // (the right part ends at its last slice, the left part runs to the top digit).
+    let mut acc0 = fr11(&digits[pos.min(digits.len())..], false);
+    let mut acc1 = fr11(&digits[pos.min(digits.len())..], true);
+    for k in (0..n).rev() {
+        let (start, bits) = ranges[k];
+        if k + 1 == right.len() {
+            acc1 = Fr::from(0u64);
         }
+        let shift = Fr::from(pow11(bits));
+        let slice = &digits[start..start + bits];
+        let input_slice = pack11(slice, false);
+        let normalized_slice = pack11(slice, true);
+        let normalized_msb = u64::from(slice[bits - 1] & 1);
+        let normalized_slice_fr = Fr::from(normalized_slice);
+        acc0 = Fr::from(input_slice) + shift * acc0;
+        acc1 = normalized_slice_fr + shift * acc1;
+        col0[k] = acc0;
+        col1[k] = acc1;
+        col2[k] = Fr::small(normalized_msb);
+        entries.push(LookupEntry {
+            key: [input_slice, 0],
+            value: [normalized_slice_fr, Fr::small(normalized_msb)],
+        });
+    }
+    entries.reverse();
+    let lookup = ReadData::<Fr> {
+        columns: [col0, col1, col2],
+        lookup_entries: entries,
     };
-    compute_lookup_witnesses(&right, &mut right_normalized);
-    compute_lookup_witnesses(&left, &mut left_normalized);
     let limb_index = limb.get_witness_index();
     let witnesses = ctx.borrow_mut().create_gates_from_plookup_accumulators(
         MultiTableId::KeccakNormalizeAndRotate(lane as u8),
