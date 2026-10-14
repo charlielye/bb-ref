@@ -100,6 +100,16 @@ impl<F: NativeField, const N: usize> Mul<&Graded<F, N>> for Graded<F, N> {
         if (l1 == 1 && self.c[0].is_zero()) || (l2 == 1 && rhs.c[0].is_zero()) {
             return Graded::constant(F::ZERO);
         }
+        // An edge-constant ±1 (most selector values) multiplies for free.
+        if l1 == 1 || l2 == 1 {
+            let (k, other) = if l1 == 1 { (self.c[0], rhs) } else { (rhs.c[0], &self) };
+            if k == F::ONE {
+                return *other;
+            }
+            if (k + F::ONE).is_zero() {
+                return -*other;
+            }
+        }
         let out_len = l1 + l2 - 1;
         assert!(out_len <= N, "graded univariate degree overflow");
         // Karatsuba for the two shapes the relation bodies produce most — a product of two edge
@@ -134,6 +144,27 @@ impl<F: NativeField, const N: usize> Mul<&Graded<F, N>> for Graded<F, N> {
         let mut c = self.c;
         for k in 0..out_len {
             c[k] = F::ZERO;
+        }
+        // A linear factor times a longer one: Karatsuba over pairs of the longer one's
+        // coefficients, 3 multiplications per pair instead of 4 (2×5: 8 instead of 10).
+        if (l1 == 2) != (l2 == 2) && l1.min(l2) == 2 {
+            let (a, b, lb) = if l1 == 2 { (&self.c, &rhs.c, l2) } else { (&rhs.c, &self.c, l1) };
+            let (a0, a1) = (a[0], a[1]);
+            let s = a0 + a1;
+            let mut j = 0;
+            while j + 1 < lb {
+                let p0 = a0 * b[j];
+                let p2 = a1 * b[j + 1];
+                c[j] += p0;
+                c[j + 1] += s * (b[j] + b[j + 1]) - p0 - p2;
+                c[j + 2] = p2;
+                j += 2;
+            }
+            if j < lb {
+                c[j] += a0 * b[j];
+                c[j + 1] = a1 * b[j];
+            }
+            return Graded { c, len: out_len as u8 };
         }
         for i in 0..l1 {
             let a = self.c[i];
@@ -231,6 +262,25 @@ impl<F: NativeField, const N: usize> FieldLike for Graded<F, N> {
     fn assert_equal(&self, _other: &Self) {}
     fn as_const(&self) -> Option<F> {
         (self.len == 1).then_some(self.c[0])
+    }
+    /// A linear entry's fifth power by the binomial expansion, `Σ C(5,k) a^(5-k) b^k X^k`: 12
+    /// multiplications (the binomials by doubling) where `(x²)²·x` costs 3 + 6 + 10.
+    fn pow5(&self) -> Self {
+        if self.len != 2 {
+            return self.sqr().sqr() * self;
+        }
+        let (a, b) = (self.c[0], self.c[1]);
+        let (a2, b2) = (a * a, b * b);
+        let (a4, b4) = (a2 * a2, b2 * b2);
+        let five = |t: F| t.double().double() + t;
+        let mut c = self.c;
+        c[0] = a4 * a;
+        c[1] = five(a4 * b);
+        c[2] = five(a2 * a * b2).double();
+        c[3] = five(a2 * b2 * b).double();
+        c[4] = five(a * b4);
+        c[5] = b4 * b;
+        Graded { c, len: 6 }
     }
 }
 

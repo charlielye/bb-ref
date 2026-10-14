@@ -454,7 +454,7 @@ fn non_native_field<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: &T) {
 }
 
 fn sbox<T: FieldLike>(x: T) -> T {
-    x.sqr().sqr() * &x
+    x.pow5()
 }
 
 // relations/poseidon2_external_relation.hpp
@@ -602,8 +602,7 @@ fn poseidon2_initial_external<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: 
 }
 
 fn pow5<T: FieldLike>(x: T) -> T {
-    let sq = x.sqr();
-    sq.sqr() * &x
+    x.pow5()
 }
 
 /// bb `poseidon2_quad_internal_relation.hpp`: four internal rounds per row, linked to the next

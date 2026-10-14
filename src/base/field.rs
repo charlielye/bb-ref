@@ -96,6 +96,10 @@ pub trait FieldLike:
     fn sqr(&self) -> Self {
         self.clone() * self
     }
+    /// `x^5` (the Poseidon2 S-box) as `(x²)²·x`; coefficient-basis univariates override it.
+    fn pow5(&self) -> Self {
+        self.sqr().sqr() * self
+    }
     /// bb bigfield `self_reduce`: native and circuit-native fields are always reduced.
     fn self_reduce(&self) {}
     /// bb `x + x` with both operands the same object (bigfield reduction aliasing).
