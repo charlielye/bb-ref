@@ -58,6 +58,9 @@ pub const STORED_DOMAIN_261: bool = cfg!(target_family = "wasm");
 /// The four-lane simd128 kernels exist (`packed.rs`, `ipafold.rs`, `tree.rs`).
 pub const PACKED: bool = cfg!(all(target_family = "wasm", target_feature = "simd128"));
 
+/// The permutation relation runs on four-lane edge batches in the sumcheck (`perm4.rs`).
+pub const PERM_LANES: bool = PACKED;
+
 /// The GLV companion table `(β·x, −y)` per SRS point pays off where the per-entry multiply at
 /// gather time is the visible cost: wasm only.
 pub const GLV_PHI_TABLE: bool = cfg!(target_family = "wasm");
@@ -87,6 +90,8 @@ mod ipafold;
 #[cfg(all(target_family = "wasm", target_feature = "simd128"))]
 mod packed;
 #[cfg(all(target_family = "wasm", target_feature = "simd128"))]
+mod perm4;
+#[cfg(all(target_family = "wasm", target_feature = "simd128"))]
 mod quad261;
 #[cfg(all(target_family = "wasm", target_feature = "simd128"))]
 mod tree;
@@ -94,10 +99,14 @@ mod tree;
 pub use {
     ipafold::try_fold_two_rounds,
     packed::{try_axpy, try_fold_from, try_fold_halve, try_fold_into, Kc, QuadConsts},
+    perm4::{PermLanes, PERM_INPUTS, PERM_POINTS},
     tree::PackedTree,
 };
 
 #[cfg(not(all(target_family = "wasm", target_feature = "simd128")))]
 mod fallback;
 #[cfg(not(all(target_family = "wasm", target_feature = "simd128")))]
-pub use fallback::{try_axpy, try_fold_from, try_fold_halve, try_fold_into, try_fold_two_rounds, PackedTree, QuadConsts};
+pub use fallback::{
+    try_axpy, try_fold_from, try_fold_halve, try_fold_into, try_fold_two_rounds, PackedTree, PermLanes, QuadConsts,
+    PERM_INPUTS, PERM_POINTS,
+};

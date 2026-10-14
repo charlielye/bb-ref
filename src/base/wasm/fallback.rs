@@ -48,3 +48,24 @@ impl<P: SWCurveConfig> PackedTree<P> {
         false
     }
 }
+
+pub const PERM_INPUTS: usize = 29;
+pub const PERM_POINTS: usize = 6;
+
+/// The four-lane permutation-relation kernel; absent here, so the sumcheck keeps its scalar body.
+pub enum PermLanes {}
+
+impl PermLanes {
+    #[inline(always)]
+    pub fn new<F: 'static>(_beta: &F, _gamma: &F) -> Option<Box<Self>> {
+        None
+    }
+    #[inline(always)]
+    pub fn push<F: 'static>(&mut self, _v: &[F; PERM_INPUTS]) {
+        match *self {}
+    }
+    #[inline(always)]
+    pub fn finish<F: 'static>(&mut self) -> Option<[F; PERM_POINTS]> {
+        match *self {}
+    }
+}
