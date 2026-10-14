@@ -16,6 +16,7 @@ use crate::base::poly::Polynomial;
 use crate::base::rng::{random_field, Rng};
 use crate::base::srs::Ck;
 use crate::base::transcript::Transcript;
+use crate::base::wasm::{PermLanes, PERM_INPUTS, PERM_LANES, PERM_POINTS};
 use crate::honk::flavor::{Ent, Rel, BUS_SPECS};
 use ark_ff::PrimeField;
 use rayon::prelude::*;
@@ -94,6 +95,23 @@ pub trait RelationSet<F: FieldLike> {
     fn total_subrelations(&self) -> usize {
         (0..self.num_relations()).map(|r| self.num_subrelations(r)).sum()
     }
+    /// The permutation relation's index and columns, for the lane kernel (`PermLanes`).
+    fn permutation_columns(&self) -> Option<PermCols> {
+        None
+    }
+}
+
+/// Columns of the permutation relation's grand-product identity (`PermLanes`).
+#[derive(Clone, Copy)]
+pub struct PermCols {
+    pub ri: usize,
+    pub w: [usize; 4],
+    pub id: [usize; 4],
+    pub sigma: [usize; 4],
+    pub z: usize,
+    pub z_shift: usize,
+    pub lagrange_first: usize,
+    pub lagrange_last: usize,
 }
 
 /// The relations of an Ultra/Mega flavor.
@@ -190,6 +208,19 @@ impl<F: FieldLike> RelationSet<F> for HonkRelations<'_> {
             g += rel.num_subrelations();
         }
         out.quad_batching.iter().any(|v| !v.is_empty()).then_some(out)
+    }
+    fn permutation_columns(&self) -> Option<PermCols> {
+        let l = self.layout;
+        Some(PermCols {
+            ri: self.flavor.relations.iter().position(|r| *r == Rel::Permutation)?,
+            w: [Ent::w_l, Ent::w_r, Ent::w_o, Ent::w_4].map(|e| l.idx(e)),
+            id: [Ent::id_1, Ent::id_2, Ent::id_3, Ent::id_4].map(|e| l.idx(e)),
+            sigma: [Ent::sigma_1, Ent::sigma_2, Ent::sigma_3, Ent::sigma_4].map(|e| l.idx(e)),
+            z: l.idx(Ent::z_perm),
+            z_shift: l.shift_idx(Ent::z_perm),
+            lagrange_first: l.idx(Ent::lagrange_first),
+            lagrange_last: l.idx(Ent::lagrange_last),
+        })
     }
     fn skip_columns(&self) -> Option<Vec<usize>> {
         let l = self.layout;
@@ -802,6 +833,10 @@ struct Scratch<F: NativeField> {
     acc_wide: Vec<Vec<GradedWide<F>>>,
     cols_wide: Vec<usize>,
     params_wide: Option<RelationParams<GradedWide<F>>>,
+    /// The permutation identity on lanes of edges (`PermLanes`), where a kernel exists: its
+    /// columns, and the kernel once the first edge has supplied β and γ (`Some(None)`: none).
+    perm_cols: Option<PermCols>,
+    perm: Option<Option<Box<PermLanes>>>,
 }
 
 impl<F: NativeField> Scratch<F> {
@@ -833,6 +868,8 @@ impl<F: NativeField> Scratch<F> {
             acc_wide: Vec::new(),
             cols_wide: Vec::new(),
             params_wide: None,
+            perm_cols: None,
+            perm: None,
         }
         .init_in_skip(num_columns)
         .init_graded(rels, num_columns, d)
@@ -841,6 +878,8 @@ impl<F: NativeField> Scratch<F> {
         let zero = Graded::<F, GRADED_MAX_LEN>::constant(<F as ark_ff::AdditiveGroup>::ZERO);
         self.graded_rel = (0..rels.num_relations()).map(|r| graded_relation(rels, r, d)).collect();
         self.graded = self.graded_rel.iter().any(|&g| g);
+        self.perm_cols = (rels.permutation_columns())
+            .filter(|pc| PERM_LANES && self.graded_rel[pc.ri] && rels.partial_length(pc.ri).min(d) == PERM_POINTS);
         if self.graded {
             self.row_uni = vec![zero; num_columns];
             self.acc_uni = (0..rels.num_relations())
@@ -987,7 +1026,14 @@ fn coefficient_form<F: FieldLike>(rels: &impl RelationSet<F>, ri: usize, d: usiz
 /// graded relations hold coefficients (slot `k` = coefficient of X^k) rather than point values.
 /// Staying in coefficient form makes the per-round batching O(len) per subrelation instead of a
 /// barycentric extension to every one of the d points (bb's short-monomial flavors do the same).
-fn flush_graded<F: NativeField>(s: &Scratch<F>, acc: &mut Accumulators<F>) {
+fn flush_graded<F: NativeField>(s: &mut Scratch<F>, acc: &mut Accumulators<F>) {
+    if let (Some(pc), Some(Some(lanes))) = (s.perm_cols, s.perm.as_mut()) {
+        if let Some(v) = lanes.finish::<F>() {
+            for (k, c) in points_to_coefficients(&v).into_iter().enumerate() {
+                acc.point(pc.ri, k)[0] += c;
+            }
+        }
+    }
     for ri in 0..s.acc_uni.len() {
         if !s.graded_rel[ri] {
             continue;
@@ -1008,6 +1054,37 @@ fn flush_graded<F: NativeField>(s: &Scratch<F>, acc: &mut Accumulators<F>) {
             }
         }
     }
+}
+
+/// Coefficients of the degree-5 univariate with values `v` at `0..6`: Newton's forward differences
+/// `Δᵏv(0)/k!` against the falling factorials `X(X−1)…(X−k+1)`.
+fn points_to_coefficients<F: NativeField>(v: &[F; PERM_POINTS]) -> [F; PERM_POINTS] {
+    let mut d = *v;
+    for k in 1..PERM_POINTS {
+        for i in (k..PERM_POINTS).rev() {
+            d[i] = d[i] - d[i - 1];
+        }
+    }
+    let mut out = [F::ZERO; PERM_POINTS];
+    let mut falling = [F::ZERO; PERM_POINTS];
+    falling[0] = F::ONE;
+    let mut factorial = F::ONE;
+    for k in 0..PERM_POINTS {
+        if k > 0 {
+            // falling *= (X - (k - 1)); factorial *= k
+            let m = F::from((k - 1) as u64);
+            for j in (0..=k).rev() {
+                let lower = if j > 0 { falling[j - 1] } else { F::ZERO };
+                falling[j] = lower - m * falling[j];
+            }
+            factorial *= F::from(k as u64);
+        }
+        let w = d[k] * factorial.inverse().unwrap();
+        for j in 0..=k {
+            out[j] += w * falling[j];
+        }
+    }
+    out
 }
 
 /// BBREF_ROUND_DETAIL=1: per-round breakdown of the univariate (pows / edges / head / assembly)
@@ -1040,7 +1117,7 @@ where
         accumulate_edge(rels, used, table, e, params, &params_uni, &pows.at(e), &mut acc, &mut scratch);
     }
     if scratch.graded {
-        flush_graded(&scratch, &mut acc);
+        flush_graded(&mut scratch, &mut acc);
     }
     acc
 }
@@ -1212,13 +1289,37 @@ fn accumulate_edge<F: NativeField>(
         }
         s.delta[j] = s.row1[j] - s.row0[j];
     }
+    // The permutation identity goes to the lane kernel on edges without the Lagrange terms.
+    let mut perm_ri = usize::MAX;
+    if let Some(pc) = s.perm_cols {
+        let lagrange = [pc.lagrange_first, pc.lagrange_last];
+        if s.active[pc.ri] && lagrange.iter().all(|&j| s.row0[j].is_zero() && s.row1[j].is_zero()) {
+            if let Some(lanes) = s.perm.get_or_insert_with(|| PermLanes::new(&params.beta, &params.gamma)) {
+                let (r0, dl) = (&s.row0, &s.delta);
+                let mut v = [F::zero(); PERM_INPUTS];
+                for i in 0..4 {
+                    v[6 * i..6 * i + 6].copy_from_slice(&[
+                        r0[pc.w[i]],
+                        dl[pc.w[i]],
+                        r0[pc.id[i]],
+                        dl[pc.id[i]],
+                        r0[pc.sigma[i]],
+                        dl[pc.sigma[i]],
+                    ]);
+                }
+                v[24..].copy_from_slice(&[r0[pc.z], dl[pc.z], r0[pc.z_shift], dl[pc.z_shift], *scaling]);
+                lanes.push(&v);
+                perm_ri = pc.ri;
+            }
+        }
+    }
     if s.graded {
         for &j in &s.cols {
             s.row_uni[j].set_linear(s.row0[j], s.delta[j]);
         }
         let scaling_uni = Graded::constant(*scaling);
         for ri in 0..rels.num_relations() {
-            if s.active[ri] && s.graded_rel[ri] {
+            if s.active[ri] && s.graded_rel[ri] && ri != perm_ri {
                 rels.accumulate_graded(ri, &mut s.acc_uni[ri], &s.row_uni, params_uni, &scaling_uni);
             }
         }
@@ -1702,7 +1803,7 @@ where
                 &mut scratch,
             );
             if scratch.graded {
-                flush_graded(&scratch, &mut acc);
+                flush_graded(&mut scratch, &mut acc);
             }
             let rd = if self.row_disabling {
                 Some((self.rd0, self.rd1))

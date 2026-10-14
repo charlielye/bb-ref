@@ -15,7 +15,7 @@ pub fn try_axpy<F: 'static>(_dst: &mut [F], _src: &[F], _s: &F) -> bool {
     false
 }
 
-pub use crate::base::ifma::{try_fold_from, try_fold_halve, try_fold_into};
+pub use crate::base::ifma::{try_fold_from, try_fold_halve, try_fold_into, PermLanes, PERM_INPUTS, PERM_POINTS};
 
 #[inline(always)]
 pub fn try_fold_two_rounds<P: SWCurveConfig>(
@@ -48,3 +48,4 @@ impl<P: SWCurveConfig> PackedTree<P> {
         false
     }
 }
+
