@@ -96,13 +96,13 @@ def print_single(binary, run_result):
     print(f"{'TOTAL':{width}}  {len(rows):3}  {sum(totals.values()):8.2f}s   peak RSS {peak_rss_kb / 1048576:.2f}GB")
 
 
-def print_both(run_bb, run_ref):
+def print_both(run_bb, run_ref, how="concurrent"):
     rows_bb, peak_bb = run_bb
     rows_ref, peak_ref = run_ref
     t_bb, counts = totals_of(rows_bb)
     t_ref, _ = totals_of(rows_ref)
     width = max(len(n) for n in t_bb)
-    print(f"\nbb vs bb-ref (concurrent replay of the same corpus)\n")
+    print(f"\nbb vs bb-ref ({how} replay of the same corpus)\n")
     print(f"{'operation':{width}}  {'n':>3}  {'bb':>9}  {'bb-ref':>9}  {'ref/bb':>7}")
     print("-" * (width + 36))
     for name, total in t_bb.most_common():
@@ -116,6 +116,11 @@ def print_both(run_bb, run_ref):
 
 def main():
     corpus_path, binary, extra_args = sys.argv[1], sys.argv[2], sys.argv[3:]
+    if binary == "--pair":
+        # One replay after the other, each owning the machine: bb, then bb-ref.
+        bb, ref, extra_args = extra_args[0], extra_args[1], extra_args[2:]
+        print_both(run(corpus_path, bb, extra_args), run(corpus_path, ref, extra_args), "sequential")
+        return
     if binary == "--both":
         # Concurrent replays contend for cpu: only meaningful with ~2x THREADS of spare cores.
         from concurrent.futures import ThreadPoolExecutor

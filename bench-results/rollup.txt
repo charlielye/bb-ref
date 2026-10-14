@@ -1,0 +1,23 @@
+rollup corpus rollup-3b2c553, sequential replay, 16 threads, seed 12345, 2026-10-14, host ip-172-31-27-76, bb: pinned bb (3b2c5536), bb-ref: ef4534e
+threads: 16 (both binaries)
+
+bb vs bb-ref (sequential replay of the same corpus)
+
+operation                                                 n         bb     bb-ref   ref/bb
+------------------------------------------------------------------------------------------
+BbCircuitProve PrivateTxBaseRollupArtifact                9     93.62s     40.75s    0.44x
+BbCircuitProve RootRollupArtifact                         2     66.19s     31.85s    0.48x
+BbCircuitProve CheckpointRootRollupArtifact               2     47.47s     21.32s    0.45x
+BbCircuitProve CheckpointRootSingleBlockRollupArtifact    2     40.75s     18.27s    0.45x
+BbCircuitProve BlockRootRollupArtifact                    2     12.71s      6.32s    0.50x
+BbCircuitProve BlockRootSingleTxRollupArtifact            4     12.16s      6.83s    0.56x
+BbCircuitProve InboxParity64Artifact                      4      9.57s      3.84s    0.40x
+BbCircuitProve TxMergeRollupArtifact                      1      6.12s      2.93s    0.48x
+BbCircuitProve BlockMergeRollupArtifact                   1      6.09s      2.95s    0.48x
+BbCircuitProve CheckpointMergeRollupArtifact              1      5.27s      3.05s    0.58x
+BbCircuitVerify                                          32      0.49s      0.39s    0.80x
+BbCircuitProve BlockRootNoTxsRollupArtifact               1      0.46s      0.25s    0.54x
+BbCircuitProve CheckpointPaddingRollupArtifact            1      0.17s      0.13s    0.75x
+------------------------------------------------------------------------------------------
+TOTAL                                                    62    301.06s    138.87s    0.46x
+peak RSS: bb 12.56GB, bb-ref 12.89GB

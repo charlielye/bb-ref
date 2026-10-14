@@ -16,7 +16,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 FLOWS_DIR=${BB_FLOWS:-../aztec-packages2/barretenberg/cpp/chonk-pinned-flows}
-BB=./bin/bb
+BB=${BB:-./bin/bb}
 BBREF=${BBREF:-./target/release/bb-ref}
 
 ARGS=()

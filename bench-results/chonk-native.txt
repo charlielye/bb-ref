@@ -1,0 +1,15 @@
+threads: 8 (both binaries), seed: 12345, flows: 11, wall = best of 3, proving = one instrumented run
+date: 2026-10-14, host: ip-172-31-27-76, bb: /home/ubuntu/bb-ref/bin/bb (3b2c5536), bb-ref: /home/ubuntu/bb-ref/tables-bb-ref (ef4534e)
+flow                                                                bb  bb-ref  ratio  bb prv ref prv  ratio  bb rss ref rss    mem
+deploy_ecdsar1+sponsored_fpc                                      3.02    1.55  0.51x    2.83    1.48  0.52x   0.30G   0.32G  1.07x
+deploy_schnorr+sponsored_fpc                                      2.82    1.42  0.50x    2.62    1.35  0.52x   0.29G   0.31G  1.05x
+ecdsar1+amm_add_liquidity_1_recursions+sponsored_fpc              4.62    2.38  0.52x    4.25    2.22  0.52x   0.34G   0.34G  1.02x
+ecdsar1+deploy_tokenContract_with_registration+sponsored_fpc      3.54    1.77  0.50x    3.24    1.66  0.51x   0.32G   0.34G  1.04x
+ecdsar1+storage_proof_7_layers+sponsored_fpc                     10.26    3.97  0.39x    9.80    3.79  0.39x   0.87G   0.73G  0.84x
+ecdsar1+token_bridge_claim_private+sponsored_fpc                  3.09    1.56  0.50x    2.84    1.48  0.52x   0.31G   0.31G  1.00x
+ecdsar1+transfer_0_recursions+private_fpc                         4.00    2.03  0.51x    3.67    1.93  0.53x   0.33G   0.33G  0.99x
+ecdsar1+transfer_0_recursions+sponsored_fpc                       2.70    1.35  0.50x    2.50    1.30  0.52x   0.29G   0.29G  0.99x
+ecdsar1+transfer_1_recursions+private_fpc                         4.22    2.18  0.52x    3.88    2.01  0.52x   0.34G   0.33G  0.99x
+ecdsar1+transfer_1_recursions+sponsored_fpc                       2.95    1.51  0.51x    2.74    1.43  0.52x   0.30G   0.30G  0.98x
+schnorr+deploy_tokenContract_with_registration+sponsored_fpc      3.36    1.65  0.49x    3.04    1.54  0.51x   0.32G   0.33G  1.01x
+TOTAL                                                            44.58   21.37  0.48x   41.41   20.21  0.49x

@@ -1,15 +1,17 @@
-STALE (2026-09-06): not regenerated — the bench box (bbbench) has no wasmtime, and browsers run V8, so chonk-v8.txt is the wasm table of record. Kept for history; numbers below predate the 2026-09-05/06 optimization passes.
-runtime: wasmtime, threads: 8 (both provers), seed: 12345, flows: 11
-flow                                                                 bb   bb-ref   ratio   bb rss  ref rss     mem
-deploy_ecdsar1+sponsored_fpc                                       6.18     7.74   1.25x    0.37G    0.33G   0.88x
-deploy_schnorr+sponsored_fpc                                       5.72     6.98   1.22x    0.37G    0.33G   0.90x
-ecdsar1+amm_add_liquidity_1_recursions+sponsored_fpc               9.80    12.00   1.22x    0.41G    0.34G   0.82x
-ecdsar1+deploy_tokenContract_with_registration+sponsored_fpc       7.27     9.42   1.30x    0.39G    0.36G   0.92x
-ecdsar1+storage_proof_7_layers+sponsored_fpc                      28.16    21.48   0.76x    0.89G    0.94G   1.05x
-ecdsar1+token_bridge_claim_private+sponsored_fpc                   6.39     7.72   1.21x    0.38G    0.34G   0.88x
-ecdsar1+transfer_0_recursions+private_fpc                          8.37    10.18   1.22x    0.41G    0.34G   0.83x
-ecdsar1+transfer_0_recursions+sponsored_fpc                        5.42     6.66   1.23x    0.36G    0.33G   0.92x
-ecdsar1+transfer_1_recursions+private_fpc                          8.85    10.77   1.22x    0.41G    0.34G   0.83x
-ecdsar1+transfer_1_recursions+sponsored_fpc                        6.06     7.42   1.22x    0.37G    0.33G   0.91x
-schnorr+deploy_tokenContract_with_registration+sponsored_fpc       6.86     8.77   1.28x    0.39G    0.36G   0.92x
-TOTAL                                                             99.08   109.14   1.10x
+basis: bb wall from the stripped module (the release module carries a 100 MB name section that costs ~2% of wall to load); bb proving-only from its ENABLE_WASM_BENCH module via --bench_out
+wasm_check: /home/ubuntu/bb-ref/tables-bb-ref.wasm ok (6861 memory.copy)
+runtime: wasmtime (wasmtime 36.0.0), threads: 8 (both provers), seed: 12345, flows: 11, wall = best of 3, proving = one instrumented run
+date: 2026-10-14, host: ip-172-31-27-76, bb module: bb-stripped.wasm (17997895 bytes), bb bench module: /home/ubuntu/bench-bb.wasm, bb-ref module: tables-bb-ref.wasm (12228480 bytes), bb-ref: ef4534e
+flow                                                                bb  bb-ref  ratio  bb prv ref prv  ratio  bb mem ref mem    mem
+deploy_ecdsar1+sponsored_fpc                                      6.14    4.32  0.70x   5.445    4.10  0.75x   0.87G   0.24G  0.28x
+deploy_schnorr+sponsored_fpc                                      5.60    4.00  0.71x   5.558    3.79  0.68x   0.34G   0.24G  0.71x
+ecdsar1+amm_add_liquidity_1_recursions+sponsored_fpc              9.56    6.51  0.68x   8.517    6.14  0.72x   0.39G   0.24G  0.63x
+ecdsar1+deploy_tokenContract_with_registration+sponsored_fpc      7.15    4.96  0.69x   6.269    4.67  0.74x   0.36G   0.25G  0.70x
+ecdsar1+storage_proof_7_layers+sponsored_fpc                     27.03   11.43  0.42x  25.746   10.83  0.42x   0.87G   0.58G  0.67x
+ecdsar1+token_bridge_claim_private+sponsored_fpc                  6.25    4.34  0.69x   5.509    4.10  0.74x   0.35G   0.24G  0.69x
+ecdsar1+transfer_0_recursions+private_fpc                         8.16    5.61  0.69x   7.151    5.33  0.75x   0.38G   0.24G  0.65x
+ecdsar1+transfer_0_recursions+sponsored_fpc                       5.31    3.82  0.72x   4.780    3.62  0.76x   0.33G   0.24G  0.73x
+ecdsar1+transfer_1_recursions+private_fpc                         8.73    5.94  0.68x   7.626    5.61  0.73x   0.38G   0.24G  0.64x
+ecdsar1+transfer_1_recursions+sponsored_fpc                       5.89    4.22  0.72x   5.229    3.99  0.76x   0.34G   0.24G  0.71x
+schnorr+deploy_tokenContract_with_registration+sponsored_fpc      6.67    4.69  0.70x   5.844    4.38  0.75x   0.36G   0.25G  0.69x
+TOTAL                                                            96.49   59.84  0.62x   87.67   56.55  0.64x

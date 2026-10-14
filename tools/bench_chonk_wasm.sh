@@ -102,7 +102,7 @@ run_one() { # binary inputs outdir -> "seconds maxrss_kb" (best wall of $REPS, m
     echo "$best $mem"
 }
 
-echo "runtime: $RUNTIME, threads: $THREADS (both provers), seed: $BB_RNG_SEED, flows: ${#FLOWS[@]}, wall = best of $REPS, proving = one instrumented run"
+echo "runtime: $RUNTIME ($(case $RUNTIME in wasmtime) wasmtime --version ;; v8) echo "node $(node --version)" ;; esac)), threads: $THREADS (both provers), seed: $BB_RNG_SEED, flows: ${#FLOWS[@]}, wall = best of $REPS, proving = one instrumented run"
 echo "date: $(date -u +%Y-%m-%d), host: $(hostname), bb module: $(basename "$BB_WASM") ($(stat -c %s "$BB_WASM" 2>/dev/null) bytes), bb bench module: ${BB_WASM_BENCH:-none}, bb-ref module: $(basename "$REF_WASM") ($(stat -c %s "$REF_WASM" 2>/dev/null) bytes), bb-ref: ${BBREF_COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}"
 printf '%-62s %7s %7s %6s %7s %7s %6s %7s %7s %6s\n' flow "bb" "bb-ref" ratio "bb prv" "ref prv" ratio "bb mem" "ref mem" mem
 total_bb=0; total_ref=0; total_bbp=0; total_refp=0

@@ -4,6 +4,7 @@
 #   tools/bench.sh <corpus[.zst]> [binary] [--threads <n>]   # binary defaults to ./bin/bb
 #   tools/bench.sh <corpus[.zst]> --both           # bb AND bb-ref concurrently, one comparison
 #                                                  # table (needs 2x THREADS of spare cpu)
+#   tools/bench.sh <corpus[.zst]> --pair <bb> <bb-ref>   # the same table, replayed one after the other
 #
 # The corpus is real recorded traffic, so this measures the operations a prover actually performs,
 # in the proportions it performs them -- a rollup benchmark that needs no separate harness. Run it
@@ -29,7 +30,7 @@ while [ $# -gt 0 ]; do
 done
 set -- "${ARGS[@]}"
 
-CORPUS=${1:?usage: bench.sh <corpus[.zst]> [binary|--both] [--threads <n>]}
+CORPUS=${1:?usage: bench.sh <corpus[.zst]> [binary|--both|--pair <bb> <bb-ref>] [--threads <n>]}
 BIN=${2:-./bin/bb}
 : "${BB_RNG_SEED:=12345}"
 # The two binaries default to DIFFERENT thread caps (bb: min(32, cores); bb-ref: rayon min(48,
