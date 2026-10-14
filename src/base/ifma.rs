@@ -573,9 +573,154 @@ mod x86 {
             store8(&mut ax[8 * g], &x3);
         }
     }
+
+    /// The sumcheck permutation identity on eight edges (`super::PermLanes`). Bounds, in units of
+    /// p for canonical inputs: a factor `w + γ + β·x` is below 3.19p and its slope below 2.19p; its
+    /// points are reduced at X = 2 and 4, so none exceeds 5.38p; a pair product is below 6.5p and
+    /// reduced; the four-factor products are below 1.19p, z at X ≤ 5 below 6p, so z·num − z'·den
+    /// stays below 6.36p with 4p added, and the accumulator is reduced after every add.
+    #[target_feature(enable = "avx512f,avx512ifma")]
+    pub(super) unsafe fn perm8(
+        stage: &[[Fr; 8]; PERM_INPUTS],
+        acc: &mut [V5; PERM_POINTS],
+        beta: &V5,
+        gamma: &V5,
+    ) {
+        let c = &const { Consts::new(<Fr as ark_ff::PrimeField>::MODULUS.0) };
+        let at = |k: usize| load8(stage[k].as_ptr());
+        let sc = at(PERM_INPUTS - 1);
+        let points = |mut a: V5, mut da: V5, scaled: bool| -> [V5; PERM_POINTS] {
+            if scaled {
+                (a, da) = (mont_mul(c, &a, &sc), mont_mul(c, &da, &sc));
+            }
+            let mut t = [a; PERM_POINTS];
+            for x in 1..PERM_POINTS {
+                t[x] = add(&t[x - 1], &da);
+                if x % 2 == 0 {
+                    t[x] = canonical(c, &t[x]);
+                }
+            }
+            t
+        };
+        let mut num = [[*gamma; PERM_POINTS]; 4];
+        let mut den = num;
+        for i in 0..4 {
+            let (w0, dw) = (at(6 * i), at(6 * i + 1));
+            let wg = add(&w0, gamma);
+            let factor = |k: usize| (add(&wg, &mont_mul(c, &at(k), beta)), add(&dw, &mont_mul(c, &at(k + 1), beta)));
+            let ((na, nd), (da, dd)) = (factor(6 * i + 2), factor(6 * i + 4));
+            num[i] = points(na, nd, i == 0);
+            den[i] = points(da, dd, i == 0);
+        }
+        let (z0, dz, s0, ds) = (at(24), at(25), at(26), at(27));
+        let (mut z, mut s) = (z0, s0);
+        for x in 0..PERM_POINTS {
+            if x > 0 {
+                z = add(&z, &dz);
+                s = add(&s, &ds);
+            }
+            let pair = |f: &[[V5; PERM_POINTS]; 4], i: usize| canonical(c, &mont_mul(c, &f[i][x], &f[i + 1][x]));
+            let n = mont_mul(c, &pair(&num, 0), &pair(&num, 2));
+            let d = mont_mul(c, &pair(&den, 0), &pair(&den, 2));
+            let t = sub_plus(&mont_mul(c, &z, &n), &mont_mul(c, &s, &d), None, &c.p4);
+            acc[x] = canonical(c, &add(&acc[x], &t));
+        }
+    }
 }
 #[cfg(target_arch = "x86_64")]
-use x86::{add_kernel, axpy_tile, fold_kernel};
+use x86::{add_kernel, axpy_tile, fold_kernel, perm8};
+
+/// Inputs per edge of the sumcheck's permutation lane kernel: for each wire `i`: `w₀, Δw, id₀,
+/// Δid, σ₀, Δσ`; then `z₀, Δz, z_shift₀, Δz_shift` and the separator weight.
+pub const PERM_INPUTS: usize = 29;
+/// Points of the identity's univariate (degree 5).
+pub const PERM_POINTS: usize = 6;
+
+/// The sumcheck permutation identity on eight edges at once (the native counterpart of the wasm
+/// `perm4.rs`, same contract): `push` stages an edge, `finish` returns the sum over the pushed
+/// edges at the points `0..PERM_POINTS`.
+#[cfg(target_arch = "x86_64")]
+pub struct PermLanes {
+    stage: [[Fr; 8]; PERM_INPUTS],
+    lanes: usize,
+    pushed: bool,
+    acc: [V5; PERM_POINTS],
+    beta: V5,
+    gamma: V5,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl PermLanes {
+    /// `None` unless `F` is bn254 Fr on an IFMA CPU.
+    pub fn new<F: 'static>(beta: &F, gamma: &F) -> Option<Box<Self>> {
+        if core::any::TypeId::of::<F>() != core::any::TypeId::of::<Fr>() || !available::<Fr>() {
+            return None;
+        }
+        let as_fr = |v: &F| unsafe { core::mem::transmute_copy::<F, Fr>(v) };
+        let (b, g) = (as_fr(beta), as_fr(gamma));
+        unsafe {
+            Some(Box::new(PermLanes {
+                stage: [[<Fr as ark_ff::AdditiveGroup>::ZERO; 8]; PERM_INPUTS],
+                lanes: 0,
+                pushed: false,
+                acc: [x86::load8([<Fr as ark_ff::AdditiveGroup>::ZERO; 8].as_ptr()); PERM_POINTS],
+                beta: x86::load8([b; 8].as_ptr()),
+                gamma: x86::load8([g; 8].as_ptr()),
+            }))
+        }
+    }
+
+    #[inline]
+    pub fn push<F: 'static>(&mut self, v: &[F; PERM_INPUTS]) {
+        for (k, x) in v.iter().enumerate() {
+            self.stage[k][self.lanes] = unsafe { core::mem::transmute_copy::<F, Fr>(x) };
+        }
+        self.lanes += 1;
+        self.pushed = true;
+        if self.lanes == 8 {
+            unsafe { perm8(&self.stage, &mut self.acc, &self.beta, &self.gamma) };
+            self.lanes = 0;
+        }
+    }
+
+    pub fn finish<F: 'static>(&mut self) -> Option<[F; PERM_POINTS]> {
+        if !self.pushed {
+            return None;
+        }
+        if self.lanes > 0 {
+            // A zero weight zeroes both scaled factors, so the idle lanes contribute 0.
+            self.stage[PERM_INPUTS - 1][self.lanes..].fill(<Fr as ark_ff::AdditiveGroup>::ZERO);
+            unsafe { perm8(&self.stage, &mut self.acc, &self.beta, &self.gamma) };
+            self.lanes = 0;
+        }
+        self.pushed = false;
+        let out = core::array::from_fn(|x| {
+            let mut lanes = [<Fr as ark_ff::AdditiveGroup>::ZERO; 8];
+            unsafe { x86::store8(lanes.as_mut_ptr(), &self.acc[x]) };
+            let t: Fr = lanes.iter().sum();
+            unsafe { core::mem::transmute_copy::<Fr, F>(&t) }
+        });
+        self.acc = [unsafe { x86::load8([<Fr as ark_ff::AdditiveGroup>::ZERO; 8].as_ptr()) }; PERM_POINTS];
+        Some(out)
+    }
+}
+
+/// No lane kernel off x86-64 (simd128 wasm has its own): the sumcheck keeps its scalar body.
+#[cfg(not(target_arch = "x86_64"))]
+pub enum PermLanes {}
+
+#[cfg(not(target_arch = "x86_64"))]
+impl PermLanes {
+    pub fn new<F: 'static>(_beta: &F, _gamma: &F) -> Option<Box<Self>> {
+        None
+    }
+    pub fn push<F: 'static>(&mut self, _v: &[F; PERM_INPUTS]) {
+        match *self {}
+    }
+    pub fn finish<F: 'static>(&mut self) -> Option<[F; PERM_POINTS]> {
+        match *self {}
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -703,5 +848,37 @@ mod tests {
     #[test]
     fn chords_grumpkin() {
         chords_match_ark::<crate::base::GrumpkinConfig>();
+    }
+
+    /// The permutation lane kernel against the identity evaluated per edge, over partial lane
+    /// groups and edge values (0, ±1, p − 1 at the extremes of the bound analysis).
+    #[test]
+    fn perm_lanes_match_scalar() {
+        use crate::base::Fr;
+        let mut rng = ark_std::test_rng();
+        let (beta, gamma) = (Fr::rand(&mut rng), Fr::rand(&mut rng));
+        let Some(mut lanes) = PermLanes::new(&beta, &gamma) else {
+            eprintln!("no AVX-512 IFMA: skipped");
+            return;
+        };
+        for n in [1usize, 7, 8, 9, 16, 61] {
+            let edges: Vec<[Fr; PERM_INPUTS]> = (0..n)
+                .map(|e| core::array::from_fn(|k| sample::<Fr>(64, &mut rng)[(e * 7 + k * 13) % 64]))
+                .collect();
+            let mut expect = [Fr::ZERO; PERM_POINTS];
+            for v in &edges {
+                lanes.push(v);
+                let at = |k: usize, x: u64| v[k] + Fr::from(x) * v[k + 1];
+                for x in 0..PERM_POINTS as u64 {
+                    let (mut num, mut den) = (v[28], v[28]);
+                    for i in 0..4 {
+                        num *= at(6 * i, x) + gamma + beta * at(6 * i + 2, x);
+                        den *= at(6 * i, x) + gamma + beta * at(6 * i + 4, x);
+                    }
+                    expect[x as usize] += at(24, x) * num - at(26, x) * den;
+                }
+            }
+            assert_eq!(lanes.finish::<Fr>(), Some(expect), "n={n}");
+        }
     }
 }

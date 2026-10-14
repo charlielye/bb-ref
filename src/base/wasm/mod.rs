@@ -58,8 +58,9 @@ pub const STORED_DOMAIN_261: bool = cfg!(target_family = "wasm");
 /// The four-lane simd128 kernels exist (`packed.rs`, `ipafold.rs`, `tree.rs`).
 pub const PACKED: bool = cfg!(all(target_family = "wasm", target_feature = "simd128"));
 
-/// The permutation relation runs on four-lane edge batches in the sumcheck (`perm4.rs`).
-pub const PERM_LANES: bool = PACKED;
+/// The sumcheck's permutation relation runs on edge lanes: four on simd128 wasm (`perm4.rs`), eight
+/// on x86-64 where the CPU has AVX-512 IFMA (`ifma.rs`; `PermLanes::new` checks at run time).
+pub const PERM_LANES: bool = PACKED || cfg!(target_arch = "x86_64");
 
 /// The GLV companion table `(β·x, −y)` per SRS point pays off where the per-entry multiply at
 /// gather time is the visible cost: wasm only.
