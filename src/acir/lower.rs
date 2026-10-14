@@ -1180,6 +1180,63 @@ pub fn build_circuit_mega(
     out
 }
 
+/// A Chonk step's circuit lowered ahead of its turn (`prebuild_circuit_mega`), waiting for the IVC
+/// state the rest of its build depends on.
+pub struct Prebuilt {
+    builder: Builder,
+    hn_recursion: Vec<RecursionConstraint>,
+    gaps: Vec<u32>,
+}
+// SAFETY: the builder's only `Rc` is its private op queue, checked unique, so it moves whole.
+unsafe impl Send for Prebuilt {}
+
+/// The part of `build_circuit_mega` that does not depend on the IVC, for another thread: the ACIR
+/// lowering, against a private op queue, of a witness whose gaps (`decode_witness_gaps`) are still
+/// zero. `None` when that would not equal the inline build: the lowering drew from the global
+/// randomness, whose order the inline build fixes, or read a gap.
+pub fn prebuild_circuit_mega(circuit: &Circuit, witness: &[Fr], gaps: Vec<u32>) -> Option<Prebuilt> {
+    let (mut c, public_inputs) = classify(circuit, true);
+    let hn_recursion = std::mem::take(&mut c.hn_recursion);
+    let (builder, drew) = crate::base::rng::detached(|| {
+        let op_queue = Rc::new(RefCell::new(EccOpQueue::new()));
+        into_builder(lower(Builder::from_acir_mega(op_queue, &witness_or_zeros(Some(witness), &c), public_inputs, false), c))
+    });
+    assert_eq!(Rc::strong_count(&builder.mega.as_ref().unwrap().op_queue), 1);
+    (!drew && !references_any(&builder, &gaps)).then_some(Prebuilt { builder, hn_recursion, gaps })
+}
+
+/// Whether any of `vars` is wired into a gate, a memory array or the databus, or copy-constrained.
+fn references_any(b: &Builder, vars: &[u32]) -> bool {
+    let mut is_var = vec![false; b.variables.len()];
+    vars.iter().for_each(|&k| is_var[k as usize] = true);
+    let hit = |w: &u32| is_var.get(*w as usize) == Some(&true);
+    vars.iter().any(|&k| b.real_variable_index[k as usize] != k)
+        || (b.blocks.blocks.iter()).any(|bl| bl.rows.iter().any(|r| r.wires.iter().any(hit)))
+        || (b.memory.rom_arrays.iter()).any(|a| a.state.iter().flatten().any(hit))
+        || (b.memory.ram_arrays.iter()).any(|a| a.state.iter().any(hit))
+        || (b.mega.as_ref()).is_some_and(|m| m.databus.iter().any(|bus| bus.data.iter().any(hit)))
+}
+
+/// The rest of `build_circuit_mega`, in turn and in its order: the gaps' random fill (drawn where
+/// `decode_witness` draws it), the op queue handed over, then the kernel logic.
+pub fn finish_circuit_mega(prebuilt: Prebuilt, ivc: &mut Chonk, rng: &mut dyn Rng) -> Builder {
+    let Prebuilt { mut builder, hn_recursion, gaps } = prebuilt;
+    for k in gaps {
+        builder.variables[k as usize] = rng.fr();
+    }
+    let mega = builder.mega.as_mut().unwrap();
+    let private = std::mem::replace(&mut mega.op_queue, ivc.op_queue.clone());
+    ivc.op_queue.borrow_mut().absorb_current(Rc::into_inner(private).unwrap().into_inner());
+    let ctx = Rc::new(RefCell::new(builder));
+    if hn_recursion.is_empty() {
+        add_default_pairing_points(&mut ctx.borrow_mut());
+    } else {
+        let _g_rec = crate::base::bench::Scope::new("acir::recursion_constraints");
+        process_hn_recursion_constraints(&ctx, &hn_recursion, ivc, rng);
+    }
+    into_builder(ctx)
+}
+
 fn witness_or_zeros(witness: Option<&[Fr]>, c: &Constraints) -> Vec<Fr> {
     match witness {
         Some(w) => {

@@ -295,13 +295,28 @@ pub fn decode_witness(witness_gz: &[u8], rng: &mut dyn Rng) -> Vec<Fr> {
 
 /// A decompressed witness-stack buffer — the form witnesses take on the bbapi wire.
 pub fn decode_witness_raw(raw: &[u8], rng: &mut dyn Rng) -> Vec<Fr> {
+    decode_witness_with(raw, |_| rng.fr())
+}
+
+/// `decode_witness` with the gaps left zero, and their indices in draw order: the random fill is
+/// made later, at the point of the draw sequence where `decode_witness` would have made it.
+pub fn decode_witness_gaps(witness_gz: &[u8]) -> (Vec<Fr>, Vec<u32>) {
+    let mut gaps = vec![];
+    let v = decode_witness_with(&gunzip(witness_gz), |k| {
+        gaps.push(k as u32);
+        Fr::from(0u64)
+    });
+    (v, gaps)
+}
+
+fn decode_witness_with(raw: &[u8], mut gap: impl FnMut(usize) -> Fr) -> Vec<Fr> {
     let mut stack: WitnessStack = decode_msgpack(raw);
     assert_eq!(stack.stack.len(), 1, "expected a single witness map");
     let map = std::mem::take(&mut stack.stack[0].witness).0;
     let mut v = Vec::with_capacity(map.last().map_or(0, |(k, _)| *k as usize + 1));
     for (k, x) in map {
         while v.len() < k as usize {
-            v.push(rng.fr());
+            v.push(gap(v.len()));
         }
         v.push(x);
     }

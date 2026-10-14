@@ -174,7 +174,24 @@ impl Rng for GlobalProxy {
 /// stream and changes every later proof in the same session.
 pub static GLOBAL_DRAWS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+thread_local! {
+    /// Set while this thread runs work ahead of its turn (`detached`): whether it tried to draw.
+    static DETACHED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// Runs `f` with this thread's global draws replaced by throwaway OS draws, and reports whether it
+/// made any: work done ahead of its turn on another thread must not take from the shared stream,
+/// whose order fixes the proof bytes, so the caller discards such a result and redoes it in turn.
+pub fn detached<T>(f: impl FnOnce() -> T) -> (T, bool) {
+    DETACHED.with(|d| d.set(Some(false)));
+    let out = f();
+    (out, DETACHED.with(|d| d.take()) == Some(true))
+}
+
 pub fn global_next_u256() -> U256 {
+    if DETACHED.with(|d| d.get().map(|_| d.set(Some(true)))).is_some() {
+        return OsRng.next_u256();
+    }
     GLOBAL_DRAWS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut g = GLOBAL.lock().unwrap();
     match g.as_mut() {

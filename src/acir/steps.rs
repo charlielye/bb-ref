@@ -1,11 +1,12 @@
 //! bb `PrivateExecutionSteps`: the `ivc-inputs.msgpack` a Chonk proof is made from — one
 //! `{bytecode, witness, vk, functionName, kind}` per circuit, bytecode and witness gzipped.
 
-use super::format::{decode_program_gz, decode_witness, Circuit};
-use super::lower::build_circuit_mega;
+use super::format::{decode_program_gz, decode_witness, decode_witness_gaps, Circuit};
+use super::lower::{build_circuit_mega, finish_circuit_mega, prebuild_circuit_mega, Prebuilt};
 use crate::base::rng::Rng;
 use crate::base::vk::Vk;
 use crate::base::{Bn254, CommitmentKey, Fr};
+use crate::circuit::Builder;
 use crate::chonk::ivc::{Chonk, CircuitKind};
 use crate::chonk::proof::ChonkProof;
 use serde::de::{Deserializer, SeqAccess, Visitor};
@@ -99,51 +100,108 @@ pub fn decode_steps(bytes: &[u8]) -> Vec<PrivateExecutionStep> {
 /// kernel's VK. `check_vks` recomputes each circuit's VK and compares it with the pinned one
 /// (bb `--vk_policy check`); otherwise the pinned VKs are used as they are (bb's default).
 pub fn prove_steps(
-    steps: Vec<PrivateExecutionStep>,
+    mut steps: Vec<PrivateExecutionStep>,
     ck: CommitmentKey,
     rng: &mut dyn Rng,
     check_vks: bool,
 ) -> (ChonkProof, Vk<Bn254>) {
     let mut ivc = Chonk::new(steps.iter().map(|s| s.kind).collect(), ck);
-    for step in steps {
-        let step = &step;
-        crate::base::timing::phase(&format!("== {} ({:?})", step.name, step.kind));
-        let _gp = crate::base::bench::Scope::new("decode_program");
-        let program = step.circuit();
-        drop(_gp);
-        let _gc = crate::base::bench::Scope::new("create_circuit");
-        let _gw = crate::base::bench::Scope::new("create_circuit/decode_witness");
-        let witness = step.decode_witness(rng);
-        drop(_gw);
-        let _gb = crate::base::bench::Scope::new("create_circuit/build_circuit");
-        let circuit = build_circuit_mega(&program, Some(&witness), Some(&mut ivc), rng);
-        drop(_gb);
-        assert!(
-            circuit.failed.is_none(),
-            "{}: circuit not satisfied: {:?}",
-            step.name,
-            circuit.failed
-        );
-        drop((witness, program));
-        drop(_gc);
-        crate::base::timing::phase("circuit built");
-        let _ga = crate::base::bench::Scope::new("Chonk::accumulate");
-        ivc.accumulate(circuit, (!check_vks).then(|| step.vk.clone()), rng);
-        drop(_ga);
-        if check_vks {
-            let computed = match step.kind {
-                CircuitKind::HidingKernel => ivc.hiding_vk(),
-                _ => &ivc.verification_queue.last().unwrap().vk,
+    // Each step's gzipped bytecode and witness, taken when decoded so they are freed as they go.
+    let mut inputs: Vec<_> = (steps.iter_mut())
+        .map(|s| Some((std::mem::take(&mut s.bytecode_gz), std::mem::take(&mut s.witness_gz))))
+        .collect();
+    let mut rows = vec![];
+    std::thread::scope(|s| {
+        // Step `i + 1`'s circuit, lowered on a helper thread while step `i` accumulates; its inputs
+        // come back when it has to be built in turn.
+        let mut next: Option<std::thread::ScopedJoinHandle<Result<Prebuilt, Inputs>>> = None;
+        for (i, step) in steps.iter().enumerate() {
+            crate::base::timing::phase(&format!("== {} ({:?})", step.name, step.kind));
+            let _gc = next.is_some().then(|| crate::base::bench::Scope::new("create_circuit"));
+            let circuit = match next.take().map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e))) {
+                Some(Ok(prebuilt)) => {
+                    crate::base::timing::phase("      build: built ahead");
+                    finish_circuit_mega(prebuilt, &mut ivc, rng)
+                }
+                Some(Err(input)) => build_inline(input, &mut ivc, rng),
+                None => build_inline(inputs[i].take().unwrap(), &mut ivc, rng),
             };
-            assert_eq!(
-                computed.to_bytes(),
-                step.vk.to_bytes(),
-                "{}: the pinned VK does not match the circuit",
-                step.name
+            drop(_gc);
+            assert!(
+                circuit.failed.is_none(),
+                "{}: circuit not satisfied: {:?}",
+                step.name,
+                circuit.failed
             );
+            crate::base::timing::phase("circuit built");
+            rows.push(circuit.blocks.total_content_size());
+            if i + 1 < steps.len() && prebuild(&steps, &rows, i + 1) {
+                let (bytecode, witness) = inputs[i + 1].take().unwrap();
+                let helper = std::thread::Builder::new().stack_size(if cfg!(target_family = "wasm") { 1 << 20 } else { 8 << 20 });
+                next = Some(helper.spawn_scoped(s, move || {
+                    let _gp = crate::base::bench::Scope::new("prebuild");
+                    let (w, gaps) = decode_witness_gaps(&witness);
+                    prebuild_circuit_mega(&decode_program_gz(&bytecode), &w, gaps).ok_or((bytecode, witness))
+                }).unwrap());
+            }
+            let _ga = crate::base::bench::Scope::new("Chonk::accumulate");
+            ivc.accumulate(circuit, (!check_vks).then(|| step.vk.clone()), rng);
+            drop(_ga);
+            if check_vks {
+                let computed = match step.kind {
+                    CircuitKind::HidingKernel => ivc.hiding_vk(),
+                    _ => &ivc.verification_queue.last().unwrap().vk,
+                };
+                assert_eq!(
+                    computed.to_bytes(),
+                    step.vk.to_bytes(),
+                    "{}: the pinned VK does not match the circuit",
+                    step.name
+                );
+            }
         }
-    }
+    });
     let proof = ivc.prove(rng);
     let vk = ivc.hiding_vk().clone();
     (proof, vk)
+}
+
+/// A step's gzipped bytecode and witness.
+type Inputs = (Vec<u8>, Vec<u8>);
+
+fn build_inline((bytecode, witness): Inputs, ivc: &mut Chonk, rng: &mut dyn Rng) -> Builder {
+    let _gp = crate::base::bench::Scope::new("decode_program");
+    let program = decode_program_gz(&bytecode);
+    drop((_gp, bytecode));
+    let _gc = crate::base::bench::Scope::new("create_circuit");
+    let _gw = crate::base::bench::Scope::new("create_circuit/decode_witness");
+    let witness = decode_witness(&witness, rng);
+    drop(_gw);
+    let _gb = crate::base::bench::Scope::new("create_circuit/build_circuit");
+    build_circuit_mega(&program, Some(&witness), Some(ivc), rng)
+}
+
+/// Whether step `j`'s circuit is built ahead, on a helper thread while step `j - 1` accumulates
+/// (`BBREF_PREBUILD`: `off`, `always`, or by default bounded). The build is serial, so the overlap
+/// hides most of it, but the finished builder is held through that accumulation's memory peak.
+/// Bounded, it runs only when that peak plus the builder stays under a floor of the flow's own peak
+/// (`rows`: the content rows of the steps built so far). The byte counts are fits of live wasm
+/// memory over the pinned flows, each bounding every measured step: the accumulation peak (fixed
+/// state, the circuit's instance and tables, the accumulator); the builder, per row of an identical
+/// earlier circuit, else of its dyadic size; and for the floor, the final proof's peak or any step's
+/// accumulation, per row of half its dyadic size when not yet built.
+fn prebuild(steps: &[PrivateExecutionStep], rows: &[usize], j: usize) -> bool {
+    const MIB: u64 = 1 << 20;
+    match std::env::var("BBREF_PREBUILD").as_deref() {
+        Ok("off") => return false,
+        Ok("always") => return true,
+        _ => {}
+    }
+    let (i, log, vk) = (j - 1, |k: usize| steps[k].vk.log_n(), |k: usize| steps[k].vk.to_bytes());
+    let known = |k: usize| rows.get(k).or_else(|| (0..rows.len()).find(|&e| vk(e) == vk(k)).map(|e| &rows[e]));
+    let rows_or = |k: usize, log: usize| known(k).map_or(1 << log, |&r| r as u64);
+    let peak = 56 * MIB + 1800 * rows[i] as u64 + 150 * rows[..i].iter().max().map_or(0, |&r| r as u64);
+    let builder = 736 * rows_or(j, log(j));
+    let floor = (0..steps.len()).map(|k| 1500 * rows_or(k, log(k) - 1)).max().unwrap_or(0);
+    peak + builder <= floor.max(185 * MIB)
 }
