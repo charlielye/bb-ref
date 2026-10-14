@@ -1997,3 +1997,32 @@ reps (medians) vs its predecessor, proofs golden:
 All 11 flows × 3 reps, golf-bb in the same run: peak memory Σ 3,012 → 2,554 MiB (golf-bb 2,885:
 **0.885×**), storage_proof 748 → 543 MiB (golf 602), proving Σ 56.88 → 56.22 s (−1.2%). Below golf-bb
 on all 11 flows. Native 0.994× (5 flows × 5 reps, 17/25 wins); storage RSS 0.87 → 0.74 GB.
+
+## Update 70: second audit's wins — HyperNova sumcheck lanes, small ports, opt-in prebuild (2026-10-14)
+
+Branch `wasm-golf`. A second audit (memory-for-speed, papers and other provers, end-to-end profile;
+reports in the session scratchpad) ranked the remaining levers; these landed:
+
+| commit(s) | change | measured alone |
+|---|---|---|
+| 42bdeb8 | keccak ρ on base-11 digits without BigUint (golf 0023/0025) | native storage −3.8%; wasm storage −1.8%, small flows +0.8% (layout) |
+| b34d35f | `Graded` products: ±1 constants free, linear×longer Karatsuba, binomial x⁵ | wasm −0.6 to −0.9%, native ~−1% |
+| acad62c, 0479450 | op queue sums `mul_accumulate` terms as one MSM at `eq_and_reset` | −0.4 to −1.2% |
+| 119f962, 2daadb3 | permutation relation evaluated on 4 edges (wasm `quad261`) / 8 IFMA lanes (native) in the sumcheck — golf's VectorField/0065 lever, scoped to the relation that owns ~85M of ~150M multiplies | HyperNova sumcheck wasm storage 2.12 → 1.70 s (golf 1.65), native 0.83 → 0.61 s (golf 0.70); proving wasm −2 to −4%, native −3.2% |
+| c774ea9, 8c6e3e8 | `--prebuild` (opt-in per proof): next circuit built on a helper thread during accumulation; parity kept by drawing all randomness on the main thread in order | wasm proving −3.3% / wall −5.4% for up to one builder of memory (storage +213 MiB); native −7.5% |
+
+Stack vs ea301a3 (bbbench, 11 flows × 3 interleaved reps, golf-bb in the same run, proofs golden;
+measured at 0479450 with prebuild's since-removed bounded default, worth ~−1% wasm / ~−2% native):
+
+| target | base | tip | golf-bb |
+|---|---|---|---|
+| wasm proving Σ | 56.33 s | 53.40 s (0.948) | 56.34 s (tip 0.948× golf) |
+| wasm wall Σ | 60.27 s | 56.92 s | 61.88 s (tip 0.920× golf) |
+| wasm peak memory Σ | 2,555 MiB | 2,560 MiB | 2,904 MiB (0.882×) |
+| native wall Σ (min) | 22.54 s | 21.00 s (paired 0.943, 33/33) | 23.28 s (tip 0.902× golf) |
+
+Rejected: lookup relation on 4-lane batches (+0.6 to +1.1%), small-value sumcheck (85% full-size
+values), Shplonk ±r pairing (~10 ms), SRS precompute tables (−1.3 to −2.7% for 0.35–0.65 GB and a
+3.6–5.4 s build: only a long-lived prover), full φ table, uncapped batch_commit, larger initial memory.
+Pending: wasm wide-arithmetic (−15 to −18% wasm proving from the scalar multiply alone on node 27
+`--wasm-wide-arithmetic`; no engine enables it by default yet).
