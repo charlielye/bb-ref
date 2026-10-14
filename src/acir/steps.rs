@@ -99,18 +99,21 @@ pub fn decode_steps(bytes: &[u8]) -> Vec<PrivateExecutionStep> {
 /// bb `ChonkAPI::prove`: accumulate every step, then prove. Returns the proof and the hiding
 /// kernel's VK. `check_vks` recomputes each circuit's VK and compares it with the pinned one
 /// (bb `--vk_policy check`); otherwise the pinned VKs are used as they are (bb's default).
+/// `prebuild` builds each next circuit on a helper thread while the current step accumulates: the
+/// serial build is mostly hidden, but the finished builder is held through that accumulation's
+/// memory peak (opt-in: faster for up to one extra builder of memory).
 pub fn prove_steps(
     mut steps: Vec<PrivateExecutionStep>,
     ck: CommitmentKey,
     rng: &mut dyn Rng,
     check_vks: bool,
+    prebuild: bool,
 ) -> (ChonkProof, Vk<Bn254>) {
     let mut ivc = Chonk::new(steps.iter().map(|s| s.kind).collect(), ck);
     // Each step's gzipped bytecode and witness, taken when decoded so they are freed as they go.
     let mut inputs: Vec<_> = (steps.iter_mut())
         .map(|s| Some((std::mem::take(&mut s.bytecode_gz), std::mem::take(&mut s.witness_gz))))
         .collect();
-    let mut rows = vec![];
     std::thread::scope(|s| {
         // Step `i + 1`'s circuit, lowered on a helper thread while step `i` accumulates; its inputs
         // come back when it has to be built in turn.
@@ -134,8 +137,7 @@ pub fn prove_steps(
                 circuit.failed
             );
             crate::base::timing::phase("circuit built");
-            rows.push(circuit.blocks.total_content_size());
-            if i + 1 < steps.len() && prebuild(&steps, &rows, i + 1) {
+            if prebuild && i + 1 < steps.len() {
                 let (bytecode, witness) = inputs[i + 1].take().unwrap();
                 let helper = std::thread::Builder::new().stack_size(if cfg!(target_family = "wasm") { 1 << 20 } else { 8 << 20 });
                 next = Some(helper.spawn_scoped(s, move || {
@@ -179,29 +181,4 @@ fn build_inline((bytecode, witness): Inputs, ivc: &mut Chonk, rng: &mut dyn Rng)
     drop(_gw);
     let _gb = crate::base::bench::Scope::new("create_circuit/build_circuit");
     build_circuit_mega(&program, Some(&witness), Some(ivc), rng)
-}
-
-/// Whether step `j`'s circuit is built ahead, on a helper thread while step `j - 1` accumulates
-/// (`BBREF_PREBUILD`: `off`, `always`, or by default bounded). The build is serial, so the overlap
-/// hides most of it, but the finished builder is held through that accumulation's memory peak.
-/// Bounded, it runs only when that peak plus the builder stays under a floor of the flow's own peak
-/// (`rows`: the content rows of the steps built so far). The byte counts are fits of live wasm
-/// memory over the pinned flows, each bounding every measured step: the accumulation peak (fixed
-/// state, the circuit's instance and tables, the accumulator); the builder, per row of an identical
-/// earlier circuit, else of its dyadic size; and for the floor, the final proof's peak or any step's
-/// accumulation, per row of half its dyadic size when not yet built.
-fn prebuild(steps: &[PrivateExecutionStep], rows: &[usize], j: usize) -> bool {
-    const MIB: u64 = 1 << 20;
-    match std::env::var("BBREF_PREBUILD").as_deref() {
-        Ok("off") => return false,
-        Ok("always") => return true,
-        _ => {}
-    }
-    let (i, log, vk) = (j - 1, |k: usize| steps[k].vk.log_n(), |k: usize| steps[k].vk.to_bytes());
-    let known = |k: usize| rows.get(k).or_else(|| (0..rows.len()).find(|&e| vk(e) == vk(k)).map(|e| &rows[e]));
-    let rows_or = |k: usize, log: usize| known(k).map_or(1 << log, |&r| r as u64);
-    let peak = 56 * MIB + 1800 * rows[i] as u64 + 150 * rows[..i].iter().max().map_or(0, |&r| r as u64);
-    let builder = 736 * rows_or(j, log(j));
-    let floor = (0..steps.len()).map(|k| 1500 * rows_or(k, log(k) - 1)).max().unwrap_or(0);
-    peak + builder <= floor.max(185 * MIB)
 }

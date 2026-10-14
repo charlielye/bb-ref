@@ -90,7 +90,7 @@ fn mock_flows_bb_proofs_verify() {
 fn mock_flow_rust_proof() {
     let steps = decode_steps(&common::read("acir/mock_1_1/ivc-inputs.msgpack"));
     assert_eq!(steps.len(), 7);
-    let (proof, vk) = prove_steps(steps, CommitmentKey::new(1 << 17), &mut OsRng, true);
+    let (proof, vk) = prove_steps(steps, CommitmentKey::new(1 << 17), &mut OsRng, true, false);
     assert!(verify(&vk, &proof), "Rust proof rejected by the Rust verifier");
     let out = common::fixture_dir("acir/rust_1_1");
     std::fs::create_dir_all(&out).unwrap();
@@ -110,7 +110,7 @@ fn mock_flow_byte_exact_with_seed() {
     }
     let mut rng = DebugRng::new(12345);
     let steps = decode_steps(&common::read("acir/mock_1_1/ivc-inputs.msgpack"));
-    let (proof, vk) = prove_steps(steps, CommitmentKey::new(1 << 17), &mut rng, false);
+    let (proof, vk) = prove_steps(steps, CommitmentKey::new(1 << 17), &mut rng, false, false);
     assert_eq!(
         encode_fields(&proof.to_fields()),
         std::fs::read(dir.join("proof")).unwrap(),
@@ -129,7 +129,7 @@ fn mock_flow_byte_exact_with_tape() {
     }
     let mut tape = TapeRng::from_bytes(std::fs::read(dir.join("rng_tape.bin")).unwrap());
     let steps = decode_steps(&common::read("acir/mock_1_1/ivc-inputs.msgpack"));
-    let (proof, vk) = prove_steps(steps, CommitmentKey::new(1 << 17), &mut tape, true);
+    let (proof, vk) = prove_steps(steps, CommitmentKey::new(1 << 17), &mut tape, true, false);
     assert_eq!(
         vk.to_bytes(),
         std::fs::read(dir.join("vk")).unwrap(),

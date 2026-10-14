@@ -116,7 +116,8 @@ fn pinned_flows_byte_exact_with_seed() {
         let mut rng = DebugRng::new(12345);
         let steps = decode_steps(&std::fs::read(&inputs).unwrap());
         let max_size = steps.iter().map(|s| 1usize << s.vk.log_n()).max().unwrap().max(1 << 17);
-        let (proof, vk) = prove_steps(steps, CommitmentKey::new(max_size), &mut rng, false);
+        // Built ahead (`--prebuild`): the overlap must not move a proof byte.
+        let (proof, vk) = prove_steps(steps, CommitmentKey::new(max_size), &mut rng, false, true);
         assert_eq!(
             encode_fields(&proof.to_fields()),
             std::fs::read(dir.join("proof")).unwrap(),

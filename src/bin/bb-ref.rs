@@ -5,7 +5,7 @@
 //!   bb-ref write_vk --scheme ultra_honk [--disable_zk] -b <program.json> -o <out_dir>
 //!   bb-ref verify   --scheme ultra_honk [--disable_zk] -k <vk> -p <proof> -i <public_inputs>
 //!   bb-ref write_vk --scheme chonk --circuit_kind app|kernel|hiding -b <program.json> -o <out_dir>
-//!   bb-ref prove    --scheme chonk --ivc_inputs_path <ivc-inputs.msgpack> -o <out_dir> [--vk_policy check]
+//!   bb-ref prove    --scheme chonk --ivc_inputs_path <ivc-inputs.msgpack> -o <out_dir> [--vk_policy check] [--prebuild]
 //!   bb-ref verify   --scheme chonk -k <vk> -p <proof>
 
 // mimalloc as an opt-in A/B reference: the default (system) allocator matches it once the
@@ -90,7 +90,8 @@ fn chonk(cmd: &str, flags: &HashMap<String, String>) {
                 .max()
                 .unwrap_or(0)
                 .max(1 << 17);
-            let (proof, vk) = prove_steps(steps, CommitmentKey::new(max_size), rng.as_mut(), check_vks);
+            let prebuild = flags.contains_key("--prebuild");
+            let (proof, vk) = prove_steps(steps, CommitmentKey::new(max_size), rng.as_mut(), check_vks, prebuild);
             let out = out_dir(flags);
             std::fs::write(out.join("proof"), encode_fields(&proof.to_fields())).unwrap();
             std::fs::write(out.join("vk"), vk.to_bytes()).unwrap();
