@@ -24,6 +24,9 @@ The tables of record are in [`bench-results/`](../bench-results/), all regenerat
 temporary state-of-the-art reference). Wall is best of 3, proving-only one instrumented run, 8
 threads (rollup: 16, sequential replays); the wasm tables use the *stripped* bb module for wall and
 bb's `ENABLE_WASM_BENCH` module for proving. How we got here: LADDER Updates 64–70.
+`chonk-v8-wide.txt` (2026-10-15, branch `w1-wide`) runs bb-ref's second module, built with the
+wasm wide-arithmetic proposal (`--cfg wasm_wide`), under node 27 nightly with
+`--wasm-wide-arithmetic`; bb's modules are unchanged. No engine enables the proposal by default yet.
 
 | benchmark (11 chonk flows unless noted) | pin bb | golf bb | bb-ref | vs pin | vs golf |
 |---|---|---|---|---|---|
@@ -32,6 +35,8 @@ bb's `ENABLE_WASM_BENCH` module for proving. How we got here: LADDER Updates 64�
 | chonk **wasm/V8** (node 24) — wall | 83.60s | 60.98s | **57.04s** | **0.68×** | **0.94×** |
 | — proving-only | 76.05s | 56.15s | **53.50s** | **0.70×** | **0.96×** |
 | chonk **wasm/wasmtime** 36 — wall | 96.49s | 67.56s | **59.84s** | **0.62×** | **0.89×** |
+| chonk **wasm/V8, wide arithmetic** (node 27 nightly, flag) — wall | 82.42s | | **46.79s** | **0.57×** | |
+| — proving-only | 75.46s | | **43.72s** | **0.58×** | |
 | rollup corpus, 62 server ops, native 16t | 301.06s | | **138.87s** | **0.46×** | |
 | chonk peak memory, V8 linear memory | | | | storage 0.67× | storage 0.91× |
 | chonk peak RSS, native | | | | 0.98–1.07× (storage 0.84×) | storage 1.31× |

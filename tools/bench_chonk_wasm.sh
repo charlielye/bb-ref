@@ -14,6 +14,7 @@
 # identical treatment for both provers. Memory columns: under v8 the wasm linear-memory peak
 # (final memory.buffer size — linear memory only grows), the browser-relevant number; under
 # wasmtime the host-process peak RSS (wasmtime has no linear-memory report) — noisy, indicative.
+# NODE overrides the v8 command, flags included (e.g. NODE="node27 --wasm-wide-arithmetic").
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -26,6 +27,7 @@ BB_WASM_BENCH=${BB_WASM_BENCH:-}
 : "${REPS:=1}"
 : "${BB_RNG_SEED:=12345}"
 : "${THREADS:=8}"
+read -ra NODE_CMD <<< "${NODE:-node}"
 export BB_RNG_SEED HARDWARE_CONCURRENCY=$THREADS RAYON_NUM_THREADS=$THREADS CRS_PATH=$HOME/.bb-crs
 # bb-ref.wasm is linked with --max-memory=4GB (the biggest flow needs >1GB linear memory).
 export WASM_MAX_PAGES=${WASM_MAX_PAGES:-65536}
@@ -46,7 +48,7 @@ run_wasm() { # module inputs outdir extra-args... -> runs once; logs in $3.log
             --env BB_RNG_SEED --env HARDWARE_CONCURRENCY --env RAYON_NUM_THREADS --env CRS_PATH --env BBREF_BENCH --env WASM_MAX_PAGES \
             "$1" prove --scheme chonk --ivc_inputs_path "$2" -o "$3" "${@:4}" >/dev/null 2>"$3.log" ;;
     v8)
-        node tools/runwasi_threads.mjs "$1" prove --scheme chonk --ivc_inputs_path "$2" -o "$3" "${@:4}" >/dev/null 2>"$3.log" ;;
+        "${NODE_CMD[@]}" tools/runwasi_threads.mjs "$1" prove --scheme chonk --ivc_inputs_path "$2" -o "$3" "${@:4}" >/dev/null 2>"$3.log" ;;
     esac
 }
 prove_only() { # bb|ref module inputs outdir -> proving-only seconds
@@ -88,7 +90,7 @@ run_one() { # binary inputs outdir -> "seconds maxrss_kb" (best wall of $REPS, m
             || { cat "$3.log" >&2; exit 1; } ;;
     v8)
         /usr/bin/time -f '%e %M' -o "$3.time" \
-            node tools/runwasi_threads.mjs "$1" prove --scheme chonk --ivc_inputs_path "$2" -o "$3" \
+            "${NODE_CMD[@]}" tools/runwasi_threads.mjs "$1" prove --scheme chonk --ivc_inputs_path "$2" -o "$3" \
             >/dev/null 2>"$3.log" \
             || { cat "$3.log" >&2; exit 1; }
         # Replace host RSS with the wasm linear-memory peak reported by the harness.
@@ -102,7 +104,7 @@ run_one() { # binary inputs outdir -> "seconds maxrss_kb" (best wall of $REPS, m
     echo "$best $mem"
 }
 
-echo "runtime: $RUNTIME ($(case $RUNTIME in wasmtime) wasmtime --version ;; v8) echo "node $(node --version)" ;; esac)), threads: $THREADS (both provers), seed: $BB_RNG_SEED, flows: ${#FLOWS[@]}, wall = best of $REPS, proving = one instrumented run"
+echo "runtime: $RUNTIME ($(case $RUNTIME in wasmtime) wasmtime --version ;; v8) echo "node $("${NODE_CMD[@]}" --version)${NODE_CMD[1]:+ ${NODE_CMD[*]:1}}" ;; esac)), threads: $THREADS (both provers), seed: $BB_RNG_SEED, flows: ${#FLOWS[@]}, wall = best of $REPS, proving = one instrumented run"
 echo "date: $(date -u +%Y-%m-%d), host: $(hostname), bb module: $(basename "$BB_WASM") ($(stat -c %s "$BB_WASM" 2>/dev/null) bytes), bb bench module: ${BB_WASM_BENCH:-none}, bb-ref module: $(basename "$REF_WASM") ($(stat -c %s "$REF_WASM" 2>/dev/null) bytes), bb-ref: ${BBREF_COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}"
 printf '%-62s %7s %7s %6s %7s %7s %6s %7s %7s %6s\n' flow "bb" "bb-ref" ratio "bb prv" "ref prv" ratio "bb mem" "ref mem" mem
 total_bb=0; total_ref=0; total_bbp=0; total_refp=0
