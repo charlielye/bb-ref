@@ -83,7 +83,23 @@ far:
 
 ## Re-pinning
 
-Re-pointing bb-ref at a new bb commit is a deliberate procedure: rebase the pin branch onto it,
-update `tools/PIN`, run `tools/regen/regen_corpus.sh` and every `regen_*.sh`, re-harvest
-witness-bearing fixtures, and run the full suite. Divergences found are chased with the ladder above — they are the changelog
-of what bb changed, which is half the value of maintaining the mirror.
+Re-pointing bb-ref at a new bb commit is a deliberate procedure, in this order:
+
+1. Rebase the pin branch onto it (drop patches that landed upstream), update `tools/PIN`, rename
+   `tests/data/<pin7>` and `tests/common/mod.rs`'s `PIN`, and stage the submodule (`regen_corpus.sh`
+   runs `git submodule update`, which would otherwise reset the tree to the old pin).
+2. Build in the tree: `pin/build.sh --noir`, `dsl_tests` (the dumper), the protocol and mock
+   circuits (`noir-projects/fnd/*/bootstrap.sh build`), `barretenberg/acir_tests` (compile), and
+   `make labs-yarn-project` (the mock-stack witness generator and the corpus driver). Download the
+   flows `barretenberg/cpp/scripts/pinned_chonk_inputs.sh` names.
+3. `dev/regen_msgpack.sh`, then every `tools/regen/regen_*.sh`: chonk flows, protocol, ultra, acir
+   (mock stack), merge, vk hashes, corpus (`--harvest` after any protocol change), and backend last
+   (its rollup circuits are extracted from the corpus).
+4. Run the full suite and `tools/conformance.sh` on the new corpus.
+
+Divergences found are chased with the ladder above — they are the changelog of what bb changed,
+which is half the value of maintaining the mirror. The 2026-10 re-pin (3b2c553 → the bb.js-api PR
+head) needed no prover change: every flow and the corpus came out byte-exact; the ports were wire
+(`Warmup`, `Poseidon2AbsorbChain`) and SRS ingress (bb now authenticates pushed points against pinned
+chunk hashes), and most of the time went to tooling drift in labs (package renames, `noir-execute`,
+the block builder's API).

@@ -4,6 +4,7 @@
 //! responses are compared by shape where bb's message text is legitimately different (noted
 //! per case).
 
+mod common;
 use bb_ref::acir::format::gunzip;
 use bb_ref::base::rng::{set_global, DebugRng};
 use bb_ref::msgpack::generated::bb_server::handle_request;
@@ -38,7 +39,7 @@ fn repo_root() -> PathBuf {
 }
 
 fn fixture(rel: &str) -> PathBuf {
-    repo_root().join("tests/data/9df414e").join(rel)
+    repo_root().join("tests/data").join(common::PIN).join(rel)
 }
 
 /// The raw gzipped ACIR buffer out of a program.json wrapper.
@@ -219,9 +220,10 @@ fn circuit_case(name: &str, dir: &Path, oracle: &str, ipa: bool, threads: Option
 /// The transfer pinned flow driven as bb drives it over the wire: ChonkStart, then per step
 /// ChonkLoad + ChonkAccumulate, ChonkProve, and a ChonkVerify of the produced proof.
 fn chonk_case() {
-    let flow = PathBuf::from(std::env::var("HOME").unwrap()).join(
-        "aztec-repos/aztec-packages2/barretenberg/cpp/chonk-pinned-flows/ecdsar1+transfer_0_recursions+sponsored_fpc/ivc-inputs.msgpack",
-    );
+    let flow = std::env::var("BB_FLOWS")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| repo_root().join("pin/aztec-packages/barretenberg/cpp/chonk-pinned-flows"))
+        .join("ecdsar1+transfer_0_recursions+sponsored_fpc/ivc-inputs.msgpack");
     if !flow.exists() {
         eprintln!("skipping chonk case: {} missing", flow.display());
         return;
@@ -294,8 +296,8 @@ fn msgpack_server_oracle() {
     );
     circuit_case("a_1_mul_keccak", &fixture("keccak/a_1_mul"), "keccak", false, None);
     circuit_case(
-        "rollup_parity_root",
-        &fixture("backend/rollup_parity_root"),
+        "inbox_parity_4",
+        &fixture("backend/inbox_parity_4"),
         "poseidon2",
         false,
         None,

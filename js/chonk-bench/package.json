@@ -1,0 +1,15 @@
+{
+  "name": "chonk-bench",
+  "private": true,
+  "type": "module",
+  "description": "Prove the pinned chonk flows through bb-ref.js and bb's bb.js-api side by side (node or browser)",
+  "scripts": {
+    "node": "node run-node.mjs",
+    "serve": "node serve.mjs"
+  },
+  "dependencies": {
+    "bb-ref.js": "file:../bb-ref.js",
+    "@aztec-foundation/bb.js-api": "file:../../pin/aztec-packages/barretenberg/ts/bb.js-api",
+    "msgpackr": "^1.11.2"
+  }
+}

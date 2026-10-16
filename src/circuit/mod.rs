@@ -15,7 +15,7 @@ pub mod trace;
 pub mod uint_tables;
 
 pub use builder::{Builder, IS_CONSTANT};
-pub use op_queue::EccOpQueue;
+pub use op_queue::{EccOpQueue, SharedOpQueue};
 pub use trace::{Block, BlockDesc, BlockId, Blocks, GateRow, Kind};
 
 /// Rows at the top of the trace reserved for row disabling / ZK masking (bb `NUM_DISABLED_ROWS_IN_SUMCHECK`).

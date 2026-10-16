@@ -61,9 +61,9 @@ pub trait Handler {
     fn chonk_decompress_proof(&mut self, cmd: BbChonkDecompressProof, respond: Responder<BbChonkDecompressProofResponse>);
     fn poseidon2_hash(&mut self, cmd: BbPoseidon2Hash, respond: Responder<BbPoseidon2HashResponse>);
     fn poseidon2_permutation(&mut self, cmd: BbPoseidon2Permutation, respond: Responder<BbPoseidon2PermutationResponse>);
+    fn poseidon2_absorb_chain(&mut self, cmd: BbPoseidon2AbsorbChain, respond: Responder<BbPoseidon2AbsorbChainResponse>);
     fn pedersen_commit(&mut self, cmd: BbPedersenCommit, respond: Responder<BbPedersenCommitResponse>);
     fn pedersen_hash(&mut self, cmd: BbPedersenHash, respond: Responder<BbPedersenHashResponse>);
-    fn pedersen_hash_buffer(&mut self, cmd: BbPedersenHashBuffer, respond: Responder<BbPedersenHashBufferResponse>);
     fn blake2s(&mut self, cmd: BbBlake2s, respond: Responder<BbBlake2sResponse>);
     fn blake2s_to_field(&mut self, cmd: BbBlake2sToField, respond: Responder<BbBlake2sToFieldResponse>);
     fn aes_encrypt(&mut self, cmd: BbAesEncrypt, respond: Responder<BbAesEncryptResponse>);
@@ -98,6 +98,7 @@ pub trait Handler {
     fn chonk_batch_verifier_queue(&mut self, cmd: BbChonkBatchVerifierQueue, respond: Responder<BbChonkBatchVerifierQueueResponse>);
     fn chonk_batch_verifier_stop(&mut self, cmd: BbChonkBatchVerifierStop, respond: Responder<BbChonkBatchVerifierStopResponse>);
     fn srs_init_grumpkin_srs(&mut self, cmd: BbSrsInitGrumpkinSrs, respond: Responder<BbSrsInitGrumpkinSrsResponse>);
+    fn init(&mut self, cmd: BbInit, respond: Responder<BbInitResponse>);
 }
 
 /// Dispatch a single decoded command, building the typed responder.
@@ -184,14 +185,14 @@ pub fn dispatch(handler: &mut dyn Handler, command: Command, raw: RawRespond) {
         Command::BbPoseidon2Permutation(cmd) => {
             handler.poseidon2_permutation(cmd, Responder { raw, wrap: Response::BbPoseidon2PermutationResponse });
         }
+        Command::BbPoseidon2AbsorbChain(cmd) => {
+            handler.poseidon2_absorb_chain(cmd, Responder { raw, wrap: Response::BbPoseidon2AbsorbChainResponse });
+        }
         Command::BbPedersenCommit(cmd) => {
             handler.pedersen_commit(cmd, Responder { raw, wrap: Response::BbPedersenCommitResponse });
         }
         Command::BbPedersenHash(cmd) => {
             handler.pedersen_hash(cmd, Responder { raw, wrap: Response::BbPedersenHashResponse });
-        }
-        Command::BbPedersenHashBuffer(cmd) => {
-            handler.pedersen_hash_buffer(cmd, Responder { raw, wrap: Response::BbPedersenHashBufferResponse });
         }
         Command::BbBlake2s(cmd) => {
             handler.blake2s(cmd, Responder { raw, wrap: Response::BbBlake2sResponse });
@@ -294,6 +295,9 @@ pub fn dispatch(handler: &mut dyn Handler, command: Command, raw: RawRespond) {
         }
         Command::BbSrsInitGrumpkinSrs(cmd) => {
             handler.srs_init_grumpkin_srs(cmd, Responder { raw, wrap: Response::BbSrsInitGrumpkinSrsResponse });
+        }
+        Command::BbInit(cmd) => {
+            handler.init(cmd, Responder { raw, wrap: Response::BbInitResponse });
         }
     }
 }

@@ -145,7 +145,7 @@ where
 
     // The Shplonk quotient's base point is the SRS first point, NOT the Grumpkin generator
     // (bb VerifierCommitmentKey::get_g1_identity; a circuit constant in the recursive verifier).
-    let g1_identity = C::G::constant(ctx, crate::base::GrumpkinKey::new(1).points[0]);
+    let g1_identity = C::G::constant(ctx, crate::base::srs::grumpkin_g1_first());
     let batch = shplonk_verify::<C>(&claims, g1_identity, t);
     let univariate_commitment = C::G::batch_mul(&batch.commitments, &batch.scalars);
 

@@ -3,15 +3,13 @@
 //! trace blocks. A line-by-line port of bb's `CircuitBuilderBase` + `UltraCircuitBuilder_` restricted
 //! to what the client-side circuits use (no non-native-field gates).
 
+use crate::circuit::op_queue::SharedOpQueue;
 use super::mega::MegaState;
-use super::op_queue::EccOpQueue;
 use super::trace::{BlockId, Blocks, GateRow, Kind, MEGA_BLOCKS, ULTRA_BLOCKS};
 use crate::base::field::{u256, u256_num_bits, u256_shr, FieldLike, NativeField};
 use crate::base::poseidon2::round_constants;
 use crate::base::Fr;
-use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
-use std::rc::Rc;
 
 pub const IS_CONSTANT: u32 = u32::MAX;
 const REAL_VARIABLE: u32 = u32::MAX - 1;
@@ -227,7 +225,7 @@ impl Builder {
     }
 
     /// A Mega circuit sharing the IVC's op queue (bb `MegaCircuitBuilder_`).
-    pub fn new_mega(op_queue: Rc<RefCell<EccOpQueue>>) -> Self {
+    pub fn new_mega(op_queue: SharedOpQueue) -> Self {
         let mut b = Self::empty(false, true);
         b.zero_idx = b.put_constant_variable(Fr::zero());
         b.set_tau_at_index(DEFAULT_TAG, DEFAULT_TAG);
@@ -250,7 +248,7 @@ impl Builder {
     }
 
     pub fn from_acir_mega(
-        op_queue: Rc<RefCell<EccOpQueue>>,
+        op_queue: SharedOpQueue,
         witness: &[Fr],
         public_inputs: Vec<u32>,
         is_write_vk_mode: bool,

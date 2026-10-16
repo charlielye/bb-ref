@@ -30,6 +30,7 @@ cargo build --release --quiet --bin bb-ref
 cargo build --profile lto --target wasm32-wasip1-threads --quiet --bin bb-ref
 tools/wasm_check.sh target/wasm32-wasip1-threads/lto/bb-ref.wasm
 COMMIT=$(git rev-parse --short HEAD)$(git diff --quiet HEAD -- src || echo +dirty)
+PIN7=$(cut -c1-7 tools/PIN)
 rsync -a --exclude corpus tools/ "${HOST}:bb-ref/tools/"
 rsync -a target/release/bb-ref "${HOST}:bb-ref/tables-bb-ref"
 rsync -a target/wasm32-wasip1-threads/lto/bb-ref.wasm "${HOST}:bb-ref/tables-bb-ref.wasm"
@@ -56,7 +57,7 @@ remote() { # table -> the command that writes it
     v8 | wasmtime) echo "{ echo '$WASM_NOTE'; BB_WASM=$PIN_BB_WASM BB_WASM_BENCH=$PIN_BB_WASM_BENCH $wasm $1; } > bench-results/chonk-$1.txt" ;;
     golf-v8 | golf-wasmtime)
         echo "{ echo '$GOLF_NOTE'; echo '$WASM_NOTE'; BB_WASM=$GOLF_BB_WASM BB_WASM_BENCH=$GOLF_BB_WASM_BENCH $wasm ${1#golf-}; } > bench-results/chonk-$1.txt" ;;
-    rollup) echo "{ echo \"rollup corpus rollup-3b2c553, sequential replay, 16 threads, seed 12345, \$(date -u +%Y-%m-%d), host \$(hostname), bb: pinned bb (\$($PIN_BB --version)), bb-ref: $COMMIT\"; tools/bench.sh tools/corpus/rollup-3b2c553.corpus.zst --pair $PIN_BB \$HOME/bb-ref/tables-bb-ref --threads 16; } > bench-results/rollup.txt" ;;
+    rollup) echo "{ echo \"rollup corpus rollup-$PIN7, sequential replay, 16 threads, seed 12345, \$(date -u +%Y-%m-%d), host \$(hostname), bb: pinned bb (\$($PIN_BB --version)), bb-ref: $COMMIT\"; tools/bench.sh tools/corpus/rollup-$PIN7.corpus.zst --pair $PIN_BB \$HOME/bb-ref/tables-bb-ref --threads 16; } > bench-results/rollup.txt" ;;
     *) echo "unknown table: $1" >&2; exit 2 ;;
     esac
 }

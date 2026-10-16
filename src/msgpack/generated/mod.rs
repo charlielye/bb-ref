@@ -11,6 +11,9 @@
 pub mod backend;
 #[rustfmt::skip]
 pub mod bb_client;
+#[macro_use]
+#[rustfmt::skip]
+pub mod bb_ffi;
 #[rustfmt::skip]
 pub mod bb_server;
 #[allow(dead_code)]

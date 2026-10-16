@@ -22,10 +22,14 @@ TREE=$ROOT/pin/aztec-packages
 ASSETS=$ROOT/tools/corpus/leaf-assets
 OUT=$ROOT/tools/corpus
 BB=$TREE/barretenberg/cpp/build/bin/bb-avm
-ACVM=$TREE/noir/noir-repo/target/release/acvm
+NOIR_EXECUTE=$TREE/noir/noir-repo/target/release/noir-execute
 YP=$TREE/labs/yarn-project
 
 step() { printf '\n=== %s\n' "$1"; }
+# The harvest's anvil binds an ephemeral port, so it never collides with an anvil already running here.
+export ANVIL_PORT=${ANVIL_PORT:-0}
+# The node simulates public functions through bb's AVM simulator binary, built with bb-avm.
+export BB_AVM_SIM_PATH=${BB_AVM_SIM_PATH:-$PWD/pin/aztec-packages/barretenberg/cpp/build/bin/bb-avm-sim}
 
 step "pinned tree @ ${PIN:0:9}"
 git submodule update --init pin/aztec-packages
@@ -45,7 +49,9 @@ if [ "$(cat "$BUILT_MARKER" 2>/dev/null)" = "$PIN" ]; then
     echo "workspace already built for ${PIN:0:9} -- skipping build (rm $BUILT_MARKER to force)"
 else
     step "building bb + labs yarn-project (first run takes ~20 min; cached afterwards)"
-    make -C "$TREE" labs-yarn-project
+    # The labs checkout's own pre-commit hook formats with labs' unlinked dependencies; the build
+    # commits the use-local marker inside labs, so hooks are off for it.
+    GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null make -C "$TREE" labs-yarn-project
     ninja -C "$TREE/barretenberg/cpp/build" bb-avm
     echo "$PIN" > "$BUILT_MARKER"
 fi
@@ -63,7 +69,7 @@ if [ ! -d "$ASSETS/txs" ] || [ "${1:-}" = "--harvest" ]; then
     rm -rf "$ASSETS"; mkdir -p "$ASSETS"
     ( cd "$OUT" && \
       BBREF_HARVEST_OUT=$ASSETS BBREF_FUNDED_ACCOUNTS=11 FAKE_PROOFS=1 \
-      BB_BINARY_PATH=$BB ACVM_BINARY_PATH=$ACVM LOG_LEVEL=info \
+      BB_BINARY_PATH=$BB NOIR_EXECUTE_BINARY_PATH=$NOIR_EXECUTE LOG_LEVEL=info \
       node --experimental-strip-types --experimental-transform-types --no-warnings harvest.ts )
 else
     echo "leaf assets present ($(ls "$ASSETS/txs" | wc -l) txs) -- pass --harvest to refresh"
@@ -73,7 +79,7 @@ step "proving the recipe epochs into a corpus (~7 min)"
 FRAMES=$(mktemp -d); trap 'rm -rf "$FRAMES"' EXIT
 ( cd "$OUT" && \
   BBREF_CORPUS_ASSETS=$ASSETS \
-  BB_BINARY_PATH=$ROOT/tools/lib/bb_capture_proxy.py BB_REAL=$BB ACVM_BINARY_PATH=$ACVM \
+  BB_BINARY_PATH=$ROOT/tools/lib/bb_capture_proxy.py BB_REAL=$BB NOIR_EXECUTE_BINARY_PATH=$NOIR_EXECUTE \
   IPC_FRAME_CAPTURE_DIR=$FRAMES BB_POOL_SIZE=1 BB_RNG_SEED=12345 \
   node --experimental-strip-types --experimental-transform-types --no-warnings driver.ts )
 

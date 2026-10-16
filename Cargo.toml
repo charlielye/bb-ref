@@ -19,6 +19,7 @@ flate2 = "1"
 base64 = "0.22"
 serde_json = "1"
 sha2 = "0.10"
+libc = "0.2"
 blake3 = "1.8.5"
 rayon = "1.11"
 num-bigint = "0.4"
@@ -56,6 +57,8 @@ heap-profile = ["dep:dhat"]
 # A/B reference: mimalloc instead of the system allocator.
 mimalloc = ["dep:mimalloc"]
 dhat = ["dep:dhat"]
+# The FFI exports (src/msgpack/ffi.rs) for a cdylib build: tools/build_bb_ref_js.sh.
+ffi = []
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(wasm_wide)"] }

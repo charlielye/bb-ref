@@ -14,7 +14,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 HOST=${AB_HOST:-bbbench}
-BBBIN=../aztec-packages2/barretenberg/cpp/build-wasm-threads/bin
+BBBIN=pin/aztec-packages/barretenberg/cpp/build-wasm-threads/bin
 
 build_ours() { # example name
     if ! cargo build --release --target wasm32-wasip1-threads --example "$1" >/tmp/ab-build.log 2>&1; then

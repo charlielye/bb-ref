@@ -1,14 +1,13 @@
 //! Mega-only builder operations (bb `MegaCircuitBuilder_`): Goblin ECC op "gates", the databus,
 //! the bilinear/batched-equality gate and the compressed Poseidon2 gates.
 
+use crate::circuit::op_queue::SharedOpQueue;
 use super::builder::Builder;
-use super::op_queue::{EccOpCode, EccOpQueue, UltraOp};
+use super::op_queue::{EccOpCode, UltraOp};
 use super::trace::{BlockId, GateRow, Kind};
 use crate::base::field::FieldLike;
 use crate::base::poseidon2::round_constants;
 use crate::base::{Fr, G1Affine, Rng};
-use std::cell::RefCell;
-use std::rc::Rc;
 
 pub const NUM_BUS_COLUMNS: usize = 7;
 pub const KERNEL_CALLDATA: usize = 0;
@@ -62,7 +61,7 @@ pub struct BilinearBatchedEqGate {
 }
 
 pub struct MegaState {
-    pub op_queue: Rc<RefCell<EccOpQueue>>,
+    pub op_queue: SharedOpQueue,
     pub databus: [BusVector; NUM_BUS_COLUMNS],
     add_accum_op_idx: u32,
     mul_accum_op_idx: u32,
@@ -70,8 +69,8 @@ pub struct MegaState {
 }
 
 impl Builder {
-    pub(super) fn init_mega(&mut self, op_queue: Rc<RefCell<EccOpQueue>>) {
-        op_queue.borrow_mut().initialize_new_subtable();
+    pub(super) fn init_mega(&mut self, op_queue: SharedOpQueue) {
+        op_queue.write().unwrap().initialize_new_subtable();
         let add_accum_op_idx = self.put_constant_variable(Fr::from(EccOpCode::add().value() as u64));
         let mul_accum_op_idx = self.put_constant_variable(Fr::from(EccOpCode::mul().value() as u64));
         let equality_op_idx = self.put_constant_variable(Fr::from(EccOpCode::eq_reset().value() as u64));
@@ -89,7 +88,7 @@ impl Builder {
     pub fn is_mega(&self) -> bool {
         self.mega.is_some()
     }
-    pub fn op_queue(&self) -> Rc<RefCell<EccOpQueue>> {
+    pub fn op_queue(&self) -> SharedOpQueue {
         self.mega.as_ref().expect("not a Mega circuit").op_queue.clone()
     }
     pub fn bus(&self, bus: usize) -> &BusVector {
@@ -99,23 +98,23 @@ impl Builder {
     // ---- Goblin ECC ops ----
 
     pub fn queue_ecc_add_accum(&mut self, point: G1Affine) -> EccOpTuple {
-        let op = self.op_queue().borrow_mut().add_accumulate(point);
+        let op = self.op_queue().write().unwrap().add_accumulate(point);
         self.populate_ecc_op_wires(&op)
     }
     pub fn queue_ecc_mul_accum(&mut self, point: G1Affine, scalar: Fr) -> EccOpTuple {
-        let op = self.op_queue().borrow_mut().mul_accumulate(point, scalar);
+        let op = self.op_queue().write().unwrap().mul_accumulate(point, scalar);
         self.populate_ecc_op_wires(&op)
     }
     pub fn queue_ecc_eq(&mut self) -> EccOpTuple {
-        let op = self.op_queue().borrow_mut().eq_and_reset();
+        let op = self.op_queue().write().unwrap().eq_and_reset();
         self.populate_ecc_op_wires(&op)
     }
     pub fn queue_ecc_no_op(&mut self) -> EccOpTuple {
-        let op = self.op_queue().borrow_mut().no_op_ultra_only();
+        let op = self.op_queue().write().unwrap().no_op_ultra_only();
         self.populate_ecc_op_wires(&op)
     }
     pub fn queue_ecc_random_op(&mut self, rng: &mut dyn Rng) {
-        let op = self.op_queue().borrow_mut().random_op_ultra_only(rng);
+        let op = self.op_queue().write().unwrap().random_op_ultra_only(rng);
         self.populate_ecc_op_wires(&op);
     }
 

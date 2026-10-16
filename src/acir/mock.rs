@@ -39,7 +39,7 @@ fn push_random(out: &mut Vec<Fr>, n: usize, rng: &mut dyn Rng) {
 /// public inputs), then one commitment per witness entity.
 fn mock_oink_proof(kind: CircuitKind) -> Vec<Fr> {
     let ctx: Ctx = Rc::new(RefCell::new(Builder::from_acir_mega(
-        Rc::new(RefCell::new(EccOpQueue::new())),
+        EccOpQueue::shared(),
         &[],
         vec![],
         false,

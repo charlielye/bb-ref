@@ -55,8 +55,10 @@ fn thread_key() -> u64 {
 }
 
 thread_local! {
-    /// Innermost enclosing scope name on this thread, mirroring bb's `thread_local parent`.
-    static PARENT: Cell<&'static str> = const { Cell::new("") };
+    /// Innermost enclosing scope name on this thread, mirroring bb's `thread_local parent`. `None`
+    /// (the top level) is the all-zero value, so a thread-local slot that starts zeroed instead of
+    /// at its initializer (seen on a wasm reactor's main thread) still reads as the top level.
+    static PARENT: Cell<Option<&'static str>> = const { Cell::new(None) };
     /// Per-thread accumulation, flushed to the global table when the thread's outermost scope exits.
     static LOCAL: std::cell::RefCell<HashMap<(&'static str, &'static str), Acc>> =
         std::cell::RefCell::new(HashMap::new());
@@ -75,7 +77,7 @@ impl Scope {
         if !enabled() {
             return None;
         }
-        let parent = PARENT.with(|p| p.replace(name));
+        let parent = PARENT.with(|p| p.replace(Some(name))).unwrap_or("");
         Some(Scope {
             name,
             parent,
@@ -87,7 +89,7 @@ impl Scope {
 impl Drop for Scope {
     fn drop(&mut self) {
         let dur = self.start.elapsed().as_nanos() as u64;
-        PARENT.with(|p| p.set(self.parent));
+        PARENT.with(|p| p.set(Some(self.parent).filter(|p| !p.is_empty())));
         LOCAL.with(|l| {
             let mut l = l.borrow_mut();
             let e = l.entry((self.name, self.parent)).or_default();

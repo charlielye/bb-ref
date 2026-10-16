@@ -90,15 +90,157 @@ pub fn load_bn254_g1(n: usize) -> Vec<G1Affine> {
 }
 
 /// The Grumpkin SRS from `grumpkin_g1_v2.flat.dat` (same raw 64-byte layout, coordinates in bn254 Fr).
+/// As bb's loader, the chunks covering the prefix are read whole and checked against their pins.
 pub fn load_grumpkin_g1(n: usize) -> Vec<GrumpkinAffine> {
+    assert!(n > 0 && n <= GRUMPKIN_NUM_POINTS, "Grumpkin CRS point count must be between 1 and {GRUMPKIN_NUM_POINTS}");
     let path = crs_dir().join("grumpkin_g1_v2.flat.dat");
     let mut f = std::fs::File::open(&path).unwrap_or_else(|e| panic!("cannot open {}: {e}", path.display()));
-    let mut buf = vec![0u8; n * 64];
+    let mut buf = vec![0u8; n.div_ceil(GRUMPKIN_CHUNK_BYTES / 64) * GRUMPKIN_CHUNK_BYTES];
     f.read_exact(&mut buf)
         .unwrap_or_else(|e| panic!("CRS file too small for {n} points: {e}"));
-    buf.chunks(64)
-        .map(|c| GrumpkinAffine::new_unchecked(from_bytes_be::<Fr>(&c[0..32]), from_bytes_be::<Fr>(&c[32..64])))
-        .collect()
+    verify_grumpkin_chunks(&buf).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    buf[..n * 64].chunks(64).map(grumpkin_from_raw).collect()
+}
+
+// The pins bb authenticates SRS bytes against (`srs/factories/bn254_g1_chunk_hashes.hpp`,
+// `bn254_crs_data.hpp`, `grumpkin_crs_data.hpp`): SHA-256 of every 2^17-point chunk of the
+// compressed BN254 G1 setup, of the G2 point's 128 bytes, of each 2^16-point Grumpkin v2 chunk, and
+// the raw bytes of tau·G.
+const BN254_G1_CHUNK_HASHES: &[u8] = include_bytes!("srs_pins/bn254_g1_chunk_hashes.bin");
+const BN254_G1_SECOND: &[u8; 64] = include_bytes!("srs_pins/bn254_g1_second.bin");
+const BN254_G2_SHA256: &[u8; 32] = include_bytes!("srs_pins/bn254_g2_sha256.bin");
+const GRUMPKIN_G1_CHUNK_HASHES: &[u8; 128] = include_bytes!("srs_pins/grumpkin_g1_chunk_hashes.bin");
+const BN254_CHUNK_BYTES: usize = (1 << 17) * 32;
+const BN254_FULL_CHUNKS: usize = 762;
+/// bb `GRUMPKIN_G1_NUM_POINTS`: the pinned Grumpkin CRS, four chunks of 2^16 points.
+pub const GRUMPKIN_NUM_POINTS: usize = 1 << 18;
+const GRUMPKIN_CHUNK_BYTES: usize = (GRUMPKIN_NUM_POINTS / 4) * 64;
+
+fn sha256(b: &[u8]) -> [u8; 32] {
+    use sha2::Digest;
+    sha2::Sha256::digest(b).into()
+}
+
+/// bb `verify_grumpkin_crs_integrity`: one to four complete chunks, each matching its pin.
+pub fn verify_grumpkin_chunks(data: &[u8]) -> Result<(), String> {
+    if data.is_empty() || data.len() > GRUMPKIN_NUM_POINTS * 64 || data.len() % GRUMPKIN_CHUNK_BYTES != 0 {
+        return Err("Grumpkin CRS must contain complete pinned chunks (1 to 4 chunks)".into());
+    }
+    for (c, chunk) in data.chunks(GRUMPKIN_CHUNK_BYTES).enumerate() {
+        if sha256(chunk)[..] != GRUMPKIN_G1_CHUNK_HASHES[c * 32..(c + 1) * 32] {
+            return Err(format!("grumpkin g1 SHA-256 mismatch at chunk {c}"));
+        }
+    }
+    Ok(())
+}
+
+fn g1_from_raw(c: &[u8]) -> G1Affine {
+    G1Affine::new_unchecked(from_bytes_be::<Fq>(&c[0..32]), from_bytes_be::<Fq>(&c[32..64]))
+}
+
+/// bb `affine_element::from_compressed`: x in the low 255 bits, y's parity in the top bit; a
+/// non-canonical x or a non-residue decodes to (0, 0), as bb's does.
+fn g1_from_compressed(c: &[u8]) -> G1Affine {
+    use ark_ff::{BigInteger, Field, PrimeField};
+    let mut x_bytes: [u8; 32] = c.try_into().unwrap();
+    let y_bit = x_bytes[0] >> 7 == 1;
+    x_bytes[0] &= 0x7f;
+    let zero = G1Affine::new_unchecked(Fq::from(0u64), Fq::from(0u64));
+    let mut limbs = [0u64; 4];
+    for (i, w) in x_bytes.chunks(8).enumerate() {
+        limbs[3 - i] = u64::from_be_bytes(w.try_into().unwrap());
+    }
+    let x_int = super::field::U256::new(limbs);
+    if x_int >= Fq::MODULUS {
+        return zero;
+    }
+    let x = Fq::from_bigint(x_int).unwrap();
+    let Some(mut y) = (x.square() * x + Fq::from(3u64)).sqrt() else {
+        return zero;
+    };
+    if y.into_bigint().is_odd() != y_bit {
+        y = -y;
+    }
+    G1Affine::new_unchecked(x, y)
+}
+
+fn g1_to_raw(p: &G1Affine, out: &mut [u8]) {
+    out[0..32].copy_from_slice(&super::field::to_bytes_be(&p.x));
+    out[32..64].copy_from_slice(&super::field::to_bytes_be(&p.y));
+}
+
+/// bb `SrsInitSrs::execute`: authenticate and decode the BN254 points a client pushes. Compressed
+/// input (32 bytes a point) must be whole chunks matching the pins and is returned uncompressed for
+/// the caller to cache; uncompressed input is trusted apart from its first two points. The G2 point
+/// must be the canonical `[x]_2`.
+pub fn bn254_from_ingress(num_points: u32, points_buf: &[u8], g2_point: &[u8]) -> Result<(Vec<G1Affine>, Vec<u8>), String> {
+    use rayon::prelude::*;
+    let n = num_points as usize;
+    let bytes_per_point = if n > 0 { points_buf.len() / n } else { 0 };
+    if bytes_per_point != 64 && bytes_per_point != 32 {
+        return Err(format!(
+            "SrsInitSrs: invalid points_buf size. Expected 32 or 64 bytes per point, got {bytes_per_point}"
+        ));
+    }
+    let mut uncompressed = vec![];
+    let points: Vec<G1Affine> = if bytes_per_point == 64 {
+        points_buf[..n * 64].par_chunks(64).map(g1_from_raw).collect()
+    } else {
+        if points_buf.is_empty() || points_buf.len() % BN254_CHUNK_BYTES != 0 {
+            return Err(format!(
+                "SrsInitSrs: compressed points_buf size {} must be a positive multiple of {BN254_CHUNK_BYTES}",
+                points_buf.len()
+            ));
+        }
+        let chunks = (points_buf.len() / BN254_CHUNK_BYTES).min(BN254_FULL_CHUNKS);
+        for (i, chunk) in points_buf.chunks(BN254_CHUNK_BYTES).take(chunks).enumerate() {
+            if sha256(chunk)[..] != BN254_G1_CHUNK_HASHES[i * 32..(i + 1) * 32] {
+                return Err(format!("SrsInitSrs: g1 compressed chunk {i} SHA-256 mismatch"));
+            }
+        }
+        let points: Vec<G1Affine> = points_buf[..n * 32].par_chunks(32).map(g1_from_compressed).collect();
+        uncompressed = vec![0u8; n * 64];
+        uncompressed.par_chunks_mut(64).zip(points.par_iter()).for_each(|(o, p)| g1_to_raw(p, o));
+        points
+    };
+    if n >= 1 && points[0] != G1Affine::generator() {
+        return Err("SrsInitSrs: g1_points[0] is not the canonical BN254 generator".into());
+    }
+    if n >= 2 && points[1] != g1_from_raw(BN254_G1_SECOND) {
+        return Err("SrsInitSrs: g1_points[1] does not match the canonical trusted-setup tau·G".into());
+    }
+    // The hash pin fixes the bytes to the canonical [x]_2, which is a valid prime-order point.
+    if sha256(g2_point) != *BN254_G2_SHA256 {
+        return Err("SrsInitSrs: g2_point bytes do not match the canonical Aztec [x]_2 SHA-256".into());
+    }
+    Ok((points, uncompressed))
+}
+
+/// bb `SrsInitGrumpkinSrs::execute`: the first `num_points` of an authenticated Grumpkin buffer.
+pub fn grumpkin_from_ingress(num_points: u32, points_buf: &[u8]) -> Result<Vec<GrumpkinAffine>, String> {
+    let n = num_points as usize;
+    if n == 0 || n > GRUMPKIN_NUM_POINTS {
+        return Err("SrsInitGrumpkinSrs: point count is outside the pinned Grumpkin CRS".into());
+    }
+    if points_buf.len() < n * 64 {
+        return Err(format!(
+            "SrsInitGrumpkinSrs: points_buf too small ({} bytes) for num_points={n} (need {})",
+            points_buf.len(),
+            n * 64
+        ));
+    }
+    verify_grumpkin_chunks(points_buf)?;
+    Ok(points_buf[..n * 64].chunks(64).map(grumpkin_from_raw).collect())
+}
+
+/// The Grumpkin SRS's first point (the head of pinned chunk 0): the ECCVM's Shplonk base point
+/// (bb `VerifierCommitmentKey::get_g1_identity`), which a verifier needs without the setup at hand.
+pub fn grumpkin_g1_first() -> GrumpkinAffine {
+    grumpkin_from_raw(include_bytes!("srs_pins/grumpkin_g1_first.bin"))
+}
+
+fn grumpkin_from_raw(c: &[u8]) -> GrumpkinAffine {
+    GrumpkinAffine::new_unchecked(from_bytes_be::<Fr>(&c[0..32]), from_bytes_be::<Fr>(&c[32..64]))
 }
 
 /// The trusted-setup `[x]_2`, pinned in bb at `srs/factories/bn254_crs_data.hpp`
@@ -132,6 +274,44 @@ mod tests {
     #[test]
     fn g2_is_valid() {
         let _ = bn254_g2();
+    }
+
+    /// The ingress path against the real setup files: one compressed chunk decompresses to exactly
+    /// the uncompressed setup's points, a flipped byte is rejected, and Grumpkin chunks authenticate.
+    #[test]
+    fn ingress_authenticates_and_decompresses() {
+        let dir = crs_dir();
+        let (Ok(comp), Ok(raw), Ok(grum)) = (
+            std::fs::read(dir.join("bn254_g1_compressed.dat")),
+            std::fs::read(dir.join("bn254_g1.dat")),
+            std::fs::read(dir.join("grumpkin_g1_v2.flat.dat")),
+        ) else {
+            eprintln!("skipping: no CRS files");
+            return;
+        };
+        let g2: Vec<u8> = BN254_G2_X_BYTES.to_vec();
+        let n = 1 << 17;
+        let chunk = &comp[..BN254_CHUNK_BYTES];
+        let (points, out) = bn254_from_ingress(n as u32, chunk, &g2).unwrap();
+        assert_eq!(out, raw[..n * 64]);
+        assert_eq!(points[12345], g1_from_raw(&raw[12345 * 64..12346 * 64]));
+        let (points64, out64) = bn254_from_ingress(n as u32, &raw[..n * 64], &g2).unwrap();
+        assert!(out64.is_empty() && points64 == points);
+        let mut bad = chunk.to_vec();
+        bad[1000] ^= 1;
+        assert!(bn254_from_ingress(n as u32, &bad, &g2).unwrap_err().contains("chunk 0 SHA-256 mismatch"));
+        let mut bad_g2 = g2.clone();
+        bad_g2[5] ^= 1;
+        assert!(bn254_from_ingress(n as u32, chunk, &bad_g2).is_err());
+        assert!(bn254_from_ingress(n as u32, &chunk[..chunk.len() - 32], &g2).is_err());
+
+        let g = grumpkin_from_ingress(1 << 16, &grum[..GRUMPKIN_CHUNK_BYTES]).unwrap();
+        assert_eq!(g[0], grumpkin_g1_first());
+        assert_eq!(g, load_grumpkin_g1(1 << 16));
+        assert!(grumpkin_from_ingress(1 << 16, &grum[..GRUMPKIN_CHUNK_BYTES - 64]).is_err());
+        let mut bad = grum[..GRUMPKIN_CHUNK_BYTES].to_vec();
+        bad[7] ^= 1;
+        assert!(grumpkin_from_ingress(16, &bad).unwrap_err().contains("chunk 0"));
     }
 
     #[test]
@@ -217,6 +397,17 @@ impl Srs {
             bn254: std::sync::Arc::new(load_bn254_g1(bn254_n)),
             grumpkin: std::sync::Arc::new(load_grumpkin_g1(grumpkin_n)),
         }
+    }
+
+    /// Serve BN254 keys from `points` (bb `init_bn254_mem_crs_factory`); larger requests still
+    /// fall back to an exact load.
+    pub fn set_bn254(&mut self, points: Vec<G1Affine>) {
+        self.bn254 = std::sync::Arc::new(points);
+    }
+
+    /// Serve Grumpkin keys from `points` (bb `init_grumpkin_mem_crs_factory`).
+    pub fn set_grumpkin(&mut self, points: Vec<GrumpkinAffine>) {
+        self.grumpkin = std::sync::Arc::new(points);
     }
 
     pub fn bn254_key(&self, num_points: usize) -> CommitmentKey {

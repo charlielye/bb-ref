@@ -488,7 +488,9 @@ impl Handler for BbRefHandler {
                 .map(|k| circuit_kind(*k))
                 .collect::<Result<Vec<_>, _>>()?;
             // The key grows as circuits load; the translator's 2^17 is the floor.
-            self.ivc = Some(Chonk::new(kinds, self.srs.bn254_key(1 << 17)));
+            let mut ivc = Chonk::new(kinds, self.srs.bn254_key(1 << 17));
+            ivc.eccvm_ck = Some(self.srs.grumpkin_key(ECCVM_FIXED_SIZE));
+            self.ivc = Some(ivc);
             self.loaded = None;
             Ok(BbChonkStartResponse {})
         });
@@ -612,6 +614,45 @@ impl Handler for BbRefHandler {
         });
     }
 
+    fn poseidon2_absorb_chain(
+        &mut self,
+        cmd: BbPoseidon2AbsorbChain,
+        respond: Responder<BbPoseidon2AbsorbChainResponse>,
+    ) {
+        // bb `Sponge::absorb_blocks`: each 3-element block is added into the rate part of the state,
+        // then permuted; no IV, padding or squeeze.
+        run_catching(respond, || {
+            const BLOCK_BYTES: usize = 3 * 32;
+            if cmd.inputs.len() % BLOCK_BYTES != 0 {
+                return Err(format!("Poseidon2AbsorbChain: input size must be a multiple of {BLOCK_BYTES} bytes"));
+            }
+            let mut state = cmd.state.each_ref().map(fr_from_wire);
+            for block in cmd.inputs.chunks(BLOCK_BYTES) {
+                for (s, f) in state.iter_mut().zip(block.chunks(32)) {
+                    *s += crate::base::field::from_bytes_be::<FrField>(f);
+                }
+                poseidon2::permutation(&mut state);
+            }
+            Ok(BbPoseidon2AbsorbChainResponse { state: state.each_ref().map(fr_to_wire) })
+        });
+    }
+
+    fn init(&mut self, cmd: BbInit, respond: Responder<BbInitResponse>) {
+        // bb `handle_init`, plus the setup bb does lazily and a library user has no main for: the
+        // thread pool and the session's seeded randomness (`BB_RNG_SEED`). Sent first; anything
+        // before it is undefined. Sent again it restarts the seeded stream, as bb's does.
+        run_catching(respond, || {
+            start_pool();
+            crate::base::rng::set_global_from_env();
+            if cmd.warmup.unwrap_or(true) {
+                warmup()?;
+                // The warmup's random scalars must not count against the session.
+                crate::base::rng::set_global_from_env();
+            }
+            Ok(BbInitResponse {})
+        });
+    }
+
     fn poseidon2_permutation(
         &mut self,
         cmd: BbPoseidon2Permutation,
@@ -634,14 +675,22 @@ impl Handler for BbRefHandler {
         });
     }
 
-    // The SRS loads lazily from ~/.bb-crs whenever a commitment key is built; the push-points
-    // commands are satisfied by acknowledging them.
-    fn srs_init_srs(&mut self, _cmd: BbSrsInitSrs, respond: Responder<BbSrsInitSrsResponse>) {
-        respond.ok(BbSrsInitSrsResponse { points_buf: vec![] });
+    // Pushed points are authenticated as bb does and then serve every key they cover; anything
+    // larger still loads from ~/.bb-crs.
+    fn srs_init_srs(&mut self, cmd: BbSrsInitSrs, respond: Responder<BbSrsInitSrsResponse>) {
+        run_catching(respond, || {
+            let (points, points_buf) =
+                crate::base::srs::bn254_from_ingress(cmd.num_points, &cmd.points_buf, &cmd.g2_point)?;
+            self.srs.set_bn254(points);
+            Ok(BbSrsInitSrsResponse { points_buf })
+        });
     }
 
-    fn srs_init_grumpkin_srs(&mut self, _cmd: BbSrsInitGrumpkinSrs, respond: Responder<BbSrsInitGrumpkinSrsResponse>) {
-        respond.ok(BbSrsInitGrumpkinSrsResponse { dummy: 0 });
+    fn srs_init_grumpkin_srs(&mut self, cmd: BbSrsInitGrumpkinSrs, respond: Responder<BbSrsInitGrumpkinSrsResponse>) {
+        run_catching(respond, || {
+            self.srs.set_grumpkin(crate::base::srs::grumpkin_from_ingress(cmd.num_points, &cmd.points_buf)?);
+            Ok(BbSrsInitGrumpkinSrsResponse { dummy: 0 })
+        });
     }
 
     // Everything below is outside bb-ref's scope (AVM, crypto helpers, raw curve ops, batch
@@ -659,7 +708,6 @@ impl Handler for BbRefHandler {
         chonk_stats: BbChonkStats => BbChonkStatsResponse,
         pedersen_commit: BbPedersenCommit => BbPedersenCommitResponse,
         pedersen_hash: BbPedersenHash => BbPedersenHashResponse,
-        pedersen_hash_buffer: BbPedersenHashBuffer => BbPedersenHashBufferResponse,
         blake2s: BbBlake2s => BbBlake2sResponse,
         blake2s_to_field: BbBlake2sToField => BbBlake2sToFieldResponse,
         aes_encrypt: BbAesEncrypt => BbAesEncryptResponse,
@@ -693,4 +741,54 @@ impl Handler for BbRefHandler {
         chonk_batch_verifier_queue: BbChonkBatchVerifierQueue => BbChonkBatchVerifierQueueResponse,
         chonk_batch_verifier_stop: BbChonkBatchVerifierStop => BbChonkBatchVerifierStopResponse,
     }
+}
+
+/// The rayon pool, built once with the calling thread as its first worker, so work issued from the
+/// thread that serves commands runs in it and the host's thread count (`RAYON_NUM_THREADS`) includes
+/// that thread. Not `build_global`: it waits for every worker to start, and a browser starts a
+/// worker spawned from a blocked worker only once that worker returns to its event loop; until the
+/// others come up the calling thread runs the work itself. Leaked: it lives for the process.
+fn start_pool() {
+    static STARTED: std::sync::Once = std::sync::Once::new();
+    STARTED.call_once(|| {
+        let mut pool = rayon::ThreadPoolBuilder::new().use_current_thread();
+        if cfg!(target_family = "wasm") {
+            // bb's 1 MiB worker stacks: on wasm they are heap blocks in every linear-memory peak.
+            pool = pool.stack_size(1 << 20);
+        }
+        if let Ok(pool) = pool.build() {
+            std::mem::forget(pool);
+        }
+    });
+}
+
+/// bb `run_warmup`: one pass over the hot loops (a 2^14 MSM over 2^i·G, a batch inversion, 2^10
+/// Poseidon2 hashes) so a tiering wasm engine has optimized them before real work. Its 2^14 random
+/// scalars come from the session source, as bb's do.
+fn warmup() -> Result<(), String> {
+    use crate::base::{G1Affine, G1Projective};
+    use ark_ec::{AdditiveGroup, CurveGroup, PrimeGroup};
+    use ark_ff::Field;
+    const NUM_POINTS: usize = 1 << 14;
+    const NUM_HASHES: usize = 1 << 10;
+    let mut acc = G1Projective::generator();
+    let mut points = Vec::with_capacity(NUM_POINTS);
+    for _ in 0..NUM_POINTS {
+        points.push(acc);
+        acc.double_in_place();
+    }
+    let points: Vec<G1Affine> = G1Projective::normalize_batch(&points);
+    let scalars: Vec<FrField> = (0..NUM_POINTS).map(|_| crate::base::rng::global_field()).collect();
+    let commitment = crate::base::msm::msm(&points, &scalars);
+    let mut elements: Vec<FrField> =
+        scalars.iter().enumerate().map(|(i, s)| s.square() + FrField::from(i as u64 + 1)).collect();
+    crate::base::field::batch_invert(&mut elements);
+    let mut h = elements[0];
+    for e in &elements[..NUM_HASHES] {
+        h = poseidon2::Poseidon2::hash(&[h, *e]);
+    }
+    if commitment == G1Projective::default() || h == FrField::from(0u64) {
+        return Err("Init: warmup produced a degenerate result".into());
+    }
+    Ok(())
 }

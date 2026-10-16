@@ -115,9 +115,7 @@ mod tests {
     /// RFC 7693 Appendix A: blake2s("abc") — the value pin against the standard, independent of bb.
     #[test]
     fn matches_rfc7693_kat() {
-        let ctx = Rc::new(RefCell::new(Builder::new_mega(Rc::new(
-            RefCell::new(EccOpQueue::new()),
-        ))));
+        let ctx = Rc::new(RefCell::new(Builder::new_mega(EccOpQueue::shared())));
         let input = ByteArray::from_bytes(&ctx, b"abc");
         let digest = hash(&input);
         let hex: String = digest.get_value().iter().map(|b| format!("{b:02x}")).collect();

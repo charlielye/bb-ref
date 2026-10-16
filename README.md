@@ -29,11 +29,13 @@ private-tx rollups. Also out of scope: Solidity verifier generation, Starknet or
 
 ## The pin
 
-bb-ref tracks one bb commit, recorded in [`tools/PIN`](tools/PIN) (a branch carrying a handful of
-reviewable test-support commits: the seeded RNG, the frame-draw counter, envelope framing, the
-instance dumper). Every doc comment citing a bb source path means *that file at the pin*.
-Re-pinning: update the pin, `tools/regen/regen_corpus.sh`, re-run the suites, chase drift
-with [docs/oracle.md](docs/oracle.md)'s ladder.
+bb-ref tracks one bb commit, recorded in [`tools/PIN`](tools/PIN): `cl/bb-ref-conformance`, bb's
+`next` plus the generated bb.js-api package (aztec-packages#25433), carrying a handful of reviewable
+test-support commits (the seeded RNG and its draw tape, the frame-draw counter, envelope framing,
+the instance dumper) and one fix to that PR's node wasm runtime. Every doc comment citing a bb source path means *that file at the pin*.
+Re-pinning: update the pin, run `tools/regen/regen_*.sh` (the corpus last-but-one: the backend
+fixtures are extracted from it), re-run the suites, chase drift with
+[docs/oracle.md](docs/oracle.md)'s ladder.
 
 ## Layout
 
@@ -61,6 +63,7 @@ graph LR
 | [`msgpack`](src/msgpack/README.md) | bb's wire protocol: generated types + the command handler (`bb-ref msgpack run`) |
 | [`tests/`](tests) | differential suites (vs `tests/data/` fixtures) + standalone soundness/relations suites |
 | [`tools/`](tools/README.md) | the commands below, their support libs, and the fixture regenerators |
+| [`js/`](js/README.md) | `bb-ref.js` (generated: bb.js-api's API over bb-ref's module) and a browser bench page comparing the two |
 
 ## Commands
 
@@ -72,6 +75,7 @@ tools/bench_chonk.sh                 # client-IVC proving over the pinned tx flo
 tools/check.sh                       # the standalone gate: unit tests with no bb, corpus, or fixtures
 tools/coverage.sh                    # line coverage of the standalone test set
 tools/loc.sh [--no-tests]            # bb C++ vs bb-ref Rust, side by side
+tools/build_bb_ref_js.sh             # generate + build js/bb-ref.js; then node js/chonk-bench/serve.mjs
 cargo test --release                 # everything: differential + standalone (~10 min)
 ```
 

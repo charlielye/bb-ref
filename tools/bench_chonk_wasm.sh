@@ -20,8 +20,8 @@ cd "$(dirname "$0")/.."
 
 RUNTIME=${1:?usage: bench_chonk_wasm.sh wasmtime|v8 [flow ...]}
 shift || true
-FLOWS_DIR=$(cd "${BB_FLOWS:-../aztec-packages2/barretenberg/cpp/chonk-pinned-flows}" && pwd)
-BB_WASM=$(cd "$(dirname "${BB_WASM:-../aztec-packages2/barretenberg/cpp/build-wasm-threads/bin/bb}")" && pwd)/$(basename "${BB_WASM:-bb}")
+FLOWS_DIR=$(cd "${BB_FLOWS:-pin/aztec-packages/barretenberg/cpp/chonk-pinned-flows}" && pwd)
+BB_WASM=$(cd "$(dirname "${BB_WASM:-pin/aztec-packages/barretenberg/cpp/build-wasm-threads/bin/bb}")" && pwd)/$(basename "${BB_WASM:-bb}")
 REF_WASM=${REF_WASM:-$PWD/target/wasm32-wasip1-threads/release/bb-ref.wasm}
 BB_WASM_BENCH=${BB_WASM_BENCH:-}
 : "${REPS:=1}"

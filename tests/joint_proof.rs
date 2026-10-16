@@ -72,9 +72,7 @@ fn batched_matches_bb() {
     let text =
         std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/scripts/mega_zk.txt"))
             .unwrap();
-    let ctx = Rc::new(RefCell::new(Builder::new_mega(Rc::new(
-        RefCell::new(EccOpQueue::new()),
-    ))));
+    let ctx = Rc::new(RefCell::new(Builder::new_mega(EccOpQueue::shared())));
     common::script::run_script(&ctx, &text);
     let mut builder = Rc::try_unwrap(ctx).ok().unwrap().into_inner();
     let mut inst = ProverInstance::from_builder(&MEGA_ZK, &mut builder, &mut OsRng);
@@ -160,9 +158,7 @@ fn batched_byte_exact_with_tape() {
     let text =
         std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/scripts/mega_zk.txt"))
             .unwrap();
-    let ctx = Rc::new(RefCell::new(Builder::new_mega(Rc::new(
-        RefCell::new(EccOpQueue::new()),
-    ))));
+    let ctx = Rc::new(RefCell::new(Builder::new_mega(EccOpQueue::shared())));
     common::script::run_script(&ctx, &text);
     let mut builder = Rc::try_unwrap(ctx).ok().unwrap().into_inner();
     let mut inst = ProverInstance::from_builder(&MEGA_ZK, &mut builder, &mut tape);

@@ -19,39 +19,39 @@
 // Driven by ../regen/regen_corpus.sh, which builds the pinned tree, runs the harvest when the leaf
 // assets are missing, and starts this with the environment it needs. Plain node, no test runner:
 //   node --experimental-strip-types --experimental-transform-types driver.ts
-import { BBNativeRollupProver } from '@aztec/bb-prover';
-import { BackendType, Barretenberg, BarretenbergSync } from '@aztec/bb.js';
-import { PAIRING_POINTS_SIZE } from '@aztec/constants';
-import { BlockNumber, CheckpointNumber, EpochNumber, SlotNumber } from '@aztec/foundation/branded-types';
-import { SerialQueue } from '@aztec/foundation/queue';
-import { getVKTreeRoot } from '@aztec/noir-protocol-circuits-types/vk-tree';
-import { protocolContractsHash } from '@aztec/protocol-contracts';
-import { AztecAddress } from '@aztec/stdlib/aztec-address';
-import { GasFees } from '@aztec/stdlib/gas';
-import { CheckpointConstantData } from '@aztec/stdlib/rollup';
-import { GlobalVariables } from '@aztec/stdlib/tx';
-import type { FieldsOf } from '@aztec/foundation/types';
-import { Fr } from '@aztec/foundation/curves/bn254';
-import { EthAddress } from '@aztec/foundation/eth-address';
-import { createLogger } from '@aztec/foundation/log';
-import { PublicProcessorFactory } from '@aztec/simulator/server';
-import { PublicSimulatorConfig } from '@aztec/stdlib/avm';
-import { L2Block } from '@aztec/stdlib/block';
-import { PublicDataTreeLeaf } from '@aztec/stdlib/trees';
-import { MerkleTreeId } from '@aztec/stdlib/trees';
-import type { BlockHeader, ProcessedTx, Tx } from '@aztec/stdlib/tx';
-import { Tx as TxClass } from '@aztec/stdlib/tx';
-import { NativeWorldStateService } from '@aztec/world-state/native';
+import { BBNativeRollupProver } from '@aztec-labs/bb-prover';
+import { BackendType, Barretenberg, BarretenbergSync } from '@aztec-foundation/bb.js';
+import { PAIRING_POINTS_SIZE } from '@aztec-labs/constants';
+import { BlockNumber, CheckpointNumber, EpochNumber, SlotNumber } from '@aztec-labs/foundation/branded-types';
+import { SerialQueue } from '@aztec-labs/foundation/queue';
+import { getVKTreeRoot } from '@aztec-labs/noir-protocol-circuits-types/vk-tree';
+import { protocolContractsHash } from '@aztec-labs/protocol-contracts';
+import { AztecAddress } from '@aztec-labs/stdlib/aztec-address';
+import { GasFees } from '@aztec-labs/stdlib/gas';
+import { CheckpointConstantData } from '@aztec-labs/stdlib/rollup';
+import { GlobalVariables } from '@aztec-labs/stdlib/tx';
+import type { FieldsOf } from '@aztec-labs/foundation/types';
+import { Fr } from '@aztec-labs/foundation/curves/bn254';
+import { EthAddress } from '@aztec-labs/foundation/eth-address';
+import { createLogger } from '@aztec-labs/foundation/log';
+import { PublicProcessorFactory } from '@aztec-labs/simulator/server';
+import { PublicSimulatorConfig } from '@aztec-labs/stdlib/avm';
+import { L2Block } from '@aztec-labs/stdlib/block';
+import { PublicDataTreeLeaf } from '@aztec-labs/stdlib/trees';
+import { MerkleTreeId } from '@aztec-labs/stdlib/trees';
+import type { BlockHeader, ProcessedTx, Tx } from '@aztec-labs/stdlib/tx';
+import { Tx as TxClass } from '@aztec-labs/stdlib/tx';
+import { NativeWorldStateService } from '@aztec-labs/world-state/native';
 
 import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { LightweightCheckpointBuilder } from '@aztec/prover-client/light';
-import { buildFinalBlobChallenges } from '@aztec/prover-client/helpers';
-import { CheckpointSubTreeOrchestrator } from '@aztec/prover-client/orchestrator';
-import { ChonkCache } from '@aztec/prover-client/orchestrator';
-import { type CheckpointTopTreeData, TopTreeOrchestrator } from '@aztec/prover-client/orchestrator';
+import { LightweightCheckpointBuilder } from '@aztec-labs/prover-client/light';
+import { buildFinalBlobChallenges } from '@aztec-labs/prover-client/helpers';
+import { CheckpointSubTreeOrchestrator } from '@aztec-labs/prover-client/orchestrator';
+import { ChonkCache } from '@aztec-labs/prover-client/orchestrator';
+import { type CheckpointTopTreeData, TopTreeOrchestrator } from '@aztec-labs/prover-client/orchestrator';
 
 /** Constants every circuit in a checkpoint shares. The defaults stand in only where the harvested
  * chain does not pin a value; callers MUST override chainId, version and gas fees with the tip's,
@@ -208,8 +208,8 @@ async function main() {
       bbIVCConcurrency: 1,
       bbChonkVerifyMaxBatch: 16,
       bbChonkVerifyConcurrency: 1,
-      acvmBinaryPath: process.env.ACVM_BINARY_PATH!,
-      acvmWorkingDirectory: mkdtempSync(path.join(tmpdir(), 'bbref-corpus-acvm-')),
+      noirExecuteBinaryPath: process.env.NOIR_EXECUTE_BINARY_PATH!,
+      noirExecuteWorkingDirectory: mkdtempSync(path.join(tmpdir(), 'bbref-corpus-noir-execute-')),
     });
 
     // --- Checkpoint composition (jaws' BenchCheckpointBuilder, on pin APIs) ---
@@ -310,9 +310,11 @@ async function main() {
 
       const builtBlocks: { header: BlockHeader; txs: ProcessedTx[] }[] = [];
       for (let i = 0; i < numBlocks; i++) {
-        const { block } = await builder.addBlock(blockGlobals[i], processedPerBlock[i], i === 0 ? l1ToL2Messages : [], {
-          insertTxsEffects: true,
-        });
+        const { block } = await builder.applyEffectsAndSealBlock(
+          blockGlobals[i],
+          processedPerBlock[i],
+          i === 0 ? l1ToL2Messages : [],
+        );
         headers.set(Number(block.number), block.header);
         await worldState.handleL2BlockAndMessages(block, block.indexWithinCheckpoint === 0 ? l1ToL2Messages : []);
         builtBlocks.push({ header: block.header, txs: processedPerBlock[i] });

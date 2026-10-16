@@ -150,9 +150,7 @@ mod tests {
     /// The official BLAKE3 test vector for "abc" — the value pin against the standard.
     #[test]
     fn matches_official_kat() {
-        let ctx = Rc::new(RefCell::new(Builder::new_mega(Rc::new(
-            RefCell::new(EccOpQueue::new()),
-        ))));
+        let ctx = Rc::new(RefCell::new(Builder::new_mega(EccOpQueue::shared())));
         let input = ByteArray::from_bytes(&ctx, b"abc");
         let digest = hash(&input);
         let hex: String = digest.get_value().iter().map(|b| format!("{b:02x}")).collect();

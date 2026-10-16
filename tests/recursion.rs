@@ -20,7 +20,7 @@ use std::rc::Rc;
 
 fn acir_tests_dir() -> PathBuf {
     std::env::var("ACIR_TESTS").map(PathBuf::from).unwrap_or_else(|_| {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../aztec-packages2/barretenberg/acir_tests/acir_tests")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pin/aztec-packages/barretenberg/acir_tests/acir_tests")
     })
 }
 

@@ -152,10 +152,9 @@ backend_tests! {
 }
 
 // Real-witness proving through the recursion lowerings (CHONK for tx_base_private, ROLLUP_HONK
-// for the tree levels): instance + VK + combined honk+ipa proof byte-equal to bb. Fixtures are
-// harvested from live epoch runs (tools/regen/regen_backend.sh); the merge and multi-tx block-root
-// variants come from a 3-tx-block epoch shape. Still unharvested: block_merge (needs 3+ blocks in
-// ONE checkpoint — this shape gives each block its own checkpoint) and checkpoint_padding.
+// for the tree levels): instance + VK + combined honk+ipa proof byte-equal to bb. The witnesses
+// come from the conformance corpus's epochs (tools/regen/backend_from_corpus.py), which reach every
+// rollup circuit.
 mod rollup_tx_base_private_witness {
     #[test]
     fn nozk() {
@@ -168,34 +167,28 @@ mod rollup_tx_merge_witness {
         super::check_nozk_opts("rollup_tx_merge", true);
     }
 }
-mod rollup_block_root_single_tx_first_witness {
+mod rollup_block_root_witness {
     #[test]
     fn nozk() {
-        super::check_nozk_opts("rollup_block_root_single_tx_first", true);
-    }
-}
-mod rollup_block_merge_witness {
-    #[test]
-    fn nozk() {
-        super::check_nozk_opts("rollup_block_merge", true);
-    }
-}
-mod rollup_checkpoint_merge_witness {
-    #[test]
-    fn nozk() {
-        super::check_nozk_opts("rollup_checkpoint_merge", true);
-    }
-}
-mod rollup_block_root_first_witness {
-    #[test]
-    fn nozk() {
-        super::check_nozk_opts("rollup_block_root_first", true);
+        super::check_nozk_opts("rollup_block_root", true);
     }
 }
 mod rollup_block_root_single_tx_witness {
     #[test]
     fn nozk() {
         super::check_nozk_opts("rollup_block_root_single_tx", true);
+    }
+}
+mod rollup_block_root_no_txs_witness {
+    #[test]
+    fn nozk() {
+        super::check_nozk_opts("rollup_block_root_no_txs", true);
+    }
+}
+mod rollup_block_merge_witness {
+    #[test]
+    fn nozk() {
+        super::check_nozk_opts("rollup_block_merge", true);
     }
 }
 mod rollup_checkpoint_root_witness {
@@ -210,16 +203,18 @@ mod rollup_checkpoint_root_single_block_witness {
         super::check_nozk_opts("rollup_checkpoint_root_single_block", true);
     }
 }
-mod rollup_parity_root_witness {
+mod rollup_checkpoint_merge_witness {
     #[test]
     fn nozk() {
-        super::check_nozk_opts("rollup_parity_root", false);
+        super::check_nozk_opts("rollup_checkpoint_merge", true);
     }
 }
-// The tx/block/checkpoint MERGE variants have no harvested witnesses yet: the e2e epoch that
-// produced the fixtures is too small to force them (a merge needs 3+ leaves at its level).
-// They arrive with the recipe-driven generator (docs/conformance.md); rollup_tx_merge above
-// skips cleanly until then.
+mod rollup_checkpoint_padding_witness {
+    #[test]
+    fn nozk() {
+        super::check_nozk_opts("rollup_checkpoint_padding", true);
+    }
+}
 
 /// The circuits bb-ref can currently build, with the node's `--ipa_accumulation` flag (grows per
 /// B-milestone; the rest of `backend_vk_hash/` is fixture-complete but unsupported until the
@@ -227,9 +222,11 @@ mod rollup_parity_root_witness {
 /// keccak vk_hash for rollup_root, AVM never).
 const SUPPORTED: &[(&str, bool)] = &[
     ("rollup_root", false),
+    ("inbox_parity_4", false),
+    ("inbox_parity_16", false),
     ("inbox_parity_64", false),
-    ("parity_base", false),
-    ("parity_root", false),
+    ("inbox_parity_256", false),
+    ("inbox_parity_1024", false),
     ("rollup_checkpoint_padding", true),
     ("rollup_tx_merge", true),
     ("rollup_checkpoint_merge", true),
@@ -237,9 +234,7 @@ const SUPPORTED: &[(&str, bool)] = &[
     ("rollup_checkpoint_root_single_block", true),
     ("rollup_block_merge", true),
     ("rollup_block_root", true),
-    ("rollup_block_root_first", true),
-    ("rollup_block_root_first_empty_tx", true),
-    ("rollup_block_root_first_single_tx", true),
+    ("rollup_block_root_no_txs", true),
     ("rollup_block_root_single_tx", true),
     ("rollup_tx_base_private", true),
     ("chonk_verifier_public", true),
@@ -252,7 +247,7 @@ fn artifact(name: &str) -> std::path::PathBuf {
     }
     let root = std::env::var("PROTOCOL_CIRCUITS").unwrap_or_else(|_| {
         format!(
-            "{}/../aztec-packages2/noir-projects/fnd/noir-protocol-circuits/target",
+            "{}/pin/aztec-packages/noir-projects/fnd/noir-protocol-circuits/target",
             env!("CARGO_MANIFEST_DIR")
         )
     });

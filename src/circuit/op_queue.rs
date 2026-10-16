@@ -147,6 +147,11 @@ impl<T> SubTables<T> {
     }
 }
 
+/// The op queue shared by `Chonk` and each circuit it builds. An `RwLock` keeps `RefCell`'s rules
+/// (many readers or one writer) while letting the prover state cross threads, so the msgpack
+/// handler that owns it is `Send`.
+pub type SharedOpQueue = std::sync::Arc<std::sync::RwLock<EccOpQueue>>;
+
 pub struct EccOpQueue {
     accumulator: crate::base::G1Projective,
     /// The `mul_accumulate` terms not yet in `accumulator`: summed as one MSM at `eq_and_reset`.
@@ -166,6 +171,11 @@ impl Default for EccOpQueue {
 }
 
 impl EccOpQueue {
+    /// A fresh queue to share.
+    pub fn shared() -> SharedOpQueue {
+        std::sync::Arc::new(std::sync::RwLock::new(Self::new()))
+    }
+
     pub fn new() -> Self {
         Self {
             accumulator: crate::base::G1Projective::default(),

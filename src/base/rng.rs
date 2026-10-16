@@ -174,22 +174,28 @@ impl Rng for GlobalProxy {
 /// stream and changes every later proof in the same session.
 pub static GLOBAL_DRAWS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+const NOT_DETACHED: u8 = 0;
+const DETACHED_CLEAN: u8 = 1;
+const DETACHED_DREW: u8 = 2;
+
 thread_local! {
-    /// Set while this thread runs work ahead of its turn (`detached`): whether it tried to draw.
-    static DETACHED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+    /// Whether this thread runs work ahead of its turn (`detached`), and if so whether it tried to
+    /// draw. Not detached is zero: a wasm reactor's main thread was seen to start with this slot
+    /// zeroed rather than at its initializer, and zero must be the state that draws from the stream.
+    static DETACHED: std::cell::Cell<u8> = const { std::cell::Cell::new(NOT_DETACHED) };
 }
 
 /// Runs `f` with this thread's global draws replaced by throwaway OS draws, and reports whether it
 /// made any: work done ahead of its turn on another thread must not take from the shared stream,
 /// whose order fixes the proof bytes, so the caller discards such a result and redoes it in turn.
 pub fn detached<T>(f: impl FnOnce() -> T) -> (T, bool) {
-    DETACHED.with(|d| d.set(Some(false)));
+    DETACHED.with(|d| d.set(DETACHED_CLEAN));
     let out = f();
-    (out, DETACHED.with(|d| d.take()) == Some(true))
+    (out, DETACHED.with(|d| d.replace(NOT_DETACHED)) == DETACHED_DREW)
 }
 
 pub fn global_next_u256() -> U256 {
-    if DETACHED.with(|d| d.get().map(|_| d.set(Some(true)))).is_some() {
+    if DETACHED.with(|d| d.get() != NOT_DETACHED && { d.set(DETACHED_DREW); true }) {
         return OsRng.next_u256();
     }
     GLOBAL_DRAWS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

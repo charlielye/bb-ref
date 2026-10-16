@@ -8,23 +8,23 @@
 // symlink beside this file), no test runner and no changes to the pinned tree:
 //   BBREF_HARVEST_OUT=<dir> FAKE_PROOFS=1 node --experimental-strip-types \
 //     --experimental-transform-types harvest.ts
-import { generateSchnorrAccounts } from '@aztec/accounts/testing';
-import { EthAddress } from '@aztec/aztec.js/addresses';
-import { BackendType, Barretenberg } from '@aztec/bb.js';
-import { BlockNumber, CheckpointNumber } from '@aztec/foundation/branded-types';
-import { jsonStringify } from '@aztec/foundation/json-rpc';
-import { createLogger } from '@aztec/foundation/log';
-import { TokenContract } from '@aztec/noir-contracts.js/Token';
-import { L2Block } from '@aztec/stdlib/block';
+import { generateSchnorrAccounts } from '@aztec-labs/accounts/testing';
+import { EthAddress } from '@aztec-labs/aztec.js/addresses';
+import { BackendType, Barretenberg } from '@aztec-foundation/bb.js';
+import { BlockNumber, CheckpointNumber } from '@aztec-labs/foundation/branded-types';
+import { jsonStringify } from '@aztec-labs/foundation/json-rpc';
+import { createLogger } from '@aztec-labs/foundation/log';
+import { TokenContract } from '@aztec-labs/noir-contracts.js/Token';
+import { L2Block } from '@aztec-labs/stdlib/block';
 
 import { execFileSync } from 'node:child_process';
 import { cpSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 // The e2e fixtures are consumed as the compiled package ('./*' maps into dest/).
-import { PIPELINING_SETUP_OPTS } from '@aztec/end-to-end/fixtures/fixtures.js';
-import { setup, setupPXEAndGetWallet } from '@aztec/end-to-end/fixtures/setup.js';
-import { proveInteraction } from '@aztec/end-to-end/test-wallet/utils.js';
+import { PIPELINING_SETUP_OPTS } from '@aztec-labs/end-to-end/fixtures/fixtures.js';
+import { setup, setupPXEAndGetWallet } from '@aztec-labs/end-to-end/fixtures/setup.js';
+import { proveInteraction } from '@aztec-labs/end-to-end/test-wallet/utils.js';
 
 const OUT = process.env.BBREF_HARVEST_OUT;
 const NUM_SENDERS = 9;

@@ -9,13 +9,13 @@
 # a scratch copy of the crate closure and executed there with a deterministic Prover.toml.
 set -e
 F=$(cd "$(dirname "$0")" && pwd)
-pin=$(cut -c1-7 "$F/PIN")
-REPO=${AZTEC_REPO:-$F/../../aztec-packages2}
+source "$F/env.sh"
+pin=$PIN7
 NARGO=${NARGO:-$REPO/noir/noir-repo/target/release/nargo}
-BB=${BB_BUILD:-$REPO/barretenberg/cpp/build}/bin/bb
-DSL=${BB_BUILD:-$REPO/barretenberg/cpp/build}/bin/dsl_tests
+BB=$BUILD/bin/bb
+DSL=$BUILD/bin/dsl_tests
 CRATES=$REPO/noir-projects/fnd/noir-protocol-circuits/crates
-OUT=$F/data/$pin
+OUT=$DATA
 WS=$(mktemp -d)
 
 # name = crate dir; the Prover.toml written below covers the inbox-parity shape.
@@ -61,11 +61,11 @@ rm -rf "$WS"
 # node's per-circuit flags (yarn-project/bb-prover/src/honk.ts). rollup_tx_base_public needs AVM
 # recursion, which the stock bb binary refuses — expected to fail until the AVM is in scope.
 TGT=$REPO/noir-projects/fnd/noir-protocol-circuits/target
-for j in "$TGT"/parity_*.json "$TGT"/rollup_*.json "$TGT"/chonk_verifier_public.json; do
+for j in "$TGT"/inbox_parity_*.json "$TGT"/rollup_*.json "$TGT"/chonk_verifier_public.json; do
   name=$(basename "$j" .json)
   case $name in
   *simulated*) continue ;;
-  parity_*) flags="--oracle_hash poseidon2" ;;
+  inbox_parity_*) flags="--oracle_hash poseidon2" ;;
   rollup_root) flags="--oracle_hash keccak" ;;
   *) flags="--oracle_hash poseidon2 --ipa_accumulation" ;;
   esac
@@ -93,35 +93,25 @@ for prog in a_1_mul array_dynamic unsafe_range_constraint; do
   echo "keccak $prog"
 done
 
-# Real-witness instance dumps (BbRefDump.UltraInstance + BBREF_IPA + RNG tape). The
-# program.json/witness.gz under backend/ for these circuits are HARVESTED from live e2e prover
-# runs (BB_DEBUG_OUTPUT_DIR on yarn-project's single-node prover full test) — they cannot be
-# rebuilt from the crates (they embed real recursive proofs), only re-harvested. The epoch SHAPE
-# decides which circuits appear: the stock test sends one tx per block (tx_base, single-tx block
-# root, single-block checkpoint root, root); adding a 3-tx second block to
-# `single-node/prover/server/full.test.ts` also yields tx_merge, checkpoint_merge and the
-# multi-tx first block root. Adding SEQ_MAX_TX_PER_BLOCK=1 to that same run makes each tx its own
-# block, which additionally yields the non-first single-tx block root and the plain (multi-block)
-# checkpoint root.
-#
-# Still unharvested, and NOT reachable by adding txs:
-#   block_merge        needs 3+ blocks inside ONE checkpoint (an N-block checkpoint gives N-2 block
-#                      merges). This setup advances blocks and checkpoints in lockstep — a 6-tx /
-#                      6-block epoch still produced ~1 block per checkpoint — so it needs checkpoint
-#                      CADENCE config (the slot/block timetable), not more txs.
-#   checkpoint_padding fires only when an epoch has a single checkpoint, leaving the root rollup's
-#                      second input unfilled; these runs always produce several checkpoints.
-# Both are shape problems a recipe-driven generator (crafted checkpoints over the orchestrator with
-# committed real leaf txs) would control directly.
-for name in rollup_tx_base_private rollup_block_root_single_tx_first rollup_checkpoint_root_single_block rollup_parity_root rollup_tx_merge rollup_checkpoint_merge rollup_block_root_first rollup_block_root_single_tx rollup_checkpoint_root rollup_block_merge; do
-  mkdir -p "$OUT/instance/backend/$name"
-  ipa=1
-  [ "$name" = rollup_parity_root ] && ipa=   # parity_root is plain HONK recursion, no RollupIO
+# Real-witness instance dumps (BbRefDump.UltraInstance + BBREF_IPA + RNG tape) for every rollup
+# circuit. Their program.json/witness.gz come from the conformance corpus (tools/regen/regen_corpus.sh
+# proves whole epochs through bb and records the stream), which carries each circuit with a real
+# witness, block_merge and checkpoint_padding included; settings.json is the node's flags for it.
+CORPUS=${CORPUS:-$ROOT/tools/corpus/rollup-$PIN7.corpus.zst}
+python3 "$F/backend_from_corpus.py" "$CORPUS" "$OUT/backend"
+# Each dump is every polynomial of a 2^22-2^23-row circuit, ~5 GB apiece (~60 GB for the set, plus
+# the write-VK dumps below): opt in with BBREF_BACKEND_DUMPS=1. Without them the real-witness tests
+# skip and the VK sweep and conformance corpus still cover these circuits.
+[ -n "${BBREF_BACKEND_DUMPS:-}" ] && for d in "$OUT"/backend/rollup_*/; do
+  name=$(basename "$d")
+  [ "$name" = rollup_root ] && continue  # keccak, 2^23: proven seeded below instead of dumped
+  ipa=$(python3 -c 'import json, sys; print(1 if json.load(open(sys.argv[1]))["ipa_accumulation"] else "")' "$d/settings.json")
   mkdir -p "$OUT/instance/backend/$name"
   HARDWARE_CONCURRENCY=1 BB_RNG_TAPE_OUT="$OUT/instance/backend/$name/rng_tape.bin" BBREF_IPA=$ipa \
     BBREF_PROGRAM=$OUT/backend/$name/program.json BBREF_WITNESS=$OUT/backend/$name/witness.gz \
-    BBREF_OUT="$OUT/instance/backend/$name" "$DSL" --gtest_filter='BbRefDump.UltraInstance'
-  echo "backend witness dump $name"
+    BBREF_OUT="$OUT/instance/backend/$name" "$DSL" --gtest_filter='BbRefDump.UltraInstance' \
+    && echo "backend witness dump $name" \
+    || echo "backend witness dump FAILED for $name (single-threaded bb trips its slab-allocator bound on some 2^22+ circuits)"
 done
 
 # B6: the harvested rollup_root proven with the seeded engine (keccak; seed-deterministic even
@@ -135,23 +125,11 @@ echo "backend witness golden rollup_root"
 
 # B4b: write-VK instance dumps for the chonk-recursion circuits (BbRefDump.UltraWriteVk); witness
 # polynomials are mock-random so only precomputed + sigma/id are comparable (backend_write_vk_instance_diff).
-for name in chonk_verifier_public rollup_tx_base_private; do
+[ -n "${BBREF_BACKEND_DUMPS:-}" ] && for name in chonk_verifier_public rollup_tx_base_private; do
   mkdir -p "$OUT/instance/backend_wvk/$name"
   HARDWARE_CONCURRENCY=1 BB_RNG_SEED=12345 BBREF_IPA=1 BBREF_PROGRAM=$TGT/$name.json \
     BBREF_OUT="$OUT/instance/backend_wvk/$name" "$DSL" --gtest_filter='BbRefDump.UltraWriteVk'
   echo "backend_wvk $name"
 done
-
-# Epoch shapes that produce each harvested circuit (yarn-project single-node prover full.test.ts,
-# run with BB_DEBUG_OUTPUT_DIR + an AVM-capable bb; see docs/oracle.md):
-#   default PIPELINING_SETUP_OPTS ............ parity_base/root, tx_base_private, block_root_single_tx_first,
-#                                              checkpoint_root_single_block, rollup_root
-#   + a 3-tx batch in one block .............. tx_merge, checkpoint_merge, block_root_first
-#   + maxTxsPerBlock=1 (one tx per block) .... block_root_single_tx, checkpoint_root
-#   + blockDurationMs=1000 (8 blocks/slot)
-#     and a 5-tx concurrent wave ............. block_merge (5 blocks land in ONE checkpoint;
-#                                              an N-block checkpoint yields N-2 block merges)
-# Not reachable from this test at any shape: checkpoint_padding (needs an epoch with exactly ONE
-# checkpoint; every run here produces several). Its VK is still covered by backend_vk_hash_sweep.
 
 echo "backend fixtures regenerated under $OUT"

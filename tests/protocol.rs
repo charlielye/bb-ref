@@ -24,7 +24,7 @@ fn protocol_circuits_dir() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../aztec-packages2/noir-projects/fnd/noir-protocol-circuits/target")
+                .join("pin/aztec-packages/noir-projects/fnd/noir-protocol-circuits/target")
         })
 }
 

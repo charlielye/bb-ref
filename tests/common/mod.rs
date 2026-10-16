@@ -2,7 +2,7 @@
 #![allow(dead_code)]
 use std::path::PathBuf;
 
-pub const PIN: &str = "9df414e";
+pub const PIN: &str = "d43209d";
 
 pub fn fixture_dir(rel: &str) -> PathBuf {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data").join(PIN);

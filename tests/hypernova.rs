@@ -21,9 +21,7 @@ fn build_instance(script: &str, flavor: &'static FlavorDesc) -> ProverInstance {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("tests/data/scripts/{script}.txt")),
     )
     .unwrap();
-    let ctx = Rc::new(RefCell::new(Builder::new_mega(Rc::new(
-        RefCell::new(EccOpQueue::new()),
-    ))));
+    let ctx = Rc::new(RefCell::new(Builder::new_mega(EccOpQueue::shared())));
     common::script::run_script(&ctx, &text);
     let mut builder = Rc::try_unwrap(ctx).ok().unwrap().into_inner();
     ProverInstance::from_builder(flavor, &mut builder, &mut OsRng)

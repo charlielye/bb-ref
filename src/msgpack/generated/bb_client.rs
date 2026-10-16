@@ -406,6 +406,20 @@ impl<B: Backend> BbApi<B> {
         }
     }
 
+    /// Execute BbPoseidon2AbsorbChain
+    pub fn poseidon2_absorb_chain(&mut self, state: [Fr; 4], inputs: &[u8]) -> Result<BbPoseidon2AbsorbChainResponse> {
+        let cmd = Command::BbPoseidon2AbsorbChain(BbPoseidon2AbsorbChain::new(state, inputs.to_vec()));
+        match self.execute(cmd)? {
+            Response::BbPoseidon2AbsorbChainResponse(resp) => Ok(resp),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
+            _ => Err(IpcError::InvalidResponse(
+                "Expected BbPoseidon2AbsorbChainResponse".to_string()
+            )),
+        }
+    }
+
     /// Execute BbPedersenCommit
     pub fn pedersen_commit(&mut self, inputs: Vec<Fr>, hash_index: u32) -> Result<BbPedersenCommitResponse> {
         let cmd = Command::BbPedersenCommit(BbPedersenCommit::new(inputs, hash_index));
@@ -430,20 +444,6 @@ impl<B: Backend> BbApi<B> {
             )),
             _ => Err(IpcError::InvalidResponse(
                 "Expected BbPedersenHashResponse".to_string()
-            )),
-        }
-    }
-
-    /// Execute BbPedersenHashBuffer
-    pub fn pedersen_hash_buffer(&mut self, input: &[u8], hash_index: u32) -> Result<BbPedersenHashBufferResponse> {
-        let cmd = Command::BbPedersenHashBuffer(BbPedersenHashBuffer::new(input.to_vec(), hash_index));
-        match self.execute(cmd)? {
-            Response::BbPedersenHashBufferResponse(resp) => Ok(resp),
-            Response::BbErrorResponse(err) => Err(IpcError::Backend(
-                err.message
-            )),
-            _ => Err(IpcError::InvalidResponse(
-                "Expected BbPedersenHashBufferResponse".to_string()
             )),
         }
     }
@@ -920,6 +920,20 @@ impl<B: Backend> BbApi<B> {
             )),
             _ => Err(IpcError::InvalidResponse(
                 "Expected BbSrsInitGrumpkinSrsResponse".to_string()
+            )),
+        }
+    }
+
+    /// Execute BbInit
+    pub fn init(&mut self, warmup: Option<bool>) -> Result<BbInitResponse> {
+        let cmd = Command::BbInit(BbInit::new(warmup));
+        match self.execute(cmd)? {
+            Response::BbInitResponse(resp) => Ok(resp),
+            Response::BbErrorResponse(err) => Err(IpcError::Backend(
+                err.message
+            )),
+            _ => Err(IpcError::InvalidResponse(
+                "Expected BbInitResponse".to_string()
             )),
         }
     }

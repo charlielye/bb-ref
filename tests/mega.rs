@@ -17,7 +17,7 @@ use std::rc::Rc;
 
 fn acir_tests_dir() -> PathBuf {
     std::env::var("ACIR_TESTS_DIR").map(PathBuf::from).unwrap_or_else(|_| {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../aztec-packages2/barretenberg/acir_tests/acir_tests")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pin/aztec-packages/barretenberg/acir_tests/acir_tests")
     })
 }
 
@@ -121,9 +121,7 @@ fn check_script(script: &str, flavor: &'static FlavorDesc, flavor_dir: &str) {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("tests/data/scripts/{script}.txt")),
     )
     .unwrap();
-    let ctx = Rc::new(RefCell::new(Builder::new_mega(Rc::new(
-        RefCell::new(EccOpQueue::new()),
-    ))));
+    let ctx = Rc::new(RefCell::new(Builder::new_mega(EccOpQueue::shared())));
     common::script::run_script(&ctx, &text);
     let mut builder = Rc::try_unwrap(ctx).ok().unwrap().into_inner();
     assert!(

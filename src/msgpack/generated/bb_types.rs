@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Schema version hash for compatibility checking
-pub const SCHEMA_HASH: &str = "b810acd96b1f46bde9238cb762e828eb5ab7075cb4c322623e1c429f56521e76";
+pub const SCHEMA_HASH: &str = "a12dd1699334c9ea9476b3338318fa81fa4506a6dd7512e50ae14e182d71eea1";
 
 /// 32 raw bytes encoded as msgpack bin32. Primitive schema aliases below are
 /// zero-cost pub type declarations over either this newtype or a scalar.
@@ -741,6 +741,23 @@ impl BbPoseidon2Permutation {
     }
 }
 
+/// BbPoseidon2AbsorbChain
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BbPoseidon2AbsorbChain {
+    pub state: [Fr; 4],
+    #[serde(with = "serde_bytes")]
+    pub inputs: Vec<u8>,
+}
+
+impl BbPoseidon2AbsorbChain {
+    pub fn new(state: [Fr; 4], inputs: Vec<u8>) -> Self {
+        Self {
+            state,
+            inputs,
+        }
+    }
+}
+
 /// BbPedersenCommit
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BbPedersenCommit {
@@ -768,23 +785,6 @@ impl BbPedersenHash {
     pub fn new(inputs: Vec<Fr>, hash_index: u32) -> Self {
         Self {
             inputs,
-            hash_index,
-        }
-    }
-}
-
-/// BbPedersenHashBuffer
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BbPedersenHashBuffer {
-    #[serde(with = "serde_bytes")]
-    pub input: Vec<u8>,
-    pub hash_index: u32,
-}
-
-impl BbPedersenHashBuffer {
-    pub fn new(input: Vec<u8>, hash_index: u32) -> Self {
-        Self {
-            input,
             hash_index,
         }
     }
@@ -1375,6 +1375,20 @@ impl BbSrsInitGrumpkinSrs {
     }
 }
 
+/// BbInit
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BbInit {
+    pub warmup: Option<bool>,
+}
+
+impl BbInit {
+    pub fn new(warmup: Option<bool>) -> Self {
+        Self {
+            warmup,
+        }
+    }
+}
+
 /// BbAvmProveResponse
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BbAvmProveResponse {
@@ -1555,6 +1569,12 @@ pub struct BbPoseidon2PermutationResponse {
     pub outputs: [Fr; 4],
 }
 
+/// BbPoseidon2AbsorbChainResponse
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BbPoseidon2AbsorbChainResponse {
+    pub state: [Fr; 4],
+}
+
 /// BbPedersenCommitResponse
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BbPedersenCommitResponse {
@@ -1564,12 +1584,6 @@ pub struct BbPedersenCommitResponse {
 /// BbPedersenHashResponse
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BbPedersenHashResponse {
-    pub hash: Fr,
-}
-
-/// BbPedersenHashBufferResponse
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BbPedersenHashBufferResponse {
     pub hash: Fr,
 }
 
@@ -1792,6 +1806,12 @@ pub struct BbSrsInitGrumpkinSrsResponse {
     pub dummy: u8,
 }
 
+/// BbInitResponse
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BbInitResponse {
+
+}
+
 /// BbErrorResponse
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BbErrorResponse {
@@ -1828,9 +1848,9 @@ pub enum Command {
     BbChonkDecompressProof(BbChonkDecompressProof),
     BbPoseidon2Hash(BbPoseidon2Hash),
     BbPoseidon2Permutation(BbPoseidon2Permutation),
+    BbPoseidon2AbsorbChain(BbPoseidon2AbsorbChain),
     BbPedersenCommit(BbPedersenCommit),
     BbPedersenHash(BbPedersenHash),
-    BbPedersenHashBuffer(BbPedersenHashBuffer),
     BbBlake2s(BbBlake2s),
     BbBlake2sToField(BbBlake2sToField),
     BbAesEncrypt(BbAesEncrypt),
@@ -1865,6 +1885,7 @@ pub enum Command {
     BbChonkBatchVerifierQueue(BbChonkBatchVerifierQueue),
     BbChonkBatchVerifierStop(BbChonkBatchVerifierStop),
     BbSrsInitGrumpkinSrs(BbSrsInitGrumpkinSrs),
+    BbInit(BbInit),
 }
 
 impl Serialize for Command {
@@ -1981,16 +2002,16 @@ impl Serialize for Command {
                 tuple.serialize_element("BbPoseidon2Permutation")?;
                 tuple.serialize_element(data)?;
             }
+            Command::BbPoseidon2AbsorbChain(data) => {
+                tuple.serialize_element("BbPoseidon2AbsorbChain")?;
+                tuple.serialize_element(data)?;
+            }
             Command::BbPedersenCommit(data) => {
                 tuple.serialize_element("BbPedersenCommit")?;
                 tuple.serialize_element(data)?;
             }
             Command::BbPedersenHash(data) => {
                 tuple.serialize_element("BbPedersenHash")?;
-                tuple.serialize_element(data)?;
-            }
-            Command::BbPedersenHashBuffer(data) => {
-                tuple.serialize_element("BbPedersenHashBuffer")?;
                 tuple.serialize_element(data)?;
             }
             Command::BbBlake2s(data) => {
@@ -2127,6 +2148,10 @@ impl Serialize for Command {
             }
             Command::BbSrsInitGrumpkinSrs(data) => {
                 tuple.serialize_element("BbSrsInitGrumpkinSrs")?;
+                tuple.serialize_element(data)?;
+            }
+            Command::BbInit(data) => {
+                tuple.serialize_element("BbInit")?;
                 tuple.serialize_element(data)?;
             }
         }
@@ -2285,6 +2310,11 @@ impl<'de> Deserialize<'de> for Command {
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbPoseidon2Permutation(data))
                     }
+                    "BbPoseidon2AbsorbChain" => {
+                        let data = seq.next_element()?
+                            .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                        Ok(Command::BbPoseidon2AbsorbChain(data))
+                    }
                     "BbPedersenCommit" => {
                         let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
@@ -2294,11 +2324,6 @@ impl<'de> Deserialize<'de> for Command {
                         let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbPedersenHash(data))
-                    }
-                    "BbPedersenHashBuffer" => {
-                        let data = seq.next_element()?
-                            .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
-                        Ok(Command::BbPedersenHashBuffer(data))
                     }
                     "BbBlake2s" => {
                         let data = seq.next_element()?
@@ -2470,7 +2495,12 @@ impl<'de> Deserialize<'de> for Command {
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Command::BbSrsInitGrumpkinSrs(data))
                     }
-                    _ => Err(serde::de::Error::unknown_variant(&name, &["BbAvmProve", "BbAvmVerify", "BbAvmCheckCircuit", "BbCircuitProve", "BbCircuitComputeVk", "BbCircuitStats", "BbCircuitVerify", "BbChonkComputeVk", "BbChonkStart", "BbChonkLoad", "BbChonkAccumulate", "BbChonkProve", "BbChonkVerify", "BbChonkVerifyFromFields", "BbChonkBatchVerify", "BbVkAsFields", "BbMegaVkAsFields", "BbMegaAppVkAsFields", "BbMegaKernelVkAsFields", "BbMegaZKVkAsFields", "BbCircuitWriteSolidityVerifier", "BbChonkCheckPrecomputedVk", "BbChonkStats", "BbChonkCompressProof", "BbChonkDecompressProof", "BbPoseidon2Hash", "BbPoseidon2Permutation", "BbPedersenCommit", "BbPedersenHash", "BbPedersenHashBuffer", "BbBlake2s", "BbBlake2sToField", "BbAesEncrypt", "BbAesDecrypt", "BbGrumpkinMul", "BbGrumpkinAdd", "BbGrumpkinBatchMul", "BbGrumpkinGetRandomFr", "BbGrumpkinReduce512", "BbSecp256k1Mul", "BbSecp256k1GetRandomFr", "BbSecp256k1Reduce512", "BbBn254FrSqrt", "BbBn254FqSqrt", "BbBn254G1Mul", "BbBn254G2Mul", "BbBn254G1IsOnCurve", "BbBn254G1FromCompressed", "BbSchnorrComputePublicKey", "BbSchnorrConstructSignature", "BbSchnorrVerifySignature", "BbEcdsaSecp256k1ComputePublicKey", "BbEcdsaSecp256r1ComputePublicKey", "BbEcdsaSecp256k1ConstructSignature", "BbEcdsaSecp256r1ConstructSignature", "BbEcdsaSecp256k1RecoverPublicKey", "BbEcdsaSecp256r1RecoverPublicKey", "BbEcdsaSecp256k1VerifySignature", "BbEcdsaSecp256r1VerifySignature", "BbSrsInitSrs", "BbChonkBatchVerifierStart", "BbChonkBatchVerifierQueue", "BbChonkBatchVerifierStop", "BbSrsInitGrumpkinSrs"])),
+                    "BbInit" => {
+                        let data = seq.next_element()?
+                            .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                        Ok(Command::BbInit(data))
+                    }
+                    _ => Err(serde::de::Error::unknown_variant(&name, &["BbAvmProve", "BbAvmVerify", "BbAvmCheckCircuit", "BbCircuitProve", "BbCircuitComputeVk", "BbCircuitStats", "BbCircuitVerify", "BbChonkComputeVk", "BbChonkStart", "BbChonkLoad", "BbChonkAccumulate", "BbChonkProve", "BbChonkVerify", "BbChonkVerifyFromFields", "BbChonkBatchVerify", "BbVkAsFields", "BbMegaVkAsFields", "BbMegaAppVkAsFields", "BbMegaKernelVkAsFields", "BbMegaZKVkAsFields", "BbCircuitWriteSolidityVerifier", "BbChonkCheckPrecomputedVk", "BbChonkStats", "BbChonkCompressProof", "BbChonkDecompressProof", "BbPoseidon2Hash", "BbPoseidon2Permutation", "BbPoseidon2AbsorbChain", "BbPedersenCommit", "BbPedersenHash", "BbBlake2s", "BbBlake2sToField", "BbAesEncrypt", "BbAesDecrypt", "BbGrumpkinMul", "BbGrumpkinAdd", "BbGrumpkinBatchMul", "BbGrumpkinGetRandomFr", "BbGrumpkinReduce512", "BbSecp256k1Mul", "BbSecp256k1GetRandomFr", "BbSecp256k1Reduce512", "BbBn254FrSqrt", "BbBn254FqSqrt", "BbBn254G1Mul", "BbBn254G2Mul", "BbBn254G1IsOnCurve", "BbBn254G1FromCompressed", "BbSchnorrComputePublicKey", "BbSchnorrConstructSignature", "BbSchnorrVerifySignature", "BbEcdsaSecp256k1ComputePublicKey", "BbEcdsaSecp256r1ComputePublicKey", "BbEcdsaSecp256k1ConstructSignature", "BbEcdsaSecp256r1ConstructSignature", "BbEcdsaSecp256k1RecoverPublicKey", "BbEcdsaSecp256r1RecoverPublicKey", "BbEcdsaSecp256k1VerifySignature", "BbEcdsaSecp256r1VerifySignature", "BbSrsInitSrs", "BbChonkBatchVerifierStart", "BbChonkBatchVerifierQueue", "BbChonkBatchVerifierStop", "BbSrsInitGrumpkinSrs", "BbInit"])),
                 }
             }
         }
@@ -2508,9 +2538,9 @@ pub enum Response {
     BbChonkDecompressProofResponse(BbChonkDecompressProofResponse),
     BbPoseidon2HashResponse(BbPoseidon2HashResponse),
     BbPoseidon2PermutationResponse(BbPoseidon2PermutationResponse),
+    BbPoseidon2AbsorbChainResponse(BbPoseidon2AbsorbChainResponse),
     BbPedersenCommitResponse(BbPedersenCommitResponse),
     BbPedersenHashResponse(BbPedersenHashResponse),
-    BbPedersenHashBufferResponse(BbPedersenHashBufferResponse),
     BbBlake2sResponse(BbBlake2sResponse),
     BbBlake2sToFieldResponse(BbBlake2sToFieldResponse),
     BbAesEncryptResponse(BbAesEncryptResponse),
@@ -2545,6 +2575,7 @@ pub enum Response {
     BbChonkBatchVerifierQueueResponse(BbChonkBatchVerifierQueueResponse),
     BbChonkBatchVerifierStopResponse(BbChonkBatchVerifierStopResponse),
     BbSrsInitGrumpkinSrsResponse(BbSrsInitGrumpkinSrsResponse),
+    BbInitResponse(BbInitResponse),
     BbErrorResponse(BbErrorResponse),
 }
 
@@ -2662,16 +2693,16 @@ impl Serialize for Response {
                 tuple.serialize_element("BbPoseidon2PermutationResponse")?;
                 tuple.serialize_element(data)?;
             }
+            Response::BbPoseidon2AbsorbChainResponse(data) => {
+                tuple.serialize_element("BbPoseidon2AbsorbChainResponse")?;
+                tuple.serialize_element(data)?;
+            }
             Response::BbPedersenCommitResponse(data) => {
                 tuple.serialize_element("BbPedersenCommitResponse")?;
                 tuple.serialize_element(data)?;
             }
             Response::BbPedersenHashResponse(data) => {
                 tuple.serialize_element("BbPedersenHashResponse")?;
-                tuple.serialize_element(data)?;
-            }
-            Response::BbPedersenHashBufferResponse(data) => {
-                tuple.serialize_element("BbPedersenHashBufferResponse")?;
                 tuple.serialize_element(data)?;
             }
             Response::BbBlake2sResponse(data) => {
@@ -2808,6 +2839,10 @@ impl Serialize for Response {
             }
             Response::BbSrsInitGrumpkinSrsResponse(data) => {
                 tuple.serialize_element("BbSrsInitGrumpkinSrsResponse")?;
+                tuple.serialize_element(data)?;
+            }
+            Response::BbInitResponse(data) => {
+                tuple.serialize_element("BbInitResponse")?;
                 tuple.serialize_element(data)?;
             }
             Response::BbErrorResponse(data) => {
@@ -2970,6 +3005,11 @@ impl<'de> Deserialize<'de> for Response {
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbPoseidon2PermutationResponse(data))
                     }
+                    "BbPoseidon2AbsorbChainResponse" => {
+                        let data = seq.next_element()?
+                            .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                        Ok(Response::BbPoseidon2AbsorbChainResponse(data))
+                    }
                     "BbPedersenCommitResponse" => {
                         let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
@@ -2979,11 +3019,6 @@ impl<'de> Deserialize<'de> for Response {
                         let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbPedersenHashResponse(data))
-                    }
-                    "BbPedersenHashBufferResponse" => {
-                        let data = seq.next_element()?
-                            .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
-                        Ok(Response::BbPedersenHashBufferResponse(data))
                     }
                     "BbBlake2sResponse" => {
                         let data = seq.next_element()?
@@ -3155,12 +3190,17 @@ impl<'de> Deserialize<'de> for Response {
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbSrsInitGrumpkinSrsResponse(data))
                     }
+                    "BbInitResponse" => {
+                        let data = seq.next_element()?
+                            .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                        Ok(Response::BbInitResponse(data))
+                    }
                     "BbErrorResponse" => {
                         let data = seq.next_element()?
                             .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                         Ok(Response::BbErrorResponse(data))
                     }
-                    _ => Err(serde::de::Error::unknown_variant(&name, &["BbAvmProveResponse", "BbAvmVerifyResponse", "BbAvmCheckCircuitResponse", "BbCircuitProveResponse", "BbCircuitComputeVkResponse", "BbCircuitStatsResponse", "BbCircuitVerifyResponse", "BbChonkComputeVkResponse", "BbChonkStartResponse", "BbChonkLoadResponse", "BbChonkAccumulateResponse", "BbChonkProveResponse", "BbChonkVerifyResponse", "BbChonkVerifyFromFieldsResponse", "BbChonkBatchVerifyResponse", "BbVkAsFieldsResponse", "BbMegaVkAsFieldsResponse", "BbMegaAppVkAsFieldsResponse", "BbMegaKernelVkAsFieldsResponse", "BbMegaZKVkAsFieldsResponse", "BbCircuitWriteSolidityVerifierResponse", "BbChonkCheckPrecomputedVkResponse", "BbChonkStatsResponse", "BbChonkCompressProofResponse", "BbChonkDecompressProofResponse", "BbPoseidon2HashResponse", "BbPoseidon2PermutationResponse", "BbPedersenCommitResponse", "BbPedersenHashResponse", "BbPedersenHashBufferResponse", "BbBlake2sResponse", "BbBlake2sToFieldResponse", "BbAesEncryptResponse", "BbAesDecryptResponse", "BbGrumpkinMulResponse", "BbGrumpkinAddResponse", "BbGrumpkinBatchMulResponse", "BbGrumpkinGetRandomFrResponse", "BbGrumpkinReduce512Response", "BbSecp256k1MulResponse", "BbSecp256k1GetRandomFrResponse", "BbSecp256k1Reduce512Response", "BbBn254FrSqrtResponse", "BbBn254FqSqrtResponse", "BbBn254G1MulResponse", "BbBn254G2MulResponse", "BbBn254G1IsOnCurveResponse", "BbBn254G1FromCompressedResponse", "BbSchnorrComputePublicKeyResponse", "BbSchnorrConstructSignatureResponse", "BbSchnorrVerifySignatureResponse", "BbEcdsaSecp256k1ComputePublicKeyResponse", "BbEcdsaSecp256r1ComputePublicKeyResponse", "BbEcdsaSecp256k1ConstructSignatureResponse", "BbEcdsaSecp256r1ConstructSignatureResponse", "BbEcdsaSecp256k1RecoverPublicKeyResponse", "BbEcdsaSecp256r1RecoverPublicKeyResponse", "BbEcdsaSecp256k1VerifySignatureResponse", "BbEcdsaSecp256r1VerifySignatureResponse", "BbSrsInitSrsResponse", "BbChonkBatchVerifierStartResponse", "BbChonkBatchVerifierQueueResponse", "BbChonkBatchVerifierStopResponse", "BbSrsInitGrumpkinSrsResponse", "BbErrorResponse"])),
+                    _ => Err(serde::de::Error::unknown_variant(&name, &["BbAvmProveResponse", "BbAvmVerifyResponse", "BbAvmCheckCircuitResponse", "BbCircuitProveResponse", "BbCircuitComputeVkResponse", "BbCircuitStatsResponse", "BbCircuitVerifyResponse", "BbChonkComputeVkResponse", "BbChonkStartResponse", "BbChonkLoadResponse", "BbChonkAccumulateResponse", "BbChonkProveResponse", "BbChonkVerifyResponse", "BbChonkVerifyFromFieldsResponse", "BbChonkBatchVerifyResponse", "BbVkAsFieldsResponse", "BbMegaVkAsFieldsResponse", "BbMegaAppVkAsFieldsResponse", "BbMegaKernelVkAsFieldsResponse", "BbMegaZKVkAsFieldsResponse", "BbCircuitWriteSolidityVerifierResponse", "BbChonkCheckPrecomputedVkResponse", "BbChonkStatsResponse", "BbChonkCompressProofResponse", "BbChonkDecompressProofResponse", "BbPoseidon2HashResponse", "BbPoseidon2PermutationResponse", "BbPoseidon2AbsorbChainResponse", "BbPedersenCommitResponse", "BbPedersenHashResponse", "BbBlake2sResponse", "BbBlake2sToFieldResponse", "BbAesEncryptResponse", "BbAesDecryptResponse", "BbGrumpkinMulResponse", "BbGrumpkinAddResponse", "BbGrumpkinBatchMulResponse", "BbGrumpkinGetRandomFrResponse", "BbGrumpkinReduce512Response", "BbSecp256k1MulResponse", "BbSecp256k1GetRandomFrResponse", "BbSecp256k1Reduce512Response", "BbBn254FrSqrtResponse", "BbBn254FqSqrtResponse", "BbBn254G1MulResponse", "BbBn254G2MulResponse", "BbBn254G1IsOnCurveResponse", "BbBn254G1FromCompressedResponse", "BbSchnorrComputePublicKeyResponse", "BbSchnorrConstructSignatureResponse", "BbSchnorrVerifySignatureResponse", "BbEcdsaSecp256k1ComputePublicKeyResponse", "BbEcdsaSecp256r1ComputePublicKeyResponse", "BbEcdsaSecp256k1ConstructSignatureResponse", "BbEcdsaSecp256r1ConstructSignatureResponse", "BbEcdsaSecp256k1RecoverPublicKeyResponse", "BbEcdsaSecp256r1RecoverPublicKeyResponse", "BbEcdsaSecp256k1VerifySignatureResponse", "BbEcdsaSecp256r1VerifySignatureResponse", "BbSrsInitSrsResponse", "BbChonkBatchVerifierStartResponse", "BbChonkBatchVerifierQueueResponse", "BbChonkBatchVerifierStopResponse", "BbSrsInitGrumpkinSrsResponse", "BbInitResponse", "BbErrorResponse"])),
                 }
             }
         }

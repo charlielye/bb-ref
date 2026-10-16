@@ -260,6 +260,7 @@ dependencies = [
  "flate2",
  "getrandom",
  "hex",
+ "libc",
  "mimalloc",
  "num-bigint",
  "rand",

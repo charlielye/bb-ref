@@ -935,7 +935,7 @@ fn check(name: &str) {
     let ctx = Rc::new(RefCell::new(if std::ptr::eq(flavor_of(name), &ULTRA) {
         Builder::new()
     } else {
-        Builder::new_mega(Rc::new(RefCell::new(EccOpQueue::new())))
+        Builder::new_mega(EccOpQueue::shared())
     }));
     run(&ctx, name);
     let mut builder = Rc::try_unwrap(ctx).ok().unwrap().into_inner();
@@ -961,7 +961,7 @@ fn stdlib_programs_are_satisfied() {
         let ctx = Rc::new(RefCell::new(if std::ptr::eq(flavor_of(name), &ULTRA) {
             Builder::new()
         } else {
-            Builder::new_mega(Rc::new(RefCell::new(EccOpQueue::new())))
+            Builder::new_mega(EccOpQueue::shared())
         }));
         run(&ctx, name);
         let mut builder = Rc::try_unwrap(ctx).ok().unwrap().into_inner();

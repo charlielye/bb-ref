@@ -19,7 +19,7 @@ fn real_flow_circuits_match_bb() {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| {
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../aztec-packages2/barretenberg/cpp/chonk-pinned-flows")
+                .join("pin/aztec-packages/barretenberg/cpp/chonk-pinned-flows")
         });
     let inputs = flows.join(&flow).join("ivc-inputs.msgpack");
     if !dump.join("circuit_0/vk").exists() || !inputs.exists() {

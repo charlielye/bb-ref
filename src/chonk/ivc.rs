@@ -2,6 +2,7 @@
 //! per kernel group; the hiding kernel is proven with the joint MegaZK + Translator proof) and
 //! `prove` emits the `ChonkProof`.
 
+use crate::circuit::op_queue::SharedOpQueue;
 use super::batched::joint_prove;
 use super::proof::ChonkProof;
 use crate::base::rng::Rng;
@@ -21,8 +22,6 @@ use crate::honk::flavor::{FlavorDesc, MEGA_APP, MEGA_KERNEL, MEGA_ZK};
 use crate::honk::hypernova::{FoldingProver, ProverClaim, VerifierClaim};
 use crate::honk::oink_prover::prove_oink;
 use crate::honk::prover_instance::ProverInstance;
-use std::cell::RefCell;
-use std::rc::Rc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CircuitKind {
@@ -52,7 +51,10 @@ pub struct Chonk {
     kinds: Vec<CircuitKind>,
     accumulated: usize,
     pub ck: CommitmentKey,
-    pub op_queue: Rc<RefCell<EccOpQueue>>,
+    /// The ECCVM's IPA key; `None` loads it from the CRS directory when proving. A server sets it
+    /// from its pool, which is the only source where there is no filesystem (wasm).
+    pub eccvm_ck: Option<GrumpkinKey>,
+    pub op_queue: SharedOpQueue,
     folding_prover: Option<FoldingProver>,
     /// The folding transcript of the current group, continued by the decider (bb `prover_accumulation_transcript`).
     accumulation_transcript: NativeTranscript,
@@ -85,7 +87,8 @@ impl Chonk {
             kinds,
             accumulated: 0,
             ck,
-            op_queue: Rc::new(RefCell::new(EccOpQueue::new())),
+            eccvm_ck: None,
+            op_queue: EccOpQueue::shared(),
             folding_prover: None,
             accumulation_transcript: NativeTranscript::new(),
             prover_accumulator: None,
@@ -152,7 +155,7 @@ impl Chonk {
                     drop(_gd);
                     self.decider_proof = self.accumulation_transcript.export_proof();
                     timing::phase("decider");
-                    let mut q = self.op_queue.borrow_mut();
+                    let mut q = self.op_queue.write().unwrap();
                     q.construct_zk_columns(rng);
                     self.batch_merge_proof = batch_merge_prove(&q, CHONK_MAX_NUM_CIRCUITS, &self.ck);
                     timing::phase("batch merge");
@@ -202,7 +205,7 @@ impl Chonk {
             drop(_gm);
             timing::phase("multilinear batching");
         }
-        self.op_queue.borrow_mut().merge();
+        self.op_queue.write().unwrap().merge();
         self.accumulated += 1;
     }
 
@@ -225,14 +228,15 @@ impl Chonk {
         drop(_g);
         let hiding_oink_proof = t.export_proof();
         timing::phase("hiding oink");
-        let mut q = self.op_queue.borrow_mut();
+        let mut q = self.op_queue.write().unwrap();
         let _gmg = crate::base::bench::Scope::new("Goblin::prove_merge");
         merge_prove(&mut q, &self.ck, &mut t);
         drop(_gmg);
         let merge_proof = t.export_proof();
         timing::phase("merge");
         let _ge = crate::base::bench::Scope::new("ECCVMProver::construct_proof");
-        let eccvm = eccvm_prove(&q, &GrumpkinKey::new(ECCVM_FIXED_SIZE), &mut t, rng);
+        let eccvm_ck = self.eccvm_ck.take().unwrap_or_else(|| GrumpkinKey::new(ECCVM_FIXED_SIZE));
+        let eccvm = eccvm_prove(&q, &eccvm_ck, &mut t, rng);
         drop(_ge);
         let eccvm_proof = t.export_proof();
         timing::phase("eccvm");

@@ -4,10 +4,11 @@
 # Usage: tools/regen/regen_vk_hashes.sh [acir_tests_dir] [bb_binary]
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
-pin=$(cut -c1-7 "$here/PIN")
-acir=${1:-$here/../../aztec-packages2/barretenberg/acir_tests/acir_tests}
-bb=${2:-$here/../../aztec-packages2/barretenberg/cpp/build/bin/bb}
-out="$here/data/$pin/vk_hash"
+source "$here/env.sh"
+pin=$PIN7
+acir=${1:-$REPO/barretenberg/acir_tests/acir_tests}
+bb=${2:-$BUILD/bin/bb}
+out="$DATA/vk_hash"
 mkdir -p "$out"
 tmp=$(mktemp -d)
 python3 - "$acir" <<'PY' > "$tmp/programs"

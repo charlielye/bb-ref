@@ -1154,7 +1154,7 @@ pub fn build_circuit_mega(
     };
     let op_queue = ivc
         .as_ref()
-        .map_or_else(|| Rc::new(RefCell::new(EccOpQueue::new())), |ivc| ivc.op_queue.clone());
+        .map_or_else(|| EccOpQueue::shared(), |ivc| ivc.op_queue.clone());
     let _g_wit = crate::base::bench::Scope::new("acir::from_acir_mega");
     let builder = Builder::from_acir_mega(
         op_queue,
@@ -1198,10 +1198,10 @@ pub fn prebuild_circuit_mega(circuit: &Circuit, witness: &[Fr], gaps: Vec<u32>) 
     let (mut c, public_inputs) = classify(circuit, true);
     let hn_recursion = std::mem::take(&mut c.hn_recursion);
     let (builder, drew) = crate::base::rng::detached(|| {
-        let op_queue = Rc::new(RefCell::new(EccOpQueue::new()));
+        let op_queue = EccOpQueue::shared();
         into_builder(lower(Builder::from_acir_mega(op_queue, &witness_or_zeros(Some(witness), &c), public_inputs, false), c))
     });
-    assert_eq!(Rc::strong_count(&builder.mega.as_ref().unwrap().op_queue), 1);
+    assert_eq!(std::sync::Arc::strong_count(&builder.mega.as_ref().unwrap().op_queue), 1);
     (!drew && !references_any(&builder, &gaps)).then_some(Prebuilt { builder, hn_recursion, gaps })
 }
 
@@ -1226,7 +1226,7 @@ pub fn finish_circuit_mega(prebuilt: Prebuilt, ivc: &mut Chonk, rng: &mut dyn Rn
     }
     let mega = builder.mega.as_mut().unwrap();
     let private = std::mem::replace(&mut mega.op_queue, ivc.op_queue.clone());
-    ivc.op_queue.borrow_mut().absorb_current(Rc::into_inner(private).unwrap().into_inner());
+    ivc.op_queue.write().unwrap().absorb_current(std::sync::Arc::into_inner(private).unwrap().into_inner().unwrap());
     let ctx = Rc::new(RefCell::new(builder));
     if hn_recursion.is_empty() {
         add_default_pairing_points(&mut ctx.borrow_mut());

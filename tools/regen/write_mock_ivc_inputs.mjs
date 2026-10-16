@@ -1,6 +1,6 @@
 // Write bb's `ivc-inputs.msgpack` for a mock-protocol transaction (yarn-project/ivc-integration's
 // `generateTestingIVCStack`): one {bytecode, witness, vk, functionName, kind} per circuit, bytecode
-// and witness gzipped. Usage: node write_mock_ivc_inputs.mjs <aztec-packages root> <#creator calls> <#reader calls> <out>
+// and witness gzipped. Usage: node write_mock_ivc_inputs.mjs <labs root (aztec-node checkout)> <#creator calls> <#reader calls> <out>
 import { createRequire } from 'module';
 import { writeFileSync } from 'fs';
 import { gzipSync } from 'zlib';

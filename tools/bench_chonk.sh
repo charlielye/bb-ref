@@ -7,7 +7,7 @@
 # Columns: wall (best of --reps runs, default 1) and proving-only (one instrumented run per prover;
 # see bb_proving_from_json / ref_proving_from_log) with both ratios, plus peak RSS.
 #
-# Flows come from $BB_FLOWS (default: ../aztec-packages2/barretenberg/cpp/chonk-pinned-flows,
+# Flows come from $BB_FLOWS (default: pin/aztec-packages/barretenberg/cpp/chonk-pinned-flows,
 # where bb's TS harness writes them). Both binaries run the identical CLI command sequentially
 # on pinned threads and seed, so rows are directly comparable:
 #   bb     prove --scheme chonk --ivc_inputs_path <flow>/ivc-inputs.msgpack -o <tmp>
@@ -15,7 +15,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-FLOWS_DIR=${BB_FLOWS:-../aztec-packages2/barretenberg/cpp/chonk-pinned-flows}
+FLOWS_DIR=${BB_FLOWS:-pin/aztec-packages/barretenberg/cpp/chonk-pinned-flows}
 BB=${BB:-./bin/bb}
 BBREF=${BBREF:-./target/release/bb-ref}
 

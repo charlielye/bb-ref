@@ -331,9 +331,7 @@ mod tests {
     /// NIST SP 800-38A F.2.1 (CBC-AES128, first block) — the value pin against the standard.
     #[test]
     fn matches_nist_cbc_kat() {
-        let ctx = Rc::new(RefCell::new(Builder::new_mega(Rc::new(
-            RefCell::new(EccOpQueue::new()),
-        ))));
+        let ctx = Rc::new(RefCell::new(Builder::new_mega(EccOpQueue::shared())));
         let input = vec![block(&ctx, "6bc1bee22e409f96e93d7e117393172a")];
         let iv = block(&ctx, "000102030405060708090a0b0c0d0e0f");
         let key = block(&ctx, "2b7e151628aed2a6abf7158809cf4f3c");

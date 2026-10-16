@@ -99,7 +99,7 @@ fn pinned_flows_byte_exact_with_seed() {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| {
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../aztec-packages2/barretenberg/cpp/chonk-pinned-flows")
+                .join("pin/aztec-packages/barretenberg/cpp/chonk-pinned-flows")
         });
     let (Ok(entries), true) = (std::fs::read_dir(&root), flows.exists()) else {
         eprintln!("skipping pinned flows: no dump or no flows");
