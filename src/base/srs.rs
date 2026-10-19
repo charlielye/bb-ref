@@ -456,8 +456,28 @@ fn dedup_min_len() -> usize {
     *V
 }
 
-/// Sample the first nonzero coefficients: dedup pays only when a large share repeats.
+/// Sample the first nonzero coefficients: dedup pays only when a large share repeats. A prefix
+/// misses repeats past a varying head, as in the translator's `z_perm` (varying over its first
+/// ~27k rows, long constant runs after), so runs of equal neighbours are counted over the whole.
 fn duplicate_heavy<F: FieldLike>(coeffs: &[F]) -> bool {
+    prefix_duplicate_heavy(coeffs) || run_heavy(coeffs)
+}
+
+/// At least a quarter of the nonzero coefficients equal their predecessor, estimated from 4,096
+/// neighbour pairs spread evenly (a pair sample is unbiased for runs, as a value sample is not
+/// for scattered duplicates).
+fn run_heavy<F: FieldLike>(coeffs: &[F]) -> bool {
+    let (mut nonzero, mut repeats) = (0usize, 0usize);
+    for i in (1..coeffs.len()).step_by((coeffs.len() / 4096).max(1)) {
+        if !coeffs[i].is_zero() {
+            nonzero += 1;
+            repeats += (coeffs[i] == coeffs[i - 1]) as usize;
+        }
+    }
+    nonzero >= 512 && repeats * 4 >= nonzero
+}
+
+fn prefix_duplicate_heavy<F: FieldLike>(coeffs: &[F]) -> bool {
     use std::collections::HashSet;
     assert_eq!(std::mem::size_of::<F>(), 32);
     let mut seen: HashSet<[u64; 4], LimbHashBuilder> = HashSet::default();

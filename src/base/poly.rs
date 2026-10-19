@@ -113,13 +113,16 @@ impl<F: FieldLike> Polynomial<F> {
         for (p, _) in terms {
             assert!(p.len() <= self.len(), "add_scaled_batch: term is longer");
         }
+        // Each term's backing rows up to its last non-zero: a zero tail adds nothing (fixed-size
+        // columns, e.g. the ECCVM's at 2^15, are mostly tail on small flows).
+        let ends: Vec<usize> = terms.par_iter().map(|(p, _)| p.end_index().saturating_sub(p.start)).collect();
         const CHUNK: usize = WINDOW_ALIGN;
         self.coeffs.par_chunks_mut(CHUNK).enumerate().for_each(|(c, chunk)| {
             let start = c * CHUNK;
             // A term's rows from `start`: empty below its window (window starts are chunk-aligned).
-            let srcs: Vec<(&[F], F)> = (terms.iter())
-                .map(|(p, s)| match start.checked_sub(p.start) {
-                    Some(k) => (&p.coeffs[k.min(p.coeffs.len())..], s.clone()),
+            let srcs: Vec<(&[F], F)> = (terms.iter().zip(&ends))
+                .map(|((p, s), &end)| match start.checked_sub(p.start) {
+                    Some(k) => (&p.coeffs[k.min(end)..end], s.clone()),
                     None => (&[][..], s.clone()),
                 })
                 .collect();

@@ -60,10 +60,18 @@ impl TranslatorPolys {
         grand_product_par(&mut z[1..CIRCUIT_SIZE], |lo, num, den| {
             let mut row = vec![Fr::zero(); self.cols.len()];
             for (k, (n, d)) in num.iter_mut().zip(den).enumerate() {
+                let mut zero = true;
                 for e in COLS {
                     row[e as usize] = self.cols[e as usize].at(lo + k);
+                    zero &= row[e as usize].is_zero();
                 }
-                (*n, *d) = (permutation_numerator(&row, p), permutation_denominator(&row, p));
+                // All inputs zero: numerator and denominator are both gamma^5, a ratio of exactly
+                // one (most of a small flow's rows), so the products are skipped.
+                (*n, *d) = if zero {
+                    (Fr::one(), Fr::one())
+                } else {
+                    (permutation_numerator(&row, p), permutation_denominator(&row, p))
+                };
             }
         });
         self.cols[z_perm as usize].coeffs = z;

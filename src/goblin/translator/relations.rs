@@ -128,6 +128,7 @@ impl<T: FieldLike<Native = Fr>> RelationSet<T> for TranslatorRelations {
             lagrange_last_in_minicircuit,
             lagrange_result_row,
             lagrange_mini_masking,
+            op,
             ordered_range_constraints_0,
             ordered_range_constraints_1,
             ordered_range_constraints_2,
@@ -169,16 +170,24 @@ impl<T: FieldLike<Native = Fr>> RelationSet<T> for TranslatorRelations {
                     + &at(r, lagrange_result_row))
                     .is_zero()
             }),
-            TranslatorRel::Decomposition | TranslatorRel::NonNativeField => {
+            TranslatorRel::Decomposition => both(&|r: &[T]| at(r, lagrange_even_in_minicircuit).is_zero()),
+            // Every subrelation carries the factor `even · op`, so an edge where either is zero at
+            // both ends contributes exactly zero, in any round: the no-op padding of a small op
+            // queue is most of the mini circuit.
+            TranslatorRel::NonNativeField => {
                 both(&|r: &[T]| at(r, lagrange_even_in_minicircuit).is_zero())
+                    || both(&|r: &[T]| at(r, Ent::op).is_zero())
             }
-            TranslatorRel::ZeroConstraints => both(&|r: &[T]| {
-                (at(r, lagrange_odd_in_minicircuit)
-                    + &at(r, lagrange_even_in_minicircuit)
-                    + &at(r, lagrange_mini_masking)
-                    - &T::one())
-                    .is_zero()
-            }),
+            // bb `TranslatorZeroConstraintsRelation::skip`: with s = odd + even + mini_masking, every
+            // contribution is wire · (s − 1). s == 1 at both ends zeroes the selector; s == 0 at
+            // both ends is the no-op head and the zero tail, where every constrained wire is zero
+            // (and stays zero under folding).
+            TranslatorRel::ZeroConstraints => {
+                let s = |r: &[T]| {
+                    at(r, lagrange_odd_in_minicircuit) + &at(r, lagrange_even_in_minicircuit) + &at(r, lagrange_mini_masking)
+                };
+                both(&|r: &[T]| (s(r) - &T::one()).is_zero()) || both(&|r: &[T]| s(r).is_zero())
+            }
             TranslatorRel::ShiftableFirstCoeffZero => both(&|r: &[T]| at(r, lagrange_first).is_zero()),
         }
     }
