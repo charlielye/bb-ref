@@ -69,7 +69,9 @@ function send(res, status, body, type = 'text/plain') {
 /** A file, revalidated by an ETag (size + mtime): a reload re-downloads only what changed. */
 function sendFile(req, res, path, length, cache = 'no-cache') {
   const st = statSync(path);
-  const etag = `"${st.size.toString(36)}-${Math.floor(st.mtimeMs).toString(36)}-${length ?? 'all'}"`;
+  // ctime too: extracted archives (the pinned flows) carry a zero mtime.
+  const changed = Math.floor(Math.max(st.mtimeMs, st.ctimeMs));
+  const etag = `"${st.size.toString(36)}-${changed.toString(36)}-${length ?? 'all'}"`;
   res.setHeader('Cache-Control', cache);
   res.setHeader('ETag', etag);
   if (req.headers['if-none-match'] === etag) {
@@ -95,7 +97,7 @@ createServer((req, res) => {
     if (parts[0] === 'api' && parts[1] === 'flows') return send(res, 200, JSON.stringify(flows()), TYPES['.json']);
     if (parts[0] === 'flows' && parts.length === 2) {
       const path = inside(FLOWS, join(parts[1], 'ivc-inputs.msgpack'));
-      return path ? sendFile(req, res, path, undefined, 'public, max-age=86400') : send(res, 404, 'no such flow');
+      return path ? sendFile(req, res, path) : send(res, 404, 'no such flow');
     }
     if (parts[0] === 'crs' && CRS_FILES[parts[1]]) {
       const [file, length] = CRS_FILES[parts[1]];

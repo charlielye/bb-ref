@@ -91,7 +91,10 @@ async function fetchSrs() {
 
 const inputs = {};
 async function flowSteps(name) {
-  inputs[name] ??= new Uint8Array(await (await fetch(`/flows/${encodeURIComponent(name)}`)).arrayBuffer());
+  // Revalidated every time (a 304 when unchanged): a re-pin changes the flows under the same URL.
+  inputs[name] ??= new Uint8Array(
+    await (await fetch(`/flows/${encodeURIComponent(name)}`, { cache: 'no-cache' })).arrayBuffer(),
+  );
   return decodeIvcInputs(unpack, inputs[name]);
 }
 
