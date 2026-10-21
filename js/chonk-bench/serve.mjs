@@ -16,7 +16,8 @@ import { extname, join, normalize } from 'node:path';
 
 const HERE = new URL('.', import.meta.url).pathname;
 const ROOT = join(HERE, '../..');
-const PIN7 = readFileSync(join(ROOT, 'tools/PIN'), 'utf8').slice(0, 7);
+// Read per request: a re-pin renames the fixture directory under a running server.
+const pin7 = () => readFileSync(join(ROOT, 'tools/PIN'), 'utf8').slice(0, 7);
 const FLOWS = process.env.BB_FLOWS ?? join(ROOT, 'pin/aztec-packages/barretenberg/cpp/chonk-pinned-flows');
 const CRS = process.env.CRS_PATH ?? join(process.env.HOME, '.bb-crs');
 const port = Number(process.argv[2] ?? 8080);
@@ -46,7 +47,7 @@ const flows = () =>
     .filter(f => existsSync(join(FLOWS, f, 'ivc-inputs.msgpack')))
     .sort()
     .map(name => {
-      const proof = join(ROOT, 'tests/data', PIN7, 'chonk_flows', name, 'proof');
+      const proof = join(ROOT, 'tests/data', pin7(), 'chonk_flows', name, 'proof');
       return {
         name,
         golden: existsSync(proof) ? createHash('sha256').update(readFileSync(proof)).digest('hex') : null,
@@ -110,4 +111,4 @@ createServer((req, res) => {
   } catch (e) {
     send(res, 500, String(e));
   }
-}).listen(port, () => console.log(`chonk bench: http://localhost:${port}/  (pin ${PIN7}, flows ${FLOWS})`));
+}).listen(port, () => console.log(`chonk bench: http://localhost:${port}/  (pin ${pin7()}, flows ${FLOWS})`));

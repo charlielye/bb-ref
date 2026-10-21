@@ -134,8 +134,8 @@
       <h1>Chonk Bench</h1>
       <p class="sub">
         The pinned chonk flows proven in this browser by <span class="ref">bb-ref.js</span> and by bb's
-        <span class="bb">bb.js-api</span>, through the same generated API. Times are accumulate (every
-        circuit loaded and folded), prove, and their total, in seconds; memory is the wasm module's linear
+        <span class="bb">bb.js-api</span>, through the same generated API. Time is the whole flow, every
+        circuit loaded and folded and the final proof, in seconds; memory is the wasm module's linear
         memory at the end of the flow, its high-water mark.
       </p>
       <div class="controls">
@@ -148,7 +148,15 @@
           ><input type="checkbox" id="fresh" /> Fresh module per flow (memory becomes a per-flow peak;
           off, it is the module's peak so far — wasm memory never shrinks — and a phone keeps one module)</label
         >
-        <button id="all">Run all flows, both</button>
+        <label
+          >Run all flows on
+          <select id="engines">
+            <option value="ref,bb">bb-ref, then bb</option>
+            <option value="ref">bb-ref</option>
+            <option value="bb">bb</option>
+          </select></label
+        >
+        <button id="all">Run all</button>
         <span id="status"></span>
       </div>
       <div class="wrap">
@@ -157,14 +165,10 @@
             <tr>
               <th>Flow</th>
               <th></th>
-              <th class="ref">accumulate</th>
-              <th class="ref">prove</th>
-              <th class="ref">total</th>
+              <th class="ref">time</th>
               <th class="ref">memory</th>
               <th class="ref">golden</th>
-              <th class="bb">accumulate</th>
-              <th class="bb">prove</th>
-              <th class="bb">total</th>
+              <th class="bb">time</th>
               <th class="bb">memory</th>
               <th class="bb">golden</th>
               <th>bb-ref / bb</th>

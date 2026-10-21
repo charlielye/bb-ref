@@ -22,17 +22,29 @@ const memoryBytes = api => api?.backend?.memoryBytes?.();
 const verbose = new URLSearchParams(location.search).has('verbose');
 
 if (!crossOriginIsolated) log('Not cross-origin isolated: SharedArrayBuffer is unavailable, so wasm threads are too.');
-const maxThreads = Math.min(navigator.hardwareConcurrency || 1, 32);
-for (let t = 1; t <= maxThreads; t *= 2) $('threads').add(new Option(String(t), String(t)));
-if (!Array.from($('threads').options).some(o => o.value === String(maxThreads))) {
-  $('threads').add(new Option(String(maxThreads), String(maxThreads)));
+// Powers of two up to twice the core count (to see what oversubscription does), plus the core count
+// itself, which is the default.
+const cores = Math.min(navigator.hardwareConcurrency || 1, 32);
+const counts = new Set([cores]);
+for (let t = 1; t <= Math.min(2 * cores, 32); t *= 2) counts.add(t);
+for (const t of [...counts].sort((a, b) => a - b)) {
+  $('threads').add(new Option(t === cores ? `${t} (cores)` : String(t), String(t)));
 }
-$('threads').value = String(Math.min(maxThreads, 8));
+$('threads').value = String(cores);
 
 // One live service per engine; a change of threads or seeding starts a fresh one.
 const live = {};
 let srs;
 async function service(key) {
+  // One module at a time: wasm memory never shrinks, so a module kept from the other engine would
+  // hold its peak alongside this one's (two storage_proof peaks are more than a phone tab gets).
+  for (const other of Object.keys(live)) {
+    if (other !== key) {
+      const old = live[other].api;
+      delete live[other];
+      await old.destroy();
+    }
+  }
   const config = `${$('threads').value}/${$('seeded').checked}`;
   if (live[key]?.config === config && !$('fresh').checked) return live[key].api;
   if (live[key]) {
@@ -95,15 +107,13 @@ function render(flow, key) {
     return;
   }
   if (!r) return;
-  cells[0].textContent = secs(r.accumulate);
-  cells[1].textContent = secs(r.prove);
-  cells[2].textContent = secs(r.total);
-  cells[3].textContent = mib(r.memory);
+  cells[0].textContent = secs(r.total);
+  cells[1].textContent = mib(r.memory);
   // bb's seeded ZK proofs reproduce only on one thread (its own warning); bb-ref's on any.
   const comparable = r.seeded && flow.golden && (key === 'ref' || r.threads === 1);
   const golden = !comparable ? '—' : r.sha === flow.golden ? '✓' : '✗';
-  cells[4].textContent = r.verified ? golden : 'not verified';
-  cells[4].className = `${key} ${r.verified && golden !== '✗' ? 'ok' : 'bad'}`;
+  cells[2].textContent = r.verified ? golden : 'not verified';
+  cells[2].className = `${key} ${r.verified && golden !== '✗' ? 'ok' : 'bad'}`;
   const ref = results[flow.name]?.ref;
   const bb = results[flow.name]?.bb;
   row.querySelector('td.ratio').textContent = ref?.total && bb?.total ? `${(ref.total / bb.total).toFixed(2)}×` : '';
@@ -160,14 +170,15 @@ for (const flow of flows) {
   tr.innerHTML =
     `<td class="flow" title="${flow.name}">${flow.name}</td>` +
     `<td><button data-k="ref">bb-ref</button> <button data-k="bb">bb</button></td>` +
-    `<td class="ref"></td><td class="ref"></td><td class="ref"></td><td class="ref"></td><td class="ref"></td>` +
-    `<td class="bb"></td><td class="bb"></td><td class="bb"></td><td class="bb"></td><td class="bb"></td>` +
+    `<td class="ref"></td><td class="ref"></td><td class="ref"></td>` +
+    `<td class="bb"></td><td class="bb"></td><td class="bb"></td>` +
     `<td class="ratio"></td>`;
   tr.querySelectorAll('button').forEach(b => (b.onclick = () => !busy && run(flow, b.dataset.k)));
   $('rows').append(tr);
 }
+// Engine by engine, so each module starts once (only one is alive at a time).
 $('all').onclick = async () => {
-  for (const flow of flows) {
-    for (const key of ['ref', 'bb']) await run(flow, key);
+  for (const key of $('engines').value.split(',')) {
+    for (const flow of flows) await run(flow, key);
   }
 };
