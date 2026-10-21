@@ -165,8 +165,13 @@ impl MockIvcCircuits {
                 self.bus.populate_app(&mut ctx.borrow_mut());
                 AppIo::add_default(&ctx);
             }
-            CircuitKind::Kernel | CircuitKind::HidingKernel => {
+            CircuitKind::Kernel => {
                 self.bus.populate_kernel(&mut ctx.borrow_mut());
+                complete_kernel_circuit_logic(ivc, &ctx, zk_rng, None);
+            }
+            // bb populates only the buses an arithmetization has: MegaZK has kernel calldata alone.
+            CircuitKind::HidingKernel => {
+                self.bus.populate_hiding(&mut ctx.borrow_mut());
                 complete_kernel_circuit_logic(ivc, &ctx, zk_rng, None);
             }
         }

@@ -5,7 +5,6 @@
 
 use super::lower::{io_public_inputs_size, RecursionConstraint, HN, HN_FINAL, OINK};
 use crate::base::codec::Transcriptable;
-use crate::base::rng::Rng;
 use crate::base::vk::Vk;
 use crate::base::{Bn254, CommitmentKey, Fr, G1Affine};
 use crate::chonk::ivc::{Chonk, CircuitKind, VerifierInputs};
@@ -29,10 +28,9 @@ fn push_commitments(out: &mut Vec<Fr>, n: usize) {
     }
 }
 
-fn push_random(out: &mut Vec<Fr>, n: usize, rng: &mut dyn Rng) {
-    for _ in 0..n {
-        out.push(rng.fr());
-    }
+/// bb `populate_field_elements` without a value: `1, 2, .., n`, restarting with every call.
+fn push_seq(out: &mut Vec<Fr>, n: usize) {
+    out.extend((1..=n as u64).map(Fr::from));
 }
 
 /// bb `create_mock_oink_proof`: the default IO as public inputs (verified circuits have no ACIR
@@ -56,36 +54,34 @@ fn mock_oink_proof(kind: CircuitKind) -> Vec<Fr> {
 }
 
 /// bb `create_mock_sumcheck_proof`: the round univariates and the multilinear evaluations.
-fn mock_sumcheck_proof(flavor: &FlavorDesc, rng: &mut dyn Rng) -> Vec<Fr> {
+fn mock_sumcheck_proof(flavor: &FlavorDesc) -> Vec<Fr> {
     let layout = flavor.layout();
     let mut proof = vec![];
-    push_random(
-        &mut proof,
-        flavor.virtual_log_n * layout.batched_len + layout.num_all(),
-        rng,
-    );
+    push_seq(&mut proof, flavor.virtual_log_n * layout.batched_len);
+    push_seq(&mut proof, layout.num_all());
     proof
 }
 
-fn mock_instance_proof(kind: CircuitKind, rng: &mut dyn Rng) -> Vec<Fr> {
+fn mock_instance_proof(kind: CircuitKind) -> Vec<Fr> {
     let mut proof = mock_oink_proof(kind);
-    proof.extend(mock_sumcheck_proof(kind.flavor(), rng));
+    proof.extend(mock_sumcheck_proof(kind.flavor()));
     proof
 }
 
 /// bb `create_mock_multilinear_batch_proof`.
-fn mock_batching_proof(num_claims: usize, rng: &mut dyn Rng) -> Vec<Fr> {
+fn mock_batching_proof(num_claims: usize) -> Vec<Fr> {
     let mut proof = vec![];
-    push_random(&mut proof, MLB_LOG_N * UNIVARIATE_LENGTH + 3 * num_claims, rng);
+    push_seq(&mut proof, MLB_LOG_N * UNIVARIATE_LENGTH);
+    push_seq(&mut proof, 3 * num_claims);
     proof
 }
 
 /// bb `create_mock_pcs_proof<MegaKernelFlavor>`: the decider's Gemini folds and evaluations, Shplonk Q and KZG W.
-fn mock_decider_proof(rng: &mut dyn Rng) -> Vec<Fr> {
+fn mock_decider_proof() -> Vec<Fr> {
     let n = MEGA_KERNEL.virtual_log_n;
     let mut proof = vec![];
     push_commitments(&mut proof, n - 1);
-    push_random(&mut proof, n, rng);
+    push_seq(&mut proof, n);
     push_commitments(&mut proof, 2);
     proof
 }
@@ -93,7 +89,7 @@ fn mock_decider_proof(rng: &mut dyn Rng) -> Vec<Fr> {
 /// bb `create_mock_batch_merge_proof`: one subtable per wire slot, the ZK columns, a single
 /// subtable of size 2 (sizes the verifier's indicator logic accepts), the merged and degree-check
 /// commitments, the evaluations, and the two opening commitments.
-fn mock_batch_merge_proof(rng: &mut dyn Rng) -> Vec<Fr> {
+fn mock_batch_merge_proof() -> Vec<Fr> {
     let m = CHONK_MAX_NUM_CIRCUITS;
     let mut proof = vec![];
     push_commitments(&mut proof, m * NUM_WIRES);
@@ -102,7 +98,7 @@ fn mock_batch_merge_proof(rng: &mut dyn Rng) -> Vec<Fr> {
     proof.push(Fr::from(2u64));
     proof.extend(vec![Fr::from(0u64); m - 1]);
     push_commitments(&mut proof, NUM_WIRES + 1);
-    push_random(&mut proof, m * NUM_WIRES + NUM_WIRES + NUM_WIRES + 1, rng);
+    push_seq(&mut proof, m * NUM_WIRES + NUM_WIRES + NUM_WIRES + 1);
     push_commitments(&mut proof, 2);
     proof
 }
@@ -119,13 +115,13 @@ fn mock_vk(kind: CircuitKind) -> Vk<Bn254> {
 }
 
 /// bb `mock_chonk_accumulation`: what accumulating one circuit of the kernel's group leaves behind.
-fn mock_accumulation(ivc: &mut Chonk, is_kernel: bool, is_hiding: bool, rng: &mut dyn Rng) {
+fn mock_accumulation(ivc: &mut Chonk, is_kernel: bool, is_hiding: bool) {
     ivc.recursive_verifier_native_accum = Some(VerifierClaim {
         challenge: vec![Fr::from(0u64); MEGA_KERNEL.virtual_log_n],
         non_shifted_evaluation: Fr::from(0u64),
         shifted_evaluation: Fr::from(0u64),
         non_shifted_commitment: <G1Affine as AffineRepr>::generator(),
-        shifted_commitment: <G1Affine as AffineRepr>::generator(),
+        shifted_commitment: (<G1Affine as AffineRepr>::generator() * Fr::from(2u64)).into(),
     });
     let kind = if is_kernel {
         CircuitKind::Kernel
@@ -133,18 +129,18 @@ fn mock_accumulation(ivc: &mut Chonk, is_kernel: bool, is_hiding: bool, rng: &mu
         CircuitKind::App
     };
     ivc.verification_queue.push(VerifierInputs {
-        proof: mock_instance_proof(kind, rng),
+        proof: mock_instance_proof(kind),
         vk: mock_vk(kind),
         kind,
     });
     let is_init = ivc.verification_queue[0].kind == CircuitKind::App;
     let num_claims = ivc.verification_queue.len() + (!is_init) as usize;
     if num_claims >= 2 {
-        ivc.multilinear_batch_proof = mock_batching_proof(num_claims, rng);
+        ivc.multilinear_batch_proof = mock_batching_proof(num_claims);
     }
     if is_hiding {
-        ivc.batch_merge_proof = mock_batch_merge_proof(rng);
-        ivc.decider_proof = mock_decider_proof(rng);
+        ivc.batch_merge_proof = mock_batch_merge_proof();
+        ivc.decider_proof = mock_decider_proof();
     }
     let n = ivc.num_accumulated();
     ivc.set_num_circuits_accumulated_for_mocking(n + 1);
@@ -153,7 +149,7 @@ fn mock_accumulation(ivc: &mut Chonk, is_kernel: bool, is_hiding: bool, rng: &mu
 /// bb `create_mock_chonk_from_constraints`: infer the kernel's position from its proof types (OINK
 /// first: init kernel; HN_FINAL: hiding kernel; otherwise a kernel proof then app proofs) and mock
 /// the accumulation of its group.
-pub fn mock_chonk_from_constraints(constraints: &[RecursionConstraint], rng: &mut dyn Rng) -> Chonk {
+pub fn mock_chonk_from_constraints(constraints: &[RecursionConstraint]) -> Chonk {
     assert!(
         !constraints.is_empty(),
         "at least one recursion constraint is required to determine the IVC state"
@@ -201,7 +197,7 @@ pub fn mock_chonk_from_constraints(constraints: &[RecursionConstraint], rng: &mu
     };
     let mut ivc = Chonk::new(kinds, CommitmentKey::empty());
     for (is_kernel, hiding) in group {
-        mock_accumulation(&mut ivc, is_kernel, hiding, rng);
+        mock_accumulation(&mut ivc, is_kernel, hiding);
     }
     ivc.set_num_circuits_accumulated_for_mocking(target);
     ivc

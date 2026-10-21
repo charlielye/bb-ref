@@ -661,6 +661,15 @@ fn create_big_quad_constraint(b: &mut Builder, mut gates: Vec<MulQuad>) {
 
 /// bb `create_block_constraints`: ROM/RAM tables, or (Mega only) a databus column initialized
 /// with the block's entries and read through databus read gates.
+
+/// bb `bus_vector::set_values`: one writer per bus column, since reads index the column from row 0.
+fn assert_bus_unwritten(ctx: &Ctx, bus: usize) {
+    assert!(
+        ctx.borrow().bus(bus).data.is_empty(),
+        "bus_vector::set_values: bus_idx already written."
+    );
+}
+
 fn create_block_constraints(ctx: &Ctx, block: &BlockConstraint) {
     let init: Vec<FieldT> = block.init.iter().map(|w| FieldT::from_witness_index(ctx, *w)).collect();
     match block.kind {
@@ -686,6 +695,7 @@ fn create_block_constraints(ctx: &Ctx, block: &BlockConstraint) {
         }
         BlockKind::CallData(bus) => {
             assert!(bus <= MAX_APPS_PER_KERNEL, "databus app calldata index out of bounds");
+            assert_bus_unwritten(ctx, bus);
             for w in &block.init {
                 ctx.borrow_mut().add_public_calldata(bus, *w);
             }
@@ -696,6 +706,7 @@ fn create_block_constraints(ctx: &Ctx, block: &BlockConstraint) {
             }
         }
         BlockKind::ReturnData => {
+            assert_bus_unwritten(ctx, crate::circuit::mega::RETURNDATA);
             for w in &block.init {
                 ctx.borrow_mut().add_public_return_data(*w);
             }
@@ -984,7 +995,7 @@ fn create_multi_scalar_mul_constraint(ctx: &Ctx, m: &MultiScalarMul) {
         points.push(to_grumpkin_point(ctx, &m.points[i], &m.points[i + 1], &predicate));
         scalars.push(to_grumpkin_scalar(ctx, &m.scalars[i], &m.scalars[i + 1], &predicate));
     }
-    let mut result = CycleGroup::batch_mul(&points, &scalars);
+    let mut result = CycleGroup::batch_mul(&points, &scalars, false);
     let mut to_be_asserted_equal = CycleGroup::conditional_assign(&predicate, &input_result, &result);
     result.assert_equal(&mut to_be_asserted_equal);
 }
@@ -1125,6 +1136,41 @@ pub fn build_circuit_opts(circuit: &Circuit, witness: Option<&[Fr]>, has_ipa_cla
     out
 }
 
+/// bb `translate_or_reject`: a kernel's arithmetization has no lookup or non-native-field gates,
+/// and the hiding kernel's no elliptic or memory gates either, so ACIR that needs them is rejected
+/// (bb names the first such opcode list, in its translation order).
+pub fn check_representable(circuit: &Circuit, kind: CircuitKind) -> Result<(), String> {
+    if kind == CircuitKind::App {
+        return Ok(());
+    }
+    let hiding = kind == CircuitKind::HidingKernel;
+    let (c, _) = classify(circuit, true);
+    let lists: [(&str, bool, bool); 10] = [
+        ("logic_constraints", !c.logic.is_empty(), true),
+        ("aes128_constraints", !c.aes128.is_empty(), true),
+        ("sha256_compression", !c.sha256.is_empty(), true),
+        ("ecdsa_k1_constraints", !c.ecdsa_k1.is_empty(), true),
+        ("ecdsa_r1_constraints", !c.ecdsa_r1.is_empty(), true),
+        ("blake2s_constraints", !c.blake2s.is_empty(), true),
+        ("blake3_constraints", !c.blake3.is_empty(), true),
+        ("keccak_permutations", !c.keccak.is_empty(), true),
+        ("multi_scalar_mul_constraints", !c.msm.is_empty(), hiding),
+        ("ec_add_constraints", !c.ec_add.is_empty(), hiding),
+    ];
+    if let Some((name, ..)) = lists.iter().find(|(_, present, missing)| *present && *missing) {
+        return Err(format!("ACIR contains {name}, which this arithmetization cannot represent."));
+    }
+    for b in c.blocks.values().filter(|_| hiding) {
+        match b.kind {
+            BlockKind::Rom => return Err("ACIR contains a ROM block, which this arithmetization cannot represent.".into()),
+            BlockKind::Ram => return Err("ACIR contains a RAM block, which this arithmetization cannot represent.".into()),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+
 /// The Mega circuit of an ACIR program (bb `create_circuit<MegaCircuitBuilder>`): AssertZero
 /// opcodes that fit the bilinear / batched-eq gate use it, the op queue is the IVC's, and a
 /// kernel's recursion constraints run the kernel logic against the IVC state. Without an IVC a
@@ -1148,7 +1194,8 @@ pub fn build_circuit_mega(
         Some(ivc) => Some(ivc),
         None if hn_recursion.is_empty() => None,
         None => {
-            mock = mock_chonk_from_constraints(&hn_recursion, rng);
+            assert!(witness.is_none(), "HN recursion requires an IVC outside write-VK mode");
+            mock = mock_chonk_from_constraints(&hn_recursion);
             Some(&mut mock)
         }
     };

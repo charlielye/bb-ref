@@ -52,11 +52,9 @@ pub fn aggregate_pair(
 }
 
 /// bb stdlib `PairingPoints::aggregate_multiple` (Ultra branch): bind every point in a fresh
-/// transcript, draw `n-1` short challenges, then `P = P_0 + batch_mul(P_1.., challenges, 128)`.
-pub fn aggregate_multiple(
-    points: Vec<PairingPoints<StdUltraBn254>>,
-    handle_edge_cases: bool,
-) -> PairingPoints<StdUltraBn254> {
+/// transcript, draw `n-1` short challenges, then `P_j = P_0 + Σ c_i · P_{i+1}` with one 128-bit
+/// scalar mul per point, interleaved P0 then P1.
+pub fn aggregate_multiple(points: Vec<PairingPoints<StdUltraBn254>>) -> PairingPoints<StdUltraBn254> {
     assert!(!points.is_empty(), "aggregate_multiple needs at least one pair");
     if points.len() == 1 {
         return points.into_iter().next().unwrap();
@@ -72,14 +70,11 @@ pub fn aggregate_multiple(
     }
     let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
     let challenges: Vec<FieldT> = t.short_challenges(&label_refs);
-    let remaining_p0: Vec<G> = points[1..].iter().map(|p| p.p0.clone()).collect();
-    let remaining_p1: Vec<G> = points[1..].iter().map(|p| p.p1.clone()).collect();
-    let p0 = points[0]
-        .p0
-        .add(&G::batch_mul(&remaining_p0, &challenges, 128, handle_edge_cases));
-    let p1 = points[0]
-        .p1
-        .add(&G::batch_mul(&remaining_p1, &challenges, 128, handle_edge_cases));
+    let (mut p0, mut p1) = (points[0].p0.clone(), points[0].p1.clone());
+    for (pp, c) in points[1..].iter().zip(&challenges) {
+        p0 = p0.add(&pp.p0.scalar_mul(c, 128));
+        p1 = p1.add(&pp.p1.scalar_mul(c, 128));
+    }
     PairingPoints { p0, p1 }
 }
 
@@ -240,5 +235,6 @@ pub fn verify_ultra_rollup(
     let mut t = ipa::NativeTranscript::from_proof(ipa_fields);
     let out = ipa::reduce_verify(grumpkin_key, &claim, &mut t);
     crate::base::timing::phase("      vfy: ipa reduce_verify");
+    t.enforce_proof_fully_consumed("UltraVerifier IPA");
     out
 }

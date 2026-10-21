@@ -38,12 +38,12 @@ impl TranslatorRel {
         match self {
             TranslatorRel::Permutation => vec![7, 3, 3],
             TranslatorRel::DeltaRange => [vec![6; 5], vec![3; 5]].concat(),
-            TranslatorRel::Opcode => vec![6; 5],
+            TranslatorRel::Opcode => vec![6, 6, 6, 6, 6, 3],
             TranslatorRel::AccumulatorTransfer => [vec![4; 4], vec![3; 8]].concat(),
             TranslatorRel::Decomposition => [vec![4; 4], vec![3; 44]].concat(),
             TranslatorRel::NonNativeField => vec![4; 3],
             TranslatorRel::ZeroConstraints => vec![3; 68],
-            TranslatorRel::ShiftableFirstCoeffZero => vec![3; 5],
+            TranslatorRel::ShiftableFirstCoeffZero => vec![3; 18],
         }
     }
     pub fn num_subrelations(self) -> usize {
@@ -305,6 +305,8 @@ fn opcode<T: FieldLike<Native = Fr>>(acc: &mut [T], r: &[T], scaling: &T) {
         tmp *= scaling;
         acc[1 + i] += tmp;
     }
+    // The result row holds the hiding op (eq and reset).
+    acc[5] += (opv - &c(3)) * &v(lagrange_result_row) * scaling;
 }
 
 fn accumulator_transfer<T: FieldLike<Native = Fr>>(acc: &mut [T], r: &[T], p: &RelationParams<T>, scaling: &T) {
@@ -791,7 +793,28 @@ fn zero_constraints<T: FieldLike<Native = Fr>>(acc: &mut [T], r: &[T], scaling: 
 
 fn shiftable_first_coeff_zero<T: FieldLike<Native = Fr>>(acc: &mut [T], r: &[T], scaling: &T) {
     let v = |e: Ent| r[e as usize].clone();
-    for i in 0..5 {
-        acc[i] += v(lagrange_first) * &v(ORDERED[i]) * scaling;
+    // Every shiftable wire starts at zero.
+    const FIRST_ZERO: [Ent; 18] = [
+        ordered_range_constraints_0,
+        ordered_range_constraints_1,
+        ordered_range_constraints_2,
+        ordered_range_constraints_3,
+        ordered_range_constraints_4,
+        p_x_low_limbs,
+        p_x_high_limbs,
+        p_y_low_limbs,
+        p_y_high_limbs,
+        z_low_limbs,
+        z_high_limbs,
+        accumulators_binary_limbs_0,
+        accumulators_binary_limbs_1,
+        accumulators_binary_limbs_2,
+        accumulators_binary_limbs_3,
+        quotient_low_binary_limbs,
+        quotient_high_binary_limbs,
+        relation_wide_limbs,
+    ];
+    for (i, e) in FIRST_ZERO.into_iter().enumerate() {
+        acc[i] += v(lagrange_first) * &v(e) * scaling;
     }
 }

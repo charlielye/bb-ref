@@ -59,6 +59,8 @@ pub struct RamTranscript {
     pub state: Vec<u32>,
     pub records: Vec<RamRecord>,
     pub access_count: u32,
+    /// Cells initialized so far: bb requires all of them before the first read or write.
+    pub num_initialized: usize,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -323,10 +325,19 @@ impl Builder {
             state: vec![UNINITIALIZED; size],
             records: vec![],
             access_count: 0,
+            num_initialized: 0,
         });
         self.memory.ram_arrays.len() - 1
     }
 
+    fn assert_ram_initialized(&self, ram_id: usize, op: &str) {
+        let ram = &self.memory.ram_arrays[ram_id];
+        assert_eq!(
+            ram.num_initialized,
+            ram.state.len(),
+            "{op}: every cell must be initialised before the first access"
+        );
+    }
     pub fn init_ram_element(&mut self, ram_id: usize, index: usize, value_witness: u32) {
         let index_witness = if index == 0 {
             self.zero_idx()
@@ -337,6 +348,7 @@ impl Builder {
             self.memory.ram_arrays[ram_id].state[index], UNINITIALIZED,
             "RAM cell initialized twice"
         );
+        self.memory.ram_arrays[ram_id].num_initialized += 1;
         let timestamp = self.memory.ram_arrays[ram_id].access_count;
         let timestamp_witness = self.put_constant_variable(Fr::from(timestamp as u64));
         let record = RamRecord {
@@ -358,6 +370,7 @@ impl Builder {
 
     pub fn read_ram_array(&mut self, ram_id: usize, index_witness: u32) -> u32 {
         let index = Self::low_u64(&self.get_variable(index_witness)) as usize;
+        self.assert_ram_initialized(ram_id, "read_RAM_array");
         let cell = self.memory.ram_arrays[ram_id].state[index];
         assert_ne!(cell, UNINITIALIZED, "RAM read of uninitialized cell");
         let value_witness = self.add_variable(self.get_variable(cell));
@@ -382,6 +395,7 @@ impl Builder {
 
     pub fn write_ram_array(&mut self, ram_id: usize, index_witness: u32, value_witness: u32) {
         let index = Self::low_u64(&self.get_variable(index_witness)) as usize;
+        self.assert_ram_initialized(ram_id, "write_RAM_array");
         assert_ne!(
             self.memory.ram_arrays[ram_id].state[index], UNINITIALIZED,
             "RAM write to uninitialized cell"

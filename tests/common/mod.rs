@@ -2,7 +2,7 @@
 #![allow(dead_code)]
 use std::path::PathBuf;
 
-pub const PIN: &str = "d43209d";
+pub const PIN: &str = "1117683";
 
 pub fn fixture_dir(rel: &str) -> PathBuf {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data").join(PIN);
@@ -76,7 +76,7 @@ pub fn assert_polys_equal(
         let at: usize = at.parse().unwrap();
         for row in at.saturating_sub(2)..=at + 2 {
             for &j in compare {
-                let (a, b) = (inst.polys[j].coeffs[row], expected.polys[j].coeffs[row]);
+                let (a, b) = (inst.polys[j].coeffs.get(row).copied().unwrap_or_default(), expected.polys[j].coeffs.get(row).copied().unwrap_or_default());
                 if a != Fr::from(0u64) || b != Fr::from(0u64) {
                     eprintln!(
                         "AT row {row} {:>24}: rust {:?}{}",
@@ -136,7 +136,7 @@ pub fn assert_polys_equal(
     }
     for row in r.saturating_sub(2)..=r + after {
         for &j in compare {
-            let (a, b) = (inst.polys[j].coeffs[row], expected.polys[j].coeffs[row]);
+            let (a, b) = (inst.polys[j].coeffs.get(row).copied().unwrap_or_default(), expected.polys[j].coeffs.get(row).copied().unwrap_or_default());
             if a != Fr::from(0u64) || b != Fr::from(0u64) {
                 report += &format!(
                     "  row {row} {:>24}: rust {:?}{}\n",

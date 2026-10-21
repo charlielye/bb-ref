@@ -12,6 +12,13 @@ pub const ECCVM_PROOF_LENGTH: usize = 556;
 pub const TRIPLE_IPA_PROOF_LENGTH: usize = 70;
 /// bb `TranslatorFlavor::COMMITTED_SUMCHECK_PROOF_LENGTH + MegaZKFlavor::NUM_ALL_ENTITIES`.
 pub const JOINT_PROOF_LENGTH: usize = 478;
+const FIXED_LENGTH: usize = MERGE_PROOF_SIZE + ECCVM_PROOF_LENGTH + TRIPLE_IPA_PROOF_LENGTH + JOINT_PROOF_LENGTH;
+
+/// bb `ChonkProof::PROOF_LENGTH_WITHOUT_PUB_INPUTS`: the hiding kernel's Oink without its public
+/// inputs plus the fixed-size sub-proofs.
+pub fn proof_length_without_pub_inputs() -> usize {
+    super::batched::mega_zk_oink_length_without_public_inputs() + FIXED_LENGTH
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChonkProof {
@@ -41,11 +48,10 @@ impl ChonkProof {
 
     /// The Oink proof takes whatever is not accounted for by the fixed-size sub-proofs.
     pub fn from_fields(fields: &[Fr]) -> Self {
-        let fixed = MERGE_PROOF_SIZE + ECCVM_PROOF_LENGTH + TRIPLE_IPA_PROOF_LENGTH + JOINT_PROOF_LENGTH;
+        let fixed = FIXED_LENGTH;
         assert!(
-            fields.len() >= fixed,
-            "Chonk proof too short: {} < {fixed}",
-            fields.len()
+            fields.len() >= proof_length_without_pub_inputs(),
+            "ChonkProof::from_field_elements: proof too short"
         );
         let mut rest = fields;
         let mut take = |n: usize| {
@@ -150,7 +156,7 @@ mod tests {
                 .collect()
         };
         ChonkProof {
-            hiding_oink_proof: seq(5),
+            hiding_oink_proof: seq(crate::chonk::batched::mega_zk_oink_length_without_public_inputs() + 5),
             merge_proof: seq(MERGE_PROOF_SIZE),
             eccvm_proof: seq(ECCVM_PROOF_LENGTH),
             ipa_proof: seq(TRIPLE_IPA_PROOF_LENGTH),

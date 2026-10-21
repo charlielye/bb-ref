@@ -211,13 +211,30 @@ pub fn batch_merge_verify<C: Curve>(
     evals.push(t.receive("DEGREE_CHECK_EVAL"));
 
     crate::circuit::builder::trace_phase("batch merge: evals received");
-    // T(κ) = Σ_i κ^{Σ_{l<i} size_l} C_i(κ) per column, by Horner from the last table.
+    // T(κ) per column, by Horner from the last table: each active subtable is followed by a
+    // separator op (opcode 3 in column 0, two rows), so its successor shifts by κ^{size+2} and
+    // column 0 gains 3·κ^{offset+size} (bb `check_concatenation_identity`).
+    let separator_shift = kappa.clone() * &kappa - &C::Fr::one();
+    let (mut shifts, mut separators) = (vec![], vec![]);
+    for i in 0..m {
+        let active_shift = indicator[i].clone() * &powers_of_kappa[i + 1];
+        if i + 1 < m {
+            shifts.push(powers_of_kappa[i + 1].clone() + &(separator_shift.clone() * &active_shift));
+        }
+        separators.push(C::Fr::from_u64(3) * &active_shift);
+    }
     for j in 0..NUM_WIRES {
         let mut diff = evals[m * NUM_WIRES + j].clone();
-        for i in (0..m).rev() {
-            diff *= &powers_of_kappa[i];
-            diff += &evals[i * NUM_WIRES + j];
+        if j == 0 {
+            diff += &separators[m - 1];
         }
+        for i in (0..m - 1).rev() {
+            diff = evals[(i + 1) * NUM_WIRES + j].clone() + &(shifts[i].clone() * &diff);
+            if j == 0 {
+                diff += &separators[i];
+            }
+        }
+        diff = evals[j].clone() + &(powers_of_kappa[0].clone() * &diff);
         diff -= &evals[num_column_evals + j];
         ok &= diff.is_zero();
         diff.assert_equal(&C::Fr::zero());

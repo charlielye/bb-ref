@@ -579,6 +579,9 @@ fn bus_lookup<T: FieldLike>(bus: usize, acc: &mut [T], r: &Row<T>, p: &RelationP
     acc[2] += tmp;
     let indicator = r.e(b.indicator);
     acc[3] += (read_counts.clone() - indicator.clone() * read_counts) * scaling;
+    // The column holds nothing outside its declared support.
+    let value = r.e(b.value);
+    acc[4] += (value.clone() - indicator.clone() * value) * scaling;
 }
 
 /// bb `poseidon2_initial_external_relation.hpp`: the next row holds `M_E · (w_l, w_r, w_o, w_4)`.

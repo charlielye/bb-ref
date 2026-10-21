@@ -2,7 +2,6 @@
 //! marker 2 or 3: structs as maps or positional arrays, enums as `{Variant: payload}` or a bare
 //! variant name).
 
-use crate::base::field::from_bytes_be;
 use crate::base::rng::Rng;
 use crate::base::Fr;
 use base64::Engine;
@@ -246,7 +245,7 @@ struct WitnessStack {
 
 pub fn field(bytes: &[u8]) -> Fr {
     assert_eq!(bytes.len(), 32, "field element must be 32 bytes");
-    from_bytes_be(bytes)
+    crate::base::field::from_bytes_be_canonical(bytes)
 }
 
 pub fn gunzip(data: &[u8]) -> Vec<u8> {

@@ -162,6 +162,9 @@ pub struct EccOpQueue {
     pub zk_ops: Vec<UltraOp>,
     pub fixed_append_offset: Option<usize>,
     pub hiding_op: Option<EccvmOp>,
+    /// Subtables followed by a batch-merge separator op in the aggregate views (bb
+    /// `num_separator_subtables`): every subtable merged before the hiding kernel's.
+    pub num_separators: usize,
 }
 
 impl Default for EccOpQueue {
@@ -185,6 +188,7 @@ impl EccOpQueue {
             zk_ops: vec![],
             fixed_append_offset: None,
             hiding_op: None,
+            num_separators: 0,
         }
     }
     /// Called by every new circuit; the previous circuit's subtable must have been merged.
@@ -301,6 +305,35 @@ impl EccOpQueue {
         (ultra, eccvm)
     }
 
+    /// The fixed op that delimits batch-merged subtables: eq and reset against infinity, which leaves
+    /// the accumulator alone and ends any pending MSM.
+    pub fn make_separator_op_pair() -> (UltraOp, EccvmOp) {
+        let ultra = UltraOp {
+            op_code: EccOpCode::eq_reset(),
+            return_is_infinity: true,
+            ..Default::default()
+        };
+        let eccvm = EccvmOp {
+            op_code: EccOpCode::eq_reset(),
+            base_point: G1Affine::identity(),
+            z1: U256::zero(),
+            z2: U256::zero(),
+            mul_scalar_full: Fr::zero(),
+        };
+        (ultra, eccvm)
+    }
+    /// bb `add_batch_merge_separators`: every subtable merged so far gets a separator in the
+    /// aggregate views; the subtable commitments themselves are unchanged.
+    pub fn add_batch_merge_separators(&mut self) {
+        assert!(self.fixed_append_offset.is_none() && self.num_separators == 0);
+        assert!(self.ultra_ops.current.is_empty(), "current subtable must be merged");
+        self.num_separators = self.num_subtables();
+    }
+    /// Separators among the first `n` subtables.
+    fn separators_in(&self, n: usize) -> usize {
+        self.num_separators.min(n)
+    }
+
     /// Shift `k` of the final merge `M = L + X^k R`: the ZK prefix (if any) plus `append_offset` op slots.
     pub fn compute_fixed_append_offset(append_offset: usize, include_zk_prefix: bool) -> usize {
         (if include_zk_prefix { ZK_ULTRA_OPS } else { 0 }) + append_offset * NUM_ROWS_PER_OP
@@ -323,7 +356,7 @@ impl EccOpQueue {
             "the fixed-location append happens once"
         );
         assert!(
-            self.ultra_ops.num_ops() <= offset,
+            self.ultra_ops.num_ops() + self.num_separators <= offset,
             "the tables before the fixed append do not fit"
         );
         self.fixed_append_offset = Some(offset);
@@ -333,7 +366,7 @@ impl EccOpQueue {
     /// Rows of the merged Ultra table, excluding the ZK prefix.
     pub fn num_ultra_rows(&self) -> usize {
         match self.fixed_append_offset {
-            None => self.ultra_ops.num_ops() * NUM_ROWS_PER_OP,
+            None => (self.ultra_ops.num_ops() + self.num_separators) * NUM_ROWS_PER_OP,
             Some(off) => {
                 Self::compute_fixed_append_offset(off, false)
                     + APPEND_TRACE_OFFSET
@@ -344,10 +377,8 @@ impl EccOpQueue {
     /// Rows of the table up to and including the tail subtable (all but the last), excluding the ZK prefix.
     pub fn ultra_table_size_up_to_tail(&self) -> usize {
         assert!(self.ultra_ops.current.is_empty() && self.num_subtables() > 1);
-        self.ultra_ops.tables[..self.num_subtables() - 1]
-            .iter()
-            .map(|t| t.len() * NUM_ROWS_PER_OP)
-            .sum()
+        let n = self.num_subtables() - 1;
+        (self.ultra_ops.tables[..n].iter().map(Vec::len).sum::<usize>() + self.separators_in(n)) * NUM_ROWS_PER_OP
     }
 
     /// bb `get_zk_reconstructed_ultra_ops`: the ZK prefix, every merged subtable, and — under a
@@ -356,11 +387,17 @@ impl EccOpQueue {
     pub fn get_zk_reconstructed_ultra_ops(&self) -> Vec<UltraOp> {
         assert!(self.ultra_ops.current.is_empty() && !self.zk_ops.is_empty());
         let mut ops = self.zk_ops.clone();
+        let n = self.num_subtables();
+        let sequential = n - self.fixed_append_offset.is_some() as usize;
+        for (i, t) in self.ultra_ops.tables[..sequential].iter().enumerate() {
+            ops.extend(t.iter().cloned());
+            if i < self.num_separators {
+                ops.push(Self::make_separator_op_pair().0);
+            }
+        }
         match self.fixed_append_offset {
-            None => ops.extend(self.ultra_ops.tables.iter().flatten().cloned()),
+            None => {}
             Some(offset) => {
-                let n = self.num_subtables();
-                ops.extend(self.ultra_ops.tables[..n - 1].iter().flatten().cloned());
                 let target = offset + self.zk_ops.len() + APPEND_TRACE_OFFSET / NUM_ROWS_PER_OP;
                 assert!(ops.len() <= target);
                 ops.resize(target, UltraOp::default());
@@ -394,7 +431,7 @@ impl EccOpQueue {
     /// Columns of every merged subtable, in append order.
     pub fn construct_subtable_columns(&self) -> Vec<Columns> {
         (0..self.num_subtables())
-            .map(|i| self.columns_in_range(self.ultra_ops.tables[i].len() * NUM_ROWS_PER_OP, i, i + 1, false, None))
+            .map(|i| self.columns_in_range(self.ultra_ops.tables[i].len() * NUM_ROWS_PER_OP, i, i + 1, false, None, false))
             .collect()
     }
     /// Columns of the full merged table (ZK prefix, subtables, and the fixed-location final subtable if set).
@@ -405,6 +442,7 @@ impl EccOpQueue {
             self.num_subtables(),
             include_zk_ops,
             self.fixed_append_offset,
+            true,
         )
     }
     /// Columns of the aggregate table up to and including the tail subtable (with the ZK prefix).
@@ -416,6 +454,7 @@ impl EccOpQueue {
             self.num_subtables() - 1,
             true,
             None,
+            true,
         )
     }
     /// Columns of the most recently merged subtable; under a fixed-location append they carry the
@@ -436,6 +475,7 @@ impl EccOpQueue {
 
     /// Columns of subtables `[start, end)` laid out sequentially after the optional ZK prefix; with
     /// `fixed_last`, the last subtable in range is instead placed at that op slot (plus the preamble).
+    /// With `separators`, each covered sequential subtable is followed by the batch-merge separator.
     fn columns_in_range(
         &self,
         poly_size: usize,
@@ -443,6 +483,7 @@ impl EccOpQueue {
         end: usize,
         include_zk_ops: bool,
         fixed_last: Option<usize>,
+        separators: bool,
     ) -> Columns {
         let size = poly_size + if include_zk_ops { ZK_ULTRA_OPS } else { 0 };
         let mut cols = std::array::from_fn(|_| Poly::zero(size));
@@ -455,9 +496,13 @@ impl EccOpQueue {
             }
         }
         let sequential_end = if fixed_last.is_some() { end - 1 } else { end };
-        for op in self.ultra_ops.tables[start..sequential_end].iter().flatten() {
-            Self::write_op(&mut cols, op, row);
-            row += NUM_ROWS_PER_OP;
+        let separator = Self::make_separator_op_pair().0;
+        for i in start..sequential_end {
+            let sep = (separators && i < self.num_separators).then_some(&separator);
+            for op in self.ultra_ops.tables[i].iter().chain(sep) {
+                Self::write_op(&mut cols, op, row);
+                row += NUM_ROWS_PER_OP;
+            }
         }
         if let Some(offset) = fixed_last {
             let mut row = Self::compute_fixed_append_offset(offset, include_zk_ops) + APPEND_TRACE_OFFSET;

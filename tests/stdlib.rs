@@ -832,7 +832,7 @@ fn cycle_group_mul(ctx: &Ctx, k: u64) {
         scalars.push(CycleScalar::new(w(ctx, 12345 + i), w(ctx, 67 + i)));
         points.push(one.clone());
     }
-    let mut r = CycleGroup::batch_mul(&points, &scalars);
+    let mut r = CycleGroup::batch_mul(&points, &scalars, false);
     let mut e = from_witness_point(ctx, r.get_value());
     r.assert_equal(&mut e);
 }
@@ -842,7 +842,7 @@ fn cycle_group_mul_witness(ctx: &Ctx) {
     let s = CycleScalar::new(w(ctx, 999), w(ctx, 5));
     let cc = CycleGroup::constant(gp(11));
     let cs = CycleScalar::constant(Fq::from(13u64));
-    let mut r = CycleGroup::batch_mul(&[p, cc], &[s, cs]);
+    let mut r = CycleGroup::batch_mul(&[p, cc], &[s, cs], false);
     let mut e = from_witness_point(ctx, r.get_value());
     r.assert_equal(&mut e);
 }

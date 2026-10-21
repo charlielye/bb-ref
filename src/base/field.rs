@@ -344,6 +344,39 @@ pub fn from_bytes_be<F: PrimeField<BigInt = U256>>(bytes: &[u8]) -> F {
     F::from_bigint(bi).unwrap_or_else(|| F::from_be_bytes_mod_order(bytes))
 }
 
+/// bb's `uint256_t` stream format: `0x` and 64 hex digits.
+pub fn u256_hex(u: &U256) -> String {
+    format!("0x{:016x}{:016x}{:016x}{:016x}", u.0[3], u.0[2], u.0[1], u.0[0])
+}
+
+/// The text of a failed bb `BB_ASSERT_LT(left, right, reason)`.
+pub fn assert_lt_failure(left_expr: &str, right_expr: &str, left: &U256, right: &U256, reason: &str) -> String {
+    format!(
+        "Assertion failed: ({left_expr} < {right_expr})\n  Left   : {}\n  Right  : {}\n  Reason : {reason}",
+        u256_hex(left),
+        u256_hex(right)
+    )
+}
+
+/// bb `read(field)`: a big-endian encoding that must be canonical (it panics with bb's assertion
+/// text otherwise), where `from_bytes_be` reduces.
+pub fn from_bytes_be_canonical<F: PrimeField<BigInt = U256>>(bytes: &[u8]) -> F {
+    let limb = |i: usize| u64::from_be_bytes(bytes[8 * i..8 * i + 8].try_into().unwrap());
+    let v = U256::new([limb(3), limb(2), limb(1), limb(0)]);
+    F::from_bigint(v).unwrap_or_else(|| {
+        panic!(
+            "{}",
+            assert_lt_failure(
+                "(uint256_t{ result.data[0], result.data[1], result.data[2], result.data[3] })",
+                "field<Params>::modulus",
+                &v,
+                &F::MODULUS,
+                "Non-canonical field element",
+            )
+        )
+    })
+}
+
 pub fn from_hex<F: PrimeField<BigInt = U256>>(s: &str) -> F {
     let s = s.strip_prefix("0x").unwrap_or(s);
     let padded = format!("{s:0>64}");

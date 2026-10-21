@@ -103,3 +103,11 @@ head) needed no prover change: every flow and the corpus came out byte-exact; th
 (`Warmup`, `Poseidon2AbsorbChain`) and SRS ingress (bb now authenticates pushed points against pinned
 chunk hashes), and most of the time went to tooling drift in labs (package renames, `noir-execute`,
 the block builder's API).
+
+The 2026-10-21 re-pin (onto `next` with the private-repo security batch, ~50 bb commits) did change
+the prover: new ECCVM, Translator and databus subrelations, batch-merge separator ops (and the
+verifier's concatenation identity over them), per-point pairing-point aggregation on Ultra,
+trusted-constant `cycle_group::batch_mul`, and deterministic mock proofs; plus verifier/validation
+checks with bb's own error text (canonical field and VK decoding, Chonk proof structure and
+trailing data, the ZK keccak log_n floor, per-kind ACIR rejection, RAM initialization, one writer
+per bus column). The fixture tooling needed the per-kind builders and Foundry 1.8.5.

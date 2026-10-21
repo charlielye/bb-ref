@@ -2,7 +2,7 @@
 //! (bb `NativeVerificationKey_` / `StdlibVerificationKey_`).
 
 use super::codec::Transcriptable;
-use super::field::{from_bytes_be, to_bytes_be, Fr};
+use super::field::{to_bytes_be, Fr};
 use super::group::{Bn254, Curve};
 use super::poseidon2::Hasher;
 
@@ -88,7 +88,23 @@ impl Vk<Bn254> {
     /// bb's on-disk `vk` file: every field element as 32 big-endian bytes.
     pub fn from_bytes(bytes: &[u8], num_comms: usize) -> Self {
         assert_eq!(bytes.len() % 32, 0, "VK byte length not a multiple of 32");
-        let fields: Vec<Fr> = bytes.chunks(32).map(from_bytes_be::<Fr>).collect();
+        let fields: Vec<Fr> = bytes.chunks(32).map(super::field::from_bytes_be_canonical::<Fr>).collect();
+        // log_circuit_size, num_public_inputs and pub_inputs_offset are uint64 in bb.
+        for f in fields.iter().take(3) {
+            let v = super::field::u256(f);
+            let bound = super::field::U256::new([0, 1, 0, 0]);
+            assert!(
+                v < bound,
+                "{}",
+                super::field::assert_lt_failure(
+                    "uint256_t(fr_vec[0])",
+                    "uint256_t(1) << (sizeof(T) * 8)",
+                    &v,
+                    &bound,
+                    "Integer exceeds target range"
+                )
+            );
+        }
         Self::from_fields(&fields, num_comms)
     }
 

@@ -19,7 +19,6 @@ use crate::base::srs::{bn254_g2, Srs};
 use crate::base::{Bn254, KeccakBn254, Vk as VkGeneric};
 use crate::chonk::ivc::Chonk;
 use crate::chonk::ivc::CircuitKind;
-use crate::chonk::proof::ChonkProof as RefChonkProof;
 use crate::chonk::verifier::chonk_verify;
 use crate::goblin::eccvm::FIXED_SIZE as ECCVM_FIXED_SIZE;
 use crate::honk::prover_instance::ProverInstance;
@@ -69,8 +68,9 @@ fn u256_to_wire(u: &U256) -> Bin32 {
     Bin32(u256_to_bytes_be(u))
 }
 
+/// bb's wire decoding of a field element rejects a non-canonical encoding.
 fn fr_from_wire(b: &Bin32) -> FrField {
-    crate::base::field::from_bytes_be(&b.0)
+    crate::base::field::from_bytes_be_canonical(&b.0)
 }
 
 fn u256_from_wire(b: &Bin32) -> U256 {
@@ -394,8 +394,30 @@ impl Handler for BbRefHandler {
     fn circuit_verify(&mut self, cmd: BbCircuitVerify, respond: Responder<BbCircuitVerifyResponse>) {
         run_catching(respond, || {
             let (flavor, ipa) = select_flavor(&cmd.settings)?;
-            // bb rejects non-canonical encodings with an exception (error response), while wrong
-            // sizes and failed checks return verified=false.
+            // bb's order: a wrong VK size is verified=false; a malformed VK or (unpadded flavors) a
+            // log_n below the flavor's minimum is an error response, as is a non-canonical input;
+            // anything else that fails is verified=false.
+            let num_comms = flavor.layout().num_precomputed;
+            let keccak = flavor.name.contains("Keccak");
+            let vk_fields = if keccak {
+                VkGeneric::<KeccakBn254>::num_fields(num_comms)
+            } else {
+                VkGeneric::<Bn254>::num_fields(num_comms)
+            };
+            if cmd.verification_key.len() != vk_fields * 32 {
+                return Ok(BbCircuitVerifyResponse { verified: false });
+            }
+            if keccak {
+                let log_n = VkGeneric::<KeccakBn254>::from_bytes(&cmd.verification_key, num_comms).log_n_value();
+                let min = if flavor.has_zk { 3 } else { 1 };
+                if !flavor.use_padding && log_n < min {
+                    return Err(format!(
+                        "Assertion failed: (log_circuit_size >= min_log_circuit_size)\n  Left   : {log_n}\n  Right  : {min}\n  Reason : VK log_circuit_size is below the flavor's minimum"
+                    ));
+                }
+            } else {
+                VkGeneric::<Bn254>::from_bytes(&cmd.verification_key, num_comms);
+            }
             let modulus_check = |vals: &[Bin32], what: &str| -> Result<(), String> {
                 for v in vals {
                     if !is_canonical_fr(v) {
@@ -419,9 +441,11 @@ impl Handler for BbRefHandler {
     }
 
     fn chonk_compress_proof(&mut self, cmd: BbChonkCompressProof, respond: Responder<BbChonkCompressProofResponse>) {
-        let proof = wire_to_chonk_proof(&cmd.proof);
-        respond.ok(BbChonkCompressProofResponse {
-            compressed_proof: crate::chonk::compression::compress_chonk_proof(&proof),
+        run_catching(respond, || {
+            let proof = wire_to_chonk_proof(&cmd.proof);
+            Ok(BbChonkCompressProofResponse {
+                compressed_proof: crate::chonk::compression::compress_chonk_proof(&proof),
+            })
         });
     }
 
@@ -527,6 +551,7 @@ impl Handler for BbRefHandler {
             }
             let mut rng = GlobalProxy;
             let witness = decode_witness_raw(&cmd.witness, &mut rng);
+            crate::acir::lower::check_representable(&step.circuit, step.kind)?;
             let circuit = build_circuit_mega(&step.circuit, Some(&witness), Some(ivc), &mut rng);
             if let Some(msg) = &circuit.failed {
                 return Err(format!("circuit is not satisfied: {msg}"));
@@ -572,27 +597,27 @@ impl Handler for BbRefHandler {
     }
 
     fn chonk_verify(&mut self, cmd: BbChonkVerify, respond: Responder<BbChonkVerifyResponse>) {
-        // bb maps every malformed input to valid=false rather than an error response.
-        let valid = catch_unwind(AssertUnwindSafe(|| {
-            let vk = VkGeneric::<Bn254>::from_bytes(&cmd.vk, MEGA_ZK.layout().num_precomputed);
-            let de = |v: &[Bin32]| v.iter().map(fr_from_wire).collect::<Vec<_>>();
-            let proof = RefChonkProof {
-                hiding_oink_proof: de(&cmd.proof.hiding_oink_proof),
-                merge_proof: de(&cmd.proof.merge_proof),
-                eccvm_proof: de(&cmd.proof.eccvm_proof),
-                ipa_proof: de(&cmd.proof.ipa_proof),
-                joint_proof: de(&cmd.proof.joint_proof),
-            };
-            chonk_verify(&vk, &proof, &bn254_g2(), &self.srs.grumpkin_key(ECCVM_FIXED_SIZE))
-        }))
-        .unwrap_or(false);
-        respond.ok(BbChonkVerifyResponse { valid });
+        // bb decodes the proof before its try block (a non-canonical element is an error response);
+        // every other malformed input is valid=false.
+        run_catching(respond, || {
+            let proof = wire_to_chonk_proof(&cmd.proof);
+            let valid = catch_unwind(AssertUnwindSafe(|| {
+                let vk = VkGeneric::<Bn254>::from_bytes(&cmd.vk, MEGA_ZK.layout().num_precomputed);
+                // bb checks the total size against the VK before verifying.
+                proof.to_fields().len()
+                    == vk.num_public_inputs_usize() + crate::chonk::proof::proof_length_without_pub_inputs()
+                    && chonk_verify(&vk, &proof, &bn254_g2(), &self.srs.grumpkin_key(ECCVM_FIXED_SIZE))
+            }))
+            .unwrap_or(false);
+            Ok(BbChonkVerifyResponse { valid })
+        });
     }
 
     fn chonk_compute_vk(&mut self, cmd: BbChonkComputeVk, respond: Responder<BbChonkComputeVkResponse>) {
         run_catching(respond, || {
             let kind = circuit_kind(cmd.kind)?;
             let circuit = decode_program_raw(&cmd.circuit.bytecode);
+            crate::acir::lower::check_representable(&circuit, kind)?;
             let mut rng = GlobalProxy;
             let mut builder = build_circuit_mega(&circuit, None, None, &mut rng);
             let inst = ProverInstance::from_builder(kind.flavor(), &mut builder, &mut rng);
@@ -629,7 +654,7 @@ impl Handler for BbRefHandler {
             let mut state = cmd.state.each_ref().map(fr_from_wire);
             for block in cmd.inputs.chunks(BLOCK_BYTES) {
                 for (s, f) in state.iter_mut().zip(block.chunks(32)) {
-                    *s += crate::base::field::from_bytes_be::<FrField>(f);
+                    *s += crate::base::field::from_bytes_be_canonical::<FrField>(f);
                 }
                 poseidon2::permutation(&mut state);
             }

@@ -43,8 +43,22 @@ impl<TF: TranscriptData, H: Hasher<TF>> Transcript<TF, H> {
         t
     }
 
+    /// The next proof segment of a shared transcript; the previous one must be fully read.
     pub fn load_proof(&mut self, proof: &[TF]) {
+        assert!(
+            self.num_read == self.proof_data.len(),
+            "Transcript: load_proof called before the previous proof segment was fully consumed"
+        );
         self.proof_data.extend_from_slice(proof);
+    }
+
+    /// bb `enforce_proof_fully_consumed`: elements the verifier never read are not bound by
+    /// Fiat-Shamir, so a proof with trailing data is rejected.
+    pub fn enforce_proof_fully_consumed(&self, context: &str) {
+        assert!(
+            self.num_read == self.proof_data.len(),
+            "{context}: proof contains trailing data not consumed by the transcript"
+        );
     }
 
     /// Prover: the elements written since the last export (lets several provers share a transcript).

@@ -156,6 +156,7 @@ impl Chonk {
                     self.decider_proof = self.accumulation_transcript.export_proof();
                     timing::phase("decider");
                     let mut q = self.op_queue.write().unwrap();
+                    q.add_batch_merge_separators();
                     q.construct_zk_columns(rng);
                     self.batch_merge_proof = batch_merge_prove(&q, CHONK_MAX_NUM_CIRCUITS, &self.ck);
                     timing::phase("batch merge");

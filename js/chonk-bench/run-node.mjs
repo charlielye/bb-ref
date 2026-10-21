@@ -16,7 +16,7 @@ const flows = process.argv.slice(3).length
   ? process.argv.slice(3)
   : readdirSync(FLOWS).filter(f => existsSync(join(FLOWS, f, 'ivc-inputs.msgpack')));
 
-const { BbService } = await import(which === 'bb' ? '@aztec-foundation/bb.js-api' : 'bb-ref.js');
+const { BbService, defaultWasmModule } = await import(which === 'bb' ? '@aztec-foundation/bb.js-api' : 'bb-ref.js');
 const env = Object.fromEntries(['BB_RNG_SEED', 'RUST_BACKTRACE'].filter(k => process.env[k]).map(k => [k, process.env[k]]));
 const t = performance.now();
 const api = await BbService.wasm({ threads, env, logger: process.env.VERBOSE ? m => console.error('[wasm]', m) : () => {} });
@@ -27,7 +27,7 @@ const read = (f, n) => {
   closeSync(fd);
   return buf;
 };
-console.error('module up');
+console.error(`module up: ${defaultWasmModule?.(threads).pathname.split('/').pop()}`);
 await initSrs(api, {
   g1: read('bn254_g1.dat', (1 << 19) * 64),
   g2: read('bn254_g2.dat', 128),

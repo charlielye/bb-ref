@@ -105,14 +105,14 @@ pub const ECCVM_RELATIONS: [EccvmRel; 8] = [
 impl EccvmRel {
     pub fn partial_lengths(self) -> Vec<usize> {
         match self {
-            EccvmRel::Transcript => vec![8; 31],
+            EccvmRel::Transcript => vec![8; 33],
             EccvmRel::PointTable => vec![6; 6],
             EccvmRel::Wnaf => vec![5; 23],
-            EccvmRel::Msm => vec![8; 51],
+            EccvmRel::Msm => vec![8; 52],
             EccvmRel::Set => vec![22, 3],
             EccvmRel::Lookup => vec![9, 9],
             EccvmRel::Bools => vec![3; 23],
-            EccvmRel::ShiftableInit => vec![3; 21],
+            EccvmRel::ShiftableInit => vec![3; 26],
         }
     }
     pub fn num_subrelations(self) -> usize {
@@ -173,7 +173,7 @@ fn bools<T: FieldLike>(acc: &mut [T], r: &[T], scaling: &T) {
 }
 
 fn shiftable_init<T: FieldLike>(acc: &mut [T], r: &[T], scaling: &T) {
-    const INITS: [Ent; 21] = [
+    const INITS: [Ent; 26] = [
         z_perm,
         transcript_accumulator_not_empty,
         precompute_select,
@@ -195,11 +195,15 @@ fn shiftable_init<T: FieldLike>(acc: &mut [T], r: &[T], scaling: &T) {
         msm_add1,
         msm_pc,
         transcript_msm_count,
+        transcript_op,
+        transcript_Px,
+        transcript_Py,
+        transcript_z1,
+        transcript_z2,
     ];
-    // bb's `accumulate_init` lambda recomputes `lagrange_first * scaling_factor` per subrelation.
+    let scaled_first = r[lagrange_first as usize].clone() * scaling;
     for (j, e) in INITS.iter().enumerate() {
-        let scaled_first = r[lagrange_first as usize].clone() * scaling;
-        acc[j] += scaled_first * &r[*e as usize];
+        acc[j] += scaled_first.clone() * &r[*e as usize];
     }
 }
 
@@ -502,8 +506,9 @@ fn msm<T: FieldLike<Native = Fq>>(acc: &mut [T], r: &[T], scaling: &T) {
     acc[36] += is_not_first_row.clone() * &transition_shift * (msm_size.clone() + &pc_shift - &pc) * scaling;
     let active_phase = q_add.clone() + &q_double;
     acc[49] +=
-        is_not_first_row * &active_phase * (-transition_shift.clone() + &one) * (pc_shift.clone() - &pc) * scaling;
+        is_not_first_row.clone() * &active_phase * (-transition_shift.clone() + &one) * (pc_shift.clone() - &pc) * scaling;
     acc[50] += q_skew.clone() * &q_skew_shift * (pc_shift - &pc) * scaling;
+    acc[51] += is_not_first_row * &transition_shift * (-q_skew.clone() + &one) * scaling;
     acc[37] += adds[1].clone() * (-adds[0].clone() + &one) * scaling;
     acc[38] += adds[2].clone() * (-adds[1].clone() + &one) * scaling;
     acc[39] += adds[3].clone() * (-adds[2].clone() + &one) * scaling;
@@ -568,8 +573,10 @@ fn transcript<T: FieldLike<Native = Fq>>(acc: &mut [T], r: &[T], scaling: &T) {
     let is_not_first_or_last_row = -first.clone() + &(-last.clone()) + &one;
     let is_not_infinity = -p_infinity.clone() + &one;
     let is_not_hiding_row = -second.clone() + &one;
-    acc[0] += (z1 * &z1_zero) * scaling;
-    acc[1] += (z2 * &z2_zero) * scaling;
+    acc[0] += (z1.clone() * &z1_zero) * scaling;
+    acc[1] += (z2.clone() * &z2_zero) * scaling;
+    acc[26] += ((-q_mul.clone() + &one) * &z1) * scaling;
+    acc[27] += ((-q_mul.clone() + &one) * &z2) * scaling;
     let mut tmp = q_add.dbl();
     tmp += &q_mul;
     tmp = tmp.dbl();
@@ -695,15 +702,15 @@ fn transcript<T: FieldLike<Native = Fq>>(acc: &mut [T], r: &[T], scaling: &T) {
             let y_term = (x1.clone() - &x3) * (y2.clone() - &y1) - &((x2.clone() - &x1) * (y1.clone() + &y3));
             let subtract_x = x_term * (-msm_infinity.clone() + &one) + &(msm_infinity.clone() * &x3);
             let subtract_y = y_term * (-msm_infinity.clone() + &one) + &(msm_infinity.clone() * &y3);
-            acc[26] += mt.clone() * &subtract_x * scaling;
-            acc[27] += mt.clone() * &subtract_y * scaling;
+            acc[28] += mt.clone() * &subtract_x * scaling;
+            acc[29] += mt.clone() * &subtract_y * scaling;
             let x_diff = x2 - &x1;
             let y_sum = y2 + &y1;
-            acc[28] += mt.clone() * &msm_infinity * &x_diff * scaling;
-            acc[29] += mt.clone() * &msm_infinity * &y_sum * scaling;
+            acc[30] += mt.clone() * &msm_infinity * &x_diff * scaling;
+            acc[31] += mt.clone() * &msm_infinity * &y_sum * scaling;
             let msm_x_inverse = v(transcript_msm_x_inverse);
             let inverse_term = (-msm_infinity.clone() + &one) * (x_diff * &msm_x_inverse - &one);
-            acc[30] += mt.clone() * &inverse_term * scaling;
+            acc[32] += mt.clone() * &inverse_term * scaling;
         }
         let preserve =
             propagate * (is_accumulator_empty.clone() - &is_accumulator_empty_shift) * &is_not_first_or_last_row;

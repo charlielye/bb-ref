@@ -32,7 +32,21 @@ for (const t of [...counts].sort((a, b) => a - b)) {
 }
 $('threads').value = String(cores);
 
-// One live service per engine; a change of threads or seeding starts a fresh one.
+// The package picks its wide-arithmetic module wherever the engine supports it; the checkbox can
+// force the normal one, for a side-by-side.
+const wideModule = threads => {
+  const { defaultWasmModule } = refPackage;
+  const url = defaultWasmModule(threads);
+  return url.pathname.includes('-wide-') ? url : undefined;
+};
+const refPackage = await ENGINES.ref.load();
+if (!wideModule(Number($('threads').value))) {
+  $('wide').checked = false;
+  $('wide').disabled = true;
+  $('wide-note').textContent = 'not available in this browser';
+}
+
+// One live service per engine; a change of threads, seeding or module starts a fresh one.
 const live = {};
 let srs;
 async function service(key) {
@@ -45,7 +59,7 @@ async function service(key) {
       await old.destroy();
     }
   }
-  const config = `${$('threads').value}/${$('seeded').checked}`;
+  const config = `${$('threads').value}/${$('seeded').checked}/${$('wide').checked}`;
   if (live[key]?.config === config && !$('fresh').checked) return live[key].api;
   if (live[key]) {
     // Drop every reference first: the old instance's memory is freed only once nothing holds it.
@@ -62,10 +76,15 @@ async function service(key) {
   const laps = { at: t };
   srs ??= await fetchSrs();
   const crs = lap();
-  const { BbService } = await ENGINES[key].load();
+  const { BbService, defaultWasmModule } = await ENGINES[key].load();
   const env = $('seeded').checked ? { BB_RNG_SEED: '12345' } : {};
+  const threads = Number($('threads').value);
+  const wide = key === 'ref' && wideModule(threads);
+  // Unticked: the normal module beside the wide one.
+  const wasmModule = wide && !$('wide').checked ? new URL('bb-ref-threads.wasm', wide) : undefined;
   const api = await BbService.wasm({
-    threads: Number($('threads').value),
+    module: wasmModule,
+    threads,
     env,
     init: false,
     logger: verbose ? m => console.log(`[${key}] ${m}`) : undefined,
@@ -76,7 +95,9 @@ async function service(key) {
   await initSrs(api, srs);
   const load = lap();
   log(
-    `${ENGINES[key].label}: ${$('threads').value} threads, ready in ${secs(performance.now() - t)}s ` +
+    `${ENGINES[key].label}: ${$('threads').value} threads, ` +
+      `${(wasmModule ?? defaultWasmModule?.(threads))?.pathname.split('/').pop() ?? 'default module'}, ` +
+      `ready in ${secs(performance.now() - t)}s ` +
       `(CRS download ${crs}s, module fetch + compile ${module}s, Init + warmup ${init}s, SRS load ${load}s)`,
   );
   live[key] = { api, config, proved: 0 };

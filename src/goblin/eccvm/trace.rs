@@ -741,15 +741,22 @@ pub fn compute_msm_rows(msms: &[Vec<ScalarMul>], total_muls: u32, num_rows: usiz
 // ---------------------------------------------------------------------------------------------
 
 impl EccOpQueue {
-    /// The ECCVM's op list: the hiding op followed by every merged subtable's ops (bb `get_eccvm_ops`).
+    /// The ECCVM's op list: the hiding op followed by every merged subtable's ops, each covered
+    /// subtable closed by the batch-merge separator (bb `get_eccvm_ops`).
     pub fn get_eccvm_ops(&self) -> Vec<EccvmOp> {
         let hiding = self
             .hiding_op
             .clone()
             .expect("the hiding op must be set before building the ECCVM");
-        std::iter::once(hiding)
-            .chain(self.eccvm_ops.tables.iter().flatten().cloned())
-            .collect()
+        let separator = Self::make_separator_op_pair().1;
+        let mut ops = vec![hiding];
+        for (i, t) in self.eccvm_ops.tables.iter().enumerate() {
+            ops.extend(t.iter().cloned());
+            if i < self.num_separators {
+                ops.push(separator.clone());
+            }
+        }
+        ops
     }
 }
 

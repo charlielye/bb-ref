@@ -116,6 +116,7 @@ fn check_batch_merge(name: &str, n: usize, m: usize) {
         return;
     }
     let mut q = op_queue_with(n);
+    q.add_batch_merge_separators();
     inject_zk_ops(&mut q, &dump);
     let ck = CommitmentKey::new(1 << 12);
     let proof = batch_merge_prove(&q, m, &ck);

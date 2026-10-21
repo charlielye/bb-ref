@@ -468,7 +468,10 @@ impl CycleGroup {
 
     /// bb `batch_mul`: `sum_i scalars[i] * points[i]`. Constant terms are folded natively;
     /// variable terms go through the Straus tables, offset by generators that are removed at the end.
-    pub fn batch_mul(points: &[Self], scalars: &[CycleScalar]) -> Self {
+    /// bb `batch_mul(points, scalars, constant_points_trusted)`. A constant point skips the
+    /// collision checks only if it is trusted: the generator or a fixed-base table point (up to
+    /// sign), or every constant point when the caller vouches for them.
+    pub fn batch_mul(points: &[Self], scalars: &[CycleScalar], constant_points_trusted: bool) -> Self {
         assert_eq!(points.len(), scalars.len(), "points/scalars size mismatch in batch mul");
         if scalars.is_empty() {
             return Self::constant(GrumpkinAffine::zero());
@@ -476,12 +479,22 @@ impl CycleGroup {
         let fixed_base = default_generators(2);
         let mut variable_base_scalars = vec![];
         let mut variable_base_points = vec![];
+        let trusted = |p: GrumpkinAffine| {
+            constant_points_trusted
+                || [p, -p]
+                    .iter()
+                    .any(|c| *c == GrumpkinAffine::generator() || fixed_base.contains(c))
+        };
         let mut can_unconditional_add = true;
+        let mut can_unconditional_remove_offset = true;
         let mut has_non_constant_component = false;
         let mut constant_acc = Element::ZERO;
         for (point, scalar) in points.iter().zip(scalars) {
             if scalar.is_constant() && point.is_constant() {
                 constant_acc += point.get_value() * scalar.get_value();
+                if !point.get_value().is_zero() && !scalar.get_value().is_zero() && !trusted(point.get_value()) {
+                    can_unconditional_remove_offset = false;
+                }
             } else if !scalar.is_constant() && point.is_constant() {
                 if point.get_value().is_zero() {
                     let ctx = scalar.ctx().unwrap();
@@ -496,6 +509,7 @@ impl CycleGroup {
                 );
                 variable_base_scalars.push(scalar.clone());
                 variable_base_points.push(point.clone());
+                can_unconditional_add &= trusted(point.get_value());
                 has_non_constant_component = true;
             } else {
                 variable_base_scalars.push(scalar.clone());
@@ -504,6 +518,7 @@ impl CycleGroup {
                 has_non_constant_component = true;
             }
         }
+        can_unconditional_remove_offset &= can_unconditional_add;
         if !has_non_constant_component {
             return Self::constant(affine(constant_acc));
         }
@@ -516,7 +531,7 @@ impl CycleGroup {
             can_unconditional_add,
         );
         offset_accumulator += offset_generator_delta;
-        if constant_acc != Element::ZERO && can_unconditional_add {
+        if constant_acc != Element::ZERO && can_unconditional_remove_offset {
             result = result.unconditional_add(&Self::constant(affine(-offset_accumulator)), None);
         } else {
             result = result.sub(&Self::constant(affine(offset_accumulator)));
@@ -996,7 +1011,7 @@ impl crate::base::group::GroupLike<crate::stdlib::bigfield::BigField<Fq>> for Cy
     }
     fn batch_mul(points: &[Self], scalars: &[crate::stdlib::bigfield::BigField<Fq>]) -> Self {
         let cycle_scalars: Vec<CycleScalar> = scalars.iter().map(CycleScalar::from_bigfield).collect();
-        CycleGroup::batch_mul(points, &cycle_scalars)
+        CycleGroup::batch_mul(points, &cycle_scalars, false)
     }
     fn fix_witness(&mut self) {
         CycleGroup::fix_witness(self);

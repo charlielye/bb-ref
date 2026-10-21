@@ -1,7 +1,7 @@
 //! bb `ChonkVerifier<false>`: native verification of a Chonk proof against the hiding kernel's VK.
 
 use super::batched::{joint_verify, mega_zk_oink_length_without_public_inputs};
-use super::proof::ChonkProof;
+use super::proof::{ChonkProof, ECCVM_PROOF_LENGTH, JOINT_PROOF_LENGTH, TRIPLE_IPA_PROOF_LENGTH};
 use crate::base::codec::Transcriptable;
 use crate::base::group::Curve;
 use crate::base::group::{G2Points, PairingPoints};
@@ -10,7 +10,7 @@ use crate::base::{Bn254, G1Affine, GrumpkinKey, NativeTranscript};
 use crate::goblin::eccvm::verifier::eccvm_verify;
 use crate::goblin::ipa::triple_ipa_verify;
 use crate::goblin::ipa::TripleIpaClaim;
-use crate::goblin::merge::{merge_verify, MergeInputs};
+use crate::goblin::merge::{merge_verify, MergeInputs, MERGE_PROOF_SIZE};
 use crate::honk::flavor::{Ent, MEGA_ZK};
 use crate::honk::oink::verify_oink;
 use crate::honk::ultra_verifier::default_io_pairing_points;
@@ -53,7 +53,13 @@ impl HidingKernelIo<Bn254> {
 pub fn chonk_verify(hiding_vk: &Vk<Bn254>, proof: &ChonkProof, g2: &G2Points, grumpkin: &GrumpkinKey) -> bool {
     let layout = MEGA_ZK.layout();
     let overhead = mega_zk_oink_length_without_public_inputs();
-    if proof.hiding_oink_proof.len() < overhead {
+    // bb `ChonkProof::has_valid_structure`.
+    if proof.hiding_oink_proof.len() < overhead
+        || proof.merge_proof.len() != MERGE_PROOF_SIZE
+        || proof.eccvm_proof.len() != ECCVM_PROOF_LENGTH
+        || proof.ipa_proof.len() != TRIPLE_IPA_PROOF_LENGTH
+        || proof.joint_proof.len() != JOINT_PROOF_LENGTH
+    {
         return false;
     }
     let num_public_inputs = proof.hiding_oink_proof.len() - overhead;
@@ -122,12 +128,11 @@ pub fn chonk_verify(hiding_vk: &Vk<Bn254>, proof: &ChonkProof, g2: &G2Points, gr
         eprintln!("chonk_verify: joint failed verified={}", joint.verified);
         return false;
     }
+    t.enforce_proof_fully_consumed("ChonkVerifier");
 
-    let ok = triple_ipa_verify(
-        grumpkin,
-        &eccvm.triple_ipa_claim,
-        &mut NativeTranscript::from_proof(&proof.ipa_proof),
-    );
+    let mut ipa_transcript = NativeTranscript::from_proof(&proof.ipa_proof);
+    let ok = triple_ipa_verify(grumpkin, &eccvm.triple_ipa_claim, &mut ipa_transcript);
+    ipa_transcript.enforce_proof_fully_consumed("TripleIPA");
     if !ok {
         eprintln!("chonk_verify: triple ipa failed");
     }
@@ -226,10 +231,8 @@ pub fn chonk_verify_recursive(
         &mut t,
     );
 
-    let pairing_points = crate::rollup::aggregate_multiple(
-        vec![io.pairing_points, merge.pairing_points, joint.pairing_points],
-        false,
-    );
+    let pairing_points =
+        crate::rollup::aggregate_multiple(vec![io.pairing_points, merge.pairing_points, joint.pairing_points]);
     ChonkRecursiveOutput {
         pairing_points,
         triple_ipa_opening: DeferredTripleIpaOpening {

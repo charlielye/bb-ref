@@ -173,7 +173,7 @@ pub fn reduce_verify_ct(ctx: &Ctx, claim: &IpaClaimCt, t: &mut StdlibTranscript)
     msm_scalars.push(a_zero.clone());
     msm_scalars.push(generator_challenge.mul(&a_zero.madd(&b_zero, &[claim.evaluation.neg()])));
     let cycle_scalars: Vec<CycleScalar> = msm_scalars.iter().map(CycleScalar::from_bigfield).collect();
-    let mut ipa_relation = CycleGroup::batch_mul(&msm_elements, &cycle_scalars);
+    let mut ipa_relation = CycleGroup::batch_mul(&msm_elements, &cycle_scalars, false);
     let mut neg_commitment = claim.commitment.neg();
     ipa_relation.assert_equal(&mut neg_commitment);
     let _ = ctx;
@@ -233,6 +233,7 @@ pub fn full_verify_ct(ctx: &Ctx, claim: &IpaClaimCt, t: &mut StdlibTranscript) {
     let first_term = CycleGroup::batch_mul(
         &[CycleGroup::constant(srs.points[0])],
         &[CycleScalar::from_bigfield(&s_vec[0])],
+        true,
     );
     let remaining_points: Vec<CycleGroup> = srs.points[1..POLY_LENGTH]
         .iter()
@@ -259,7 +260,7 @@ pub fn accumulate(ck: &GrumpkinKey, acc_1: IpaAccumulatorCt, acc_2: IpaAccumulat
     let mut ar: Vec<FqCt> = t.challenges(&["IPA:alpha", "IPA:r"]);
     let r = ar.pop().unwrap();
     let alpha = ar.pop().unwrap();
-    let scaled = CycleGroup::batch_mul(&[acc_2.comm.clone()], &[CycleScalar::from_bigfield(&alpha)]);
+    let scaled = CycleGroup::batch_mul(&[acc_2.comm.clone()], &[CycleScalar::from_bigfield(&alpha)], false);
     let commitment = acc_1.comm.add(&scaled);
     let e1 = evaluate_challenge_poly_ct(&acc_1.u_challenges_inv, &r);
     let e2 = evaluate_challenge_poly_ct(&acc_2.u_challenges_inv, &r);

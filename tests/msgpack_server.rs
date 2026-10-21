@@ -344,29 +344,30 @@ mod api_boundary {
         }
     }
 
-    /// Wire words feeding the crypto helpers are REDUCED mod r, not rejected — bb does the same
-    /// (verified against the pinned bb; canonicity rejection applies to proof and public-input
-    /// words, tested by the modulus_check paths). Both hashes are pinned from bb's output, so a
-    /// change to either the reduction or the permutation trips this standalone.
+    /// Wire field words must be canonical: bb's `read(field)` rejects a word >= r with an
+    /// assertion, which comes back as an error response carrying its text. The canonical hash is
+    /// pinned from bb's output.
     #[test]
-    fn helper_inputs_reduce_like_bb() {
-        let hash = |word: [u8; 32]| -> String {
+    fn helper_inputs_must_be_canonical() {
+        use std::collections::BTreeMap;
+        let call = |word: [u8; 32]| {
             let cmd = Command::BbPoseidon2Hash(BbPoseidon2Hash::new(vec![Bin32(word)]));
-            let payload = rmp_serde::to_vec_named(&vec![&cmd]).unwrap();
-            let response = dispatch(&payload);
-            // decode via the generated response type: hash is a Bin32
-            let (tag, body): (String, std::collections::BTreeMap<String, Bin32>) =
-                rmp_serde::from_slice(&response).unwrap();
-            assert_eq!(tag, "BbPoseidon2HashResponse");
-            hex::encode(body["hash"].0)
+            dispatch(&rmp_serde::to_vec_named(&vec![&cmd]).unwrap())
         };
+        let (tag, body): (String, BTreeMap<String, Bin32>) = rmp_serde::from_slice(&call([1u8; 32])).unwrap();
+        assert_eq!(tag, "BbPoseidon2HashResponse");
         assert_eq!(
-            hash([1u8; 32]),
+            hex::encode(body["hash"].0),
             "032141b8c2e093c1ffa95367e1c729e8e93159f93967626389f591b23e59088c"
         );
+        let (tag, body): (String, BTreeMap<String, String>) = rmp_serde::from_slice(&call([0xffu8; 32])).unwrap();
+        assert_eq!(tag, "BbErrorResponse");
         assert_eq!(
-            hash([0xffu8; 32]),
-            "2b8aea25ff4f0d63ce37708cbb597a66d379d0c2e564fec2fbc6a1a314d6442a"
+            body["message"],
+            "Assertion failed: ((uint256_t{ result.data[0], result.data[1], result.data[2], result.data[3] }) \
+             < field<Params>::modulus)\n  Left   : 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n  \
+             Right  : 0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001\n  Reason : Non-canonical \
+             field element"
         );
     }
 }
