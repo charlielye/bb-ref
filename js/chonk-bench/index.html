@@ -119,6 +119,10 @@
         overflow: hidden;
         text-overflow: ellipsis;
       }
+      #runs {
+        width: 4em;
+        font: inherit;
+      }
       #log {
         margin-top: 16px;
         color: var(--muted);
@@ -135,11 +139,15 @@
       <p class="sub">
         The pinned chonk flows proven in this browser by <span class="ref">bb-ref.js</span> and by bb's
         <span class="bb">bb.js-api</span>, through the same generated API. Time is the whole flow, every
-        circuit loaded and folded and the final proof, in seconds; memory is the wasm module's linear
-        memory at the end of the flow, its high-water mark.
+        circuit loaded and folded and the final proof, in seconds (the mean over the runs); memory is the
+        wasm module's linear memory at the end of the flow, its high-water mark.
       </p>
       <div class="controls">
         <label>Threads <select id="threads"></select></label>
+        <label
+          >Runs <input type="number" id="runs" value="1" min="1" max="50" step="1" /> (time is their mean;
+          memory the highest)</label
+        >
         <label
           ><input type="checkbox" id="seeded" checked /> Seeded (BB_RNG_SEED=12345: proofs comparable with the
           goldens; bb's only at one thread)</label

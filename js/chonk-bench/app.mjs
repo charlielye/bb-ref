@@ -132,6 +132,8 @@ function render(flow, key) {
   }
   if (!r) return;
   cells[0].textContent = secs(r.total);
+  cells[0].title = r.times.length > 1 ? `mean of ${r.times.length} runs: ${r.times.map(secs).join(', ')}s` : '';
+  cells[0].className = key;
   cells[1].textContent = mib(r.memory);
   // bb's seeded ZK proofs reproduce only on one thread (its own warning); bb-ref's on any.
   const comparable = r.seeded && flow.golden && (key === 'ref' || r.threads === 1);
@@ -150,34 +152,69 @@ function setBusy(b, what = '') {
   $('status').textContent = what;
 }
 
+// One proof of the flow on the engine's live service.
+async function proveOnce(flow, key, label) {
+  const api = await service(key);
+  // Init again restarts a seeded stream, so every flow proven on one module starts where a fresh
+  // process would (its golden); the first flow's Init has just run.
+  if ($('seeded').checked && live[key].proved++ > 0) await api.init({ warmup: false });
+  const steps = await flowSteps(flow.name);
+  let step = '';
+  const show = () => ($('status').textContent = `${label}${step} — ${mib(memoryBytes(api))}`);
+  const tick = setInterval(show, 250);
+  let r;
+  try {
+    r = await proveFlow(api, steps, (i, n) => {
+      step = ` (${i}/${n})`;
+      show();
+    });
+  } finally {
+    clearInterval(tick);
+  }
+  r.memory = memoryBytes(api);
+  r.sha = await sha256Hex(r.proofBytes);
+  return r;
+}
+
+// Proves the flow `runs` times and keeps the mean time, the highest memory, and a golden/verified
+// mark that holds only if it held on every run.
 async function run(flow, key) {
+  const runs = Math.max(1, Math.floor(Number($('runs').value)) || 1);
   setBusy(true, `${ENGINES[key].label}: ${flow.name}`);
   try {
-    const api = await service(key);
-    // Init again restarts a seeded stream, so every flow proven on one module starts where a fresh
-    // process would (its golden); the first flow's Init has just run.
-    if ($('seeded').checked && live[key].proved++ > 0) await api.init({ warmup: false });
-    const steps = await flowSteps(flow.name);
-    let step = '';
-    const show = () =>
-      ($('status').textContent = `${ENGINES[key].label}: ${flow.name}${step} — ${mib(memoryBytes(api))}`);
-    const tick = setInterval(show, 250);
-    let r;
-    try {
-      r = await proveFlow(api, steps, (i, n) => {
-        step = ` (${i}/${n})`;
-        show();
-      });
-    } finally {
-      clearInterval(tick);
+    const times = [];
+    let memory = 0;
+    let verified = true;
+    const shas = new Set();
+    for (let i = 1; i <= runs; i++) {
+      const label = `${ENGINES[key].label}: ${flow.name}${runs > 1 ? ` [run ${i}/${runs}]` : ''}`;
+      const r = await proveOnce(flow, key, label);
+      times.push(r.total);
+      memory = Math.max(memory, r.memory ?? 0);
+      verified &&= r.verified;
+      shas.add(r.sha);
+      log(
+        `${label}: accumulate ${secs(r.accumulate)}s, prove ${secs(r.prove)}s, ` +
+          `total ${secs(r.total)}s, memory ${mib(r.memory)}`,
+      );
     }
-    r.memory = memoryBytes(api);
-    const sha = await sha256Hex(r.proofBytes);
-    (results[flow.name] ??= {})[key] = { ...r, sha, seeded: $('seeded').checked, threads: Number($('threads').value) };
-    log(
-      `${ENGINES[key].label} ${flow.name}: accumulate ${secs(r.accumulate)}s, prove ${secs(r.prove)}s, ` +
-        `total ${secs(r.total)}s, memory ${mib(r.memory)}`,
-    );
+    const total = times.reduce((a, b) => a + b, 0) / runs;
+    (results[flow.name] ??= {})[key] = {
+      total,
+      times,
+      memory: memory || undefined,
+      verified,
+      // Unseeded proofs differ run to run; a seeded flow is golden only if every run's proof is.
+      sha: shas.size === 1 ? [...shas][0] : undefined,
+      seeded: $('seeded').checked,
+      threads: Number($('threads').value),
+    };
+    if (runs > 1) {
+      log(
+        `${ENGINES[key].label} ${flow.name}: mean of ${runs} runs ${secs(total)}s ` +
+          `(min ${secs(Math.min(...times))}s, max ${secs(Math.max(...times))}s)`,
+      );
+    }
   } catch (e) {
     (results[flow.name] ??= {})[key] = { error: String(e?.message ?? e) };
     log(`${ENGINES[key].label} ${flow.name}: ${e?.message ?? e}`);
