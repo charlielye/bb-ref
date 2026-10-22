@@ -56,6 +56,14 @@
         color: var(--muted);
         margin: 0 0 16px;
       }
+      p.sizes {
+        margin: 0 0 16px;
+        font-variant-numeric: tabular-nums;
+      }
+      .file {
+        color: var(--muted);
+        font-size: 12px;
+      }
       .controls {
         display: flex;
         flex-wrap: wrap;
@@ -142,6 +150,7 @@
         circuit loaded and folded and the final proof, in seconds (the mean over the runs); memory is the
         wasm module's linear memory at the end of the flow, its high-water mark.
       </p>
+      <p class="sizes">Wasm module: <span id="sizes"></span></p>
       <div class="controls">
         <label>Threads <select id="threads"></select></label>
         <label

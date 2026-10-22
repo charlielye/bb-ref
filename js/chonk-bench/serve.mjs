@@ -7,12 +7,14 @@
 //   /                      index.html, app.mjs, flow.mjs
 //   /pkg/<name>/...        bb-ref.js, bb.js-api, ipc-runtime, msgpackr (their published files)
 //   /api/flows             [{ name, golden }]: the pinned flows and their bb proof sha256
+//   /api/modules           [{ engine, file, raw, gzip }]: each package's wasm modules and their sizes
 //   /flows/<name>          the flow's ivc-inputs.msgpack
 //   /crs/g1 | g2 | grumpkin  the CRS prefix the flows need (2^19 BN254 points, [x]_2, 2^16 Grumpkin)
 import { createServer } from 'node:http';
 import { createReadStream, existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { extname, join, normalize } from 'node:path';
+import { constants, gzipSync } from 'node:zlib';
 
 const HERE = new URL('.', import.meta.url).pathname;
 const ROOT = join(HERE, '../..');
@@ -54,6 +56,30 @@ const flows = () =>
       };
     });
 
+// Each package's wasm modules, served gzipped (as a deployment would) and listed with both sizes.
+const MODULE_DIRS = { ref: 'bb-ref.js', bb: 'bb.js-api' };
+const gzCache = new Map();
+/** The file gzipped at level 9, kept until the file changes (a rebuild replaces the module). */
+function gzipped(path, version) {
+  const hit = gzCache.get(path);
+  if (hit?.version === version) return hit.body;
+  const body = gzipSync(readFileSync(path), { level: constants.Z_BEST_COMPRESSION });
+  gzCache.set(path, { version, body });
+  return body;
+}
+const modules = () =>
+  Object.entries(MODULE_DIRS).flatMap(([engine, pkg]) => {
+    const dir = join(realpathSync(PACKAGES[pkg]), 'wasm');
+    return readdirSync(dir)
+      .filter(f => f.endsWith('.wasm'))
+      .sort()
+      .map(file => {
+        const path = join(dir, file);
+        const st = statSync(path);
+        return { engine, file, raw: st.size, gzip: gzipped(path, `${st.size}-${st.mtimeMs}`).length };
+      });
+  });
+
 /** A file under `base`, or null when `rel` escapes it or names no file. */
 function inside(base, rel) {
   const path = normalize(join(base, rel));
@@ -71,12 +97,19 @@ function sendFile(req, res, path, length, cache = 'no-cache') {
   const st = statSync(path);
   // ctime too: extracted archives (the pinned flows) carry a zero mtime.
   const changed = Math.floor(Math.max(st.mtimeMs, st.ctimeMs));
-  const etag = `"${st.size.toString(36)}-${changed.toString(36)}-${length ?? 'all'}"`;
+  const gzip = extname(path) === '.wasm' && !length && /\bgzip\b/.test(req.headers['accept-encoding'] ?? '');
+  const etag = `"${st.size.toString(36)}-${changed.toString(36)}-${length ?? 'all'}${gzip ? '-gz' : ''}"`;
+  res.setHeader('Vary', 'Accept-Encoding');
   res.setHeader('Cache-Control', cache);
   res.setHeader('ETag', etag);
   if (req.headers['if-none-match'] === etag) {
     res.writeHead(304);
     return res.end();
+  }
+  if (gzip) {
+    const body = gzipped(path, `${st.size}-${st.mtimeMs}`);
+    res.writeHead(200, { 'Content-Type': TYPES['.wasm'], 'Content-Encoding': 'gzip', 'Content-Length': body.length });
+    return res.end(body);
   }
   res.writeHead(200, {
     'Content-Type': TYPES[extname(path)] ?? 'application/octet-stream',
@@ -95,6 +128,7 @@ createServer((req, res) => {
   try {
     if (parts.length === 0) return sendFile(req, res, join(HERE, 'index.html'));
     if (parts[0] === 'api' && parts[1] === 'flows') return send(res, 200, JSON.stringify(flows()), TYPES['.json']);
+    if (parts[0] === 'api' && parts[1] === 'modules') return send(res, 200, JSON.stringify(modules()), TYPES['.json']);
     if (parts[0] === 'flows' && parts.length === 2) {
       const path = inside(FLOWS, join(parts[1], 'ivc-inputs.msgpack'));
       return path ? sendFile(req, res, path) : send(res, 404, 'no such flow');

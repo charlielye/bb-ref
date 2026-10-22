@@ -9,6 +9,8 @@
 # Only the wasm transport: bb-ref has no socket or shared-memory server for the package's process
 # backends to spawn. The threads build (the bench page is cross-origin isolated), and its
 # wide-arithmetic counterpart (`--cfg wasm_wide`), which the package runs where the engine has it.
+# Both are Chonk-only (`--cfg chonk_only`: the Ultra commands answer unsupported) and stripped of
+# their name section; the native build and the plain wasm builds keep everything.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 REPO=${AZTEC_REPO:-$PWD/pin/aztec-packages}
@@ -30,14 +32,15 @@ node --experimental-strip-types --experimental-transform-types --no-warnings \
   --ipc-runtime-dependency "file:$(realpath --relative-to="$PKG" "$REPO/ipc-runtime/ts")" > /dev/null
 
 # bb-ref's library as a cdylib: the crate is an rlib + bin, so the crate type is chosen here.
-cargo rustc --quiet --lib --crate-type cdylib --features ffi --profile lto --target wasm32-wasip1-threads
+PKG_ARGS=(--cfg chonk_only -C link-arg=--strip-all)
+cargo rustc --quiet --lib --crate-type cdylib --features ffi --profile lto --target wasm32-wasip1-threads -- "${PKG_ARGS[@]}"
 tools/wasm_check.sh target/wasm32-wasip1-threads/lto/bb_ref.wasm
 mkdir -p "$PKG/wasm"
 cp target/wasm32-wasip1-threads/lto/bb_ref.wasm "$PKG/wasm/bb-ref-threads.wasm"
 # RUSTFLAGS replaces .cargo/config.toml's wasm flags, so they are all restated; its own target dir
 # keeps the default build's artifacts.
 RUSTFLAGS="-C target-feature=+simd128,+wide-arithmetic -C link-arg=--max-memory=4294967296 -C llvm-args=-max-store-memcpy=48 -C llvm-args=-max-store-memset=48 --cfg wasm_wide" \
-  CARGO_TARGET_DIR=target/wide cargo rustc --quiet --lib --crate-type cdylib --features ffi --profile lto --target wasm32-wasip1-threads
+  CARGO_TARGET_DIR=target/wide cargo rustc --quiet --lib --crate-type cdylib --features ffi --profile lto --target wasm32-wasip1-threads -- "${PKG_ARGS[@]}"
 tools/wasm_check.sh target/wide/wasm32-wasip1-threads/lto/bb_ref.wasm
 cp target/wide/wasm32-wasip1-threads/lto/bb_ref.wasm "$PKG/wasm/bb-ref-wide-threads.wasm"
 

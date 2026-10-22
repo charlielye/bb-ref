@@ -61,4 +61,4 @@ dhat = ["dep:dhat"]
 ffi = []
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(wasm_wide)"] }
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(wasm_wide)", "cfg(chonk_only)"] }

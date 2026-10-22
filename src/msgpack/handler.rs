@@ -382,16 +382,28 @@ macro_rules! unsupported {
     };
 }
 
+// `--cfg chonk_only` (bb-ref.js's wasm build, tools/build_bb_ref_js.sh): the browser proves Chonk
+// only, so the Ultra commands answer unsupported and the linker drops the Ultra/rollup provers and
+// verifiers and the rollup recursion gadgets they alone reach (-14% of the module).
 impl Handler for BbRefHandler {
     fn circuit_prove(&mut self, cmd: BbCircuitProve, respond: Responder<BbCircuitProveResponse>) {
+        if cfg!(chonk_only) {
+            return respond.error("unsupported command: circuit_prove".into());
+        }
         run_catching(respond, || circuit_prove_impl(cmd, &self.srs));
     }
 
     fn circuit_compute_vk(&mut self, cmd: BbCircuitComputeVk, respond: Responder<BbCircuitComputeVkResponse>) {
+        if cfg!(chonk_only) {
+            return respond.error("unsupported command: circuit_compute_vk".into());
+        }
         run_catching(respond, || circuit_compute_vk_impl(cmd, &self.srs));
     }
 
     fn circuit_verify(&mut self, cmd: BbCircuitVerify, respond: Responder<BbCircuitVerifyResponse>) {
+        if cfg!(chonk_only) {
+            return respond.error("unsupported command: circuit_verify".into());
+        }
         run_catching(respond, || {
             let (flavor, ipa) = select_flavor(&cmd.settings)?;
             // bb's order: a wrong VK size is verified=false; a malformed VK or (unpadded flavors) a

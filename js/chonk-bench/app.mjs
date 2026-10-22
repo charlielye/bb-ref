@@ -46,6 +46,35 @@ if (!wideModule(Number($('threads').value))) {
   $('wide-note').textContent = 'not available in this browser';
 }
 
+// The module each engine would load now, its size raw and as this page serves it (gzip -9).
+const mb = bytes => `${(bytes / 1e6).toFixed(1)} MB`;
+const bbPackage = await ENGINES.bb.load();
+const modules = await (await fetch('/api/modules')).json();
+const basename = url => url?.pathname.split('/').pop();
+function showSizes() {
+  const threads = Number($('threads').value);
+  const wide = wideModule(threads);
+  const file = {
+    ref: wide && !$('wide').checked ? 'bb-ref-threads.wasm' : basename(refPackage.defaultWasmModule(threads)),
+    bb: basename(bbPackage.defaultWasmModule?.(threads)),
+  };
+  const pick = key => modules.find(m => m.engine === key && m.file === file[key]);
+  const [ref, bb] = [pick('ref'), pick('bb')];
+  $('sizes').innerHTML =
+    [ref, bb]
+      .map(
+        (m, i) =>
+          m &&
+          `<span class="${i ? 'bb' : 'ref'}">${ENGINES[i ? 'bb' : 'ref'].label}</span> ${mb(m.raw)}, ` +
+            `${mb(m.gzip)} gzipped <span class="file">${m.file}</span>`,
+      )
+      .filter(Boolean)
+      .join(' &nbsp;·&nbsp; ') + (ref && bb ? ` &nbsp;·&nbsp; bb-ref ${(bb.raw / ref.raw).toFixed(1)}× smaller` : '');
+}
+showSizes();
+$('threads').addEventListener('change', showSizes);
+$('wide').addEventListener('change', showSizes);
+
 // One live service per engine; a change of threads, seeding or module starts a fresh one.
 const live = {};
 let srs;
