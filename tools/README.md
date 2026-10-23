@@ -47,7 +47,7 @@ our own, no rehydration step, and what we test is what the node actually sent.
 | `ab_chonk.sh name=path ...` | interleaved paired A/B of chonk binaries on the bench box, golden-gated |
 | `remote_bench.sh [host] [gates\|msm]` | build, push, and run the quick perf probes on the bench box |
 | `heap_agg.py` | a dhat heap profile (`--features heap-profile`) grouped by allocation site |
-| `wasm_p0/` | one-off wasm-baseline probes (runner, phase/memory/profile analysers) run on the bench box |
+| `wasm_strip.py in.wasm out.wasm` | drops a wasm module's custom sections (how bb's module is compared) |
 
 ## Diagnosing a divergence
 

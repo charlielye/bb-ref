@@ -89,7 +89,6 @@ there: a Zen 3 workstation once called a 7.7% win ~1%.
 | `tools/ab_chonk.sh name=path ...` | interleaved A/B on the bench box: paired median, win count, and every non-bb proof checked against single-threaded bb goldens |
 | `tools/remote_bench.sh [host] [msm ...]` | quick gates (one chonk flow, one rollup frame) and the MSM rung |
 | `js/chonk-bench` | the browser page (`serve.mjs`; `build-site.mjs --publish` for GitHub Pages; `run-node.mjs` for the same packages under node), bb-ref.js against bb.js-api on the pinned flows |
-| `tools/wasm_p0/` | wasm phase, memory and profile analysers |
 
 **Instrumentation.** bb's `--print_bench`/`--bench_out` (`BB_BENCH`) against bb-ref's
 `BBREF_BENCH=1` (`src/base/bench.rs`), with bb's scope names. Finer probes: `BBREF_ROUND_DETAIL=1`
@@ -115,7 +114,7 @@ per relation),
 - **Never phase-measure wasm under `--no-liftoff`.** TurboFan compile time lands on whichever phase
   first calls each function, favouring the smaller module (it once inverted a result). Plain
   `node` (Liftoff + dynamic tiering) is the production shape.
-- **Compare against a stripped bb wasm module** for wall (`tools/wasm_p0/wasm_strip.py`), or quote
+- **Compare against a stripped bb wasm module** for wall (`tools/wasm_strip.py`), or quote
   proving-only.
 - **wasm runners must create memory at the module's declared minimum.** A runner that created
   1,200 initial pages added ~73 MiB to every reported peak.
