@@ -4,13 +4,15 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Chonk Bench</title>
+    <!-- On a host that cannot send the cross-origin isolation headers, a service worker adds them. -->
+    <script src="coi.js"></script>
     <script type="importmap">
       {
         "imports": {
-          "bb-ref.js": "/pkg/bb-ref.js/dest/browser.js",
-          "@aztec-foundation/bb.js-api": "/pkg/bb.js-api/dest/browser.js",
-          "@aztec-foundation/ipc-runtime/wasm": "/pkg/ipc-runtime/dest/wasm/browser/index.js",
-          "msgpackr": "/pkg/msgpackr/index.js"
+          "bb-ref.js": "./pkg/bb-ref.js/dest/browser.js",
+          "@aztec-foundation/bb.js-api": "./pkg/bb.js-api/dest/browser.js",
+          "@aztec-foundation/ipc-runtime/wasm": "./pkg/ipc-runtime/dest/wasm/browser/index.js",
+          "msgpackr": "./pkg/msgpackr/index.js"
         }
       }
     </script>

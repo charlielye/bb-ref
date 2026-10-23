@@ -49,7 +49,7 @@ if (!wideModule(Number($('threads').value))) {
 // The module each engine would load now, its size raw and as this page serves it (gzip -9).
 const mb = bytes => `${(bytes / 1e6).toFixed(1)} MB`;
 const bbPackage = await ENGINES.bb.load();
-const modules = await (await fetch('/api/modules')).json();
+const modules = await (await fetch('api/modules.json')).json();
 const basename = url => url?.pathname.split('/').pop();
 function showSizes() {
   const threads = Number($('threads').value);
@@ -134,7 +134,7 @@ async function service(key) {
 }
 
 async function fetchSrs() {
-  const get = async name => new Uint8Array(await (await fetch(`/crs/${name}`)).arrayBuffer());
+  const get = async name => new Uint8Array(await (await fetch(`crs/${name}`)).arrayBuffer());
   const [g1, g2, grumpkin] = await Promise.all([get('g1'), get('g2'), get('grumpkin')]);
   return { g1, g2, grumpkin };
 }
@@ -143,7 +143,7 @@ const inputs = {};
 async function flowSteps(name) {
   // Revalidated every time (a 304 when unchanged): a re-pin changes the flows under the same URL.
   inputs[name] ??= new Uint8Array(
-    await (await fetch(`/flows/${encodeURIComponent(name)}`, { cache: 'no-cache' })).arrayBuffer(),
+    await (await fetch(`flows/${encodeURIComponent(name)}`, { cache: 'no-cache' })).arrayBuffer(),
   );
   return decodeIvcInputs(unpack, inputs[name]);
 }
@@ -253,7 +253,7 @@ async function run(flow, key) {
   }
 }
 
-const flows = await (await fetch('/api/flows')).json();
+const flows = await (await fetch('api/flows.json')).json();
 for (const flow of flows) {
   const tr = document.createElement('tr');
   tr.id = `row-${flow.name}`;

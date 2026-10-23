@@ -6,35 +6,19 @@
 //
 //   /                      index.html, app.mjs, flow.mjs
 //   /pkg/<name>/...        bb-ref.js, bb.js-api, ipc-runtime, msgpackr (their published files)
-//   /api/flows             [{ name, golden }]: the pinned flows and their bb proof sha256
-//   /api/modules           [{ engine, file, raw, gzip }]: each package's wasm modules and their sizes
+//   /api/flows.json        [{ name, golden }]: the pinned flows and their bb proof sha256
+//   /api/modules.json      [{ engine, file, raw, gzip }]: each package's wasm modules and their sizes
 //   /flows/<name>          the flow's ivc-inputs.msgpack
 //   /crs/g1 | g2 | grumpkin  the CRS prefix the flows need (2^19 BN254 points, [x]_2, 2^16 Grumpkin)
+//
+// build-site.mjs writes the same tree out as static files (see there for hosting it).
 import { createServer } from 'node:http';
-import { createReadStream, existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { createReadStream, existsSync, realpathSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
-import { constants, gzipSync } from 'node:zlib';
+import { CRS, CRS_FILES, FLOWS, HERE, PACKAGES, flows, gzipped, modules, pin7 } from './site.mjs';
 
-const HERE = new URL('.', import.meta.url).pathname;
-const ROOT = join(HERE, '../..');
-// Read per request: a re-pin renames the fixture directory under a running server.
-const pin7 = () => readFileSync(join(ROOT, 'tools/PIN'), 'utf8').slice(0, 7);
-const FLOWS = process.env.BB_FLOWS ?? join(ROOT, 'pin/aztec-packages/barretenberg/cpp/chonk-pinned-flows');
-const CRS = process.env.CRS_PATH ?? join(process.env.HOME, '.bb-crs');
 const port = Number(process.argv[2] ?? 8080);
 
-const PACKAGES = {
-  'bb-ref.js': join(HERE, 'node_modules/bb-ref.js'),
-  'bb.js-api': join(HERE, 'node_modules/@aztec-foundation/bb.js-api'),
-  'ipc-runtime': join(ROOT, 'pin/aztec-packages/ipc-runtime/ts'),
-  msgpackr: join(HERE, 'node_modules/msgpackr'),
-};
-const CRS_FILES = {
-  g1: ['bn254_g1.dat', (1 << 19) * 64],
-  g2: ['bn254_g2.dat', 128],
-  grumpkin: ['grumpkin_g1_v2.flat.dat', (1 << 16) * 64],
-};
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript',
@@ -43,42 +27,6 @@ const TYPES = {
   '.wasm': 'application/wasm',
   '.map': 'application/json',
 };
-
-const flows = () =>
-  readdirSync(FLOWS)
-    .filter(f => existsSync(join(FLOWS, f, 'ivc-inputs.msgpack')))
-    .sort()
-    .map(name => {
-      const proof = join(ROOT, 'tests/data', pin7(), 'chonk_flows', name, 'proof');
-      return {
-        name,
-        golden: existsSync(proof) ? createHash('sha256').update(readFileSync(proof)).digest('hex') : null,
-      };
-    });
-
-// Each package's wasm modules, served gzipped (as a deployment would) and listed with both sizes.
-const MODULE_DIRS = { ref: 'bb-ref.js', bb: 'bb.js-api' };
-const gzCache = new Map();
-/** The file gzipped at level 9, kept until the file changes (a rebuild replaces the module). */
-function gzipped(path, version) {
-  const hit = gzCache.get(path);
-  if (hit?.version === version) return hit.body;
-  const body = gzipSync(readFileSync(path), { level: constants.Z_BEST_COMPRESSION });
-  gzCache.set(path, { version, body });
-  return body;
-}
-const modules = () =>
-  Object.entries(MODULE_DIRS).flatMap(([engine, pkg]) => {
-    const dir = join(realpathSync(PACKAGES[pkg]), 'wasm');
-    return readdirSync(dir)
-      .filter(f => f.endsWith('.wasm'))
-      .sort()
-      .map(file => {
-        const path = join(dir, file);
-        const st = statSync(path);
-        return { engine, file, raw: st.size, gzip: gzipped(path, `${st.size}-${st.mtimeMs}`).length };
-      });
-  });
 
 /** A file under `base`, or null when `rel` escapes it or names no file. */
 function inside(base, rel) {
@@ -127,8 +75,8 @@ createServer((req, res) => {
   const parts = decodeURIComponent(url.pathname).split('/').filter(Boolean);
   try {
     if (parts.length === 0) return sendFile(req, res, join(HERE, 'index.html'));
-    if (parts[0] === 'api' && parts[1] === 'flows') return send(res, 200, JSON.stringify(flows()), TYPES['.json']);
-    if (parts[0] === 'api' && parts[1] === 'modules') return send(res, 200, JSON.stringify(modules()), TYPES['.json']);
+    if (parts[0] === 'api' && parts[1] === 'flows.json') return send(res, 200, JSON.stringify(flows()), TYPES['.json']);
+    if (parts[0] === 'api' && parts[1] === 'modules.json') return send(res, 200, JSON.stringify(modules()), TYPES['.json']);
     if (parts[0] === 'flows' && parts.length === 2) {
       const path = inside(FLOWS, join(parts[1], 'ivc-inputs.msgpack'));
       return path ? sendFile(req, res, path) : send(res, 404, 'no such flow');
