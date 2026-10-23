@@ -1,0 +1,58 @@
+{
+  "name": "@aztec-foundation/bb.js-api",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "bb": "./dest/bin.js"
+  },
+  "main": "./dest/index.js",
+  "types": "./dest/index.d.ts",
+  "react-native": "./dest/react-native.js",
+  "exports": {
+    ".": {
+      "browser": {
+        "types": "./dest/browser.d.ts",
+        "default": "./dest/browser.js"
+      },
+      "react-native": {
+        "types": "./dest/react-native.d.ts",
+        "default": "./dest/react-native.js"
+      },
+      "types": "./dest/index.d.ts",
+      "default": "./dest/index.js"
+    },
+    "./browser": {
+      "types": "./dest/browser.d.ts",
+      "default": "./dest/browser.js"
+    },
+    "./react-native": {
+      "types": "./dest/react-native.d.ts",
+      "default": "./dest/react-native.js"
+    }
+  },
+  "files": [
+    "dest/",
+    "wasm/",
+    "README.md"
+  ],
+  "scripts": {
+    "clean": "rm -rf dest .tsbuildinfo",
+    "build": "rm -rf dest .tsbuildinfo && tsc -p tsconfig.json",
+    "prepare_arch_packages": "ipc-runtime-prepare-arch-packages"
+  },
+  "dependencies": {
+    "@aztec-foundation/ipc-runtime": "@aztec-foundation/ipc-runtime",
+    "msgpackr": "^1.11.2",
+    "tslib": "^2.4.0"
+  },
+  "optionalDependencies": {
+    "@aztec-foundation/bb.js-api-darwin-arm64": "0.1.0",
+    "@aztec-foundation/bb.js-api-darwin-x64": "0.1.0",
+    "@aztec-foundation/bb.js-api-linux-arm64": "0.1.0",
+    "@aztec-foundation/bb.js-api-linux-x64": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.17",
+    "typescript": "^5.3.3"
+  }
+}
