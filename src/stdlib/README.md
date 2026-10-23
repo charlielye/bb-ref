@@ -21,10 +21,11 @@ counterpart; all of it is **gate-exact** — see
 | `FieldT` | `field_t` | a native-field value as `mul_const · witness + add_const`; arithmetic folds constants and emits at most one gate per op |
 | `BoolT` | `bool_t` | a constrained bit |
 | `BigField<N>` | `bigfield` | a foreign-field element as four 68-bit limbs + a prime-basis image, with per-limb *maximum-value tracking* deciding when reductions fire |
-| `BigGroup` / `biggroup_secp256r1` | `element` | non-native curve points (bn254-in-bn254 for rollup recursion, secp256r1 for ECDSA) |
-| `CycleGroup` | `cycle_group` | Grumpkin points over the native field (Straus MSMs, fixed-base plookup tables) |
+| `biggroup::Element<P>` (+ `biggroup_secp256k1`/`_secp256r1`) | `element` | non-native curve points (bn254-in-bn254 for rollup recursion, secp256k1/secp256r1 for ECDSA) |
+| `CycleGroup` | `cycle_group` | Grumpkin points over the native field (Straus MSMs; per-point plookup tables for constant bases — bb's fixed-base generator tables are not ported) |
 | `GoblinField` / `GoblinElement` | `goblin_field`/`goblin_element` | two-limb commitments whose EC ops are *deferred* to the op queue instead of constrained |
-| `Poseidon2 gadget`, `hash` | `stdlib/hash/poseidon2` | the transcript hash in-circuit |
+| `poseidon2`, `hash` | `stdlib/hash/poseidon2` | the transcript hash in-circuit |
+| `io` | `special_public_inputs` | client circuits' public-input tails (`KernelIo`, `HidingKernelIo`, `AppIo`) and the databus commitment depot |
 
 ## What makes this layer delicate
 

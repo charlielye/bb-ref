@@ -33,7 +33,7 @@ Every basic operation is this one identity with different selector constants: ad
 `q_l=1, q_c=−k`. Richer gate types (range checks, elliptic-curve additions, Poseidon2
 rounds, ROM/RAM access, non-native field arithmetic, lookups) are the same idea with their
 own selectors and their own row identity — that's all a "custom gate" is. The circuit's
-rows are grouped into **blocks** by gate type ([`src/circuit/builder.rs`](../src/circuit/builder.rs)), one gate-selector
+rows are grouped into **blocks** by gate type ([`src/circuit/trace.rs`](../src/circuit/trace.rs)), one gate-selector
 per block.
 
 Two constraint kinds are *not* gates:
@@ -137,7 +137,7 @@ The transcript, minus the challenges (the verifier re-derives those by re-hashin
 public inputs, ~8 witness commitments, n small sumcheck univariates, ~40 claimed
 evaluations, ~n fold commitments and evaluations, two closing points. For Ultra ~400 field
 elements, fixed-length by padding n to 25 so every proof of every circuit has the same
-shape. Verification = re-hash the transcript, run the sumcheck folds, recompute the
+shape (the Keccak flavors excepted). Verification = re-hash the transcript, run the sumcheck folds, recompute the
 batched-opening scalars, one MSM, one pairing ([`src/honk/ultra_verifier.rs`](../src/honk/ultra_verifier.rs)).
 
 ---
@@ -158,7 +158,7 @@ two costs worth understanding:
 - **The pairing.** No sane circuit computes a pairing. Instead every in-circuit verifier
   *defers* it: it outputs the two points its pairing check would consume, and they get
   **aggregated** — random-linear-combined with every other deferred pairing in the circuit
-  — into one pair carried in the public inputs (`stdlib::PairingPoints`). Whoever verifies
+  — into one pair carried in the public inputs (`PairingPoints`, [`src/base/group.rs`](../src/base/group.rs)). Whoever verifies
   the outermost proof natively performs the one real pairing for the entire tower.
 
 Also visible from here: why the transcript hash is [Poseidon2](glossary.md#poseidon2) (designed to be cheap *as
@@ -201,11 +201,12 @@ data through public inputs would mean hashing megabytes in-circuit. Instead data
 dedicated **databus** columns, passed between circuits as commitments and equality-checked
 directly (`calldata`/`return_data` in [`src/circuit`](../src/circuit/README.md)).
 
-The **hiding kernel** ends the chain: it folds the last step, verifies the accumulated
-batch-merge, adds [ZK masking](glossary.md#masking-zk-flavors) (it's the one circuit whose proof leaves the device), and its
-proof plus the decider, merge, ECCVM, Translator pieces form the **ChonkProof**
-([`src/chonk`](../src/chonk/README.md)). Verifying one costs four pairings and one Grumpkin IPA — constant, whatever
-the transaction did.
+The **hiding kernel** ends the chain: it folds the last step, verifies the decider and the
+accumulated batch merge in-circuit, and adds [ZK masking](glossary.md#masking-zk-flavors) (it's the one circuit whose proof
+leaves the device). Its Oink, the merge, ECCVM and TripleIPA proofs, and one *joint* proof
+(the hiding kernel's sumcheck and opening shared with the Translator's) form the
+**ChonkProof** ([`src/chonk`](../src/chonk/README.md)). Verifying one costs three pairings and one Grumpkin IPA —
+constant, whatever the transaction did.
 
 ---
 
@@ -227,13 +228,12 @@ tx_base (verifies a ChonkProof)         tx_base ...
               rollup_root  ── one proof, verified on Ethereum
 ```
 
-[`tx_base`](glossary.md#tube-tx_base) runs the Chonk verifier in-circuit — the single biggest circuit in the system
-(~1.4M rows), and the reason Acts I–III all had to be gate-exact. Each level up verifies
+[`tx_base`](glossary.md#tube-tx_base) runs the Chonk verifier in-circuit (~1.4M rows) — the reason Acts I–III all had to be gate-exact. Each level up verifies
 two child proofs and aggregates their deferred pairings. One extra thread runs up the
 tree: the Grumpkin **IPA claims** from each transaction's ECCVM can't be checked cheaply
 inside bn254 circuits, so — same trick as pairings — they're *accumulated* upward
-([`RollupIO`](glossary.md#rollupio) carries a claim in each proof's public inputs) and the root finally verifies
-the one accumulated claim in full: that in-circuit IPA MSM is 2²³ rows of the root's work.
+([`RollupIO`](glossary.md#rollupio) carries a claim in each proof's public inputs) and the root (a 2²³-row circuit) finally
+verifies the one accumulated claim in full, in-circuit.
 `rollup_root` is proven with the Keccak transcript, and the Solidity contract verifies it:
 one pairing on L1 stands for every private transaction in the epoch.
 
@@ -246,15 +246,17 @@ purpose, how it fits, a per-file map, and its traps:
 
 | you want | read |
 |---|---|
-| fields, the transcript, codecs, SRS, randomness | [[`src/base`](../src/base/README.md)](../src/base/README.md) |
-| the table/builder machinery, op queue, memory, lookup tables | [[`src/circuit`](../src/circuit/README.md)](../src/circuit/README.md) |
-| in-circuit types and their gate costs | [[`src/stdlib`](../src/stdlib/README.md)](../src/stdlib/README.md) |
-| relations, flavors, sumcheck, PCS, folding | [[`src/honk`](../src/honk/README.md)](../src/honk/README.md) |
-| ECCVM, Translator, merge, IPA | [[`src/goblin`](../src/goblin/README.md)](../src/goblin/README.md) |
-| the IVC driver, ChonkProof, proof compression | [[`src/chonk`](../src/chonk/README.md)](../src/chonk/README.md) |
-| how Noir circuits arrive | [[`src/acir`](../src/acir/README.md)](../src/acir/README.md) |
-| rollup-side recursion and IPA accumulation | [[`src/rollup`](../src/rollup/README.md)](../src/rollup/README.md) |
-| the wire protocol bb-ref serves | [[`src/msgpack`](../src/msgpack/README.md)](../src/msgpack/README.md) |
+| fields, the transcript, codecs, SRS, randomness | [`src/base`](../src/base/README.md) |
+| the table/builder machinery, op queue, memory, lookup tables | [`src/circuit`](../src/circuit/README.md) |
+| in-circuit types and their gate costs | [`src/stdlib`](../src/stdlib/README.md) |
+| relations, flavors, sumcheck, PCS, folding | [`src/honk`](../src/honk/README.md) |
+| ECCVM, Translator, merge, IPA | [`src/goblin`](../src/goblin/README.md) |
+| the IVC driver, ChonkProof, proof compression | [`src/chonk`](../src/chonk/README.md) |
+| how Noir circuits arrive | [`src/acir`](../src/acir/README.md) |
+| rollup-side recursion and IPA accumulation | [`src/rollup`](../src/rollup/README.md) |
+| the wire protocol bb-ref serves | [`src/msgpack`](../src/msgpack/README.md) |
+| running it in a browser: wasm, bb-ref.js, the bench page | [`js`](../js/README.md) |
 | why the code looks the way it does | [gate-exactness.md](gate-exactness.md) |
+| how fast it is, and why | [performance.md](performance.md) |
 | a name you don't recognize | [glossary.md](glossary.md) |
 | why you should believe any of it | [oracle.md](oracle.md), [conformance.md](conformance.md), [testing.md](testing.md) |

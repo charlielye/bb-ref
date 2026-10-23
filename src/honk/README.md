@@ -20,7 +20,8 @@ and Translator reuse it with their own relations).
 | `relations.rs` | the Honk relations, one body each, shared by prover, native verifier, and in-circuit verifier |
 | `prover_instance.rs` | circuit → polynomials at the dyadic size, plus the metadata Oink needs |
 | `oink.rs`, `oink_prover.rs` | the pre-sumcheck phase: bind the VK, commit to wires, derive lookup inverses and the grand product |
-| `sumcheck.rs` | prover + verifier, pointwise over extended edges; the committed-univariate variant for the ECCVM |
+| `sumcheck.rs` | prover + verifier over a `RelationSet`; the committed-univariate variant for the ECCVM |
+| `graded.rs` | degree-tracked coefficient-basis univariates (bb `UnivariateCoefficientBasis`): the prover runs the same relation bodies on these per edge, bit-identical to pointwise evaluation but paying each operation's true degree |
 | `pcs.rs` | Shplemini (Gemini + Shplonk in one MSM), SmallSubgroupIPA consistency for ZK, the KZG reduction to pairing points |
 | `ultra_prover.rs`, `ultra_verifier.rs`, `decider.rs` | the composed pipelines |
 | `hypernova.rs`, `multilinear_batching.rs` | folding: each circuit becomes a *claim*, claims are batched by one sumcheck into an accumulator, the decider opens it |

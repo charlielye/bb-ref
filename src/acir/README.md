@@ -11,9 +11,9 @@ ACIR black-box surface.
 
 | file | what it is |
 |---|---|
-| `format.rs` | serde shapes of the ACIR `Program`/`WitnessStack` exactly as Noir serializes them (msgpack, two format markers); unlowered opcodes are skipped |
-| `lower.rs` | opcode classification, then lowering in bb's fixed order: quads, ranges, Poseidon2, MSM/add, memory + databus blocks, recursion, default pairing points |
-| `honk_recursion.rs` | HONK / ROLLUP_HONK / ROOT_ROLLUP_HONK recursion constraints on Ultra circuits — instantiates [`rollup`](../rollup/README.md)'s in-circuit verifier |
+| `format.rs` | serde shapes of the ACIR `Program`/`WitnessStack` exactly as Noir serializes them (msgpack, format marker 2 or 3); unconstrained calls (`BrilligCall`, `Call`) are skipped |
+| `lower.rs` | opcode classification, then lowering in bb's fixed order: quads, bilinear/batched-equality, logic, ranges, the hash/ECDSA/AES gadgets, Poseidon2, MSM/add, memory + databus blocks, then recursion (HyperNova kernel logic on Mega, `honk_recursion` on Ultra) or default pairing points |
+| `honk_recursion.rs` | HONK / ROLLUP_HONK / ROOT_ROLLUP_HONK recursion constraints on Ultra circuits — instantiates [`rollup`](../rollup/README.md)'s in-circuit verifier — and CHONK (the tube), via [`chonk`](../chonk/README.md)'s `chonk_verify_recursive` |
 | `steps.rs` | `ivc-inputs.msgpack`: the per-circuit `{bytecode, witness, vk, kind}` list a Chonk proof is made from |
 | `mock.rs` | write-VK mode: the mock IVC state a kernel is built against when only its VK is wanted — real shapes, arbitrary values |
 

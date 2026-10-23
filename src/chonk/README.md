@@ -13,8 +13,8 @@ is the narrative version of this module.
 
 Upstream, [`acir`](../acir/README.md) feeds it circuits lowered from Noir bytecode; downstream, the tube
 circuit (a rollup circuit, [Act IV](../../docs/tour.md#act-iv--the-server-side-the-rollup-tree))
-verifies the `ChonkProof` in-circuit — which is why `verifier.rs` is written over the generic
-traits.
+verifies the `ChonkProof` in-circuit — `verifier.rs`'s `chonk_verify_recursive`, reached from
+[`acir`](../acir/README.md)'s CHONK recursion constraint.
 
 | file | what it is |
 |---|---|
@@ -22,7 +22,7 @@ traits.
 | `kernel.rs` | what a kernel circuit *contains*: the recursive folding/merge/decider verifications of the circuits before it, plus its public-input tail |
 | `batched.rs` | the joint MegaZK + Translator proof: one ZK sumcheck over both circuits' relations at 2^17, one Shplemini/KZG opening of everything |
 | `proof.rs` | `ChonkProof` — the five sub-proofs (hiding-kernel Oink, merge, ECCVM, TripleIPA, joint) as fields or msgpack |
-| `verifier.rs` | native verification of a `ChonkProof` against the hiding kernel's VK |
+| `verifier.rs` | verification of a `ChonkProof` against the hiding kernel's VK: native (`chonk_verify`) and in-circuit on an Ultra builder (`chonk_verify_recursive`, TripleIPA opening deferred to the caller) |
 | `compression.rs` | `ProofCompressor`: the proof as compact bytes, 32 per element, points as x + sign bit — the layout walk *is* the format |
 
 ## What makes this layer delicate

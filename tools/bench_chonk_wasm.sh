@@ -70,7 +70,7 @@ bb_proving_from_json() { # json -> seconds
     python3 - "$1" <<'EOF'
 import json, sys
 d = {k: v / 1e9 for k, v in json.load(open(sys.argv[1])).items()}
-print("%.3f" % (d.get("create_circuit", 0) + d.get("Chonk::accumulate", 0) + d.get("ChonkProve", 0) - d.get("ChonkVerifier::verify", 0)))
+print("%.3f" % (d.get("create_circuit", d.get("create_mega_circuit", 0)) + d.get("Chonk::accumulate", 0) + d.get("ChonkProve", 0) - d.get("ChonkVerifier::verify", 0)))
 EOF
 }
 ref_proving_from_log() { # stderr log with the BBREF_BENCH flat table -> seconds

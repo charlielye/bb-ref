@@ -6,13 +6,15 @@
 bb's schema with the same flags that make bb's `@aztec-foundation/bb.js-api`, so its typed API is
 identical (`src/generated/` is byte-equal to bb.js-api's). Its backend is the pin's ipc-runtime wasm
 transport, and its module is bb-ref itself built as a wasm reactor (the `ffi` feature,
-[`src/msgpack/ffi.rs`](../src/msgpack/ffi.rs)). Code written against
+[`src/msgpack/ffi.rs`](../src/msgpack/ffi.rs)), Chonk-only (`--cfg chonk_only`: the Ultra commands
+answer unsupported) and stripped of its name section. Code written against
 bb.js-api's `BbService` runs on bb-ref by changing the import.
 
 ```bash
 tools/build_bb_ref_js.sh                  # generate + build js/bb-ref.js (gitignored output)
 node js/chonk-bench/run-node.mjs bb-ref   # prove every pinned flow in node (or `bb` for bb.js-api)
-node js/chonk-bench/serve.mjs             # the bench page on http://localhost:8080/
+node js/chonk-bench/serve.mjs [port]      # the bench page on http://localhost:8080/
+node js/chonk-bench/build-site.mjs <dir>  # the same page as a static site (--publish: to gh-pages)
 ```
 
 ## What is generated, what is not
@@ -25,18 +27,27 @@ node js/chonk-bench/serve.mjs             # the bench page on http://localhost:8
 | `build.rs` | for a wasi `cdylib` with `ffi`: links wasi-libc's `crt1-reactor.o` (rustc otherwise links it as a command, wrapping every export in constructor/destructor runs) |
 
 Only the wasm transport: bb-ref has no socket or shared-memory server for the process backends.
-Only the threads module: the bench page is cross-origin isolated. One module serves any thread
-count; with one thread no worker starts.
+Only threads modules (the bench page is cross-origin isolated): `bb-ref-threads.wasm`, and
+`bb-ref-wide-threads.wasm` (`--cfg wasm_wide`), which the package picks where the engine has
+wide arithmetic. One module serves any thread count; with one thread no worker starts.
 
 ## The bench page (`chonk-bench/`)
 
 No framework, no bundler, no runtime dependency beyond the two packages it compares. `serve.mjs`
 is plain node: it serves the page, the packages under `/pkg/` (the page's import map resolves the
 bare specifiers there), the pinned flows, the CRS prefix the flows need (2^19 BN254 points, the G2
-point, one Grumpkin chunk, read from `~/.bb-crs`), and the cross-origin isolation headers threads
-require. Each flow runs through either package with the same command sequence (`flow.mjs`, also
-used by the node runner): SRS once per service, then `ChonkStart`, `ChonkLoad`/`ChonkAccumulate` per
-circuit, `ChonkProve`, `ChonkVerify`.
+point, 2^16 Grumpkin points, read from `$CRS_PATH`, default `~/.bb-crs`), each package's wasm module
+sizes (raw and gzip -9), and the cross-origin isolation headers threads require. `site.mjs` is that
+catalogue, shared with `build-site.mjs`, which writes the same tree out as static files;
+`--publish [remote]` force-pushes it as a single-commit `gh-pages` branch, served at
+<https://charlielye.github.io/bb-ref/>. GitHub Pages cannot send the isolation headers, so
+`coi.js` registers itself as a service worker that adds them (a no-op where the server sends them).
+
+Each flow runs through either package with the same command sequence (`flow.mjs`, also used by the
+node runner): SRS once per service, then `ChonkStart`, `ChonkLoad`/`ChonkAccumulate` per circuit,
+`ChonkProve`, `ChonkVerify`. The page runs each flow N times (default 1) and shows the mean time and
+the highest memory; a threads selector, a seeded toggle and, where available, a wide-module toggle
+choose the service.
 
 Seeded runs (`BB_RNG_SEED=12345`) are compared with the fixture proofs (`tests/data/<pin>/chonk_flows`).
 bb-ref's are reproducible at any thread count; bb's ZK proofs only at one thread, so its column shows

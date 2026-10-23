@@ -19,11 +19,11 @@ and Mega, with the Mega extras split out rather than a class hierarchy.
 |---|---|
 | `builder.rs` | variables + copy constraints (union-find over `real_variable_index`), tags for the multiset checks, the gate API, finalization |
 | `trace.rs` | the trace blocks: rows of wire indices + selectors, laid out sequentially per block |
-| `mega.rs` | Mega-only gates: ECC op rows, databus reads, compressed Poseidon2 rounds |
+| `mega.rs` | Mega-only gates: ECC op rows, databus reads, the bilinear/batched-equality gate, compressed Poseidon2 rounds |
 | `op_queue.rs` | the Goblin ECC op queue — every deferred EC op, recorded natively (for the ECCVM) and as two width-4 rows (for Mega and the Translator) |
 | `memory.rs` | ROM/RAM arrays: LogUp for single-value ROM, sorted-transcript scheme for paired ROM and RAM |
 | `plookup.rs` | multi-tables that slice a key across basic tables and chain the reads with accumulators |
-| `keccak_tables.rs`, `uint_tables.rs`, `secp256r1_fixed_base.rs` | the specific table families the pinned circuits look up |
+| `keccak_tables.rs`, `uint_tables.rs`, `blake_tables.rs`, `aes_tables.rs`, `secp256r1_fixed_base.rs`, `ecc_generator_tables.rs` | the table families the gadgets look up (Keccak, XOR/AND, Blake XOR-rotate, AES sparse form + S-box, secp256r1 fixed base, secp256k1 generator wNAF) |
 | `nnf.rs` | non-native-field gates — the gate-level support `bigfield` builds its 68-bit limb arithmetic on |
 
 ## What makes this layer delicate

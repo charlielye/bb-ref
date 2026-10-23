@@ -17,16 +17,17 @@ Not everything can be compared the same way, because bb draws randomness. Three 
    write-VK mode with mock witnesses, and is what the VK-hash sweeps check.
 2. **Byte-exact proofs** (non-ZK): non-ZK UltraHonk proving is fully deterministic, so
    proofs compare byte-for-byte with no RNG games.
-3. **Byte-exact everything** (with the tape): witness gap-fills, in-circuit masking, random
-   IPA claims, and ZK masking all draw from bb's single global engine. Recording bb's draws
-   (`BB_RNG_TAPE_OUT`) and replaying them through bb-ref's global source (`TapeRng` set via
-   `set_global`, with `GlobalProxy` routing explicit-rng call sites to it) makes even ZK
-   proofs and witness columns byte-identical.
+3. **Byte-exact everything** (seeded or taped): witness gap-fills, in-circuit masking, random
+   IPA claims, and ZK masking all draw from bb's single global engine. Seeding both sides
+   (`BB_RNG_SEED`: bb's debug engine, mirrored by `DebugRng`) or recording bb's draws
+   (`BB_RNG_TAPE_OUT`) and replaying them (`TapeRng`, via `BB_RNG_TAPE_IN`) through bb-ref's
+   global source (`set_global`, with `GlobalProxy` routing explicit-rng call sites to it) makes
+   even ZK proofs and witness columns byte-identical.
 
 ## Fixture machinery
 
 - **The pin** ([`tools/PIN`](../tools/PIN)): one bb commit. Every fixture is generated
-  from it; tests assert the fixture pin matches.
+  from it; tests read `tests/data/<pin7>/` (`PIN` in `tests/common/mod.rs`).
 - **The dumper** (`BbRefDump`, in the pinned tree at
   `barretenberg/cpp/src/barretenberg/dsl/acir_format/bbref_dump.test.cpp`, built by
   `ninja dsl_tests`): a test-only C++ file carried as a commit on the pin branch rather than a
@@ -34,8 +35,9 @@ Not everything can be compared the same way, because bb draws randomness. Three 
   Its `BbRefDump.*` tests dump whatever a fixture set needs — full proving instances
   (`UltraInstance`: every polynomial, VK, proof), write-VK circuit shapes (`UltraWriteVk`),
   named stdlib micro-programs (`Stdlib`), op-queue/merge/ECCVM/translator/chonk fixtures —
-  driven by `BBREF_*` env vars. bb production code is never modified (the one exception is
-  the env-gated RNG seed/tape patch in `numeric/random/engine.cpp`).
+  driven by `BBREF_*` env vars. Beyond the bb.js-api PR, the pin branch touches bb production
+  code only with env-gated hooks (`BB_RNG_SEED`/`BB_RNG_TAPE_*` in `numeric/random/engine.cpp`,
+  `BB_RNG_COUNT` in `api/api_msgpack.cpp`) and the msgpack file mode's envelope framing.
 - **Regen scripts** (`tools/regen/regen_*.sh`): rebuild every fixture from the pin. Small
   fixtures are committed under `tests/data/<pin7>/`; bulky instance dumps are gitignored
   and regenerated on demand.
@@ -54,11 +56,11 @@ Not everything can be compared the same way, because bb draws randomness. Three 
 | VK-hash sweep (`backend_vk_hash_sweep`) | circuit structure equals bb's, per artifact, no witnesses needed | seconds/circuit |
 | write-VK instance diff (`backend_write_vk_instance_diff`) | every deterministic polynomial over the full trace; pinpoints the first divergent gate row | ~1 min |
 | instance + proof diff (`check_nozk*`) | everything: witness columns, VK, proof bytes | minutes |
-| stdlib micro-oracle (`m13` named programs) | one expression or gadget, gate-exact, in isolation | ~10 s round trip |
-| end-to-end flows (pinned chonk flows, `m20`) | whole transactions verify and re-prove byte-exact | minutes |
+| stdlib micro-oracle (`BbRefDump.Stdlib` programs, `tests/stdlib.rs`) | one expression or gadget, gate-exact, in isolation | ~10 s round trip |
+| end-to-end flows (pinned chonk flows: `tests/chonk/native.rs`, `tests/flows.rs`) | whole transactions verify and re-prove byte-exact | minutes |
 
 When a big oracle fails, **reduce to a micro-oracle**: add a named program to the dumper
-(both copies!) reproducing the suspect expression over deterministic witnesses, mirror it in
+reproducing the suspect expression over deterministic witnesses, mirror it in
 `tests/stdlib.rs`, and iterate at ten-second cadence instead of minutes.
 
 ## Debugging a divergence
@@ -91,23 +93,24 @@ Re-pointing bb-ref at a new bb commit is a deliberate procedure, in this order:
 2. Build in the tree: `pin/build.sh --noir`, `dsl_tests` (the dumper), the protocol and mock
    circuits (`noir-projects/fnd/*/bootstrap.sh build`), `barretenberg/acir_tests` (compile), and
    `make labs-yarn-project` (the mock-stack witness generator and the corpus driver). Download the
-   flows `barretenberg/cpp/scripts/pinned_chonk_inputs.sh` names.
+   pinned flows: `barretenberg/cpp/scripts/chonk_inputs.sh download
+   barretenberg/cpp/chonk-pinned-flows` (where the regen scripts look; `BB_FLOWS` overrides).
 3. `dev/regen_msgpack.sh`, then every `tools/regen/regen_*.sh`: chonk flows, protocol, ultra, acir
-   (mock stack), merge, vk hashes, corpus (`--harvest` after any protocol change), and backend last
-   (its rollup circuits are extracted from the corpus).
+   (mock stack), merge, vk hashes, mega-app VKs, corpus (`--harvest` after any protocol change),
+   and backend last (its rollup circuits are extracted from the corpus).
 4. Run the full suite and `tools/conformance.sh` on the new corpus.
 
 Divergences found are chased with the ladder above — they are the changelog of what bb changed,
-which is half the value of maintaining the mirror. The 2026-10 re-pin (3b2c553 → the bb.js-api PR
-head) needed no prover change: every flow and the corpus came out byte-exact; the ports were wire
-(`Warmup`, `Poseidon2AbsorbChain`) and SRS ingress (bb now authenticates pushed points against pinned
-chunk hashes), and most of the time went to tooling drift in labs (package renames, `noir-execute`,
-the block builder's API).
+which is half the value of maintaining the mirror. The 2026-10-16 re-pin (3b2c553 → d43209d, the
+bb.js-api PR head) needed no prover change: every flow and the corpus came out byte-exact; the ports
+were wire (`Init`, replacing `Warmup`; `Poseidon2AbsorbChain`) and SRS ingress (bb now authenticates pushed points
+against pinned chunk hashes), and most of the time went to tooling drift in labs (package renames,
+`noir-execute`, the block builder's API).
 
-The 2026-10-21 re-pin (onto `next` with the private-repo security batch, ~50 bb commits) did change
-the prover: new ECCVM, Translator and databus subrelations, batch-merge separator ops (and the
-verifier's concatenation identity over them), per-point pairing-point aggregation on Ultra,
-trusted-constant `cycle_group::batch_mul`, and deterministic mock proofs; plus verifier/validation
-checks with bb's own error text (canonical field and VK decoding, Chonk proof structure and
-trailing data, the ZK keccak log_n floor, per-kind ACIR rejection, RAM initialization, one writer
-per bus column). The fixture tooling needed the per-kind builders and Foundry 1.8.5.
+The 2026-10-21 re-pin (d43209d → 1117683, onto `next` with the private-repo security batch, ~50 bb
+commits) did change the prover: new ECCVM, Translator and databus subrelations, batch-merge
+separator ops (and the verifier's concatenation identity over them), per-point pairing-point
+aggregation on Ultra, trusted-constant `cycle_group::batch_mul`, and deterministic mock proofs; plus
+verifier/validation checks with bb's own error text (canonical field and VK decoding, Chonk proof
+structure and trailing data, the ZK keccak log_n floor, per-kind ACIR rejection, RAM initialization,
+one writer per bus column). The fixture tooling needed the per-kind builders and Foundry 1.8.5.

@@ -14,14 +14,15 @@ The problem it solves: proofs below a rollup node carry Grumpkin IPA claims (fro
 the tube), and Grumpkin has no pairing, so they can't be discharged the KZG way. Instead every
 rollup circuit *accumulates*: it reduces each nested IPA claim in-circuit, combines the
 accumulators into one, and natively re-proves the combined claim — the 64-field IPA proof
-appended to every rollup proof. The claim shrinks to a single one at the root, verified natively
-once.
+appended to every rollup proof. At the root the two nested claims are combined and the result is
+*fully* verified in-circuit (`ipa_recursive::full_verify_ct`, an MSM over the SRS), so the root
+proof carries no IPA claim.
 
 | file | what it is |
 |---|---|
-| `mod.rs` | the in-circuit Ultra/Keccak verifier instantiation + `RollupIO`, the public-input convention (pairing points + IPA claim) every rollup circuit carries |
+| `mod.rs` | the in-circuit Ultra verifier instantiation, pairing-point aggregation, and bb's `RollupIO` public-input convention (pairing points + IPA claim) every rollup circuit carries; plus `verify_ultra_rollup`, the native check of a rollup proof |
 | `ipa.rs` | the native Grumpkin IPA at 2^CONST_ECCVM_LOG_N: the prover behind the appended proof, and the verifier for a rollup proof's IPA tail |
-| `ipa_recursive.rs` | the in-circuit IPA over ULTRA arithmetic: bigfield scalars, `cycle_group` commitments; reduce, combine, hand off |
+| `ipa_recursive.rs` | the in-circuit IPA over ULTRA arithmetic: bigfield scalars, `cycle_group` commitments; reduce, combine, hand off — or, at the root, full verification |
 
 ## What makes this layer delicate
 

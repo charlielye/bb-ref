@@ -25,7 +25,7 @@ Three proofs tie it together:
 |---|---|
 | `merge.rs`, `batch_merge.rs` | the table-consistency proofs: `M = L + X^k·R`, degree checks, subtable-hash binding |
 | `eccvm/trace.rs` | op queue → ECCVM trace rows (transcript, precomputed point tables, MSM rows) |
-| `eccvm/relations.rs`, `prover.rs`, `verifier.rs`, `check.rs` | the ECCVM relations, its ZK sumcheck pipeline, and the row-checker |
+| `eccvm/relations.rs`, `prover.rs`, `verifier.rs`, `check.rs` | the ECCVM relations, its ZK sumcheck pipeline (verifier generic, so it also runs in-circuit for the tube), and the row-checker |
 | `translator/builder.rs`, `key.rs` | two rows per op with limbs, accumulators, quotients, micro-limbs; then the 2^17-row concatenated proving key |
 | `translator/relations.rs`, `check.rs` | decomposition/accumulation/permutation relations and their row-checker |
 | `ipa.rs` | the Grumpkin inner-product argument + TripleIPA, which opens the ECCVM's three claims with one proof |
@@ -40,6 +40,7 @@ traces and relations, not new protocol.
 - **The Translator's limb bookkeeping is exact**: micro-limb ranges, quotient bounds and the
   16-fold concatenation are sized to the pinned constants (`CONST_TRANSLATOR_LOG_N`); a value
   that fits mathematically but not in its micro-limb budget fails rows far from the bad op.
-- **Everything meets at the transcript**: ECCVM, Translator, and TripleIPA share evaluation
-  challenges through one running transcript, which is why they're proven together in
-  [`chonk`](../chonk/README.md)'s joint proof rather than independently.
+- **Everything meets at the transcript**: the hiding kernel's Oink, Merge, ECCVM and the joint
+  MegaZK + Translator proof run on one transcript, and the Translator circuit is built from the
+  ECCVM's challenges (`v`, `x`), so none is proven independently — see
+  [`chonk`](../chonk/README.md)'s `prove`. Only TripleIPA runs on its own transcript.

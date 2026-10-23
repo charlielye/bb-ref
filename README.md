@@ -14,12 +14,12 @@ These are the project's binding goals — changes should be judged against them:
 
 | goal | state |
 | --- | --- |
-| **Minimum lines of code** for a bit-parity reference implementation, in modern idiomatic Rust | **19.1%** of bb's C++ implementation (`tools/loc.sh`) |
-| **Lean on stable, mature dependencies** instead of handwriting (fields/curves: arkworks; msgpack: rmp-serde; parallelism: rayon) | holds — no handwritten field or curve arithmetic |
+| **Minimum lines of code** for a bit-parity reference implementation, in modern idiomatic Rust | **21.2%** of bb's C++ implementation (`tools/loc.sh`) |
+| **Lean on stable, mature dependencies** instead of handwriting (fields/curves: arkworks; msgpack: rmp-serde; parallelism: rayon) | holds, with one deliberate exception: the hot field kernels (ADX and IFMA Montgomery multiply, bb's wasm 29-bit and wide multiplies, Bernstein–Yang inverse) and the MSM are ported from bb for speed; arkworks still supplies the field and curve framework, the pairing and G2 ([src/base](src/base/README.md)) |
 | **Bit parity**: VKs bit-exact, proofs byte-exact, both directions, including the wire protocol | holds — every VK and pinned flow byte-equal |
 | **Circuit gate parity**: every selector, wire and copy-cycle identical to bb's ([docs/gate-exactness.md](docs/gate-exactness.md)) | holds — enforced by the write-VK oracles and stdlib micro-oracles |
-| **Replay the rollup through bb and bb-ref and get the same root proof** | holds — 62/62 corpus responses byte-identical, `rollup_root` included (`tools/conformance.sh`) |
-| **Performance**: within 2× of bb, reducing to ≤ 1.2× in the near future | exceeded: against pin bb, rollup corpus **0.46×**, chonk native **0.48×**, chonk wasm/V8 **0.68×** wall; against the chonk-golf-patched bb, chonk native 0.92×, wasm 0.94× ([bench-results/](bench-results/), [docs/performance.md](docs/performance.md)) |
+| **Replay the rollup through bb and bb-ref and get the same root proof** | holds — 63/63 corpus responses byte-identical, `rollup_root` included (`tools/conformance.sh`) |
+| **At parity or better with bb in performance, memory usage and wasm size** (against stock bb at the pin) | time: **0.46×** native, **0.68×** wasm; wasm memory **0.81–0.94×**; wasm module **2.1× smaller**; native memory **behind, 1.08–1.31×** ([results](#results), [docs/performance.md](docs/performance.md)) |
 | **95%+ test coverage on the critical paths**, without redundant tests | core **95%** standalone, plus full soundness sweeps ([docs/testing.md](docs/testing.md)) |
 | **Documentation an engineer can descend**: each component's purpose without the math; first use of any odd name links to its explanation | [tour](docs/tour.md) → module READMEs → [glossary](docs/glossary.md) |
 | **A maintenance process for bb divergence**: diagnose and resolve drift quickly as bb moves | the pin + regen + divergence ladder ([docs/oracle.md](docs/oracle.md)) |
@@ -27,12 +27,46 @@ These are the project's binding goals — changes should be judged against them:
 Out of scope at this time: the AVM (public-transaction execution) — bb-ref solves for pure
 private-tx rollups. Also out of scope: Solidity verifier generation, Starknet oracle hash.
 
+## Results
+
+Chonk (client IVC) proving over the 11 pinned transaction flows, stock bb at the pin against
+bb-ref, both seeded, 8 threads, on a 16-core Zen 4 box (bbbench). Time is wall, best of 3; ratio is
+bb-ref / bb, below 1 is better. Wasm runs under V8 (node 24, worker threads and shared memory, the
+browser's shape); its memory is the wasm linear-memory peak, native's is peak RSS. Every bb-ref
+proof is byte-identical to bb's. Measured 2026-10-23, pin `1117683`, bb-ref `7c9e511`; tables of
+record in [bench-results/](bench-results/), method in [docs/performance.md](docs/performance.md).
+
+| flow | native bb | bb-ref | ratio | native mem bb | bb-ref | wasm bb | bb-ref | ratio | wasm mem bb | bb-ref |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| deploy_ecdsar1 | 3.12 s | 1.52 s | 0.49× | 0.26 GB | 0.32 GB | 5.68 s | 4.29 s | 0.76× | 0.23 GB | 0.20 GB |
+| deploy_schnorr | 2.89 s | 1.40 s | 0.48× | 0.29 GB | 0.31 GB | 5.31 s | 4.02 s | 0.76× | 0.22 GB | 0.20 GB |
+| amm_add_liquidity_1_recursions | 4.76 s | 2.37 s | 0.50× | 0.27 GB | 0.34 GB | 8.58 s | 6.28 s | 0.73× | 0.23 GB | 0.21 GB |
+| ecdsar1 deploy_tokenContract | 3.66 s | 1.73 s | 0.47× | 0.27 GB | 0.35 GB | 6.50 s | 4.87 s | 0.75× | 0.24 GB | 0.21 GB |
+| storage_proof_7_layers | 10.42 s | 4.00 s | 0.38× | 0.69 GB | 0.75 GB | 22.22 s | 10.67 s | 0.48× | 0.66 GB | 0.53 GB |
+| token_bridge_claim_private | 3.16 s | 1.53 s | 0.48× | 0.27 GB | 0.31 GB | 5.83 s | 4.35 s | 0.75× | 0.23 GB | 0.21 GB |
+| transfer_0_recursions, private_fpc | 4.16 s | 2.02 s | 0.49× | 0.27 GB | 0.34 GB | 7.45 s | 5.50 s | 0.74× | 0.24 GB | 0.21 GB |
+| transfer_0_recursions | 2.76 s | 1.33 s | 0.48× | 0.26 GB | 0.29 GB | 5.10 s | 3.87 s | 0.76× | 0.22 GB | 0.20 GB |
+| transfer_1_recursions, private_fpc | 4.43 s | 2.14 s | 0.48× | 0.27 GB | 0.34 GB | 7.83 s | 5.77 s | 0.74× | 0.25 GB | 0.21 GB |
+| transfer_1_recursions | 3.07 s | 1.46 s | 0.48× | 0.26 GB | 0.31 GB | 5.59 s | 4.22 s | 0.75× | 0.22 GB | 0.20 GB |
+| schnorr deploy_tokenContract | 3.40 s | 1.62 s | 0.48× | 0.27 GB | 0.34 GB | 6.08 s | 4.59 s | 0.75× | 0.23 GB | 0.21 GB |
+| **total** | **45.83 s** | **21.12 s** | **0.46×** | | | **86.17 s** | **58.43 s** | **0.68×** | | |
+
+Flows use the sponsored fee payer unless marked `private_fpc`, and an ecdsar1 account unless
+marked schnorr. With wasm wide arithmetic (node 27 nightly), bb-ref's wasm total drops to 0.56×.
+
+**Wasm module size** (what the browser downloads): bb.js-api's threads module is 18.15 MB
+(4.03 MB gzipped); bb-ref.js's, Chonk-only and stripped, is **8.63 MB (2.12 MB gzipped)**.
+
+Try it in a browser: **[charlielye.github.io/bb-ref](https://charlielye.github.io/bb-ref/)** proves
+the same flows with both engines side by side ([js/](js/README.md)).
+
 ## The pin
 
 bb-ref tracks one bb commit, recorded in [`tools/PIN`](tools/PIN): `cl/bb-ref-conformance`, bb's
-`next` plus the generated bb.js-api package (aztec-packages#25433), carrying a handful of reviewable
-test-support commits (the seeded RNG and its draw tape, the frame-draw counter, envelope framing,
-the instance dumper) and one fix to that PR's node wasm runtime. Every doc comment citing a bb source path means *that file at the pin*.
+`next` (at 2be71b2f5d, with the private-repo security batch) plus the generated bb.js-api package
+and its `Init` command and wide-arithmetic modules (aztec-packages#25433), carrying a handful of
+reviewable test-support commits (the seeded RNG and its draw tape, the frame-draw counter, envelope
+framing, the instance dumper) and one fix to ipc-runtime's node wasm threads. Every doc comment citing a bb source path means *that file at the pin*.
 Re-pinning: update the pin, run `tools/regen/regen_*.sh` (the corpus last-but-one: the backend
 fixtures are extracted from it), re-run the suites, chase drift with
 [docs/oracle.md](docs/oracle.md)'s ladder.
@@ -63,7 +97,7 @@ graph LR
 | [`msgpack`](src/msgpack/README.md) | bb's wire protocol: generated types + the command handler (`bb-ref msgpack run`) |
 | [`tests/`](tests) | differential suites (vs `tests/data/` fixtures) + standalone soundness/relations suites |
 | [`tools/`](tools/README.md) | the commands below, their support libs, and the fixture regenerators |
-| [`js/`](js/README.md) | `bb-ref.js` (generated: bb.js-api's API over bb-ref's module) and a browser bench page comparing the two |
+| [`js/`](js/README.md) | `bb-ref.js` (generated: bb.js-api's API over bb-ref's module) and a browser bench page comparing the two ([live](https://charlielye.github.io/bb-ref/)) |
 
 ## Commands
 
@@ -72,10 +106,12 @@ tools/regen/regen_corpus.sh          # rebuild the corpus from the pinned tree (
 tools/conformance.sh <corpus.zst>    # replay it into bb-ref vs recorded bb goldens, byte compare
 tools/bench.sh <corpus.zst> --both   # per-operation timings, bb vs bb-ref (--threads <n>)
 tools/bench_chonk.sh                 # client-IVC proving over the pinned tx flows, bb vs bb-ref
-tools/check.sh                       # the standalone gate: unit tests with no bb, corpus, or fixtures
+tools/bench_chonk_wasm.sh v8         # the same on wasm (v8 or wasmtime)
+tools/check.sh                       # the standalone gate: warning-free build + unit tests, no bb or fixtures
 tools/coverage.sh                    # line coverage of the standalone test set
 tools/loc.sh [--no-tests]            # bb C++ vs bb-ref Rust, side by side
 tools/build_bb_ref_js.sh             # generate + build js/bb-ref.js; then node js/chonk-bench/serve.mjs
+node js/chonk-bench/build-site.mjs --publish   # publish the bench page to GitHub Pages
 cargo test --release                 # everything: differential + standalone (~10 min)
 ```
 
@@ -96,3 +132,5 @@ implementation with nothing in between — see [tools/README.md](tools/README.md
   thread policy, the msgpack server.
 - **[docs/testing.md](docs/testing.md)** — the two-layer test structure (differential vs
   standalone), the soundness checklist, coverage.
+- **[docs/performance.md](docs/performance.md)** — where bb-ref stands against bb, how to
+  reproduce the numbers, which optimizations own them.

@@ -45,15 +45,16 @@ the [databus](#databus). [Tour, Act III](tour.md#act-iii--the-client-side-chonk)
 ### ChonkProof
 
 the five-part output of Chonk: hiding-kernel Oink, merge, ECCVM, TripleIPA
-and the joint MegaZK+Translator proof. Verifying one costs four pairings and one Grumpkin
-IPA, regardless of transaction size. [`src/chonk/proof.rs`](../src/chonk/proof.rs).
+and the [joint](#joint-proof) MegaZK+Translator proof. Verifying one costs three pairings and one
+Grumpkin IPA, regardless of transaction size. [`src/chonk/proof.rs`](../src/chonk/proof.rs),
+[`src/chonk/verifier.rs`](../src/chonk/verifier.rs).
 
 ### Cycle group
 
 Grumpkin points represented over the *native* field (Grumpkin's base field
 is bn254's scalar field, so coordinates are plain wires — no bigfield). The cheap way to do
-EC arithmetic in-circuit when the point happens to live on Grumpkin: Poseidon2-related MSMs,
-IPA accumulation, ACIR's `EmbeddedCurve*` opcodes. [`src/stdlib/cycle_group.rs`](../src/stdlib/cycle_group.rs).
+EC arithmetic in-circuit when the point happens to live on Grumpkin: the in-circuit ECCVM/IPA
+verifiers, IPA accumulation, ACIR's `EmbeddedCurve*` opcodes. [`src/stdlib/cycle_group.rs`](../src/stdlib/cycle_group.rs).
 
 ### Databus
 
@@ -66,7 +67,8 @@ Exists so kernels can consume app outputs without hashing them in-circuit.
 
 the one proof at the end of a Chonk chain that discharges the
 [HyperNova](#hypernova) accumulator: a single Shplemini/KZG opening standing in for all the
-per-step openings folding skipped. [`src/honk/decider.rs`](../src/honk/decider.rs).
+per-step openings folding skipped. Verified in-circuit by the [hiding kernel](#hiding-kernel), so it
+is not part of the ChonkProof. [`src/honk/decider.rs`](../src/honk/decider.rs).
 
 ### Dyadic size
 
@@ -85,9 +87,10 @@ bn254 point arithmetic is native) that re-executes every operation in the
 ### Endomorphism (GLV)
 
 some curves (bn254, secp256k1) have a cheap map
-`λ·(x,y) = (β·x, y)`, which lets a 256-bit scalar multiplication split into two 128-bit
+`λ·(x,y) = (β·x, y)`, which lets a 256-bit scalar multiplication split into two 129-bit
 halves (`k = k₁ − λ·k₂`) done together — half the doublings. The in-circuit secp256k1 ECDSA
-leans on it heavily. [`src/stdlib/biggroup_secp256k1.rs`](../src/stdlib/biggroup_secp256k1.rs).
+leans on it heavily, as does the native bn254 MSM. [`src/stdlib/biggroup_secp256k1.rs`](../src/stdlib/biggroup_secp256k1.rs),
+[`src/base/endo.rs`](../src/base/endo.rs).
 
 ### Fiat–Shamir
 
@@ -102,7 +105,7 @@ a named configuration of the Honk machinery: which relations are on, how many
 wires/selectors exist, ZK or not, which transcript hash. The roster: **Ultra** (rollup
 circuits), **UltraZK** (masked variant), **UltraKeccak(ZK)** (Keccak transcript, for the one
 proof Ethereum verifies), **MegaApp**/**MegaKernel** (client circuits: Ultra + ECC-op rows +
-databus + compressed Poseidon2 gates), **MegaZK** (the hiding kernel), plus the bespoke
+databus + compressed Poseidon2 gates; kernels drop lookups and NNF gates), **MegaZK** (the hiding kernel), plus the bespoke
 **ECCVM** and **Translator** relation sets. In bb-ref a flavor is *data* — a relation list
 from which the whole wire layout is derived. [`src/honk/flavor.rs`](../src/honk/flavor.rs).
 
@@ -128,8 +131,9 @@ operations into the [op queue](#op-queue) (two rows each) instead of computing t
 
 ### Goblin element
 
-the in-circuit point type that does the recording: a pair of 136-bit
-limb commitments whose "operations" just append to the op queue. The reason a kernel's
+the in-circuit point type that does the recording: a bn254 point whose
+coordinates are two-limb (136 + 118 bits) goblin fields and whose "operations" just append to
+the op queue, copy-constrained to the operands. The reason a kernel's
 recursive verifier is cheap. [`src/stdlib/goblin.rs`](../src/stdlib/goblin.rs).
 
 ### Grand product / permutation argument
@@ -150,7 +154,7 @@ ops over bn254. No pairing, so Grumpkin commitments open with [IPA](#ipa), never
 ### Hiding kernel
 
 the final circuit of a Chonk chain: folds the last step, verifies the
-batch merge, and adds the ZK masking — it is the one circuit whose proof leaves the device,
+[decider](#decider) and the batch merge, and adds the ZK masking — it is the one circuit whose proof leaves the device,
 so it is the only Mega circuit proven with a ZK flavor. [`src/chonk/kernel.rs`](../src/chonk/kernel.rs).
 
 ### HyperNova
@@ -174,15 +178,24 @@ verify — which is why the rollup [accumulates](#ipa-accumulation) instead of v
 
 the rollup-side trick for the expensive IPA verifications: each
 rollup circuit reduces its children's IPA claims in-circuit, combines them into one, and
-re-proves the combined claim natively (the 64-field tail on every rollup proof, carried in
-[RollupIO](#rollupio)); only the root pays the full 2²³-row in-circuit MSM once.
+re-proves the combined claim natively (the 64-field IPA proof appended to every rollup proof;
+the claim itself rides in [RollupIO](#rollupio)); only the root pays for a full in-circuit IPA
+verification, once.
 [Tour, Act IV](tour.md#act-iv--the-server-side-the-rollup-tree); [`src/rollup/ipa_recursive.rs`](../src/rollup/ipa_recursive.rs).
+
+### Joint proof
+
+the hiding kernel (MegaZK) and the [Translator](#translator) proven together: MegaZK is
+zero-extended to the Translator's 2¹⁷ rows so one ZK sumcheck covers both relation sets and one
+Shplemini/KZG opening covers all their polynomials. The last part of the [ChonkProof](#chonkproof).
+[`src/chonk/batched.rs`](../src/chonk/batched.rs).
 
 ### Kernel
 
 the alternating "checker" circuit in a Chonk chain: each kernel folds the
-previous app+kernel step, verifies merge consistency, and carries the running state in its
-public inputs. Apps do user logic; kernels do protocol logic. [`src/chonk/kernel.rs`](../src/chonk/kernel.rs).
+previous app+kernel step, checks the databus commitments against the circuits it verified,
+extends the running op-queue hash the [batch merge](#batch-merge) later checks, and carries the
+running state in its public inputs. Apps do user logic; kernels do protocol logic. [`src/chonk/kernel.rs`](../src/chonk/kernel.rs).
 
 ### KZG
 
@@ -350,8 +363,7 @@ proofs. [`src/goblin/ipa.rs`](../src/goblin/ipa.rs).
 ### Tube (tx_base)
 
 the rollup circuit that verifies a [ChonkProof](#chonkproof)
-in-circuit, converting a client proof into a rollup-shaped Ultra proof; the biggest circuit
-in the system (~1.4M rows). "Tube" and "tx_base" name the same thing in different layers.
+in-circuit, converting a client proof into a rollup-shaped Ultra proof (~1.4M rows). "Tube" and "tx_base" name the same thing in different layers.
 [`src/chonk/verifier.rs`](../src/chonk/verifier.rs) (`chonk_verify_recursive`), consumed via [`src/acir/honk_recursion.rs`](../src/acir/honk_recursion.rs).
 
 ### wNAF

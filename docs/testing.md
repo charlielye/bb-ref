@@ -59,13 +59,12 @@ words like bb does — pinned as KATs; canonicity *rejection* applies to proof a
 Arithmetic at that row; a corrupted copied wire is named Permutation; one corruption per Ultra gate
 family (delta-range, memory, lookup, poseidon2 ×2) is caught under its own family. Stage
 round-trips (sumcheck, Shplonk+KZG, compression) fail in the stage that broke, not at "proof byte N
-differs". When a differential test does diverge, `tools/README.md` describes the frame-extraction
-and RNG-draw-count ladder for closing in.
+differs". When a differential test does diverge, [oracle.md](oracle.md) (fixtures) and
+[tools/README.md](../tools/README.md) (corpus frames, RNG draw counts) describe the ladder.
 
 ## What is deliberately NOT tested here
 
 bb's per-flavor/per-curve TYPED_TEST replays (one generic body suffices), field axioms over
 arkworks, accept-path gadget tests (gate-exactness differentials pin those harder), benches
-(`tools/bench.sh` measures real workloads), manifest replays. See the plan's redundancy survey:
-bb's 156k test LOC compress to ~9k here because the differential layer supplies the oracle bb's
-tests lack.
+(`tools/bench.sh` measures real workloads), manifest replays. bb's ~92k lines of `*.test.cpp` (AVM
+excluded) compress to ~8k here because the differential layer supplies the oracle bb's tests lack.

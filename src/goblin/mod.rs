@@ -1,4 +1,4 @@
-//! Goblin: the ECC op queue merge protocols (M6). ECCVM and Translator follow in later milestones.
+//! Goblin: the ECC op queue merge protocols, IPA/TripleIPA, the ECCVM and the Translator.
 pub mod batch_merge;
 pub mod eccvm;
 pub mod ipa;

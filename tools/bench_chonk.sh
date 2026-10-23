@@ -35,7 +35,7 @@ while [ $# -gt 0 ]; do
     fi
 done
 
-[ -d "$FLOWS_DIR" ] || { echo "no flows at $FLOWS_DIR (set BB_FLOWS, or regenerate with dev/regen_chonk_flows.sh)" >&2; exit 1; }
+[ -d "$FLOWS_DIR" ] || { echo "no flows at $FLOWS_DIR (set BB_FLOWS, or regenerate with tools/regen/regen_chonk_flows.sh)" >&2; exit 1; }
 [ -x "$BB" ] || { echo "no bb at $BB (run tools/regen/regen_corpus.sh to build the pin)" >&2; exit 1; }
 [ "$BBREF" != ./target/release/bb-ref ] || cargo build --release --quiet
 
@@ -92,7 +92,7 @@ bb_proving_from_json() { # json -> seconds
     python3 - "$1" <<'EOF'
 import json, sys
 d = {k: v / 1e9 for k, v in json.load(open(sys.argv[1])).items()}
-print("%.3f" % (d.get("create_circuit", 0) + d.get("Chonk::accumulate", 0) + d.get("ChonkProve", 0) - d.get("ChonkVerifier::verify", 0)))
+print("%.3f" % (d.get("create_circuit", d.get("create_mega_circuit", 0)) + d.get("Chonk::accumulate", 0) + d.get("ChonkProve", 0) - d.get("ChonkVerifier::verify", 0)))
 EOF
 }
 ref_proving_from_log() { # stderr log with the BBREF_BENCH flat table -> seconds
