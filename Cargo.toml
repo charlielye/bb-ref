@@ -32,6 +32,9 @@ getrandom = { version = "0.2", features = ["js"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 mimalloc = { version = "0.1", optional = true }
+# bb's UDS / shared-memory transport for `bb-ref msgpack run --input <path>.sock|.shm`; the same
+# sources as the pin's ipc-runtime/, compiled by its build script.
+ipc-runtime = "=7.0.0-nightly.20261026"
 
 [profile.release]
 opt-level = 2

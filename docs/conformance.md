@@ -145,7 +145,5 @@ invalidates the leaf assets) plus ~7 min of proving.
 - Land the pin branch's commits upstream (the bb.js-api PR with `Init`, BB_RNG_SEED, the RNG tape,
   BB_RNG_COUNT, envelope file framing, the BB_POOL_SIZE labs patch, the dumper), converging the pin
   to a bare release tag with a downloadable binary.
-- Serve `.sock`/SHM in `bb-ref msgpack run`, so bb-ref drops into the prover stack via
-  `BB_BINARY_PATH` (e2e, jaws' lane-bench).
 - Extend the corpus beyond the private rollup path: public txs (AVM-adjacent frames stay
   replay-skipped), and the chonk wire sessions as a second recorded stream.

@@ -260,6 +260,7 @@ dependencies = [
  "flate2",
  "getrandom",
  "hex",
+ "ipc-runtime",
  "libc",
  "mimalloc",
  "num-bigint",
@@ -619,6 +620,15 @@ dependencies = [
  "hashbrown 0.17.1",
  "serde",
  "serde_core",
+]
+
+[[package]]
+name = "ipc-runtime"
+version = "7.0.0-nightly.20261026"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "606506409521877ca3b44901c5443dd2c0a3f9b3ee302f6758efa4d80ecfedf8"
+dependencies = [
+ "cc",
 ]
 
 [[package]]

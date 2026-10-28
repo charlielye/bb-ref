@@ -7,6 +7,7 @@
 //!   bb-ref write_vk --scheme chonk --circuit_kind app|kernel|hiding -b <program.json> -o <out_dir>
 //!   bb-ref prove    --scheme chonk --ivc_inputs_path <ivc-inputs.msgpack> -o <out_dir> [--vk_policy check] [--prebuild]
 //!   bb-ref verify   --scheme chonk -k <vk> -p <proof>
+//!   bb-ref msgpack run --input <frames file>|-|<path>.sock|<path>.shm
 
 // mimalloc as an opt-in A/B reference: the default (system) allocator matches it once the
 // hugepage tunable below is applied, at roughly half the peak RSS on the client flow.
@@ -141,18 +142,21 @@ fn write_vk_files(out: &Path, vk: &Vk<Bn254>) {
 
 /// bb `process_msgpack_commands` (`api/api_msgpack.cpp`): a frame loop over one persistent
 /// handler, in bb's single wire framing — `[u32 len][u64 request_id][payload]`, the length
-/// covering id and payload, each response echoing its request id. The same stream therefore
-/// replays over a file, stdin, a socket or shared memory, against bb or against this.
-/// Responses go to stdout; everything else this process prints goes to stderr.
+/// covering id and payload, each response echoing its request id, so a captured stream replays
+/// against bb or against this. Responses go to stdout; everything else this process prints goes
+/// to stderr. A `.sock` or `.shm` path is served live instead ([`msgpack_serve`]).
 fn msgpack_run(input_path: &str) {
     use bb_ref::msgpack::generated::bb_server::handle_request;
     use bb_ref::msgpack::handler::BbRefHandler;
     use std::io::{Read, Write};
 
-    // Startup, not first-command: the largest served circuit is the 2^23 rollup root, and the
-    // ECCVM's Grumpkin IPA runs at 2^16. The handler owns the pool; nothing is global.
-    let srs = bb_ref::base::srs::Srs::load((1 << 23) + 2, 1 << 16);
-    bb_ref::base::timing::phase("srs preload");
+    #[cfg(not(target_family = "wasm"))]
+    if input_path.ends_with(".sock") || input_path.ends_with(".shm") {
+        msgpack_serve(input_path);
+        return;
+    }
+
+    let srs = preload_srs();
 
     let mut input: Box<dyn Read> = if input_path == "-" || input_path.is_empty() {
         Box::new(std::io::stdin())
@@ -182,6 +186,34 @@ fn msgpack_run(input_path: &str) {
         out.write_all(&response).unwrap();
         out.flush().unwrap();
     }
+}
+
+/// Startup, not first-command: the largest served circuit is the 2^23 rollup root, and the
+/// ECCVM's Grumpkin IPA runs at 2^16. The handler owns the pool; nothing is global.
+fn preload_srs() -> bb_ref::base::srs::Srs {
+    let srs = bb_ref::base::srs::Srs::load((1 << 23) + 2, 1 << 16);
+    bb_ref::base::timing::phase("srs preload");
+    srs
+}
+
+/// bb `execute_msgpack_run` over a live transport: ipc-runtime's server, the one bb serves with,
+/// chosen by the path's suffix (`.sock` UDS, `.shm` MPSC shared memory), so bb.js and any other
+/// ipc-runtime client spawn this in bb's place. Frames are whole msgpack requests, one handler
+/// serves every client in turn, and SIGTERM/SIGINT or the parent's death end the serve. bb's
+/// `--request-ring-size`/`--response-ring-size`/`--max-clients` are not read: ipc-runtime's
+/// defaults (4 MiB rings, which is what bb.js asks for) apply.
+#[cfg(not(target_family = "wasm"))]
+fn msgpack_serve(path: &str) {
+    use bb_ref::msgpack::generated::bb_server::handle_request;
+    use bb_ref::msgpack::handler::BbRefHandler;
+
+    let mut server = ipc_runtime::IpcServer::from_path(path).unwrap_or_else(|e| panic!("{e}"));
+    server.install_default_signal_handlers();
+    server.listen().unwrap_or_else(|e| panic!("{path}: {e}"));
+    eprintln!("bb-ref msgpack serving {path}");
+    // After listen(): a client's connect is accepted while the SRS loads, rather than retried.
+    let mut handler = BbRefHandler::new(preload_srs());
+    server.run(|_client_id, request| handle_request(&mut handler, request));
 }
 
 /// The prover streams gigabytes of short-lived multi-megabyte buffers through malloc; on 4KB

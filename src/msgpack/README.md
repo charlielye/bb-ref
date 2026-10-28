@@ -3,9 +3,11 @@
 # msgpack — the wire protocol
 
 How the outside world talks to bb-ref: bb's msgpack command protocol, served byte-compatibly, so
-a node configured to spawn `bb` can spawn `bb-ref msgpack run` instead and never notice. Frames
-are `[u32 len][u64 request_id][payload]`, read from a file or stdin — bb's framing on every
-transport, and the one the conformance corpus records (see [docs/conformance.md](../../docs/conformance.md)).
+a node configured to spawn `bb` can spawn `bb-ref msgpack run` instead and never notice. A `.sock`
+or `.shm` `--input` is served live through ipc-runtime, bb's own transport (bb.js's
+`NativeUnixSocket` and `NativeSharedMemory` backends spawn it as `msgpack run --input <path>`).
+A file or stdin is replayed as `[u32 len][u64 request_id][payload]` frames, the framing the
+conformance corpus records (see [docs/conformance.md](../../docs/conformance.md)).
 The same handler also sits behind an in-process FFI for the bb-ref.js wasm module.
 
 *Unfamiliar name? Every recurring term is defined in [docs/glossary.md](../../docs/glossary.md).*
