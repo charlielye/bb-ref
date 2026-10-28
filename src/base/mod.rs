@@ -11,6 +11,7 @@ pub mod io;
 pub mod keccak;
 pub mod msm;
 pub mod poly;
+pub mod pool;
 pub mod poseidon2;
 pub mod poseidon2_params;
 pub mod rng;

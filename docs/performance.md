@@ -22,7 +22,7 @@ one instrumented run per prover. Ratios are bb-ref / bb (below 1 is better).
 |---|---|---|---|
 | chonk **native**, wall | 45.83 s | 21.12 s | **0.46×** (per flow 0.38–0.50) |
 | chonk native, proving-only | 41.51 s | 19.83 s | 0.48× (0.39–0.52) |
-| chonk native, peak RSS (per-flow range) | 0.26–0.69 GB | 0.29–0.75 GB | **1.08–1.31×** (behind) |
+| chonk native, peak RSS (per-flow range; 2026-10-28, big-block arena) | 0.25–0.70 GB | 0.21–0.56 GB | **0.77–0.88×** |
 | chonk **wasm/V8** (node 24), wall | 86.17 s | 58.43 s | **0.68×** (0.48–0.76) |
 | chonk wasm/V8, proving-only | 77.08 s | 54.62 s | 0.71× (0.48–0.81) |
 | chonk wasm/V8, peak linear memory (per-flow range) | 0.22–0.66 GB | 0.20–0.53 GB | **0.81–0.94×** |
@@ -31,9 +31,11 @@ one instrumented run per prover. Ratios are bb-ref / bb (below 1 is better).
 | rollup corpus, peak RSS (same run) | 12.56 GB | 12.89 GB | 1.03× (behind) |
 
 Measured 2026-10-23 at the pin `1117683`, bb-ref `7c9e511`, except the rollup rows, which predate
-the repin and have not been re-run. Native memory is the one goal not met: bb's native peak RSS fell
-at this pin (by 10–20% per flow, storage_proof 0.87 → 0.69 GB) while bb-ref's did not, leaving bb-ref 8–31% above it.
-Under V8, the browser-relevant shape, bb-ref uses less memory on every flow.
+the repin and have not been re-run, and the native RSS row, re-measured 2026-10-28 on the same box
+after the big-block arena (`src/base/pool.rs`; below) replaced glibc for allocations of 64 KiB and
+up. Before it bb-ref was 6–34% above bb on every flow with a live heap at or below bb's: glibc
+stranded freed buffers in per-thread arenas. bb-ref now uses less memory than bb on every flow,
+natively and under V8; the same run's wall was 0.47× (bb 47.40 s, bb-ref 22.11 s).
 
 **wasm module size** (the browser download; bb-ref.js's module against bb.js-api's threads module,
 as the [bench page](https://charlielye.github.io/bb-ref/) serves them, gzip -9):
@@ -235,11 +237,18 @@ ports of the [chonk-golf](https://github.com/olehmisar/chonk-golf) patch series 
 
 ### Allocator and runtime
 
-- **Native: transparent huge pages** via `glibc.malloc.hugetlb=1`, self-applied by one re-exec at
-  startup (`apply_hugepage_tunable` in `src/bin/bb-ref.rs`; a hand-set value wins). On 4 KB pages
-  the prover's multi-megabyte short-lived buffers cost millions of refaults. With it the system
-  allocator matches mimalloc's speed at about half its RSS; mimalloc remains an A/B feature
-  (`--features mimalloc`).
+- **Native: a big-block arena** (`src/base/pool.rs`, the global allocator). Allocations of 64 KiB and
+  up come from one process-wide address range, carved best-fit and coalesced, whose freed ranges
+  keep their pages for reuse; smaller ones stay in glibc. glibc either unmaps big buffers (so every
+  reuse refaults its pages: ~15M faults on the rollup subset) or strands them in the freeing
+  thread's arena (native RSS 6–34% above bb's on chonk, with a live heap at or below bb's). The
+  arena asks for transparent huge pages while at least half of the host's free memory is in 2 MiB
+  blocks, re-checked after every msgpack request (a fragmented host stalls every huge-page fault
+  in compaction: rollup root 39 s → 161 s); `BBREF_HUGEPAGES=0|1` overrides. On the 2026-10-28
+  A/B (8 threads chonk, 16 threads rollup subset; Zen 4 / Zen 3), against the glibc
+  `hugetlb=1` re-exec it replaces: storage_proof 3.98 → 3.97 s / 6.01 → 5.95 s at 751 → 578 MiB,
+  transfer_0 1.32 → 1.33 s / 1.94 → 1.93 s at 295 → 220 MiB, rollup subset 42.2 → 43.7 s /
+  55.5 → 57.2 s at 12.51 → 11.88 GiB. mimalloc remains an A/B feature (`--features mimalloc`).
 - **wasm: `src/base/wasm/alloc.rs`**, a correctness fix. V8 bounds-checks `memory.fill`/`memory.copy`
   against a per-thread cached memory size that another thread's `memory.grow` updates only
   asynchronously, so memsetting freshly grown pages can trap "out of bounds". Every heap op

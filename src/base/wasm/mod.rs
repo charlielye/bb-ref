@@ -19,7 +19,12 @@ mod adx;
 mod alloc;
 #[cfg(all(target_arch = "wasm32", not(feature = "heap-profile")))]
 pub use alloc::alloc_zeroed_par as alloc_zeroed;
-#[cfg(not(all(target_arch = "wasm32", not(feature = "heap-profile"))))]
+#[cfg(all(not(target_family = "wasm"), not(feature = "mimalloc"), not(feature = "heap-profile")))]
+pub use crate::base::pool::alloc_zeroed;
+#[cfg(not(any(
+    all(target_arch = "wasm32", not(feature = "heap-profile")),
+    all(not(target_family = "wasm"), not(feature = "mimalloc"), not(feature = "heap-profile"))
+)))]
 pub use std::alloc::alloc_zeroed;
 #[cfg(target_family = "wasm")]
 mod by29;

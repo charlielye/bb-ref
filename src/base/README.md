@@ -29,6 +29,7 @@ The central design move: [`field.rs`](field.rs)'s `FieldLike` and [`group.rs`](g
 | `vk.rs` | verification keys: three metadata fields + commitments, their codecs and hash |
 | `rng.rs` | prover randomness: OS by default, `BB_RNG_SEED` (bb's seeded engine) or `BB_RNG_TAPE_IN` (a recorded bb tape) for reproducible runs, mirroring bb's single global engine |
 | `generators.rs`, `io.rs` | derived Grumpkin generators, the on-disk proof format |
+| `pool.rs` | the native global allocator: glibc below 64 KiB, a reusing big-block arena (adaptive huge pages) above |
 | `timing.rs`, `bench.rs` | the opt-in `BBREF_TIMING` phase timer and `BBREF_BENCH` scope table (diffable against bb's `--print_bench`) |
 
 **Field backends.** `Fr`/`Fq` are always arkworks' `Fp` container, but the `MontConfig` underneath
