@@ -217,14 +217,20 @@ fn msgpack_serve(path: &str) {
 }
 
 /// The prover streams gigabytes of short-lived multi-megabyte buffers through malloc; on 4KB
-/// pages the page faults and TLB misses of that cycle cost ~40% wall on the rollup base circuit
-/// (mimalloc's entire advantage was that it madvises its segments MADV_HUGEPAGE). glibc has the
-/// same behavior behind `glibc.malloc.hugetlb=1`, but only reads GLIBC_TUNABLES at process start,
-/// so re-exec once to apply it. Setting any `glibc.malloc.hugetlb` value by hand wins.
+/// pages the page faults and TLB misses of that cycle cost 27% wall on the rollup frames and 10%
+/// on a Chonk flow (mimalloc's entire advantage was that it madvises its segments MADV_HUGEPAGE).
+/// glibc has the same behavior behind `glibc.malloc.hugetlb=1`, but only reads GLIBC_TUNABLES at
+/// process start, so re-exec once to apply it. Setting any `glibc.malloc.hugetlb` value by hand
+/// wins.
+///
+/// Only on a host whose free memory is mostly in 2 MiB blocks: under THP's default `madvise`
+/// defrag, every huge-page fault the kernel cannot serve from a free block stalls in direct
+/// compaction, and on a long-running host with fragmented memory that made the rollup root 1.5x
+/// slower than without huge pages (sumcheck fold 0.8 s -> 19.6 s).
 #[cfg(target_os = "linux")]
 fn apply_hugepage_tunable() {
     let cur = std::env::var("GLIBC_TUNABLES").unwrap_or_default();
-    if cur.contains("glibc.malloc.hugetlb") {
+    if cur.contains("glibc.malloc.hugetlb") || !free_memory_unfragmented() {
         return;
     }
     let val = if cur.is_empty() {
@@ -240,6 +246,26 @@ fn apply_hugepage_tunable() {
             .env("GLIBC_TUNABLES", val)
             .exec();
     }
+}
+
+/// Whether at least half of the free memory in `/proc/buddyinfo` sits in blocks of 2 MiB or more
+/// (order 9 and up on 4 KiB pages), the ones a huge-page fault takes without compacting. An
+/// unreadable file counts as unfragmented.
+#[cfg(target_os = "linux")]
+fn free_memory_unfragmented() -> bool {
+    let Ok(info) = std::fs::read_to_string("/proc/buddyinfo") else { return true };
+    let (mut free, mut huge) = (0u64, 0u64);
+    for line in info.lines() {
+        // "Node 0, zone   Normal  <free blocks of order 0> <order 1> ..."
+        for (order, count) in line.split_whitespace().skip(4).enumerate() {
+            let pages = count.parse::<u64>().unwrap_or(0) << order;
+            free += pages;
+            if order >= 9 {
+                huge += pages;
+            }
+        }
+    }
+    2 * huge >= free
 }
 
 fn main() {
