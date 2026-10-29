@@ -81,7 +81,7 @@ fn mock_proof_fields(acir_public_inputs: usize, ipa: bool) -> Vec<Fr> {
         // bb runs `RollupIO::add_default` on a scratch builder and copies its public input values:
         // eight zeros then the random claim (challenge, evaluation, commitment halves).
         let scratch = Rc::new(RefCell::new(Builder::new()));
-        let (claim, _ipa_proof) = create_random_valid_ipa_claim_and_proof(&scratch);
+        let (claim, _ipa_proof) = create_random_valid_ipa_claim_and_proof(&scratch, &GrumpkinKey::new(POLY_LENGTH));
         fields.extend(std::iter::repeat(Fr::from(0u64)).take(8));
         let v = claim.value();
         fields.extend(<Fq as Transcriptable<Fr>>::to_fields(&v.challenge));
@@ -127,15 +127,17 @@ fn mock_proof_fields(acir_public_inputs: usize, ipa: bool) -> Vec<Fr> {
 /// proof/vk are only ever used for witness-predicate substitution, which never triggers on the
 /// protocol circuits (predicates are constant). Only the randomness matters for byte parity: three
 /// gate values, one value per ACIR public input, then `RollupIO::add_default`'s random IPA claim.
-/// Instance construction and non-ZK proving draw nothing (M2/B0), so the scratch prove is skipped.
-fn arbitrary_valid_proof_draws(ctx_template: &Ctx, acir_public_inputs: usize, ipa: bool) {
-    let _ = ctx_template;
+/// Instance construction and non-ZK proving draw nothing (M2/B0), so the scratch prove is skipped,
+/// and so is the random claim's commitment and IPA proof: only its polynomial and opening point
+/// are drawn.
+fn arbitrary_valid_proof_draws(acir_public_inputs: usize, ipa: bool) {
     for _ in 0..3 + acir_public_inputs {
         let _: Fr = global_field();
     }
     if ipa {
-        let scratch = std::rc::Rc::new(std::cell::RefCell::new(crate::circuit::Builder::new()));
-        let _ = crate::rollup::add_default_rollup_io(&scratch);
+        for _ in 0..POLY_LENGTH + 1 {
+            let _: Fq = global_field();
+        }
     }
 }
 
@@ -146,6 +148,7 @@ pub fn process_honk_recursion_constraints(
     avm_constraints: &[HonkRecursionConstraint],
     is_write_vk: bool,
     has_ipa_claim: bool,
+    srs: &crate::base::srs::Srs,
 ) {
     let mut points: Option<PairingPoints<StdUltraBn254>> = None;
     let mut nested: Vec<(IpaClaimCt, Vec<FieldT>)> = Vec::new();
@@ -159,7 +162,7 @@ pub fn process_honk_recursion_constraints(
         );
         is_root_rollup |= c.proof_type == ROOT_ROLLUP_HONK;
         if !is_write_vk {
-            arbitrary_valid_proof_draws(ctx, c.public_inputs.len(), has_ipa(c.proof_type));
+            arbitrary_valid_proof_draws(c.public_inputs.len(), has_ipa(c.proof_type));
         }
         if is_write_vk {
             let ipa = has_ipa(c.proof_type);
@@ -259,7 +262,7 @@ pub fn process_honk_recursion_constraints(
             ctx,
             &proof,
             &columns,
-            &crate::base::srs::Srs::default(),
+            srs,
             &mut crate::base::rng::GlobalProxy,
         );
         if !out.all_checks_passed && !is_write_vk {
@@ -274,7 +277,7 @@ pub fn process_honk_recursion_constraints(
 
     if has_ipa_claim {
         crate::base::timing::phase("      rec: pre-ipa");
-        let ck = GrumpkinKey::new(POLY_LENGTH);
+        let ck = srs.grumpkin_key(POLY_LENGTH);
         crate::base::timing::phase("      rec: grumpkin key");
         let mut accumulators: Vec<_> = nested
             .into_iter()
@@ -302,7 +305,7 @@ pub fn process_honk_recursion_constraints(
                 accumulate(&ck, a1, a2)
             }
             1 => prove_accumulator_claim(&ck, accumulators.pop().unwrap()),
-            0 => create_random_valid_ipa_claim_and_proof(ctx),
+            0 => create_random_valid_ipa_claim_and_proof(ctx, &ck),
             n => panic!("too many nested IPA accumulators: {n}"),
         };
         crate::base::timing::phase("      rec: ipa claim+proof");
@@ -320,7 +323,7 @@ pub fn process_honk_recursion_constraints(
         assert!(openings.is_empty(), "unreachable: root rollup with chonk openings");
         // bb `perform_full_IPA_verification`: accumulate the two nested claims, then fully verify
         // the accumulated claim in-circuit (DefaultIO; no IPA proof rides on the circuit).
-        let ck = GrumpkinKey::new(POLY_LENGTH);
+        let ck = srs.grumpkin_key(POLY_LENGTH);
         let mut accumulators: Vec<_> = nested
             .into_iter()
             .map(|(claim, proof)| {
@@ -334,7 +337,7 @@ pub fn process_honk_recursion_constraints(
         let (claim, ipa_proof) = accumulate(&ck, a1, a2);
         let proof_fields: Vec<FieldT> = ipa_proof.iter().map(|f| FieldT::from_witness(ctx, *f)).collect();
         let mut t = StdlibTranscript::from_proof(&proof_fields);
-        crate::rollup::ipa_recursive::full_verify_ct(ctx, &claim, &mut t);
+        crate::rollup::ipa_recursive::full_verify_ct(ctx, &claim, &mut t, &ck);
         match points {
             Some(pp) => {
                 set_ultra_pairing_points_public(&pp);

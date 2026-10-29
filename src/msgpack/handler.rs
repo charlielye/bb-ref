@@ -10,7 +10,7 @@ use super::generated::bb_server::{Handler, Responder};
 use super::generated::bb_types::*;
 use crate::acir::build_circuit_mega;
 use crate::acir::format::{decode_program_raw, decode_witness_raw};
-use crate::acir::lower::build_circuit_opts;
+use crate::acir::lower::build_circuit_srs;
 use crate::base::field::{to_bytes_be, Fr as FrField, U256};
 use crate::base::keccak::u256_to_bytes_be;
 use crate::base::poseidon2::{self, Hasher};
@@ -238,7 +238,7 @@ fn circuit_prove_impl(cmd: BbCircuitProve, srs: &Srs) -> Result<BbCircuitProveRe
     let mut rng = GlobalProxy;
     let witness = decode_witness_raw(&cmd.witness, &mut rng);
     crate::base::timing::phase("cmd: decode");
-    let builder = build_circuit_opts(&circuit, Some(&witness), ipa);
+    let builder = build_circuit_srs(&circuit, Some(&witness), ipa, srs);
     crate::base::timing::phase("cmd: build");
     if let Some(msg) = &builder.failed {
         return Err(format!("circuit is not satisfied: {msg}"));
@@ -328,7 +328,7 @@ fn circuit_compute_vk_impl(cmd: BbCircuitComputeVk, srs: &Srs) -> Result<BbCircu
     let keccak = flavor.name.contains("Keccak");
     let circuit = decode_program_raw(&cmd.circuit.bytecode);
     let mut rng = GlobalProxy;
-    let mut builder = build_circuit_opts(&circuit, None, ipa);
+    let mut builder = build_circuit_srs(&circuit, None, ipa, srs);
     let inst = ProverInstance::from_builder(flavor, &mut builder, &mut rng);
     let ck = srs.bn254_key(inst.max_end_index);
     let d = if keccak {

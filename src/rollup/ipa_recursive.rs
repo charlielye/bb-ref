@@ -206,7 +206,7 @@ fn prove_challenge_poly_opening(ck: &GrumpkinKey, claim: &IpaClaimCt, challenge_
 /// bb `IPA::full_verify_recursive`: reduce, then recompute `G_zero` from the round challenges by
 /// an in-circuit MSM over the (constant) SRS. The first SRS point is handled via a plain scalar
 /// mul so the plookup-table rows stay within `2^23` (bb's comment on table sizing).
-pub fn full_verify_ct(ctx: &Ctx, claim: &IpaClaimCt, t: &mut StdlibTranscript) {
+pub fn full_verify_ct(ctx: &Ctx, claim: &IpaClaimCt, t: &mut StdlibTranscript, srs: &GrumpkinKey) {
     let acc = reduce_verify_ct(ctx, claim, t);
     let round_challenges_inv = &acc.u_challenges_inv;
     let mut claimed_g_zero = acc.comm;
@@ -229,7 +229,6 @@ pub fn full_verify_ct(ctx: &Ctx, claim: &IpaClaimCt, t: &mut StdlibTranscript) {
         }
         std::mem::swap(&mut previous_round_s, &mut current_round_s);
     }
-    let srs = GrumpkinKey::new(POLY_LENGTH);
     let first_term = CycleGroup::batch_mul(
         &[CycleGroup::constant(srs.points[0])],
         &[CycleScalar::from_bigfield(&s_vec[0])],
@@ -302,8 +301,7 @@ pub fn prove_accumulator_claim(ck: &GrumpkinKey, acc: IpaAccumulatorCt) -> (IpaC
 
 /// bb `IPA::create_random_valid_ipa_claim_and_proof`: a random polynomial opened at a random point,
 /// drawn from the global engine, witnessed into the circuit.
-pub fn create_random_valid_ipa_claim_and_proof(ctx: &Ctx) -> (IpaClaimCt, Vec<Fr>) {
-    let ck = GrumpkinKey::new(POLY_LENGTH);
+pub fn create_random_valid_ipa_claim_and_proof(ctx: &Ctx, ck: &GrumpkinKey) -> (IpaClaimCt, Vec<Fr>) {
     let poly: Vec<Fq> = (0..POLY_LENGTH).map(|_| crate::base::rng::global_field()).collect();
     let x: Fq = crate::base::rng::global_field();
     let eval: Fq = poly.iter().rev().fold(Fq::from(0u64), |acc, c| acc * x + c);
@@ -311,8 +309,8 @@ pub fn create_random_valid_ipa_claim_and_proof(ctx: &Ctx) -> (IpaClaimCt, Vec<Fr
     let commitment = super::ipa::msm_affine(&ck.points[..poly.len()], &poly);
     crate::base::timing::phase("        fake-ipa: commit msm");
     let mut t = ipa::NativeTranscript::new();
-    ipa::add_claim_to_hash_buffer_prover(&ck, &poly, &x, &eval, &mut t);
-    ipa::compute_opening_proof(&ck, &poly, &x, &mut t);
+    ipa::add_claim_to_hash_buffer_prover(ck, &poly, &x, &eval, &mut t);
+    ipa::compute_opening_proof(ck, &poly, &x, &mut t);
     crate::base::timing::phase("        fake-ipa: opening proof");
     // bb creates the stdlib witnesses in order: commitment, challenge, evaluation.
     let commitment_ct = CycleGroup::from_witness(ctx, commitment);

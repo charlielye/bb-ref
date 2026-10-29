@@ -170,7 +170,8 @@ pub fn set_rollup_io_public(pairing: &PairingPoints<StdUltraBn254>, claim: &ipa_
 /// a random valid IPA claim, and its proof left for `builder.ipa_proof`.
 pub fn add_default_rollup_io(ctx: &Ctx) -> Vec<crate::base::Fr> {
     // bb constructs the random claim first; the pairing points and claim publish afterwards.
-    let (claim, ipa_proof) = ipa_recursive::create_random_valid_ipa_claim_and_proof(ctx);
+    let ck = crate::base::GrumpkinKey::new(ipa::POLY_LENGTH);
+    let (claim, ipa_proof) = ipa_recursive::create_random_valid_ipa_claim_and_proof(ctx, &ck);
     crate::stdlib::io::set_default_pairing_points_public(ctx);
     claim.set_public();
     ctx.borrow_mut().ipa_proof = ipa_proof.clone();

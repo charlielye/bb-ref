@@ -1110,6 +1110,17 @@ pub fn build_circuit(circuit: &Circuit, witness: Option<&[Fr]>) -> Builder {
 /// `--ipa_accumulation` flag): backend circuits recursively verifying UltraRollup proofs
 /// accumulate the nested IPA claims and publish `RollupIO`.
 pub fn build_circuit_opts(circuit: &Circuit, witness: Option<&[Fr]>, has_ipa_claim: bool) -> Builder {
+    build_circuit_srs(circuit, witness, has_ipa_claim, &crate::base::srs::Srs::default())
+}
+
+/// [`build_circuit_opts`] with the server's preloaded SRS pools, for the commitment keys recursion
+/// constraints need while building (IPA accumulation, the AVM verifier's inner proofs).
+pub fn build_circuit_srs(
+    circuit: &Circuit,
+    witness: Option<&[Fr]>,
+    has_ipa_claim: bool,
+    srs: &crate::base::srs::Srs,
+) -> Builder {
     let _g_cls = crate::base::bench::Scope::new("acir::classify");
     let (mut c, public_inputs) = classify(circuit, false);
     drop(_g_cls);
@@ -1132,6 +1143,7 @@ pub fn build_circuit_opts(circuit: &Circuit, witness: Option<&[Fr]>, has_ipa_cla
             &avm_recursion,
             is_write_vk,
             has_ipa_claim,
+            srs,
         );
         crate::base::timing::phase("build: recursion+io");
     }
