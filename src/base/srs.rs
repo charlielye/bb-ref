@@ -22,34 +22,15 @@ pub fn crs_dir() -> PathBuf {
 /// big-endian). The first point is the generator (1, 2).
 ///
 /// Montgomery-converting 2 x 8.4M coordinates dominates a full-size load and recurs on every
-/// one-shot CLI prove, so the converted form is cached next to the source (bb keeps the same
-/// cache as `bn254_g1.mont`): raw little-endian Montgomery limbs, 64 bytes per point.
+/// one-shot CLI prove, so the converted form is cached next to the source as `bn254_g1.ark.mont`:
+/// raw little-endian Montgomery limbs, 64 bytes per point. bb's own cache, `bn254_g1.mont`, has the
+/// same layout with coordinates only reduced to `[0, 2p)`; it is read (and canonicalised) when ours
+/// is missing or too short, so a read-only `~/.bb-crs` bb has populated serves both.
 pub fn load_bn254_g1(n: usize) -> Vec<G1Affine> {
     use rayon::prelude::*;
     let mont_path = crs_dir().join("bn254_g1.ark.mont");
-    if let Ok(f) = std::fs::File::open(&mont_path) {
-        if f.metadata().map_or(0, |m| m.len()) >= (n * 64) as u64 {
-            let mut buf = vec![0u8; n * 64];
-            let mut f = f;
-            f.read_exact(&mut buf).expect("short read on Montgomery SRS cache");
-            // The cache holds 2^256-domain Montgomery limbs (the shared cross-target format).
-            let fix = crate::base::wasm::shared_to_stored();
-            let limbs = |c: &[u8]| {
-                let mut l = [0u64; 4];
-                for (k, w) in c.chunks(8).enumerate() {
-                    l[k] = u64::from_le_bytes(w.try_into().unwrap());
-                }
-                let v = unsafe { std::mem::transmute::<[u64; 4], Fq>(l) };
-                match fix {
-                    Some(f) => v * f,
-                    None => v,
-                }
-            };
-            let points: Vec<G1Affine> = buf
-                .par_chunks(64)
-                .map(|c| G1Affine::new_unchecked(limbs(&c[0..32]), limbs(&c[32..64])))
-                .collect();
-            assert_eq!(points[0], G1Affine::generator(), "corrupt Montgomery SRS cache");
+    for path in [&mont_path, &crs_dir().join("bn254_g1.mont")] {
+        if let Some(points) = read_mont_cache(path, n) {
             return points;
         }
     }
@@ -87,6 +68,48 @@ pub fn load_bn254_g1(n: usize) -> Vec<G1Affine> {
         }
     }
     points
+}
+
+/// `n` points from a Montgomery-limb SRS cache, if it holds that many. Coordinates in `[p, 2p)`
+/// (bb's coarse reduction) are brought into `[0, p)`.
+fn read_mont_cache(path: &std::path::Path, n: usize) -> Option<Vec<G1Affine>> {
+    use ark_ff::PrimeField;
+    use rayon::prelude::*;
+    let mut f = std::fs::File::open(path).ok()?;
+    if f.metadata().map_or(0, |m| m.len()) < (n * 64) as u64 {
+        return None;
+    }
+    let mut buf = vec![0u8; n * 64];
+    f.read_exact(&mut buf).expect("short read on Montgomery SRS cache");
+    // The caches hold 2^256-domain Montgomery limbs (the shared cross-target format).
+    let fix = crate::base::wasm::shared_to_stored();
+    let p = Fq::MODULUS.0;
+    let limbs = |c: &[u8]| {
+        let mut l = [0u64; 4];
+        for (k, w) in c.chunks(8).enumerate() {
+            l[k] = u64::from_le_bytes(w.try_into().unwrap());
+        }
+        if (0..4).rev().map(|k| l[k].cmp(&p[k])).find(|o| o.is_ne()) != Some(std::cmp::Ordering::Less) {
+            let mut borrow = false;
+            for k in 0..4 {
+                let (d, b1) = l[k].overflowing_sub(p[k]);
+                let (d, b2) = d.overflowing_sub(borrow as u64);
+                l[k] = d;
+                borrow = b1 || b2;
+            }
+        }
+        let v = unsafe { std::mem::transmute::<[u64; 4], Fq>(l) };
+        match fix {
+            Some(f) => v * f,
+            None => v,
+        }
+    };
+    let points: Vec<G1Affine> = buf
+        .par_chunks(64)
+        .map(|c| G1Affine::new_unchecked(limbs(&c[0..32]), limbs(&c[32..64])))
+        .collect();
+    assert_eq!(points[0], G1Affine::generator(), "corrupt Montgomery SRS cache {}", path.display());
+    Some(points)
 }
 
 /// The Grumpkin SRS from `grumpkin_g1_v2.flat.dat` (same raw 64-byte layout, coordinates in bn254 Fr).
@@ -274,6 +297,24 @@ mod tests {
     #[test]
     fn g2_is_valid() {
         let _ = bn254_g2();
+    }
+
+    /// bb's own cache (`bn254_g1.mont`, coordinates in `[0, 2p)`) decodes to the `.dat` points.
+    /// Skipped where bb has not written one.
+    #[test]
+    fn bb_mont_cache_matches_dat() {
+        let mont = crs_dir().join("bn254_g1.mont");
+        let n = 1 << 16;
+        let Some(points) = read_mont_cache(&mont, n) else {
+            eprintln!("no {} with {n} points; skipped", mont.display());
+            return;
+        };
+        let mut raw = vec![0u8; n * 64];
+        std::fs::File::open(crs_dir().join("bn254_g1.dat")).unwrap().read_exact(&mut raw).unwrap();
+        for (i, c) in raw.chunks(64).enumerate() {
+            let p = G1Affine::new_unchecked(from_bytes_be::<Fq>(&c[0..32]), from_bytes_be::<Fq>(&c[32..64]));
+            assert_eq!(points[i], p, "point {i}");
+        }
     }
 
     /// The ingress path against the real setup files: one compressed chunk decompresses to exactly
