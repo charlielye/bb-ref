@@ -117,6 +117,7 @@ where
         batched_len: l.max_partial_length + 1,
         shifted_sources: (l.to_be_shifted_start()..l.to_be_shifted_end()).collect(),
         num_entities: l.num_all(),
+        translator: false,
     };
     let sc = verify_sumcheck::<C>(&rels, &spec, &mut t, &alphas, &params, &gate_challenges);
     let mut verified = sc.verified;
@@ -163,6 +164,57 @@ where
         verified,
         transcript: t,
     })
+}
+
+/// bb `AvmRecursiveFlavor::TemplatedTranscript::hash_avm_transcript`: the AVM verifier's transcript
+/// operations replayed without any verification arithmetic (one gate challenge rather than its
+/// powers, no relation or PCS work), then the final state as a challenge. The outer circuit of the
+/// two-layer verifier uses it to bind the inner circuit to this proof and these public inputs.
+pub fn hash_avm_transcript<C: Curve>(ctx: &<C::Fr as FieldLike>::Ctx, proof: &[C::TF], public_inputs: &[Vec<C::Fr>]) -> C::Fr
+where
+    C::Fr: FieldLike<Native = Fr> + crate::base::codec::Transcriptable<C::TF>,
+    C::TF: crate::base::codec::ChallengeField + FieldLike<Native = Fr, Ctx = <C::Fr as FieldLike>::Ctx>,
+{
+    let l = layout();
+    let log_n = l.max_trace_log_size;
+    let vk_hash = <C::TF as FieldLike>::from_witness(ctx, l.vk_hash);
+    vk_hash.fix();
+    let mut t = Transcript::<C::TF, C::Hash>::new();
+    t.load_proof(proof);
+    t.add_to_hash_buffer("avm_vk_hash", &vk_hash);
+    for column in public_inputs {
+        for v in column {
+            t.add_to_hash_buffer("public_input", v);
+        }
+    }
+    for _ in 0..l.num_wires {
+        let _: C::G = t.receive("wire");
+    }
+    let _: Vec<C::Fr> = t.challenges(&["beta", "gamma"]);
+    for _ in 0..l.num_derived {
+        let _: C::G = t.receive("derived");
+    }
+    let _: C::Fr = t.challenge("Sumcheck:alpha");
+    let _: C::Fr = t.challenge("Sumcheck:gate_challenge");
+    for i in 0..log_n {
+        let _: Vec<C::Fr> = t.receive_vec("Sumcheck:univariate", l.max_partial_length + 1);
+        let _: C::Fr = t.challenge(&format!("Sumcheck:u_{i}"));
+    }
+    let _: Vec<C::Fr> = t.receive_vec("Sumcheck:evaluations", l.num_all());
+    let _: Vec<C::Fr> = t.short_challenges(&vec!["unshifted"; l.num_unshifted()]);
+    let _: C::Fr = t.challenge("rho");
+    for _ in 1..log_n {
+        let _: C::G = t.receive("Gemini:FOLD");
+    }
+    let _: C::Fr = t.challenge("Gemini:r");
+    for _ in 1..=log_n {
+        let _: C::Fr = t.receive("Gemini:a");
+    }
+    let _: C::Fr = t.challenge("Shplonk:nu");
+    let _: C::G = t.receive("Shplonk:Q");
+    let _: C::Fr = t.challenge("Shplonk:z");
+    let _: C::G = t.receive("KZG:W");
+    t.challenge("final_transcript_state")
 }
 
 /// Native AVM verification over the public-input columns (bb `AvmVerifier::verify_proof`).

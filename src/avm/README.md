@@ -2,10 +2,12 @@
 
 # avm — the AVM verifier
 
-bb's AVM2 proofs checked without bb's AVM prover: natively (`avm/verifier.rs::verify`) and
-in-circuit, as the inner MegaAvm circuit of bb's two-layer AVM recursive verifier
-(`recursive.rs`), the circuit the public tx base rollup's AVM recursion constraint builds and proves.
-Both are gate-exact against bb; there is no AVM prover or simulator here.
+bb's AVM2 proofs checked without bb's AVM prover: natively (`verifier.rs::verify`) and as bb's
+two-layer AVM recursive verifier, the public tx base rollup's AVM recursion constraint. Its inner
+MegaAvm circuit (`recursive.rs`) verifies the AVM proof with the EC work deferred to the op queue;
+`two_layer.rs` proves that circuit (MegaAvm Honk, then Goblin: ECCVM, TripleIPA, Translator, on one
+transcript) and verifies those proofs in the rollup's Ultra circuit. All gate-exact against bb;
+there is no AVM prover or simulator here.
 
 *Unfamiliar name? Every recurring term is defined in [docs/glossary.md](../../docs/glossary.md).*
 
@@ -29,6 +31,7 @@ order ([docs/gate-exactness.md](../../docs/gate-exactness.md)).
 | `poseidon2_perm.rs` | the one relation bb hand-writes (`vm2/optimized/`) instead of generating |
 | `verifier.rs` | the verifier, generic over native and in-circuit types |
 | `recursive.rs` | bb's inner MegaAvm circuit: op-queue prefix, witnesses, fixed VK, the verifier, published outputs |
+| `two_layer.rs` | the inner proofs, the outer verification of them, and the transcript-hash binding (bb `TwoLayerAvmRecursiveVerifier`) |
 
 ## What makes this layer delicate
 
@@ -38,6 +41,8 @@ order ([docs/gate-exactness.md](../../docs/gate-exactness.md)).
   re-pin fails the regen loudly.
 - **Re-pin:** `dev/regen_avm.py`, then `tools/regen/regen_avm.sh` (needs `pin/build.sh --avm-lib`).
   `tests/avm.rs` then checks a real bb proof verifies, tampering is rejected, and bb-ref's inner
-  circuit equals bb's dump: every polynomial, public input and the VK.
+  circuit equals bb's dump: every polynomial, public input and the VK. `tests/public_base.rs`
+  (fixture: `tools/regen/regen_public_base.sh` on a recorded PublicTxBase request) checks the whole
+  rollup: VK, and with seeded randomness the proof, byte-identical to bb's.
 - **The inner circuit's VK is a constant of the public base rollup.** Any gate difference here is a
   protocol change, not a performance one.

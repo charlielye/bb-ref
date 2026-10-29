@@ -326,13 +326,24 @@ pub fn generate_witness_values(op: &UltraOp, previous_accumulator: &Fq, v: &Fq, 
 impl TranslatorCircuit {
     /// bb `TranslatorCircuitBuilder(v, x, op_queue)`: feeds the ZK-reconstructed ultra ops.
     pub fn new(batching_challenge_v: Fq, evaluation_input_x: Fq, q: &EccOpQueue) -> Self {
+        Self::with_mode(batching_challenge_v, evaluation_input_x, q, false)
+    }
+
+    /// bb `TranslatorCircuitBuilder(v, x, op_queue, avm_mode)`: in AVM mode the queue carries its own
+    /// leading no-op and random ops (queued by `GoblinAvm`), there is no ZK prefix and no trailing
+    /// random ops.
+    pub fn with_mode(batching_challenge_v: Fq, evaluation_input_x: Fq, q: &EccOpQueue, avm_mode: bool) -> Self {
         let mut c = Self {
             wires: vec![Vec::new(); NUM_WIRES],
             num_gates: 0,
             batching_challenge_v,
             evaluation_input_x,
         };
-        c.feed(&q.get_zk_reconstructed_ultra_ops());
+        if avm_mode {
+            c.feed(&q.get_no_zk_reconstructed_ultra_ops(), 0);
+        } else {
+            c.feed(&q.get_zk_reconstructed_ultra_ops(), NUM_RANDOM_OPS_END);
+        }
         c
     }
 
@@ -440,7 +451,7 @@ impl TranslatorCircuit {
 
     /// bb `feed_ecc_op_queue_into_circuit`: two zero rows, the leading random ops, then every real op
     /// as an accumulation gate (no-ops carry the accumulator through), then the trailing random ops.
-    fn feed(&mut self, ops: &[UltraOp]) {
+    fn feed(&mut self, ops: &[UltraOp], random_ops_end: usize) {
         if ops.is_empty() {
             return;
         }
@@ -456,7 +467,8 @@ impl TranslatorCircuit {
         for op in &ops[NUM_NO_OPS_START..NUM_NO_OPS_START + NUM_RANDOM_OPS_START] {
             self.process_random_op(op);
         }
-        let ops_end = ops.len() - NUM_RANDOM_OPS_END;
+        assert!(ops.len() >= NUM_NO_OPS_START + NUM_RANDOM_OPS_START + random_ops_end, "op queue too small for the Translator");
+        let ops_end = ops.len() - random_ops_end;
         let span = &ops[NUM_NO_OPS_START + NUM_RANDOM_OPS_START..ops_end];
         // Horner from the last op gives the accumulator *before* each op.
         let mut accumulator_trace = Vec::new();

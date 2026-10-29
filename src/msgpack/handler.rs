@@ -235,11 +235,6 @@ fn circuit_prove_impl(cmd: BbCircuitProve, srs: &Srs) -> Result<BbCircuitProveRe
 
     crate::base::timing::phase("cmd: start");
     let circuit = decode_program_raw(&cmd.circuit.bytecode);
-    #[cfg(feature = "bb-avm")]
-    if super::bb_avm::verifies_avm(&circuit) {
-        drop(circuit);
-        return super::bb_avm::call(|bb| bb.circuit_prove(cmd.circuit, &cmd.witness, cmd.settings));
-    }
     let mut rng = GlobalProxy;
     let witness = decode_witness_raw(&cmd.witness, &mut rng);
     crate::base::timing::phase("cmd: decode");
@@ -332,11 +327,6 @@ fn circuit_compute_vk_impl(cmd: BbCircuitComputeVk, srs: &Srs) -> Result<BbCircu
     let (flavor, ipa) = select_flavor(&cmd.settings)?;
     let keccak = flavor.name.contains("Keccak");
     let circuit = decode_program_raw(&cmd.circuit.bytecode);
-    #[cfg(feature = "bb-avm")]
-    if super::bb_avm::verifies_avm(&circuit) {
-        drop(circuit);
-        return super::bb_avm::call(|bb| bb.circuit_compute_vk(cmd.circuit, cmd.settings));
-    }
     let mut rng = GlobalProxy;
     let mut builder = build_circuit_opts(&circuit, None, ipa);
     let inst = ProverInstance::from_builder(flavor, &mut builder, &mut rng);

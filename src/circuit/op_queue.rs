@@ -385,8 +385,18 @@ impl EccOpQueue {
     /// fixed-location append — no-op padding up to the fixed slot (plus the preamble) before the
     /// last subtable.
     pub fn get_zk_reconstructed_ultra_ops(&self) -> Vec<UltraOp> {
-        assert!(self.ultra_ops.current.is_empty() && !self.zk_ops.is_empty());
-        let mut ops = self.zk_ops.clone();
+        assert!(!self.zk_ops.is_empty(), "ZK ops must be constructed before reconstructing the Ultra table");
+        self.reconstructed(true)
+    }
+
+    /// bb `get_no_zk_reconstructed_ultra_ops` (Goblin for the AVM, which queues its own prefix).
+    pub fn get_no_zk_reconstructed_ultra_ops(&self) -> Vec<UltraOp> {
+        self.reconstructed(false)
+    }
+
+    fn reconstructed(&self, include_zk_ops: bool) -> Vec<UltraOp> {
+        assert!(self.ultra_ops.current.is_empty(), "current subtable should be merged first");
+        let mut ops = if include_zk_ops { self.zk_ops.clone() } else { Vec::new() };
         let n = self.num_subtables();
         let sequential = n - self.fixed_append_offset.is_some() as usize;
         for (i, t) in self.ultra_ops.tables[..sequential].iter().enumerate() {
@@ -398,7 +408,8 @@ impl EccOpQueue {
         match self.fixed_append_offset {
             None => {}
             Some(offset) => {
-                let target = offset + self.zk_ops.len() + APPEND_TRACE_OFFSET / NUM_ROWS_PER_OP;
+                let zk = if include_zk_ops { self.zk_ops.len() } else { 0 };
+                let target = offset + zk + APPEND_TRACE_OFFSET / NUM_ROWS_PER_OP;
                 assert!(ops.len() <= target);
                 ops.resize(target, UltraOp::default());
                 ops.extend(self.ultra_ops.tables[n - 1].iter().cloned());

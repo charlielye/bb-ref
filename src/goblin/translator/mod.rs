@@ -6,6 +6,7 @@
 pub mod builder;
 pub mod check;
 pub mod key;
+pub mod proof;
 pub mod relations;
 
 use crate::base::field::{from_hex, FieldLike};

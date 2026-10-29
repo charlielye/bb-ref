@@ -42,6 +42,7 @@ pub fn sumcheck_spec() -> SumcheckSpec {
         committed: true,
         batched_len: 24,
         num_entities: NUM_ALL_ENTITIES,
+        translator: false,
         shifted_sources: TO_BE_SHIFTED.iter().map(|e| *e as usize).collect(),
     }
 }

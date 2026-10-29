@@ -24,12 +24,12 @@ These are the project's binding goals — changes should be judged against them:
 | **Documentation an engineer can descend**: each component's purpose without the math; first use of any odd name links to its explanation | [tour](docs/tour.md) → module READMEs → [glossary](docs/glossary.md) |
 | **A maintenance process for bb divergence**: diagnose and resolve drift quickly as bb moves | the pin + regen + divergence ladder ([docs/oracle.md](docs/oracle.md)) |
 
-Out of scope at this time: proving the AVM (public-transaction execution) — bb-ref solves for
-pure private-tx rollups. It does verify AVM proofs, natively and as bb's in-circuit AVM verifier
-([src/avm](src/avm/README.md)). Native builds with `--features bb-avm` link bb's own AVM in-process instead
-(`./pin/build.sh --avm-lib` first) and hand it the AVM commands and the circuits that verify an
-AVM proof, so one binary serves the whole prover. Also out of scope: Solidity verifier
-generation, Starknet oracle hash.
+Out of scope at this time: proving the AVM itself (public-transaction execution). bb-ref
+verifies AVM proofs, natively and in-circuit, so it builds and proves the public tx base rollup,
+which recursively verifies one through bb's two-layer AVM verifier ([src/avm](src/avm/README.md)).
+Native builds with `--features bb-avm` link bb's own AVM in-process (`./pin/build.sh --avm-lib`
+first) for the three AVM commands, so one binary serves the whole prover. Also out of scope:
+Solidity verifier generation, Starknet oracle hash.
 
 ## Results
 

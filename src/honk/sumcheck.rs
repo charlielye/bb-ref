@@ -309,6 +309,10 @@ pub struct SumcheckSpec {
     /// polynomials in the round table and are read one row ahead of their source.
     pub shifted_sources: Vec<usize>,
     pub num_entities: usize,
+    /// The Translator's split evaluations (bb `IsTranslatorFlavor`): the mini-circuit evaluations
+    /// arrive after round `LOG_MINI_CIRCUIT_SIZE - 1`, the full-circuit ones at the end, and the
+    /// rest are reconstructed from them.
+    pub translator: bool,
 }
 
 impl SumcheckSpec {
@@ -324,6 +328,7 @@ impl SumcheckSpec {
             batched_len: layout.batched_len,
             num_entities: layout.num_all(),
             shifted_sources: layout.shifted.iter().map(|e| layout.idx(*e)).collect(),
+            translator: false,
         }
     }
     pub fn with_witness_end(mut self, witness_end: usize) -> Self {
@@ -449,6 +454,7 @@ pub fn verify_sumcheck<C: Curve>(
     let mut partial_evaluation_result = F::<C>::one();
     let mut round_commitments = Vec::new();
     let mut round_evaluations: Vec<[F<C>; 3]> = Vec::new();
+    let mut minicircuit: Vec<F<C>> = Vec::new();
     for round in 0..spec.virtual_log_n {
         if spec.committed {
             round_commitments.push(t.receive(&format!("Sumcheck:univariate_comm_{round}")));
@@ -471,9 +477,20 @@ pub fn verify_sumcheck<C: Curve>(
             partial_evaluation_result *= &gate_separator_factor(&u, &gate_challenges[round]);
             challenge.push(u);
         }
+        if spec.translator && round == crate::goblin::translator::LOG_MINI_CIRCUIT_SIZE - 1 {
+            minicircuit = t.receive_vec(
+                "Sumcheck:minicircuit_evaluations",
+                crate::goblin::translator::NUM_MINICIRCUIT_EVALUATIONS,
+            );
+        }
     }
 
-    let evals: Vec<F<C>> = t.receive_vec("Sumcheck:evaluations", spec.num_entities);
+    let evals: Vec<F<C>> = if spec.translator {
+        let full = t.receive_vec("Sumcheck:evaluations", crate::goblin::translator::FULL_CIRCUIT_ENTITIES.len());
+        crate::goblin::translator::complete_evaluations(&full, &minicircuit, &challenge)
+    } else {
+        t.receive_vec("Sumcheck:evaluations", spec.num_entities)
+    };
 
     let mut full_value = full_relation_value(
         rels,
@@ -2270,6 +2287,7 @@ mod tests {
             batched_len: 4,
             shifted_sources: vec![],
             num_entities: 2,
+            translator: false,
         }
     }
 

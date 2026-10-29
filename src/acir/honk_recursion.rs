@@ -143,6 +143,7 @@ pub fn process_honk_recursion_constraints(
     ctx: &Ctx,
     constraints: &[HonkRecursionConstraint],
     chonk_constraints: &[HonkRecursionConstraint],
+    avm_constraints: &[HonkRecursionConstraint],
     is_write_vk: bool,
     has_ipa_claim: bool,
 ) {
@@ -231,6 +232,46 @@ pub fn process_honk_recursion_constraints(
         });
     }
 
+    // bb `create_avm2_recursion_constraints_goblin`: the inner VK is fixed, so the predicate cannot
+    // disable the opcode and the constraint's key fields are unused.
+    for c in avm_constraints {
+        if is_write_vk {
+            let mut b = ctx.borrow_mut();
+            for (&idx, v) in c.proof.iter().zip(mock_avm_proof_fields()) {
+                b.set_variable(idx, v);
+            }
+        }
+        let proof: Vec<FieldT> = c.proof.iter().map(|&i| FieldT::from_witness_index(ctx, i)).collect();
+        let flat: Vec<FieldT> = c.public_inputs.iter().map(|&i| FieldT::from_witness_index(ctx, i)).collect();
+        let lengths = crate::avm::tables::layout().public_input_column_lengths;
+        assert_eq!(
+            flat.len(),
+            lengths.iter().sum::<usize>(),
+            "Flattened public inputs vector size does not match the expected combined length."
+        );
+        let mut columns = Vec::with_capacity(lengths.len());
+        let mut at = 0;
+        for len in lengths {
+            columns.push(flat[at..at + len].to_vec());
+            at += len;
+        }
+        let out = crate::avm::two_layer::verify_two_layer(
+            ctx,
+            &proof,
+            &columns,
+            &crate::base::srs::Srs::default(),
+            &mut crate::base::rng::GlobalProxy,
+        );
+        if !out.all_checks_passed && !is_write_vk {
+            ctx.borrow_mut().failure("AVM recursion verification failed");
+        }
+        openings.push(out.triple_ipa_opening);
+        points = Some(match points {
+            None => out.points_accumulator,
+            Some(acc) => aggregate_pair(acc, out.points_accumulator),
+        });
+    }
+
     if has_ipa_claim {
         crate::base::timing::phase("      rec: pre-ipa");
         let ck = GrumpkinKey::new(POLY_LENGTH);
@@ -310,6 +351,25 @@ pub fn process_honk_recursion_constraints(
         }
     }
     ctx.borrow_mut().finalize_public_inputs();
+}
+
+/// bb `create_mock_avm_proof_without_pub_inputs`: the AVM's mock Oink (witness commitments, the
+/// DefaultIO public inputs dropped) and decider proofs at `MEGA_AVM_LOG_N` rounds.
+fn mock_avm_proof_fields() -> Vec<Fr> {
+    let l = crate::avm::tables::layout();
+    let log_n = crate::honk::flavor::MEGA_AVM_LOG_N;
+    let one = <crate::base::G1Affine as Transcriptable<Fr>>::to_fields(&crate::base::G1Affine::generator());
+    let commitments = |fields: &mut Vec<Fr>, n: usize| (0..n).for_each(|_| fields.extend_from_slice(&one));
+    let seq = |fields: &mut Vec<Fr>, n: usize| fields.extend((1..=n as u64).map(Fr::from));
+    let mut fields = Vec::with_capacity(l.proof_length);
+    commitments(&mut fields, l.num_witness());
+    seq(&mut fields, log_n * (l.max_partial_length + 1));
+    seq(&mut fields, l.num_all());
+    commitments(&mut fields, log_n - 1);
+    seq(&mut fields, log_n);
+    commitments(&mut fields, 2);
+    assert_eq!(fields.len(), l.proof_length, "AVM mock proof length must match COMPUTED_AVM_PROOF_LENGTH_IN_FIELDS");
+    fields
 }
 
 /// bb `create_mock_honk_vk<MegaZKFlavor, HidingKernelIO>`.

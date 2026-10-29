@@ -139,6 +139,7 @@ struct Constraints {
     hn_recursion: Vec<RecursionConstraint>,
     honk_recursion: Vec<crate::acir::honk_recursion::HonkRecursionConstraint>,
     chonk_recursion: Vec<crate::acir::honk_recursion::HonkRecursionConstraint>,
+    avm_recursion: Vec<crate::acir::honk_recursion::HonkRecursionConstraint>,
 }
 
 impl Constraints {
@@ -522,7 +523,7 @@ fn classify(circuit: &Circuit, is_mega: bool) -> (Constraints, Vec<u32>) {
                     use crate::acir::honk_recursion as hr;
                     if matches!(
                         r.proof_type,
-                        hr::HONK | hr::ROLLUP_HONK | hr::ROOT_ROLLUP_HONK | hr::CHONK
+                        hr::HONK | hr::ROLLUP_HONK | hr::ROOT_ROLLUP_HONK | hr::CHONK | hr::AVM
                     ) {
                         assert!(
                             matches!(r.predicate, FunctionInput::Constant(_)),
@@ -541,6 +542,8 @@ fn classify(circuit: &Circuit, is_mega: bool) -> (Constraints, Vec<u32>) {
                         };
                         if r.proof_type == hr::CHONK {
                             c.chonk_recursion.push(constraint);
+                        } else if r.proof_type == hr::AVM {
+                            c.avm_recursion.push(constraint);
                         } else {
                             c.honk_recursion.push(constraint);
                         }
@@ -1113,18 +1116,20 @@ pub fn build_circuit_opts(circuit: &Circuit, witness: Option<&[Fr]>, has_ipa_cla
     assert!(c.hn_recursion.is_empty(), "recursion constraints need a Mega circuit");
     let honk_recursion = std::mem::take(&mut c.honk_recursion);
     let chonk_recursion = std::mem::take(&mut c.chonk_recursion);
+    let avm_recursion = std::mem::take(&mut c.avm_recursion);
     let is_write_vk = witness.is_none();
     let builder = Builder::from_acir(&witness_or_zeros(witness, &c), public_inputs, is_write_vk);
     crate::base::timing::phase("build: from_acir");
     let ctx = lower(builder, c);
     crate::base::timing::phase("build: lower opcodes");
-    if honk_recursion.is_empty() && chonk_recursion.is_empty() && !has_ipa_claim {
+    if honk_recursion.is_empty() && chonk_recursion.is_empty() && avm_recursion.is_empty() && !has_ipa_claim {
         add_default_pairing_points(&mut ctx.borrow_mut());
     } else {
         super::honk_recursion::process_honk_recursion_constraints(
             &ctx,
             &honk_recursion,
             &chonk_recursion,
+            &avm_recursion,
             is_write_vk,
             has_ipa_claim,
         );
@@ -1185,7 +1190,7 @@ pub fn build_circuit_mega(
     let (mut c, public_inputs) = classify(circuit, true);
     drop(_g_cls2);
     assert!(
-        c.honk_recursion.is_empty() && c.chonk_recursion.is_empty(),
+        c.honk_recursion.is_empty() && c.chonk_recursion.is_empty() && c.avm_recursion.is_empty(),
         "Honk recursion constraints need an Ultra circuit"
     );
     let hn_recursion = std::mem::take(&mut c.hn_recursion);

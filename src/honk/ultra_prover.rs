@@ -37,13 +37,39 @@ where
     }
     let ck = srs.bn254_key(key_size);
     let mut t = Transcript::<C::TF, C::Hash>::new();
+    prove_ultra_on::<C>(inst, vk, &ck, &mut t, rng);
+    let mut proof = t.export_proof();
+    // bb `UltraProver_::construct_proof`: a RollupIO circuit's IPA proof rides after the Honk proof.
+    for f in &inst.ipa_proof {
+        proof.extend(crate::base::codec::Transcriptable::<C::TF>::to_fields(f));
+    }
+    proof
+}
 
-    let oink = prove_oink_as::<C>(inst, vk, &ck, &mut t, rng, true);
+/// The Honk proof written onto a caller's transcript (bb `UltraProver_(key, vk, transcript)`; the
+/// two-layer AVM prover continues it into the Goblin proofs). `ck` must cover the instance.
+pub fn prove_ultra_on<C>(
+    inst: &mut ProverInstance,
+    vk: &Vk<C>,
+    ck: &crate::base::CommitmentKey,
+    t: &mut Transcript<C::TF, C::Hash>,
+    rng: &mut dyn Rng,
+) where
+    C: Curve<Fr = Fr, G = G1Affine>,
+    Fr: crate::base::codec::Transcriptable<C::TF> + crate::base::codec::FromChallenge<C::TF>,
+    G1Affine: crate::base::codec::Transcriptable<C::TF>,
+{
+    let mut flavor_local = *inst.flavor;
+    if !flavor_local.use_padding {
+        flavor_local.virtual_log_n = inst.log_n();
+    }
+    let flavor = &flavor_local;
+    let oink = prove_oink_as::<C>(inst, vk, ck, t, rng, true);
     let betas: Vec<Fr> = t.dyadic_powers("Sumcheck:gate_challenge", flavor.virtual_log_n);
 
     let mut zk = flavor
         .has_zk
-        .then(|| ZkData::<C>::new(flavor.virtual_log_n, &mut t, &ck, rng));
+        .then(|| ZkData::<C>::new(flavor.virtual_log_n, t, ck, rng));
     let rels = HonkRelations {
         flavor,
         layout: &inst.layout,
@@ -53,7 +79,7 @@ where
         &rels,
         &SumcheckSpec::honk(flavor, &inst.layout).with_witness_end(inst.max_end_index),
         &inst.polys,
-        &mut t,
+        t,
         &oink.alpha,
         &betas,
         &oink.params,
@@ -67,22 +93,16 @@ where
     let to_be_shifted: Vec<&_> = layout.shifted.iter().map(|e| inst.poly(*e)).collect();
     let libra = zk
         .as_ref()
-        .map(|z| small_subgroup_ipa_prove::<C>(z, &sc.challenge, &sc.libra_evaluation, &ck, &mut t, rng));
+        .map(|z| small_subgroup_ipa_prove::<C>(z, &sc.challenge, &sc.libra_evaluation, ck, t, rng));
     let claim = shplemini_prove::<C>(
         inst.dyadic_size,
         &unshifted,
         &to_be_shifted,
         &sc.challenge,
-        &ck,
-        &mut t,
+        ck,
+        t,
         libra.as_ref(),
         &[],
     );
-    kzg_open::<C>(claim, &ck, &mut t);
-    let mut proof = t.export_proof();
-    // bb `UltraProver_::construct_proof`: a RollupIO circuit's IPA proof rides after the Honk proof.
-    for f in &inst.ipa_proof {
-        proof.extend(crate::base::codec::Transcriptable::<C::TF>::to_fields(f));
-    }
-    proof
+    kzg_open::<C>(claim, ck, t);
 }

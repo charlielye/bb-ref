@@ -28,6 +28,7 @@ Three proofs tie it together:
 | `eccvm/relations.rs`, `prover.rs`, `verifier.rs`, `check.rs` | the ECCVM relations, its ZK sumcheck pipeline (verifier generic, so it also runs in-circuit for the tube), and the row-checker |
 | `translator/builder.rs`, `key.rs` | two rows per op with limbs, accumulators, quotients, micro-limbs; then the 2^17-row concatenated proving key |
 | `translator/relations.rs`, `check.rs` | decomposition/accumulation/permutation relations and their row-checker |
+| `translator/proof.rs` | the Translator's pre-sumcheck round (shared with chonk's joint proof) and its standalone ZK proof, as Goblin proves it for the AVM |
 | `ipa.rs` | the Grumpkin inner-product argument + TripleIPA, which opens the ECCVM's three claims with one proof |
 
 All three provers reuse [`honk`](../honk/README.md)'s sumcheck and PCS machinery — this module contributes

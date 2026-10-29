@@ -1,7 +1,8 @@
-//! bb itself, linked in-process (the `bb-avm` feature), for what bb-ref does not prove: the AVM
-//! commands and circuits that recursively verify an AVM proof (the public tx base rollup). Commands
-//! go to bb's FFI entry (`bb_ipc_ffi_entry`, from bb's `bb-external-avm` archive) as the same msgpack
-//! a client would send bb, so one binary serves the whole prover surface.
+//! bb itself, linked in-process (the `bb-avm` feature), for what bb-ref does not do: the AVM
+//! commands (`avm_prove`, `avm_verify`, `avm_check_circuit`). Commands go to bb's FFI entry
+//! (`bb_ipc_ffi_entry`, from bb's `bb-external-avm` archive) as the same msgpack a client would
+//! send bb, so one binary serves the whole prover surface. Circuits that recursively verify an AVM
+//! proof (the public tx base rollup) are bb-ref's own ([`crate::avm::two_layer`]).
 
 use super::generated::backend::Backend;
 use super::generated::bb_client::BbApi;
@@ -54,13 +55,4 @@ pub fn forward<R>(respond: Responder<R>, f: impl FnOnce(&mut BbApi<InProcess>) -
         Ok(r) => respond.ok(r),
         Err(message) => respond.error(message),
     }
-}
-
-/// Whether the circuit recursively verifies an AVM proof, which only bb's AVM recursive verifier builds.
-pub fn verifies_avm(circuit: &crate::acir::format::Circuit) -> bool {
-    use crate::acir::format::{BlackBoxFuncCall, Opcode};
-    circuit.opcodes.iter().any(|op| {
-        matches!(op, Opcode::BlackBoxFuncCall(BlackBoxFuncCall::RecursiveAggregation(r))
-            if r.proof_type == crate::acir::honk_recursion::AVM)
-    })
 }

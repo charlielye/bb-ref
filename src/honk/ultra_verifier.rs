@@ -37,6 +37,8 @@ pub struct Reduction<C: Curve> {
     pub pcs_pairing_points: PairingPoints<C>,
     /// Sumcheck and (ZK) Libra consistency checks.
     pub succeeded: bool,
+    /// Commitments to all unshifted entities in layout order (bb `VerifierCommitments`).
+    pub commitments: Vec<C::G>,
 }
 
 /// bb `UltraVerifier_::reduce_to_pairing_check`. `proof` = public inputs followed by the Honk proof.
@@ -47,15 +49,28 @@ pub fn reduce_to_pairing_check<C: Curve>(
     proof: &[C::TF],
     ctx: &<C::Fr as FieldLike>::Ctx,
 ) -> Reduction<C> {
+    let mut t = Transcript::<C::TF, C::Hash>::new();
+    reduce_to_pairing_check_on(flavor, vk, vk_hash, proof, ctx, &mut t)
+}
+
+/// [`reduce_to_pairing_check`] on a caller's transcript, which `proof` is loaded onto (bb's
+/// two-layer AVM verifier continues the same transcript into the Goblin proofs).
+pub fn reduce_to_pairing_check_on<C: Curve>(
+    flavor: &FlavorDesc,
+    vk: &Vk<C>,
+    vk_hash: &C::TF,
+    proof: &[C::TF],
+    ctx: &<C::Fr as FieldLike>::Ctx,
+    t: &mut Transcript<C::TF, C::Hash>,
+) -> Reduction<C> {
     let layout = flavor.layout();
     let overhead = proof_length_without_public_inputs::<C>(flavor, &layout);
     assert!(proof.len() >= overhead, "proof too short: {} < {overhead}", proof.len());
     let num_public_inputs = proof.len() - overhead;
     let log_n = flavor.virtual_log_n;
-
-    let mut t = Transcript::<C::TF, C::Hash>::from_proof(proof);
+    t.load_proof(proof);
     crate::base::timing::phase("        hv: start");
-    let oink = verify_oink::<C>(flavor, &layout, vk, vk_hash, &mut t, num_public_inputs, true);
+    let oink = verify_oink::<C>(flavor, &layout, vk, vk_hash, t, num_public_inputs, true);
     crate::base::timing::phase("        hv: oink");
     let gate_challenges: Vec<C::Fr> = t.dyadic_powers("Sumcheck:gate_challenge", log_n);
 
@@ -74,7 +89,7 @@ pub fn reduce_to_pairing_check<C: Curve>(
     let sc = verify_sumcheck::<C>(
         &rels,
         &SumcheckSpec::honk(flavor, &layout),
-        &mut t,
+        t,
         &alphas,
         &oink.params,
         &gate_challenges,
@@ -109,7 +124,7 @@ pub fn reduce_to_pairing_check<C: Curve>(
         &batcher,
         &sc.challenge,
         &one,
-        &mut t,
+        t,
         &repeated,
         &libra_commitments,
         &sc.libra_evaluation,
@@ -118,11 +133,12 @@ pub fn reduce_to_pairing_check<C: Curve>(
     );
     crate::base::timing::phase("        hv: shplemini");
     let pcs_pairing_points =
-        kzg_reduce_verify_batch_opening_claim::<C>(shplemini.claim, &mut t, final_pcs_msm_size(flavor, &layout));
+        kzg_reduce_verify_batch_opening_claim::<C>(shplemini.claim, t, final_pcs_msm_size(flavor, &layout));
     Reduction {
         public_inputs: oink.public_inputs,
         pcs_pairing_points,
         succeeded: sc.verified && shplemini.consistency_checked,
+        commitments: oink.commitments,
     }
 }
 
