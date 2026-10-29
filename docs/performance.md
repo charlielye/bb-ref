@@ -249,6 +249,24 @@ ports of the [chonk-golf](https://github.com/olehmisar/chonk-golf) patch series 
   `hugetlb=1` re-exec it replaces: storage_proof 3.98 → 3.97 s / 6.01 → 5.95 s at 751 → 578 MiB,
   transfer_0 1.32 → 1.33 s / 1.94 → 1.93 s at 295 → 220 MiB, rollup subset 42.2 → 43.7 s /
   55.5 → 57.2 s at 12.51 → 11.88 GiB. mimalloc remains an A/B feature (`--features mimalloc`).
+  The arena is glibc Linux only (it relies on Linux's zero-on-`MADV_DONTNEED`); macOS, iOS,
+  Android and wasm keep the system allocator.
+- **Zeroed accumulators are written before they are read** (`Polynomial::linear_combination`,
+  `add_linear_quotients`, the MSM bucket histograms). Reading a fresh zeroed page maps the kernel's
+  shared zero page; the `+=` that follows is a copy-on-write fault that sends a TLB-flush IPI to
+  every core running the process. That was 5.3M TLB flushes on the rollup subset under glibc (bb:
+  2k, because bb memsets its polynomials) and 680k under the arena; zeroing each chunk just before
+  accumulating into it leaves 28k, at no memory cost. Blanket pre-faulting of every zeroed
+  allocation saves a further 5 s of kernel time there but costs 190 MiB of peak RSS, so it is not
+  done.
+- **Without huge pages** (2026-10-29, both binaries; chonk 8 threads, rollup subset 16; Zen 4 /
+  Zen 3; bb → bb-ref): storage_proof 10.85 → 4.22 s / 11.49 → 6.26 s at 662 → 575 / 683 → 574 MiB,
+  transfer_0 2.82 → 1.43 s / 2.95 → 2.07 s at 258 → 217 / 255 → 214 MiB, rollup subset 85.4 →
+  48.0 s / 91.5 → 69.0 s at 11.82 → 11.88 / 11.80 → 11.87 GiB. On the rollup subset bb-ref takes
+  39–41% fewer page faults, and its kernel time for memory (faults, `munmap`/`madvise`) is 39%
+  below bb's on Zen 3; its total system time is still higher there (38 vs 30 s) because rayon's
+  idle workers spin in `sched_yield` (~20 s of it), which is scheduling, not memory. Huge pages are
+  then an extra on top: rollup subset 48.0 → 39.3 s / 69.0 → 56.1 s.
 - **wasm: `src/base/wasm/alloc.rs`**, a correctness fix. V8 bounds-checks `memory.fill`/`memory.copy`
   against a per-thread cached memory size that another thread's `memory.grow` updates only
   asynchronously, so memsetting freshly grown pages can trap "out of bounds". Every heap op

@@ -662,8 +662,6 @@ where
     // --- Gemini ---
     let rho: Fr = t.challenge("rho");
     // A_0 = F + G/X with F = sum rho^i f_i, G = sum rho^{k+j} g_j
-    let mut batched_unshifted = Poly::zero(n);
-    let mut batched_to_be_shifted = Poly::zero(n);
     let mut scalar = Fr::one();
     let mut unshifted_terms = Vec::with_capacity(unshifted.len());
     let mut shifted_terms = Vec::with_capacity(to_be_shifted.len());
@@ -676,8 +674,8 @@ where
         scalar *= rho;
     }
     let _gb = crate::base::bench::Scope::new("Gemini::batch_polynomials");
-    batched_unshifted.add_scaled_batch(&unshifted_terms);
-    batched_to_be_shifted.add_scaled_batch(&shifted_terms);
+    let batched_unshifted = Poly::linear_combination(n, &unshifted_terms);
+    let batched_to_be_shifted = Poly::linear_combination(n, &shifted_terms);
     drop(_gb);
     let _gf = crate::base::bench::Scope::new("Gemini::compute_fold_polynomials");
     let (f, g) = (&batched_unshifted.coeffs, &batched_to_be_shifted.coeffs);

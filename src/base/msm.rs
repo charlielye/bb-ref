@@ -220,6 +220,9 @@ where
         let ptr = SendPtr(counts.as_mut_ptr());
         task_ranges.par_iter().enumerate().for_each(|(t, r)| {
             let ptr = &ptr;
+            // A task's cells are contiguous; writing them first keeps the `+=` below off the zero
+            // page (see `Polynomial::linear_combination`).
+            unsafe { std::slice::from_raw_parts_mut(ptr.0.add(cell(t, 0, 0)), num_windows * stride).fill(0) };
             for i in r.clone() {
                 if !points[i].is_zero() {
                     let mut bump = |w: usize, d: i32| unsafe {

@@ -109,6 +109,23 @@ impl<F: FieldLike> Polynomial<F> {
     where
         F: Send + Sync + 'static,
     {
+        self.scaled_batch(terms, false);
+    }
+    /// `sum_i scalar_i * poly_i` over `n` rows. Each chunk is zeroed just before it is accumulated
+    /// into, so a fresh page is first touched by a write: reading it first maps the kernel's shared
+    /// zero page, and the write that follows is a copy-on-write fault that flushes every core's TLB.
+    pub fn linear_combination(n: usize, terms: &[(&Self, F)]) -> Self
+    where
+        F: Send + Sync + 'static,
+    {
+        let mut acc = Self::zero(n);
+        acc.scaled_batch(terms, true);
+        acc
+    }
+    fn scaled_batch(&mut self, terms: &[(&Self, F)], fresh: bool)
+    where
+        F: Send + Sync + 'static,
+    {
         assert_eq!(self.start, 0);
         for (p, _) in terms {
             assert!(p.len() <= self.len(), "add_scaled_batch: term is longer");
@@ -118,6 +135,9 @@ impl<F: FieldLike> Polynomial<F> {
         let ends: Vec<usize> = terms.par_iter().map(|(p, _)| p.end_index().saturating_sub(p.start)).collect();
         const CHUNK: usize = WINDOW_ALIGN;
         self.coeffs.par_chunks_mut(CHUNK).enumerate().for_each(|(c, chunk)| {
+            if fresh {
+                chunk.fill(F::zero());
+            }
             let start = c * CHUNK;
             // A term's rows from `start`: empty below its window (window starts are chunk-aligned).
             let srcs: Vec<(&[F], F)> = (terms.iter().zip(&ends))
@@ -207,7 +227,7 @@ fn horner<F: FieldLike>(coeffs: &[F], z: &F) -> F {
     acc
 }
 
-/// `q += sum_j s_j (p_j - v_j) / (X - x_j)` over terms `(p_j, x_j, v_j, s_j)`, asserting that every
+/// `q = sum_j s_j (p_j - v_j) / (X - x_j)` over terms `(p_j, x_j, v_j, s_j)`, asserting that every
 /// division is exact (bb `factor_roots` per term, then `add_scaled`). A term's quotient is
 /// `q_i = sum_{k>i} p_k x^{k-i-1}`: each chunk of indices Horner-evaluates its own coefficients in
 /// parallel, a serial scan from the top gives the value of `q` at every chunk boundary, then the
@@ -234,6 +254,8 @@ pub fn add_linear_quotients<F: FieldLike + Copy + Send + Sync>(q: &mut [F], term
         .enumerate()
         .for_each(|(c, (out, b))| {
             let lo = c * CHUNK;
+            // Written before it is read (see `Polynomial::linear_combination`).
+            out.fill(F::zero());
             for ((p, x, v, s), mut carry) in terms.iter().zip(b) {
                 for i in (lo..(lo + out.len()).min(p.len().saturating_sub(1))).rev() {
                     carry = p[i + 1] + *x * carry;

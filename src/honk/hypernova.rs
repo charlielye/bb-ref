@@ -179,17 +179,17 @@ pub fn instance_to_accumulator(
 
     let layout = &inst.layout;
     let (uc, sh) = batching_challenges::<Bn254>(t, layout.num_unshifted(), layout.num_shifted());
-    let mut non_shifted_polynomial = Poly::zero(inst.dyadic_size);
-    let mut shifted_polynomial = Poly::zero(inst.dyadic_size);
     let mut non_shifted_evaluation = Fr::zero();
     let mut shifted_evaluation = Fr::zero();
-    non_shifted_polynomial.add_scaled_batch(
+    let non_shifted_polynomial = Poly::linear_combination(
+        inst.dyadic_size,
         &uc.iter()
             .enumerate()
             .map(|(i, c)| (&inst.polys[i], *c))
             .collect::<Vec<_>>(),
     );
-    shifted_polynomial.add_scaled_batch(
+    let shifted_polynomial = Poly::linear_combination(
+        inst.dyadic_size,
         &sh.iter()
             .enumerate()
             .map(|(j, c)| (inst.poly(layout.shifted[j]), *c))

@@ -1,5 +1,5 @@
-//! The native global allocator: glibc for everything under 64 KiB, and one process-wide arena for
-//! everything at or above it.
+//! The native global allocator on glibc Linux: glibc for everything under 64 KiB, and one
+//! process-wide arena for everything at or above it. Elsewhere the system allocator serves all.
 //!
 //! The prover streams gigabytes of multi-megabyte buffers (polynomials, folded sumcheck columns,
 //! MSM and commitment scratch), many of them freed on rayon workers. glibc either returns such a
@@ -25,7 +25,8 @@
 //! sits in 2 MiB blocks, re-checked after every request. `BBREF_HUGEPAGES=0|1` overrides.
 
 #[cfg(all(
-    not(target_family = "wasm"),
+    target_os = "linux",
+    target_env = "gnu",
     not(feature = "mimalloc"),
     not(feature = "heap-profile")
 ))]
@@ -319,8 +320,14 @@ mod imp {
         p
     }
 
-    /// Give the pages of every free range, and of the used-before top, back to the kernel.
+    /// Give the arena's free pages back to the kernel and re-decide its huge pages (`adapt`).
     pub fn trim() {
+        release_free();
+        adapt();
+    }
+
+    /// Give the pages of every free range, and of the used-before top, back to the kernel.
+    fn release_free() {
         let mut a = lock();
         let (base, top, hwm) = (a.base, a.top, a.hwm);
         // SAFETY: free ranges and the top are unallocated; dropping their pages leaves them zero.
@@ -339,13 +346,45 @@ mod imp {
     }
 
     /// Ask for (or stop asking for) transparent huge pages on the arena.
-    pub fn set_huge_pages(on: bool) {
+    fn set_huge_pages(on: bool) {
         let a = lock();
         if HUGE.swap(on, Relaxed) != on && a.base != 0 {
             let advice = if on { libc::MADV_HUGEPAGE } else { libc::MADV_NOHUGEPAGE };
             // SAFETY: advice on our own mapping.
             unsafe { libc::madvise(a.base as *mut libc::c_void, RESERVE, advice) };
         }
+    }
+
+    /// Ask for huge pages on the arena iff `BBREF_HUGEPAGES` says so, or, unset, iff free memory is
+    /// mostly unfragmented (`free_memory_unfragmented`).
+    pub fn adapt() {
+        let on = match std::env::var("BBREF_HUGEPAGES").as_deref() {
+            Ok("0") => false,
+            Ok("1") => true,
+            _ => free_memory_unfragmented(),
+        };
+        set_huge_pages(on);
+    }
+
+    /// Whether at least half of the free memory in `/proc/buddyinfo` sits in blocks of 2 MiB or more
+    /// (order 9 and up on 4 KiB pages), the ones a huge-page fault takes without compacting. An
+    /// unreadable file counts as fragmented.
+    fn free_memory_unfragmented() -> bool {
+        let Ok(info) = std::fs::read_to_string("/proc/buddyinfo") else {
+            return false;
+        };
+        let (mut free, mut huge) = (0u64, 0u64);
+        for line in info.lines() {
+            // "Node 0, zone   Normal  <free blocks of order 0> <order 1> ..."
+            for (order, count) in line.split_whitespace().skip(4).enumerate() {
+                let pages = count.parse::<u64>().unwrap_or(0) << order;
+                free += pages;
+                if order >= 9 {
+                    huge += pages;
+                }
+            }
+        }
+        free > 0 && 2 * huge >= free
     }
 
     #[cfg(test)]
@@ -399,77 +438,17 @@ mod imp {
     }
 }
 
-#[cfg(all(
-    not(target_family = "wasm"),
-    not(feature = "mimalloc"),
-    not(feature = "heap-profile")
-))]
-pub use imp::alloc_zeroed;
-
-/// Give the arena's free pages back to the kernel and re-decide its huge pages (`adapt`).
-#[cfg(all(
-    not(target_family = "wasm"),
-    not(feature = "mimalloc"),
-    not(feature = "heap-profile")
-))]
-pub fn trim() {
-    imp::trim();
-    adapt();
-}
-
-/// Ask for huge pages on the arena iff `BBREF_HUGEPAGES` says so, or, unset, iff free memory is
-/// mostly unfragmented (`free_memory_unfragmented`).
-#[cfg(all(
-    not(target_family = "wasm"),
-    not(feature = "mimalloc"),
-    not(feature = "heap-profile")
-))]
-pub fn adapt() {
-    let on = match std::env::var("BBREF_HUGEPAGES").as_deref() {
-        Ok("0") => false,
-        Ok("1") => true,
-        _ => free_memory_unfragmented(),
-    };
-    imp::set_huge_pages(on);
-}
-
-/// Whether at least half of the free memory in `/proc/buddyinfo` sits in blocks of 2 MiB or more
-/// (order 9 and up on 4 KiB pages), the ones a huge-page fault takes without compacting. An
-/// unreadable file (not Linux) counts as fragmented.
-#[cfg(all(
-    not(target_family = "wasm"),
-    not(feature = "mimalloc"),
-    not(feature = "heap-profile")
-))]
-fn free_memory_unfragmented() -> bool {
-    let Ok(info) = std::fs::read_to_string("/proc/buddyinfo") else {
-        return false;
-    };
-    let (mut free, mut huge) = (0u64, 0u64);
-    for line in info.lines() {
-        // "Node 0, zone   Normal  <free blocks of order 0> <order 1> ..."
-        for (order, count) in line.split_whitespace().skip(4).enumerate() {
-            let pages = count.parse::<u64>().unwrap_or(0) << order;
-            free += pages;
-            if order >= 9 {
-                huge += pages;
-            }
-        }
-    }
-    free > 0 && 2 * huge >= free
-}
-
-/// No arena under the other allocators.
+/// Elsewhere (macOS, iOS, Android, wasm, the A/B allocators) the system allocator serves everything.
 #[cfg(not(all(
-    not(target_family = "wasm"),
+    target_os = "linux",
+    target_env = "gnu",
     not(feature = "mimalloc"),
     not(feature = "heap-profile")
 )))]
-pub fn trim() {}
+mod imp {
+    pub use std::alloc::alloc_zeroed;
+    pub fn trim() {}
+    pub fn adapt() {}
+}
 
-#[cfg(not(all(
-    not(target_family = "wasm"),
-    not(feature = "mimalloc"),
-    not(feature = "heap-profile")
-)))]
-pub fn adapt() {}
+pub use imp::{adapt, alloc_zeroed, trim};
