@@ -24,8 +24,9 @@ These are the project's binding goals — changes should be judged against them:
 | **Documentation an engineer can descend**: each component's purpose without the math; first use of any odd name links to its explanation | [tour](docs/tour.md) → module READMEs → [glossary](docs/glossary.md) |
 | **A maintenance process for bb divergence**: diagnose and resolve drift quickly as bb moves | the pin + regen + divergence ladder ([docs/oracle.md](docs/oracle.md)) |
 
-Out of scope at this time: the AVM (public-transaction execution) — bb-ref solves for pure
-private-tx rollups. Native builds with `--features bb-avm` link bb's own AVM in-process instead
+Out of scope at this time: proving the AVM (public-transaction execution) — bb-ref solves for
+pure private-tx rollups. It does verify AVM proofs, natively and as bb's in-circuit AVM verifier
+([src/avm](src/avm/README.md)). Native builds with `--features bb-avm` link bb's own AVM in-process instead
 (`./pin/build.sh --avm-lib` first) and hand it the AVM commands and the circuits that verify an
 AVM proof, so one binary serves the whole prover. Also out of scope: Solidity verifier
 generation, Starknet oracle hash.
@@ -97,6 +98,7 @@ graph LR
 | [`goblin`](src/goblin/README.md) | merge, IPA/TripleIPA, ECCVM, Translator |
 | [`chonk`](src/chonk/README.md) | the IVC driver, joint MegaZK+Translator proof, kernel circuit logic, proof compression |
 | [`acir`](src/acir/README.md) | ACIR ingestion, protocol-opcode lowering, recursion constraints, write-VK mocks |
+| [`avm`](src/avm/README.md) | the AVM verifier, native and in-circuit, over relation tables generated from bb-pilcom's output |
 | [`rollup`](src/rollup/README.md) | backend-side recursion: in-circuit Ultra verifier, IPA accumulation, RollupIO |
 | [`msgpack`](src/msgpack/README.md) | bb's wire protocol: generated types + the command handler (`bb-ref msgpack run`) |
 | [`tests/`](tests) | differential suites (vs `tests/data/` fixtures) + standalone soundness/relations suites |

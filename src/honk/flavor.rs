@@ -561,6 +561,31 @@ pub static MEGA_ZK: FlavorDesc = FlavorDesc {
     use_padding: true,
 };
 
+/// The inner circuit of the two-layer AVM recursive verifier: arithmetic, delta-range, ECC-op and
+/// Poseidon2 gates only (bb `mega_avm_flavor.hpp`).
+pub static MEGA_AVM: FlavorDesc = FlavorDesc {
+    name: "MegaAvmFlavor",
+    relations: &[
+        Rel::Arithmetic,
+        Rel::Permutation,
+        Rel::DeltaRange,
+        Rel::EccOpQueue,
+        MEGA_POSEIDON2[0],
+        MEGA_POSEIDON2[1],
+        MEGA_POSEIDON2[2],
+        MEGA_POSEIDON2[3],
+        MEGA_POSEIDON2[4],
+    ],
+    has_zk: false,
+    has_gemini_masking: false,
+    virtual_log_n: MEGA_AVM_LOG_N,
+    trace_offset: 0,
+    batched_len_extra: 1,
+    use_padding: true,
+};
+
+/// bb `MEGA_AVM_LOG_N`: the padded sumcheck size of the AVM recursive verifier circuit.
+pub const MEGA_AVM_LOG_N: usize = 21;
 /// bb `CONST_FOLDING_LOG_N`: the padded sumcheck size of every folded (Mega) circuit.
 pub const CONST_FOLDING_LOG_N: usize = 24;
 /// bb `HIDING_KERNEL_LOG_N`: the padded size of the hiding kernel.
@@ -776,6 +801,16 @@ mod tests {
         );
         assert_eq!(l.batched_len, l.max_partial_len + 2);
         assert_eq!(l.shift_idx(Ent::w_l), 41);
+    }
+
+    /// Pinned against `mega_avm_flavor_generated.hpp`.
+    #[test]
+    fn mega_avm_layout_matches_bb() {
+        let l = MEGA_AVM.layout();
+        let expected: Vec<&str> = "q_m q_l q_r q_o q_4 q_c q_arith sigma_1 sigma_2 sigma_3 sigma_4 id_1 id_2 id_3 id_4 lagrange_first lagrange_last q_delta_range lagrange_ecc_op q_poseidon2_external q_poseidon2_external_initial q_poseidon2_quad_internal q_5 q_poseidon2_quad_internal_terminal q_poseidon2_transition_entry w_l w_r w_o w_4 z_perm ecc_op_wire_1 ecc_op_wire_2 ecc_op_wire_3 ecc_op_wire_4".split(' ').collect();
+        assert_eq!(names(&l.unshifted), expected);
+        assert_eq!((l.num_precomputed, l.num_witness, l.num_all()), (25, 9, 39));
+        assert_eq!(l.shift_idx(Ent::w_l), 34);
     }
 
     /// Pinned against `ultra_zk_flavor_generated.hpp`.

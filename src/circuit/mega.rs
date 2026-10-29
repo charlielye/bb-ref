@@ -7,7 +7,7 @@ use super::op_queue::{EccOpCode, UltraOp};
 use super::trace::{BlockId, GateRow, Kind};
 use crate::base::field::FieldLike;
 use crate::base::poseidon2::round_constants;
-use crate::base::{Fr, G1Affine, Rng};
+use crate::base::{Fq, Fr, G1Affine, Rng};
 
 pub const NUM_BUS_COLUMNS: usize = 7;
 pub const KERNEL_CALLDATA: usize = 0;
@@ -115,6 +115,10 @@ impl Builder {
     }
     pub fn queue_ecc_random_op(&mut self, rng: &mut dyn Rng) {
         let op = self.op_queue().write().unwrap().random_op_ultra_only(rng);
+        self.populate_ecc_op_wires(&op);
+    }
+    pub fn queue_ecc_hiding_op(&mut self, px: Fq, py: Fq) {
+        let op = self.op_queue().write().unwrap().append_hiding_op(px, py);
         self.populate_ecc_op_wires(&op);
     }
 

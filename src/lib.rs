@@ -6,6 +6,7 @@
 //! `msgpack` sits above all of them: bb's wire protocol (generated from the pin's schema) served
 //! over the same functions. Nothing below depends on it.
 pub mod acir;
+pub mod avm;
 pub mod base;
 pub mod chonk;
 pub mod circuit;

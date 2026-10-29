@@ -95,7 +95,7 @@ Re-pointing bb-ref at a new bb commit is a deliberate procedure, in this order:
    `make labs-yarn-project` (the mock-stack witness generator and the corpus driver). Download the
    pinned flows: `barretenberg/cpp/scripts/chonk_inputs.sh download
    barretenberg/cpp/chonk-pinned-flows` (where the regen scripts look; `BB_FLOWS` overrides).
-3. `dev/regen_msgpack.sh`, then every `tools/regen/regen_*.sh`: chonk flows, protocol, ultra, acir
+3. `dev/regen_msgpack.sh` and `dev/regen_avm.py`, then every `tools/regen/regen_*.sh`: chonk flows, protocol, ultra, acir
    (mock stack), merge, vk hashes, mega-app VKs, corpus (`--harvest` after any protocol change),
    and backend last (its rollup circuits are extracted from the corpus).
 4. Run the full suite and `tools/conformance.sh` on the new corpus.
