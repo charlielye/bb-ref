@@ -22,17 +22,15 @@ pub fn crs_dir() -> PathBuf {
 /// big-endian). The first point is the generator (1, 2).
 ///
 /// Montgomery-converting 2 x 8.4M coordinates dominates a full-size load and recurs on every
-/// one-shot CLI prove, so the converted form is cached next to the source as `bn254_g1.ark.mont`:
-/// raw little-endian Montgomery limbs, 64 bytes per point. bb's own cache, `bn254_g1.mont`, has the
-/// same layout with coordinates only reduced to `[0, 2p)`; it is read (and canonicalised) when ours
-/// is missing or too short, so a read-only `~/.bb-crs` bb has populated serves both.
+/// one-shot CLI prove, so the converted form is cached next to the source in bb's cache format,
+/// `bn254_g1.mont`: raw little-endian Montgomery limbs, 64 bytes per point. bb reduces coordinates
+/// only to `[0, 2p)`, so they are canonicalised on load; bb-ref writes canonical ones, which bb
+/// reads unchanged. One file thus serves both, including from a read-only `~/.bb-crs`.
 pub fn load_bn254_g1(n: usize) -> Vec<G1Affine> {
     use rayon::prelude::*;
-    let mont_path = crs_dir().join("bn254_g1.ark.mont");
-    for path in [&mont_path, &crs_dir().join("bn254_g1.mont")] {
-        if let Some(points) = read_mont_cache(path, n) {
-            return points;
-        }
+    let mont_path = crs_dir().join("bn254_g1.mont");
+    if let Some(points) = read_mont_cache(&mont_path, n) {
+        return points;
     }
     let path = crs_dir().join("bn254_g1.dat");
     let mut f = std::fs::File::open(&path).unwrap_or_else(|e| panic!("cannot open {}: {e}", path.display()));
@@ -47,30 +45,35 @@ pub fn load_bn254_g1(n: usize) -> Vec<G1Affine> {
     // Best-effort cache write (atomic rename; concurrent losers overwrite with identical bytes).
     // Only grow the cache: a smaller load must not truncate a bigger one.
     if std::fs::metadata(&mont_path).map_or(0, |m| m.len()) < (n * 64) as u64 {
-        let mut out: Vec<u8> = Vec::with_capacity(n * 64);
-        // Written in the shared 2^256-domain format (see the reader above).
-        let unfix = crate::base::wasm::stored_to_shared();
-        for p in &points {
-            for f in [&p.x, &p.y] {
-                let f = match unfix {
-                    Some(u) => *f * u,
-                    None => *f,
-                };
-                let l = unsafe { &*(&f as *const Fq as *const [u64; 4]) };
-                for w in l {
-                    out.extend_from_slice(&w.to_le_bytes());
-                }
-            }
-        }
-        let tmp = mont_path.with_extension("mont.tmp");
-        if std::fs::write(&tmp, &out).is_ok() {
-            let _ = std::fs::rename(&tmp, &mont_path);
-        }
+        write_mont_cache(&mont_path, &points);
     }
     points
 }
 
-/// `n` points from a Montgomery-limb SRS cache, if it holds that many. Coordinates in `[p, 2p)`
+/// Write `points` as the Montgomery-limb cache: canonical limbs in the shared 2^256-domain format
+/// (see [`read_mont_cache`]), via an atomic rename (concurrent losers write the same points).
+fn write_mont_cache(path: &std::path::Path, points: &[G1Affine]) {
+    let mut out: Vec<u8> = Vec::with_capacity(points.len() * 64);
+    let unfix = crate::base::wasm::stored_to_shared();
+    for p in points {
+        for f in [&p.x, &p.y] {
+            let f = match unfix {
+                Some(u) => *f * u,
+                None => *f,
+            };
+            let l = unsafe { &*(&f as *const Fq as *const [u64; 4]) };
+            for w in l {
+                out.extend_from_slice(&w.to_le_bytes());
+            }
+        }
+    }
+    let tmp = path.with_extension("mont.tmp");
+    if std::fs::write(&tmp, &out).is_ok() {
+        let _ = std::fs::rename(&tmp, path);
+    }
+}
+
+/// `n` points from the Montgomery-limb SRS cache, if it holds that many. Coordinates in `[p, 2p)`
 /// (bb's coarse reduction) are brought into `[0, p)`.
 fn read_mont_cache(path: &std::path::Path, n: usize) -> Option<Vec<G1Affine>> {
     use ark_ff::PrimeField;
@@ -299,8 +302,8 @@ mod tests {
         let _ = bn254_g2();
     }
 
-    /// bb's own cache (`bn254_g1.mont`, coordinates in `[0, 2p)`) decodes to the `.dat` points.
-    /// Skipped where bb has not written one.
+    /// The cache as bb writes it (coordinates in `[0, 2p)`) decodes to the `.dat` points. Skipped
+    /// where no cache exists.
     #[test]
     fn bb_mont_cache_matches_dat() {
         let mont = crs_dir().join("bn254_g1.mont");
@@ -315,6 +318,13 @@ mod tests {
             let p = G1Affine::new_unchecked(from_bytes_be::<Fq>(&c[0..32]), from_bytes_be::<Fq>(&c[32..64]));
             assert_eq!(points[i], p, "point {i}");
         }
+        // What bb-ref writes reads back to the same points.
+        let dir = std::env::temp_dir().join(format!("bbref-srs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bn254_g1.mont");
+        write_mont_cache(&path, &points);
+        assert_eq!(read_mont_cache(&path, n).unwrap(), points);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// The ingress path against the real setup files: one compressed chunk decompresses to exactly

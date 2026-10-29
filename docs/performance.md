@@ -189,7 +189,7 @@ ports of the [chonk-golf](https://github.com/olehmisar/chonk-golf) patch series 
   repeated scalars; equal scalars are summed once (batched-affine clusters) and the MSM runs over
   the distinct ones. Gated on a sample of the polynomial.
 - **Bounded scratch:** `batch_commit` caps in-flight MSM scratch at bb's 32 MiB budget; scratch
-  freed at last use. The Montgomery-form SRS is cached on disk (`bn254_g1.ark.mont` in `$CRS_PATH`, default `~/.bb-crs`).
+  freed at last use. The Montgomery-form SRS is cached on disk in bb's format (`bn254_g1.mont` in `$CRS_PATH`, default `~/.bb-crs`; bb's coarsely reduced coordinates are canonicalised on load).
 - **IPA SRS fold two rounds at a time** (bb `batch_two_round_fold`, `fold.rs`) on one shared
   doubling chain with the `u1·u2` product GLV-split; packed on wasm (`ipafold.rs`), IFMA natively.
 - The op queue sums its `mul_accumulate` terms as one MSM at `eq_and_reset`.
