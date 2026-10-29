@@ -62,6 +62,9 @@ mimalloc = ["dep:mimalloc"]
 dhat = ["dep:dhat"]
 # The FFI exports (src/msgpack/ffi.rs) for a cdylib build: tools/build_bb_ref_js.sh.
 ffi = []
+# Native only: link bb's AVM (`libbb-external-avm.a`: `./pin/build.sh --avm-lib`) and forward the
+# AVM commands and AVM-verifying circuits to it.
+bb-avm = []
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(wasm_wide)", "cfg(chonk_only)"] }

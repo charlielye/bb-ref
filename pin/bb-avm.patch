@@ -1,0 +1,48 @@
+diff --git a/barretenberg/cpp/src/CMakeLists.txt b/barretenberg/cpp/src/CMakeLists.txt
+index 7a22bd6f316..f5581815e48 100644
+--- a/barretenberg/cpp/src/CMakeLists.txt
++++ b/barretenberg/cpp/src/CMakeLists.txt
+@@ -243,6 +243,18 @@ if(NOT WASM)
+         $<TARGET_OBJECTS:env_objects>
+         $<TARGET_OBJECTS:vm2_stub>
+     )
++    # bb-external-avm: the same archive with the AVM (vm2) in place of vm2_stub, so an FFI consumer
++    # can serve the AVM commands and AVM-recursing circuits in-process.
++    if(AVM)
++        add_library(
++            bb-external-avm
++            STATIC
++            ${BB_EXTERNAL_TARGET_OBJECTS}
++            $<TARGET_OBJECTS:env_objects>
++            $<TARGET_OBJECTS:vm2_objects>
++            $<TARGET_OBJECTS:vm2_sim_objects>
++        )
++    endif()
+ endif()
+ 
+ if(WASM)
+diff --git a/barretenberg/cpp/src/barretenberg/bbapi/ffi_dispatcher.cpp b/barretenberg/cpp/src/barretenberg/bbapi/ffi_dispatcher.cpp
+index f75b5ae832f..b60de6ab52b 100644
+--- a/barretenberg/cpp/src/barretenberg/bbapi/ffi_dispatcher.cpp
++++ b/barretenberg/cpp/src/barretenberg/bbapi/ffi_dispatcher.cpp
+@@ -12,6 +12,7 @@
+ #include "barretenberg/bbapi/bbapi_shared.hpp"
+ 
+ #include "barretenberg/bbapi/generated/bb_ffi.hpp"
++#include "barretenberg/srs/global_crs.hpp"
+ 
+ namespace bb::bbapi {
+ 
+@@ -30,3 +31,12 @@ AsyncDispatchHandler& ipc_ffi_dispatcher()
+ }
+ 
+ } // namespace bb::bbapi
++
++/**
++ * @brief Points the global CRS factories at a directory, as bb's CLI does at startup: points are read from there on
++ * first use and downloaded into it when missing. A library has no CLI, so an FFI consumer calls this before proving.
++ */
++IPC_FFI_EXPORT void bb_ipc_ffi_init_crs(const char* path)
++{
++    bb::srs::init_net_crs_factory(path);
++}

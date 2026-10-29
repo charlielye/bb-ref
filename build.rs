@@ -3,8 +3,25 @@
 //! constructors and destructors around each call, which leaves nothing alive between FFI calls.
 //! wasi-libc's `crt1-reactor.o` defines `_initialize`, which the host calls once, and with it
 //! wasm-ld exports the functions as they are. The link args apply to the cdylib only.
+//!
+//! The `bb-avm` feature links bb's `libbb-external-avm.a` (`./pin/build.sh --avm-lib`, or from
+//! `$BB_AVM_LIB_DIR`) and the C++ runtime it was built against (`$BB_AVM_CXX_LIB`: `stdc++`, or
+//! `c++` for bb's release builds).
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    if std::env::var_os("CARGO_FEATURE_BB_AVM").is_some() {
+        println!("cargo:rerun-if-env-changed=BB_AVM_LIB_DIR");
+        println!("cargo:rerun-if-env-changed=BB_AVM_CXX_LIB");
+        let dir = std::env::var("BB_AVM_LIB_DIR").unwrap_or_else(|_| {
+            let repo = std::env::var("AZTEC_REPO")
+                .unwrap_or(format!("{}/pin/aztec-packages", std::env::var("CARGO_MANIFEST_DIR").unwrap()));
+            format!("{repo}/barretenberg/cpp/build/lib")
+        });
+        println!("cargo:rerun-if-changed={dir}/libbb-external-avm.a");
+        println!("cargo:rustc-link-search=native={dir}");
+        println!("cargo:rustc-link-lib=static=bb-external-avm");
+        println!("cargo:rustc-link-lib=dylib={}", std::env::var("BB_AVM_CXX_LIB").unwrap_or("stdc++".into()));
+    }
     let target = std::env::var("TARGET").unwrap();
     if !target.starts_with("wasm32-wasi") || std::env::var_os("CARGO_FEATURE_FFI").is_none() {
         return;

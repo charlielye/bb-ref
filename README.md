@@ -25,7 +25,10 @@ These are the project's binding goals — changes should be judged against them:
 | **A maintenance process for bb divergence**: diagnose and resolve drift quickly as bb moves | the pin + regen + divergence ladder ([docs/oracle.md](docs/oracle.md)) |
 
 Out of scope at this time: the AVM (public-transaction execution) — bb-ref solves for pure
-private-tx rollups. Also out of scope: Solidity verifier generation, Starknet oracle hash.
+private-tx rollups. Native builds with `--features bb-avm` link bb's own AVM in-process instead
+(`./pin/build.sh --avm-lib` first) and hand it the AVM commands and the circuits that verify an
+AVM proof, so one binary serves the whole prover. Also out of scope: Solidity verifier
+generation, Starknet oracle hash.
 
 ## Results
 

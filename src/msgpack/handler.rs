@@ -235,6 +235,11 @@ fn circuit_prove_impl(cmd: BbCircuitProve, srs: &Srs) -> Result<BbCircuitProveRe
 
     crate::base::timing::phase("cmd: start");
     let circuit = decode_program_raw(&cmd.circuit.bytecode);
+    #[cfg(feature = "bb-avm")]
+    if super::bb_avm::verifies_avm(&circuit) {
+        drop(circuit);
+        return super::bb_avm::call(|bb| bb.circuit_prove(cmd.circuit, &cmd.witness, cmd.settings));
+    }
     let mut rng = GlobalProxy;
     let witness = decode_witness_raw(&cmd.witness, &mut rng);
     crate::base::timing::phase("cmd: decode");
@@ -327,6 +332,11 @@ fn circuit_compute_vk_impl(cmd: BbCircuitComputeVk, srs: &Srs) -> Result<BbCircu
     let (flavor, ipa) = select_flavor(&cmd.settings)?;
     let keccak = flavor.name.contains("Keccak");
     let circuit = decode_program_raw(&cmd.circuit.bytecode);
+    #[cfg(feature = "bb-avm")]
+    if super::bb_avm::verifies_avm(&circuit) {
+        drop(circuit);
+        return super::bb_avm::call(|bb| bb.circuit_compute_vk(cmd.circuit, cmd.settings));
+    }
     let mut rng = GlobalProxy;
     let mut builder = build_circuit_opts(&circuit, None, ipa);
     let inst = ProverInstance::from_builder(flavor, &mut builder, &mut rng);
@@ -730,12 +740,32 @@ impl Handler for BbRefHandler {
         });
     }
 
-    // Everything below is outside bb-ref's scope (AVM, crypto helpers, raw curve ops, batch
-    // verification, proof compression, Solidity output).
+    #[cfg(feature = "bb-avm")]
+    fn avm_prove(&mut self, cmd: BbAvmProve, respond: Responder<BbAvmProveResponse>) {
+        super::bb_avm::forward(respond, |bb| bb.avm_prove(&cmd.inputs));
+    }
+
+    #[cfg(feature = "bb-avm")]
+    fn avm_verify(&mut self, cmd: BbAvmVerify, respond: Responder<BbAvmVerifyResponse>) {
+        super::bb_avm::forward(respond, |bb| bb.avm_verify(cmd.proof, &cmd.public_inputs));
+    }
+
+    #[cfg(feature = "bb-avm")]
+    fn avm_check_circuit(&mut self, cmd: BbAvmCheckCircuit, respond: Responder<BbAvmCheckCircuitResponse>) {
+        super::bb_avm::forward(respond, |bb| bb.avm_check_circuit(&cmd.inputs));
+    }
+
+    // The AVM is bb's own (the `bb-avm` feature) or unsupported.
+    #[cfg(not(feature = "bb-avm"))]
     unsupported! {
         avm_prove: BbAvmProve => BbAvmProveResponse,
         avm_verify: BbAvmVerify => BbAvmVerifyResponse,
         avm_check_circuit: BbAvmCheckCircuit => BbAvmCheckCircuitResponse,
+    }
+
+    // Everything below is outside bb-ref's scope (crypto helpers, raw curve ops, batch
+    // verification, proof compression, Solidity output).
+    unsupported! {
         circuit_stats: BbCircuitStats => BbCircuitStatsResponse,
         chonk_verify_from_fields: BbChonkVerifyFromFields => BbChonkVerifyFromFieldsResponse,
         chonk_batch_verify: BbChonkBatchVerify => BbChonkBatchVerifyResponse,

@@ -6,6 +6,7 @@
 #
 #   ./pin/build.sh            # bb only — enough for the conformance suite
 #   ./pin/build.sh --noir     # also nargo + noir-execute, needed to (re)compile circuits
+#   ./pin/build.sh --avm-lib  # also libbb-external-avm.a, which bb-ref's `bb-avm` feature links
 #
 # Set AZTEC_REPO to point at an existing checkout instead (a dev box with the tree already built);
 # the tests honour the same variable.
@@ -14,7 +15,13 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 repo=${AZTEC_REPO:-$here/aztec-packages}
 build_noir=false
-[[ ${1:-} == "--noir" ]] && build_noir=true
+build_avm_lib=false
+for a in "$@"; do
+  case $a in
+    --noir) build_noir=true ;;
+    --avm-lib) build_avm_lib=true ;;
+  esac
+done
 
 if [ ! -d "$repo/barretenberg/cpp" ]; then
   echo "pin: $repo is not a barretenberg checkout." >&2
@@ -33,6 +40,20 @@ echo "pin: building bb from $(git -C "$repo" rev-parse --short HEAD)"
   ninja -C build bb
 )
 
+# bb's static FFI archive with the AVM linked in (pin/bb-avm.patch adds the target and a CRS entry
+# point), built with the patch applied and the checkout restored afterwards.
+if $build_avm_lib; then
+  echo "pin: building libbb-external-avm.a"
+  patch=$here/bb-avm.patch
+  git -C "$repo" apply "$patch"
+  trap 'git -C "$repo" apply -R "$patch"' EXIT
+  (
+    cd "$repo/barretenberg/cpp"
+    cmake --preset default -B build -DAVM=ON > /dev/null
+    ninja -C build bb-external-avm
+  )
+fi
+
 if $build_noir; then
   echo "pin: building nargo + noir-execute"
   git -C "$repo" submodule update --init --depth 1 noir/noir-repo
@@ -41,4 +62,5 @@ fi
 
 echo "pin: done"
 echo "  bb:   $repo/barretenberg/cpp/build/bin/bb"
+$build_avm_lib && echo "  avm:  $repo/barretenberg/cpp/build/lib/libbb-external-avm.a"
 $build_noir && echo "  nargo/noir-execute: $repo/noir/noir-repo/target/release/"
