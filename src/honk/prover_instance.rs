@@ -388,27 +388,37 @@ impl ProverInstance {
         _g_inst = crate::base::bench::Scope::new("inst/tables_bus_masking");
         // bb `construct_lookup_table_polynomials` + `construct_lookup_read_counts`.
         if has(Ent::table_1) {
+            // Index each table's rows and count its gates' reads, in parallel across tables: a
+            // circuit can hold tens of thousands of tables of a few gates each, where a parallel
+            // pass per table costs more in pool wake-ups than the work. Big tables also split their gates.
+            let counts: Vec<Vec<u32>> = builder
+                .lookup_tables
+                .par_iter()
+                .map(|table| {
+                    let index: std::collections::HashMap<[Fr; 3], u32, crate::base::srs::LimbHashBuilder> = (0
+                        ..table.size())
+                        .map(|i| {
+                            (
+                                [table.columns[0][i], table.columns[1][i], table.columns[2][i]],
+                                i as u32,
+                            )
+                        })
+                        .collect();
+                    let rows: Vec<u32> = table
+                        .lookup_gates
+                        .par_iter()
+                        .with_min_len(1 << 12)
+                        .map(|gate| index[&gate.to_table_components(table.use_twin_keys)])
+                        .collect();
+                    let mut counts = vec![0u32; table.size()];
+                    for r in rows {
+                        counts[r as usize] += 1;
+                    }
+                    counts
+                })
+                .collect();
             let mut offset = blocks.get(BlockId::Lookup).trace_offset;
-            for table in &builder.lookup_tables {
-                let index: std::collections::HashMap<[Fr; 3], u32, crate::base::srs::LimbHashBuilder> = (0..table
-                    .size())
-                    .map(|i| {
-                        (
-                            [table.columns[0][i], table.columns[1][i], table.columns[2][i]],
-                            i as u32,
-                        )
-                    })
-                    .collect();
-                // Resolve the gates' table rows in parallel, then count them as integers.
-                let rows: Vec<u32> = table
-                    .lookup_gates
-                    .par_iter()
-                    .map(|gate| index[&gate.to_table_components(table.use_twin_keys)])
-                    .collect();
-                let mut counts = vec![0u32; table.size()];
-                for r in rows {
-                    counts[r as usize] += 1;
-                }
+            for (table, counts) in builder.lookup_tables.iter().zip(counts) {
                 for (i, c) in counts.into_iter().enumerate().filter(|(_, c)| *c != 0) {
                     polys[idx(Ent::lookup_read_counts)].coeffs[offset + i] = Fr::from(c as u64);
                     polys[idx(Ent::lookup_read_tags)].coeffs[offset + i] = Fr::one();

@@ -264,9 +264,15 @@ ports of the [chonk-golf](https://github.com/olehmisar/chonk-golf) patch series 
   transfer_0 2.82 → 1.43 s / 2.95 → 2.07 s at 258 → 217 / 255 → 214 MiB, rollup subset 85.4 →
   48.0 s / 91.5 → 69.0 s at 11.82 → 11.88 / 11.80 → 11.87 GiB. On the rollup subset bb-ref takes
   39–41% fewer page faults, and its kernel time for memory (faults, `munmap`/`madvise`) is 39%
-  below bb's on Zen 3; its total system time is still higher there (38 vs 30 s) because rayon's
-  idle workers spin in `sched_yield` (~20 s of it), which is scheduling, not memory. Huge pages are
-  then an extra on top: rollup subset 48.0 → 39.3 s / 69.0 → 56.1 s.
+  below bb's on Zen 3; its total system time was still higher there (38 vs 30 s), most of it pool
+  wake-ups from the lookup read counts (next bullet), not memory. Huge pages are then an extra on
+  top: rollup subset 48.0 → 39.3 s / 69.0 → 56.1 s.
+- **Lookup read counts run in parallel across tables** (`ProverInstance`). One rollup circuit holds
+  32,769 lookup tables of ~32 gates each; a parallel pass per table wakes the whole pool for almost
+  no work, 2.1 s at 16 threads and 8.1 s at 32. That alone kept bb-ref from gaining on SMT: on Zen 3
+  (16 cores / 32 threads, rollup subset, huge pages off / on) 16 → 32 threads went 68.2 → 70.0 s /
+  55.8 → 57.3 s before and 65.9 → 61.2 s / 55.0 → 50.7 s after, with system time at 32 threads
+  97 → 29 s. bb gains 8–11% from SMT on the same runs (91.4 → 83.9 s / 76.5 → 68.2 s).
 - **wasm: `src/base/wasm/alloc.rs`**, a correctness fix. V8 bounds-checks `memory.fill`/`memory.copy`
   against a per-thread cached memory size that another thread's `memory.grow` updates only
   asynchronously, so memsetting freshly grown pages can trap "out of bounds". Every heap op
