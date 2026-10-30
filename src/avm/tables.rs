@@ -84,6 +84,9 @@ pub struct Relation {
     pub name: &'static str,
     pub num_subrelations: usize,
     pub body: Body,
+    /// bb `skip()`: the relation vanishes on an edge where the sum of these columns is zero on
+    /// both rows (empty: it never skips).
+    pub skip: Vec<usize>,
 }
 
 pub fn layout() -> &'static Layout {
@@ -165,6 +168,7 @@ fn parse_relations(l: &Layout) -> Vec<Relation> {
                     name,
                     num_subrelations,
                     body,
+                    skip: Vec::new(),
                 });
             }
             "let" | "sub" => {
@@ -183,6 +187,9 @@ fn parse_relations(l: &Layout) -> Vec<Relation> {
                     subs.push(parse_expr(rest, l, &aliases));
                 }
             }
+            "skip" => {
+                out.last_mut().expect("`skip` outside a relation").skip = rest.split(' ').map(|c| l.col(c)).collect();
+            }
             "lookup" | "perm" => {
                 let mut parts = rest.split(" : ");
                 let head_fields: Vec<&str> = parts.next().unwrap().split(' ').collect();
@@ -190,13 +197,15 @@ fn parse_relations(l: &Layout) -> Vec<Relation> {
                 let src = cols(parts.next().unwrap());
                 let dst = cols(parts.next().unwrap());
                 let counts = (head == "lookup").then(|| l.col(head_fields[4]));
+                let inverses = l.col(head_fields[3]);
                 out.push(Relation {
                     name: head_fields[0],
                     num_subrelations: 2,
+                    skip: vec![inverses],
                     body: Body::Interaction {
                         src_sel: l.col(head_fields[1]),
                         dst_sel: l.col(head_fields[2]),
-                        inverses: l.col(head_fields[3]),
+                        inverses,
                         counts,
                         src,
                         dst,

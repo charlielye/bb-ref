@@ -76,6 +76,23 @@ impl<F: FieldLike<Native = Fr>> RelationSet<F> for AvmRelations {
     fn offset_only(&self, _r: usize) -> bool {
         false
     }
+    fn skip(&self, r: usize, row0: &[F], row1: &[F]) -> bool {
+        let cols = &relations()[r].skip;
+        let zero = |row: &[F]| {
+            let mut sum = F::zero();
+            for &c in cols {
+                sum = sum + &row[c];
+            }
+            sum.is_zero()
+        };
+        !cols.is_empty() && zero(row0) && zero(row1)
+    }
+    fn skip_columns(&self) -> Option<Vec<usize>> {
+        let mut cols: Vec<usize> = relations().iter().flat_map(|r| r.skip.iter().copied()).collect();
+        cols.sort_unstable();
+        cols.dedup();
+        Some(cols)
+    }
     fn accumulate(&self, r: usize, acc: &mut [F], row: &[F], p: &RelationParams<F>, scaling: &F) {
         match &relations()[r].body {
             Body::Generated { lets, subs } => {
