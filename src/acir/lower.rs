@@ -1113,7 +1113,7 @@ pub fn build_circuit_opts(circuit: &Circuit, witness: Option<&[Fr]>, has_ipa_cla
     build_circuit_srs(circuit, witness, has_ipa_claim, &crate::base::srs::Srs::default())
 }
 
-/// [`build_circuit_opts`] with the server's preloaded SRS pools, for the commitment keys recursion
+/// [`build_circuit_opts`] with the server's SRS pools, for the commitment keys recursion
 /// constraints need while building (IPA accumulation, the AVM verifier's inner proofs).
 pub fn build_circuit_srs(
     circuit: &Circuit,

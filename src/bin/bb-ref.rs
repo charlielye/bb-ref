@@ -155,7 +155,7 @@ fn msgpack_run(input_path: &str) {
         return;
     }
 
-    let srs = preload_srs();
+    let srs = server_srs();
 
     let mut input: Box<dyn Read> = if input_path == "-" || input_path.is_empty() {
         Box::new(std::io::stdin())
@@ -188,12 +188,10 @@ fn msgpack_run(input_path: &str) {
     }
 }
 
-/// Startup, not first-command: the largest served circuit is the 2^23 rollup root, and the
-/// ECCVM's Grumpkin IPA runs at 2^16. The handler owns the pool; nothing is global.
-fn preload_srs() -> bb_ref::base::srs::Srs {
-    let srs = bb_ref::base::srs::Srs::load((1 << 23) + 2, 1 << 16);
-    bb_ref::base::timing::phase("srs preload");
-    srs
+/// The server's SRS pools, loaded on first use: the largest served circuit is the 2^23 rollup
+/// root, and the ECCVM's Grumpkin IPA runs at 2^16. The handler owns them; nothing is global.
+fn server_srs() -> bb_ref::base::srs::Srs {
+    bb_ref::base::srs::Srs::lazy((1 << 23) + 2, 1 << 16)
 }
 
 /// bb `execute_msgpack_run` over a live transport: ipc-runtime's server, the one bb serves with,
@@ -211,8 +209,7 @@ fn msgpack_serve(path: &str) {
     server.install_default_signal_handlers();
     server.listen().unwrap_or_else(|e| panic!("{path}: {e}"));
     eprintln!("bb-ref msgpack serving {path}");
-    // After listen(): a client's connect is accepted while the SRS loads, rather than retried.
-    let mut handler = BbRefHandler::new(preload_srs());
+    let mut handler = BbRefHandler::new(server_srs());
     server.run(|_client_id, request| {
         let response = handle_request(&mut handler, request);
         bb_ref::base::pool::trim();

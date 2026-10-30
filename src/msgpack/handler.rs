@@ -130,7 +130,7 @@ pub struct BbRefHandler {
 }
 
 impl BbRefHandler {
-    /// `srs` is the server's preloaded pool; `Srs::default()` (empty, load-on-demand) suits
+    /// `srs` is the server's pool; `Srs::default()` (empty, load-on-demand) suits
     /// one-shot and test use.
     pub fn new(srs: Srs) -> Self {
         Self { srs, ..Self::default() }

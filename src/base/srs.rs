@@ -372,7 +372,7 @@ mod tests {
     }
 }
 
-/// A sized view into an SRS point pool. Keys constructed from the preloaded global pool share it
+/// A sized view into an SRS point pool. Keys constructed from a server pool share it
 /// (an Arc clone); keys built outside a server share nothing and own their exact slice. Deref to
 /// `[G]` keeps every `key.points[..]` call site oblivious.
 pub struct PointsView<G> {
@@ -420,13 +420,39 @@ impl<G> PhiTable<G> {
     }
 }
 
-/// The SRS pools a long-lived server loads once at startup and hands to its handler (bb memoizes
-/// its CRS globally; here the server owns it and threads it down — no globals). Keys are Arc views
-/// into the pools, so handing one out is free.
+/// The SRS pools a long-lived server loads once, on the first key request, and hands to its
+/// handler (bb memoizes its CRS globally; here the server owns it and threads it down — no
+/// globals). Keys are Arc views into the pools, so handing one out is free. Loading on first use
+/// rather than at startup keeps a process that never commits (bb.js spawns one per AVM call,
+/// whose work is bb's own) at bb's startup cost instead of a 2^23-point load.
 #[derive(Clone)]
 pub struct Srs {
-    bn254: std::sync::Arc<Vec<G1Affine>>,
-    grumpkin: std::sync::Arc<Vec<GrumpkinAffine>>,
+    bn254: Pool<G1Affine>,
+    grumpkin: Pool<GrumpkinAffine>,
+}
+
+/// A point pool of `n` points, loaded by `load` on first use (`n == 0`: empty).
+#[derive(Clone)]
+struct Pool<G> {
+    cell: std::sync::Arc<std::sync::OnceLock<std::sync::Arc<Vec<G>>>>,
+    n: usize,
+    load: fn(usize) -> Vec<G>,
+}
+
+impl<G> Pool<G> {
+    fn new(n: usize, load: fn(usize) -> Vec<G>) -> Self {
+        Self { cell: Default::default(), n, load }
+    }
+    fn filled(points: Vec<G>) -> Self {
+        let n = points.len();
+        let cell = std::sync::OnceLock::new();
+        let _ = cell.set(std::sync::Arc::new(points));
+        Self { cell: std::sync::Arc::new(cell), n, load: |_| vec![] }
+    }
+    /// The pool if it can serve `k` points (loading it then, once), else `None`.
+    fn serving(&self, k: usize) -> Option<&std::sync::Arc<Vec<G>>> {
+        (self.n >= k).then(|| self.cell.get_or_init(|| std::sync::Arc::new((self.load)(self.n))))
+    }
 }
 
 impl Default for Srs {
@@ -434,59 +460,52 @@ impl Default for Srs {
     /// process that never preloads (tests, one-shot CLI commands).
     fn default() -> Self {
         Self {
-            bn254: std::sync::Arc::new(vec![]),
-            grumpkin: std::sync::Arc::new(vec![]),
+            bn254: Pool::new(0, load_bn254_g1),
+            grumpkin: Pool::new(0, load_grumpkin_g1),
         }
     }
 }
 
 impl Srs {
+    /// Pools of `bn254_n` and `grumpkin_n` points, each loaded whole on its first key request.
     /// `bn254_n` must cover the largest circuit served (2^23 for the rollup root); an oversized
-    /// request later falls back to a private exact load rather than failing.
-    pub fn load(bn254_n: usize, grumpkin_n: usize) -> Self {
+    /// request falls back to a private exact load rather than failing.
+    pub fn lazy(bn254_n: usize, grumpkin_n: usize) -> Self {
         Self {
-            bn254: std::sync::Arc::new(load_bn254_g1(bn254_n)),
-            grumpkin: std::sync::Arc::new(load_grumpkin_g1(grumpkin_n)),
+            bn254: Pool::new(bn254_n, load_bn254_g1),
+            grumpkin: Pool::new(grumpkin_n, load_grumpkin_g1),
         }
     }
 
     /// Serve BN254 keys from `points` (bb `init_bn254_mem_crs_factory`); larger requests still
     /// fall back to an exact load.
     pub fn set_bn254(&mut self, points: Vec<G1Affine>) {
-        self.bn254 = std::sync::Arc::new(points);
+        self.bn254 = Pool::filled(points);
     }
 
     /// Serve Grumpkin keys from `points` (bb `init_grumpkin_mem_crs_factory`).
     pub fn set_grumpkin(&mut self, points: Vec<GrumpkinAffine>) {
-        self.grumpkin = std::sync::Arc::new(points);
+        self.grumpkin = Pool::filled(points);
     }
 
     pub fn bn254_key(&self, num_points: usize) -> CommitmentKey {
         let n = (num_points + 1) & !1usize;
-        if self.bn254.len() >= n {
-            Ck {
-                points: PointsView {
-                    pool: self.bn254.clone(),
-                    len: n,
-                },
+        match self.bn254.serving(n) {
+            Some(pool) => Ck {
+                points: PointsView { pool: pool.clone(), len: n },
                 phi: PhiTable::default(),
-            }
-        } else {
-            CommitmentKey::new(num_points)
+            },
+            None => CommitmentKey::new(num_points),
         }
     }
 
     pub fn grumpkin_key(&self, num_points: usize) -> GrumpkinKey {
-        if self.grumpkin.len() >= num_points {
-            Ck {
-                points: PointsView {
-                    pool: self.grumpkin.clone(),
-                    len: num_points,
-                },
+        match self.grumpkin.serving(num_points) {
+            Some(pool) => Ck {
+                points: PointsView { pool: pool.clone(), len: num_points },
                 phi: PhiTable::default(),
-            }
-        } else {
-            GrumpkinKey::new(num_points)
+            },
+            None => GrumpkinKey::new(num_points),
         }
     }
 }
@@ -767,15 +786,18 @@ mod pool_tests {
         assert_eq!(t.get_or_build(|| unreachable!()), Some(&[7u64][..]));
     }
 
-    /// Server-loaded pools hand out Arc views (rounded up to even, as bb sizes its keys); a
-    /// request past the pool falls back to an exact private load instead of failing.
+    /// Server pools load on the first key request and hand out Arc views of the one load (rounded
+    /// up to even, as bb sizes its keys); a request past the pool falls back to an exact private
+    /// load instead of failing.
     #[test]
-    fn pooled_keys_round_and_fall_back() {
+    fn pooled_keys_load_lazily_round_and_fall_back() {
         if crate::testutil::crs_or_skip().is_none() {
             return;
         }
-        let srs = Srs::load(6, 4);
+        let srs = Srs::lazy(6, 4);
+        assert!(srs.bn254.cell.get().is_none(), "nothing loaded before a key is asked for");
         assert_eq!(srs.bn254_key(3).points.len(), 4, "rounded up to even, from the pool");
+        assert!(std::sync::Arc::ptr_eq(&srs.bn254_key(2).points.pool, &srs.clone().bn254_key(6).points.pool));
         assert_eq!(srs.bn254_key(8).points.len(), 8, "past the pool: exact private load");
         assert_eq!(srs.grumpkin_key(4).points.len(), 4);
         assert_eq!(srs.grumpkin_key(6).points.len(), 6);

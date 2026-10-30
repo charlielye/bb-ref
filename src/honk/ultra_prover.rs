@@ -17,7 +17,7 @@ pub fn prove_ultra(inst: &mut ProverInstance, vk: &Vk<Bn254>, rng: &mut dyn Rng)
 }
 
 /// Generic over the transcript codec/hash: `Bn254` natively, `KeccakBn254` for the Keccak flavors.
-/// The commitment key comes from `srs` — a preloaded pool serves it for free, the default falls
+/// The commitment key comes from `srs` — a server pool serves it for free, the default falls
 /// back to an exact on-demand load.
 pub fn prove_ultra_as<C>(inst: &mut ProverInstance, vk: &Vk<C>, srs: &Srs, rng: &mut dyn Rng) -> Vec<C::TF>
 where
