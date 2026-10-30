@@ -7,8 +7,9 @@
 //! The `bb-avm` feature links bb's `libbb-external-avm.a` (`./pin/build.sh --avm-lib`, or from
 //! `$BB_AVM_LIB_DIR`) and the C++ runtime it was built against: `$BB_AVM_CXX_LIB`, comma-separated
 //! rustc link specs, default `c++` (bb's release preset uses libc++; barretenberg-rs links
-//! `bb-external` the same way). A binary for hosts without libc++ links it statically:
-//! `BB_AVM_CXX_LIB=static=c++,static=c++abi BB_AVM_CXX_LIB_DIR=/usr/lib/llvm-20/lib`.
+//! `bb-external` the same way). A portable binary links like bb's release `bb-avm`, through zig with
+//! its bundled libc++ and glibc 2.35 symbols (runs on Debian 12 / Ubuntu 22.04):
+//! `CXXSTDLIB=c++ cargo zigbuild --release --features bb-avm --target x86_64-unknown-linux-gnu.2.35`.
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     if std::env::var_os("CARGO_FEATURE_BB_AVM").is_some() {
