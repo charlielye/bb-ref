@@ -28,7 +28,8 @@ Out of scope at this time: proving the AVM itself (public-transaction execution)
 verifies AVM proofs, natively and in-circuit, so it builds and proves the public tx base rollup,
 which recursively verifies one through bb's two-layer AVM verifier ([src/avm](src/avm/README.md)).
 Native builds with `--features bb-avm` link bb's own AVM in-process (`./pin/build.sh --avm-lib`
-first) for the three AVM commands, so one binary serves the whole prover. Also out of scope:
+first; bb's release toolchain, zig 0.15.1, and the system libc++ to link it) for the three AVM
+commands, so one binary serves the whole prover. Also out of scope:
 Solidity verifier generation, Starknet oracle hash.
 
 ## Results

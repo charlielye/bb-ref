@@ -5,13 +5,16 @@
 //! wasm-ld exports the functions as they are. The link args apply to the cdylib only.
 //!
 //! The `bb-avm` feature links bb's `libbb-external-avm.a` (`./pin/build.sh --avm-lib`, or from
-//! `$BB_AVM_LIB_DIR`) and the C++ runtime it was built against (`$BB_AVM_CXX_LIB`: `stdc++`, or
-//! `c++` for bb's release builds).
+//! `$BB_AVM_LIB_DIR`) and the C++ runtime it was built against: `$BB_AVM_CXX_LIB`, comma-separated
+//! rustc link specs, default `c++` (bb's release preset uses libc++; barretenberg-rs links
+//! `bb-external` the same way). A binary for hosts without libc++ links it statically:
+//! `BB_AVM_CXX_LIB=static=c++,static=c++abi BB_AVM_CXX_LIB_DIR=/usr/lib/llvm-20/lib`.
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     if std::env::var_os("CARGO_FEATURE_BB_AVM").is_some() {
         println!("cargo:rerun-if-env-changed=BB_AVM_LIB_DIR");
         println!("cargo:rerun-if-env-changed=BB_AVM_CXX_LIB");
+        println!("cargo:rerun-if-env-changed=BB_AVM_CXX_LIB_DIR");
         let dir = std::env::var("BB_AVM_LIB_DIR").unwrap_or_else(|_| {
             let repo = std::env::var("AZTEC_REPO")
                 .unwrap_or(format!("{}/pin/aztec-packages", std::env::var("CARGO_MANIFEST_DIR").unwrap()));
@@ -20,7 +23,12 @@ fn main() {
         println!("cargo:rerun-if-changed={dir}/libbb-external-avm.a");
         println!("cargo:rustc-link-search=native={dir}");
         println!("cargo:rustc-link-lib=static=bb-external-avm");
-        println!("cargo:rustc-link-lib=dylib={}", std::env::var("BB_AVM_CXX_LIB").unwrap_or("stdc++".into()));
+        if let Ok(cxx_dir) = std::env::var("BB_AVM_CXX_LIB_DIR") {
+            println!("cargo:rustc-link-search=native={cxx_dir}");
+        }
+        for lib in std::env::var("BB_AVM_CXX_LIB").unwrap_or("c++".into()).split(',') {
+            println!("cargo:rustc-link-lib={lib}");
+        }
     }
     let target = std::env::var("TARGET").unwrap();
     if !target.starts_with("wasm32-wasi") || std::env::var_os("CARGO_FEATURE_FFI").is_none() {

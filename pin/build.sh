@@ -30,11 +30,13 @@ if [ ! -d "$repo/barretenberg/cpp" ]; then
 fi
 
 echo "pin: building bb from $(git -C "$repo" rev-parse --short HEAD)"
-# Configure from inside the source dir: the constants generator resolves its paths relative to the
-# working directory, not to -S.
+# bb's release preset (`clang20`: zig's clang and libc++), as bootstrap.sh builds bb and the
+# `bb-external` archive barretenberg-rs links; the `default` preset's system clang + libstdc++ build
+# proves the AVM ~12% slower under load. Configure from inside the source dir: the constants
+# generator resolves its paths relative to the working directory, not to -S.
 (
   cd "$repo/barretenberg/cpp"
-  cmake --preset default -B build > /dev/null
+  cmake --preset clang20 -B build > /dev/null
   # bb-avm is a separate target: the stock `bb` refuses AVM proving, which the fixture-harvest path
   # needs. It is not required by the conformance suite itself.
   ninja -C build bb
@@ -49,7 +51,7 @@ if $build_avm_lib; then
   trap 'git -C "$repo" apply -R "$patch"' EXIT
   (
     cd "$repo/barretenberg/cpp"
-    cmake --preset default -B build -DAVM=ON > /dev/null
+    cmake --preset clang20 -B build -DAVM=ON > /dev/null
     ninja -C build bb-external-avm
   )
 fi
@@ -62,5 +64,6 @@ fi
 
 echo "pin: done"
 echo "  bb:   $repo/barretenberg/cpp/build/bin/bb"
-$build_avm_lib && echo "  avm:  $repo/barretenberg/cpp/build/lib/libbb-external-avm.a"
+$build_avm_lib && echo "  avm:  $repo/barretenberg/cpp/build/lib/libbb-external-avm.a" \
+  "(link libc++ statically for hosts without it: BB_AVM_CXX_LIB=static=c++,static=c++abi BB_AVM_CXX_LIB_DIR=/usr/lib/llvm-20/lib)"
 $build_noir && echo "  nargo/noir-execute: $repo/noir/noir-repo/target/release/"
