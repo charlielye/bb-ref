@@ -113,6 +113,9 @@ fn pinned_flows_byte_exact_with_seed() {
         if !dir.join("proof").exists() || !inputs.exists() {
             continue;
         }
+        if !common::in_tier(&name, name != "ecdsar1+transfer_0_recursions+sponsored_fpc") {
+            continue;
+        }
         let mut rng = DebugRng::new(12345);
         let steps = decode_steps(&std::fs::read(&inputs).unwrap());
         let max_size = steps.iter().map(|s| 1usize << s.vk.log_n()).max().unwrap().max(1 << 17);

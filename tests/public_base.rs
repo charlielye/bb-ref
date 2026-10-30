@@ -29,6 +29,9 @@ fn instance(witness: bool) -> Option<ProverInstance> {
 /// One test, so the write-VK build cannot draw from the global RNG while the seeded proof runs.
 #[test]
 fn public_base_matches_bb() {
+    if !common::in_tier("public_base", true) {
+        return;
+    }
     let Some(inst) = instance(false) else { return };
     let dir = common::fixture_dir("instance/public_tx_base");
     let vk = inst.compute_vk(&CommitmentKey::new(inst.max_end_index));

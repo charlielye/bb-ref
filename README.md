@@ -15,6 +15,7 @@ These are the project's binding goals — changes should be judged against them:
 | goal | state |
 | --- | --- |
 | **Minimum lines of code** for a bit-parity reference implementation, in modern idiomatic Rust | **21.2%** of bb's C++ implementation (`tools/loc.sh`) |
+| **A test suite under 30 s**: the default run (`cargo nextest run --release`) keeps every differential test's smallest real cases; `BBREF_FULL=1` adds every full-size byte-exactness case | **13 s**, 234 tests, on the shared dev box under load at nice 19 |
 | **Lean on stable, mature dependencies** instead of handwriting (fields/curves: arkworks; msgpack: rmp-serde; parallelism: rayon) | holds, with one deliberate exception: the hot field kernels (ADX and IFMA Montgomery multiply, bb's wasm 29-bit and wide multiplies, Bernstein–Yang inverse) and the MSM are ported from bb for speed; arkworks still supplies the field and curve framework, the pairing and G2 ([src/base](src/base/README.md)) |
 | **Bit parity**: VKs bit-exact, proofs byte-exact, both directions, including the wire protocol | holds — every VK and pinned flow byte-equal |
 | **Circuit gate parity**: every selector, wire and copy-cycle identical to bb's ([docs/gate-exactness.md](docs/gate-exactness.md)) | holds — enforced by the write-VK oracles and stdlib micro-oracles |
@@ -119,7 +120,8 @@ tools/coverage.sh                    # line coverage of the standalone test set
 tools/loc.sh [--no-tests]            # bb C++ vs bb-ref Rust, side by side
 tools/build_bb_ref_js.sh             # generate + build js/bb-ref.js; then node js/chonk-bench/serve.mjs
 node js/chonk-bench/build-site.mjs --publish   # publish the bench page to GitHub Pages
-cargo test --release                 # everything: differential + standalone (~10 min)
+cargo nextest run --release          # the suite: differential + standalone, smallest real cases (<30 s)
+BBREF_FULL=1 cargo nextest run --release   # plus every full-size byte-exactness case
 ```
 
 A **corpus** is the exact wire bytes a real prover sent to bb, replayable into either

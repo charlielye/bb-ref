@@ -254,56 +254,73 @@ fn artifact(name: &str) -> std::path::PathBuf {
     std::path::PathBuf::from(root).join(format!("{name}.json"))
 }
 
-#[test]
-fn backend_vk_hash_sweep() {
+/// The VK hash of one `backend_vk_hash/` artifact against bb's (rollup_root's is the UltraKeccak
+/// one: it is proven with `--oracle_hash keccak`, bb-prover honk.ts).
+fn vk_hash_case(name: &str, full_only: bool) {
+    if !common::in_tier(name, full_only) {
+        return;
+    }
     let _rng_guard = GLOBAL_RNG_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     bb_ref::base::rng::set_global(Box::new(bb_ref::base::rng::OsRng));
+    let (_, ipa) = SUPPORTED.iter().find(|(n, _)| *n == name).expect("supported circuit");
+    let expected: Fr = from_bytes_be(&common::read(&format!("backend_vk_hash/{name}")));
+    let circuit = decode_program(&std::fs::read(artifact(name)).expect("program.json"));
+    let mut builder = bb_ref::acir::lower::build_circuit_opts(&circuit, None, *ipa);
+    let inst = ProverInstance::from_builder(&ULTRA, &mut builder, &mut OsRng);
+    let ck = CommitmentKey::new(inst.max_end_index);
+    let vk = inst.compute_vk(&ck);
+    let hash: Fr = if name == "rollup_root" {
+        let kvk = bb_ref::base::vk::Vk::<bb_ref::base::KeccakBn254> {
+            log_circuit_size: vk.log_circuit_size,
+            num_public_inputs: vk.num_public_inputs,
+            pub_inputs_offset: vk.pub_inputs_offset,
+            comms: vk.comms,
+        };
+        use bb_ref::base::codec::Transcriptable;
+        <Fr as Transcriptable<bb_ref::base::U256>>::from_fields(&[kvk.hash()])
+    } else {
+        vk.hash()
+    };
+    assert_eq!(hash, expected, "{name}: VK hash");
+}
+
+/// Every `backend_vk_hash/` artifact is a supported circuit with a sweep case below.
+#[test]
+fn backend_vk_hash_fixtures_are_all_swept() {
     let dir = common::fixture_dir("backend_vk_hash");
-    let mut entries: Vec<_> = std::fs::read_dir(&dir)
-        .expect("backend_vk_hash fixtures")
-        .map(|e| e.unwrap().path())
-        .collect();
-    entries.sort();
-    assert!(!entries.is_empty());
-    let mut unsupported = 0;
-    for path in &entries {
-        let name = path.file_name().unwrap().to_str().unwrap();
-        let Some((_, ipa)) = SUPPORTED.iter().find(|(n, _)| *n == name) else {
-            unsupported += 1;
-            continue;
-        };
-        if let Ok(only) = std::env::var("BBREF_SWEEP") {
-            if only != name {
-                continue;
-            }
-        }
-        let expected: Fr = from_bytes_be(&std::fs::read(path).unwrap());
-        let circuit = decode_program(&std::fs::read(artifact(name)).expect("program.json"));
-        let mut builder = bb_ref::acir::lower::build_circuit_opts(&circuit, None, *ipa);
-        eprintln!("built {name}");
-        let inst = ProverInstance::from_builder(&ULTRA, &mut builder, &mut OsRng);
-        let ck = CommitmentKey::new(inst.max_end_index);
-        let vk = inst.compute_vk(&ck);
-        // rollup_root is proven with `--oracle_hash keccak` (bb-prover honk.ts): its vk_hash fixture
-        // is the UltraKeccak one.
-        let hash: Fr = if name == "rollup_root" {
-            let kvk = bb_ref::base::vk::Vk::<bb_ref::base::KeccakBn254> {
-                log_circuit_size: vk.log_circuit_size,
-                num_public_inputs: vk.num_public_inputs,
-                pub_inputs_offset: vk.pub_inputs_offset,
-                comms: vk.comms,
-            };
-            use bb_ref::base::codec::Transcriptable;
-            <Fr as Transcriptable<bb_ref::base::U256>>::from_fields(&[kvk.hash()])
-        } else {
-            vk.hash()
-        };
-        assert_eq!(hash, expected, "{name}: VK hash");
+    for e in std::fs::read_dir(&dir).expect("backend_vk_hash fixtures") {
+        let name = e.unwrap().file_name().into_string().unwrap();
+        assert!(SUPPORTED.iter().any(|(n, _)| *n == name), "{name}: no sweep case");
     }
-    eprintln!(
-        "{} supported, {unsupported} not yet supported",
-        entries.len() - unsupported
-    );
+}
+
+macro_rules! vk_hash_sweep {
+    ($($name:ident: $full_only:expr),* $(,)?) => {
+        mod vk_hash_sweep { $(
+            #[test] fn $name() { super::vk_hash_case(stringify!($name), $full_only); }
+        )* }
+    };
+}
+// One test per circuit so they run in parallel; the fast tier keeps the six that take a second or
+// two (still through ROLLUP_HONK recursion and its IPA claim).
+vk_hash_sweep! {
+    inbox_parity_4: false,
+    inbox_parity_16: false,
+    inbox_parity_64: false,
+    inbox_parity_256: true,
+    inbox_parity_1024: true,
+    rollup_checkpoint_padding: false,
+    rollup_block_root_no_txs: false,
+    rollup_block_root_single_tx: false,
+    rollup_tx_merge: true,
+    rollup_checkpoint_merge: true,
+    rollup_checkpoint_root: true,
+    rollup_checkpoint_root_single_block: true,
+    rollup_block_merge: true,
+    rollup_block_root: true,
+    rollup_tx_base_private: true,
+    chonk_verifier_public: true,
+    rollup_root: true,
 }
 
 /// Gate-level diff of a backend write-VK circuit against a bb `BbRefDump.UltraWriteVk` dump

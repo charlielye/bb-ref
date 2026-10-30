@@ -287,13 +287,15 @@ fn error_shape_case() {
 
 #[test]
 fn msgpack_server_oracle() {
-    circuit_case(
-        "inbox_parity_64",
-        &fixture("backend/inbox_parity_64"),
-        "poseidon2",
-        false,
-        None,
-    );
+    if common::in_tier("msgpack oracle: inbox_parity_64", true) {
+        circuit_case(
+            "inbox_parity_64",
+            &fixture("backend/inbox_parity_64"),
+            "poseidon2",
+            false,
+            None,
+        );
+    }
     circuit_case("a_1_mul_keccak", &fixture("keccak/a_1_mul"), "keccak", false, None);
     circuit_case(
         "inbox_parity_4",
@@ -303,7 +305,9 @@ fn msgpack_server_oracle() {
         None,
     );
     error_shape_case();
-    chonk_case();
+    if common::in_tier("msgpack oracle: chonk", true) {
+        chonk_case();
+    }
 }
 
 /// T5 of the test plan, bb `bbapi.test.cpp`'s input-validation analog: the wire boundary must

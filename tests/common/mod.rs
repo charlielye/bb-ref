@@ -9,6 +9,22 @@ pub fn fixture_dir(rel: &str) -> PathBuf {
     root.join(rel)
 }
 
+/// The full suite (`BBREF_FULL=1`): every full-size byte-exactness case. The default run keeps each
+/// differential test's smallest real cases so it stays under 30 s; a test skipping a case for the
+/// fast tier says so on stderr.
+pub fn full() -> bool {
+    std::env::var_os("BBREF_FULL").is_some()
+}
+
+/// `false` (with a note) when `case` is full-suite only and this is the fast run.
+pub fn in_tier(case: &str, full_only: bool) -> bool {
+    if full_only && !full() {
+        eprintln!("skipping {case}: full suite only (BBREF_FULL=1)");
+        return false;
+    }
+    true
+}
+
 pub fn read(rel: &str) -> Vec<u8> {
     let p = fixture_dir(rel);
     std::fs::read(&p).unwrap_or_else(|e| panic!("missing fixture {}: {e}", p.display()))

@@ -12,8 +12,15 @@ Two complementary layers, and the claim each one carries:
    hiding the fixture layer. Valid artifacts are proven in-process; this layer carries the
    soundness (rejection) and regression-localization claims.
 
-Run `tools/check.sh` for the standalone gate, `cargo test --release` for everything,
+Run `tools/check.sh` for the standalone gate, `cargo nextest run --release` for the suite,
 `tools/coverage.sh` for the standalone set's line coverage (report-only, no threshold).
+
+The suite has two tiers. The default keeps it under 30 s (a README goal): each differential test
+runs its smallest real cases — the VK-hash sweep's six fastest circuits, one pinned Chonk flow —
+and the full-size ones (the rollup root, the public tx base rollup, the large rollup circuits,
+every Chonk flow, the server oracle's Chonk transfer) skip with a note. `BBREF_FULL=1` runs them
+all (65 s, bounded by the keccak rollup root's 65 s). nextest runs every test in its own process, in parallel; `cargo test` works too but runs the
+test binaries one at a time (~55 s).
 
 ## What the standalone layer covers
 

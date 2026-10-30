@@ -104,6 +104,9 @@ fn keccak_nozk_byte_exact() {
 /// seed-deterministic on both sides (DebugRng mirrors bb's BB_RNG_SEED engine).
 #[test]
 fn rollup_root_witness_byte_exact() {
+    if !common::in_tier("rollup_root witness", true) {
+        return;
+    }
     let dir = common::fixture_dir("backend/rollup_root");
     let golden = common::fixture_dir("instance/backend/rollup_root/seeded");
     if !golden.join("proof").exists() {

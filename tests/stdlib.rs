@@ -957,21 +957,30 @@ fn check(name: &str) {
 /// Every program builds a circuit all MegaKernel relations vanish on (bb-independent).
 #[test]
 fn stdlib_programs_are_satisfied() {
-    for name in PROGRAMS {
-        let ctx = Rc::new(RefCell::new(if std::ptr::eq(flavor_of(name), &ULTRA) {
-            Builder::new()
-        } else {
-            Builder::new_mega(EccOpQueue::shared())
-        }));
-        run(&ctx, name);
-        let mut builder = Rc::try_unwrap(ctx).ok().unwrap().into_inner();
-        assert!(builder.failed.is_none(), "{name}: builder failure {:?}", builder.failed);
-        let mut inst = ProverInstance::from_builder(flavor_of(name), &mut builder, &mut OsRng);
-        let ck = CommitmentKey::new(inst.max_end_index);
-        let vk = inst.compute_vk(&ck);
-        let out = prove_oink(&mut inst, &vk, &ck, &mut NativeTranscript::new(), &mut OsRng, true);
-        assert_eq!(check_circuit(&inst, &out.params), None, "{name}: relation failure");
-    }
+    std::thread::scope(|s| {
+        for name in PROGRAMS {
+            std::thread::Builder::new()
+                .stack_size(64 << 20)
+                .spawn_scoped(s, move || program_is_satisfied(name))
+                .unwrap();
+        }
+    });
+}
+
+fn program_is_satisfied(name: &str) {
+    let ctx = Rc::new(RefCell::new(if std::ptr::eq(flavor_of(name), &ULTRA) {
+        Builder::new()
+    } else {
+        Builder::new_mega(EccOpQueue::shared())
+    }));
+    run(&ctx, name);
+    let mut builder = Rc::try_unwrap(ctx).ok().unwrap().into_inner();
+    assert!(builder.failed.is_none(), "{name}: builder failure {:?}", builder.failed);
+    let mut inst = ProverInstance::from_builder(flavor_of(name), &mut builder, &mut OsRng);
+    let ck = CommitmentKey::new(inst.max_end_index);
+    let vk = inst.compute_vk(&ck);
+    let out = prove_oink(&mut inst, &vk, &ck, &mut NativeTranscript::new(), &mut OsRng, true);
+    assert_eq!(check_circuit(&inst, &out.params), None, "{name}: relation failure");
 }
 
 #[test]
