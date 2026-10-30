@@ -227,15 +227,18 @@ fn main() {
     #[cfg(feature = "heap-profile")]
     let _profiler = dhat::Profiler::new_heap();
 
-    // Beyond ~48 threads the MSM-heavy phases slow down (arkworks' parallel MSM splits into few
-    // windows; oversubscription costs more than it gains); RAYON_NUM_THREADS still overrides
-    // (`num_threads(0)` reads it). On wasm the workers' stacks are heap blocks that every
+    // Thread count: RAYON_NUM_THREADS (`num_threads(0)` reads it), else bb's HARDWARE_CONCURRENCY
+    // (what bb.js and other hosts set to size a lane), else the cores capped at 48: beyond that the
+    // MSM-heavy phases slow down (arkworks' parallel MSM splits into few windows; oversubscription
+    // costs more than it gains). On wasm the workers' stacks are heap blocks that every
     // linear-memory high-water includes: 1 MiB (as bb) instead of std's 2 MiB saves 8 MiB at 8
     // threads. wasm stacks have no guard page and an overflow silently corrupts the heap below; the
     // deepest worker stack measured is ~158 KB (ECCVM relations, sumcheck round, accumulate_edge).
     let mut pool = rayon::ThreadPoolBuilder::new();
     if std::env::var_os("RAYON_NUM_THREADS").is_none() {
-        pool = pool.num_threads(std::thread::available_parallelism().map_or(1, |n| n.get()).min(48));
+        let hc = std::env::var("HARDWARE_CONCURRENCY").ok().and_then(|s| s.parse::<usize>().ok());
+        let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+        pool = pool.num_threads(hc.filter(|&n| n > 0).unwrap_or(cores.min(48)));
     }
     if cfg!(target_family = "wasm") {
         pool = pool.stack_size(1 << 20);
