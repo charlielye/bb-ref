@@ -93,16 +93,27 @@ fn avm_inner_circuit_matches_bb() {
 
 /// bb-ref's AVM prover on bb's trace of the fixture inputs (bb's simulation and trace generation,
 /// linked in) against bb's own proof from the same process: the AVM proof has no ZK randomness, so
-/// the two are identical, and it verifies.
+/// the two are identical, and it verifies. `BBREF_AVM_INPUTS=<avm_inputs.bin>` runs it on other
+/// inputs (bb-prover writes them under `BB_DEBUG_OUTPUT_DIR`) and reports both provers' times.
 #[cfg(feature = "bb-avm")]
 #[test]
 fn avm_prover_matches_bb() {
     use bb_ref::msgpack::bb_avm;
-    let inputs = common::read("avm/avm_inputs.bin");
+    use std::time::Instant;
+    let inputs = match std::env::var("BBREF_AVM_INPUTS") {
+        Ok(path) => std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}")),
+        Err(_) => common::read("avm/avm_inputs.bin"),
+    };
+    let t = Instant::now();
     let trace = bb_avm::avm_trace(&inputs).expect("bb trace");
+    let t_trace = t.elapsed();
+    let t = Instant::now();
     let proof = bb_ref::avm::prover::prove(bb_ref::avm::prover::polys_from_trace(&trace), &Default::default());
+    let t_ours = t.elapsed();
+    drop(trace);
     // bb's AVM prover needs more stack than a test thread's 2 MiB.
     let bb_inputs = inputs.clone();
+    let t = Instant::now();
     let expected: Vec<Fr> = std::thread::Builder::new()
         .stack_size(64 << 20)
         .spawn(move || bb_avm::call(|bb| bb.avm_prove(&bb_inputs)).expect("bb proof").proof)
@@ -112,8 +123,17 @@ fn avm_prover_matches_bb() {
         .iter()
         .map(|b| Fr::from_be_bytes_mod_order(&b.0))
         .collect();
+    let t_bb = t.elapsed();
+    eprintln!(
+        "AVM: bb simulate+trace {:.2} s; bb-ref prove {:.2} s; bb simulate+trace+prove {:.2} s",
+        t_trace.as_secs_f64(),
+        t_ours.as_secs_f64(),
+        t_bb.as_secs_f64()
+    );
     assert_eq!(proof.len(), expected.len());
     let first = proof.iter().zip(&expected).position(|(a, b)| a != b);
     assert_eq!(first, None, "first differing proof field");
-    assert!(verify(&proof, &fixture().1, &bn254_g2()));
+    if std::env::var_os("BBREF_AVM_INPUTS").is_none() {
+        assert!(verify(&proof, &fixture().1, &bn254_g2()));
+    }
 }
