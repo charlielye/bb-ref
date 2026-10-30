@@ -46,3 +46,65 @@ index f75b5ae832f..b60de6ab52b 100644
 +{
 +    bb::srs::init_net_crs_factory(path);
 +}
+diff --git a/barretenberg/cpp/src/barretenberg/vm2/trace_ffi.cpp b/barretenberg/cpp/src/barretenberg/vm2/trace_ffi.cpp
+new file mode 100644
+index 00000000000..9cda6ae8f98
+--- /dev/null
++++ b/barretenberg/cpp/src/barretenberg/vm2/trace_ffi.cpp
+@@ -0,0 +1,56 @@
++#include <cstdint>
++#include <cstdlib>
++#include <cstring>
++#include <exception>
++#include <vector>
++
++#include "barretenberg/vm2/common/avm_io.hpp"
++#include "barretenberg/vm2/generated/columns.hpp"
++#include "barretenberg/vm2/simulation_helper.hpp"
++#include "barretenberg/vm2/tracegen_helper.hpp"
++
++/**
++ * @brief The AVM trace for an FFI prover: simulates the proving inputs' hints and generates the full trace (interactions
++ * included), as AvmAPI::prove does before proving.
++ * @details On success (returns 0) `*out` holds, for every column in `Column` order, a little-endian u32 entry count
++ * followed by that many (u32 row, 4 little-endian u64 canonical limbs) non-zero entries. On failure (returns 1) it holds
++ * the error message. Either way `*out` is malloc'd and the caller frees it.
++ */
++extern "C" __attribute__((visibility("default"))) int bb_avm_trace(const uint8_t* input,
++                                                                   size_t input_len,
++                                                                   uint8_t** out,
++                                                                   size_t* out_len)
++{
++    using namespace bb::avm2;
++    std::vector<uint8_t> buf;
++    int status = 0;
++    auto put = [&](const void* p, size_t n) {
++        const auto* b = static_cast<const uint8_t*>(p);
++        buf.insert(buf.end(), b, b + n);
++    };
++    try {
++        auto inputs = AvmProvingInputs::from(std::vector<uint8_t>(input, input + input_len));
++        auto events = AvmSimulationHelper().simulate_for_witgen(inputs.hints);
++        auto trace = AvmTraceGenHelper().generate_trace(std::move(events), inputs.public_inputs);
++        for (size_t c = 0; c < tracegen::TraceContainer::num_columns(); c++) {
++            const size_t count_at = buf.size();
++            uint32_t count = 0;
++            put(&count, 4);
++            trace.visit_column(static_cast<Column>(c), [&](uint32_t row, const FF& value) {
++                const auto canonical = value.from_montgomery_form();
++                put(&row, 4);
++                put(canonical.data, 32);
++                count++;
++            });
++            std::memcpy(buf.data() + count_at, &count, 4);
++            trace.clear_column(static_cast<Column>(c));
++        }
++    } catch (const std::exception& e) {
++        buf.assign(e.what(), e.what() + std::strlen(e.what()));
++        status = 1;
++    }
++    *out_len = buf.size();
++    *out = static_cast<uint8_t*>(std::malloc(buf.size() > 0 ? buf.size() : 1));
++    std::memcpy(*out, buf.data(), buf.size());
++    return status;
++}

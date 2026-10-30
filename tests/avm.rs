@@ -90,3 +90,30 @@ fn avm_inner_circuit_matches_bb() {
     assert_eq!(vk.to_bytes(), std::fs::read(dump.join("vk")).unwrap(), "VK");
     assert!(witness_diffs.is_empty(), "witness columns differ: {witness_diffs:?}");
 }
+
+/// bb-ref's AVM prover on bb's trace of the fixture inputs (bb's simulation and trace generation,
+/// linked in) against bb's own proof from the same process: the AVM proof has no ZK randomness, so
+/// the two are identical, and it verifies.
+#[cfg(feature = "bb-avm")]
+#[test]
+fn avm_prover_matches_bb() {
+    use bb_ref::msgpack::bb_avm;
+    let inputs = common::read("avm/avm_inputs.bin");
+    let trace = bb_avm::avm_trace(&inputs).expect("bb trace");
+    let proof = bb_ref::avm::prover::prove(bb_ref::avm::prover::polys_from_trace(&trace), &Default::default());
+    // bb's AVM prover needs more stack than a test thread's 2 MiB.
+    let bb_inputs = inputs.clone();
+    let expected: Vec<Fr> = std::thread::Builder::new()
+        .stack_size(64 << 20)
+        .spawn(move || bb_avm::call(|bb| bb.avm_prove(&bb_inputs)).expect("bb proof").proof)
+        .unwrap()
+        .join()
+        .unwrap()
+        .iter()
+        .map(|b| Fr::from_be_bytes_mod_order(&b.0))
+        .collect();
+    assert_eq!(proof.len(), expected.len());
+    let first = proof.iter().zip(&expected).position(|(a, b)| a != b);
+    assert_eq!(first, None, "first differing proof field");
+    assert!(verify(&proof, &fixture().1, &bn254_g2()));
+}

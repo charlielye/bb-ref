@@ -13,6 +13,19 @@ extern "C" {
     fn bb_ipc_ffi_entry(input: *const u8, input_len: usize, output: *mut *mut u8, output_len: *mut usize);
     fn bb_ipc_ffi_free(ptr: *mut u8);
     fn bb_ipc_ffi_init_crs(path: *const std::ffi::c_char);
+    fn bb_avm_trace(input: *const u8, input_len: usize, output: *mut *mut u8, output_len: *mut usize) -> i32;
+}
+
+/// bb's AVM trace for serialized proving inputs (simulation with the inputs' hints, then trace
+/// generation), in the sparse format [`crate::avm::prover::polys_from_trace`] reads.
+pub fn avm_trace(inputs: &[u8]) -> std::result::Result<Vec<u8>, String> {
+    let (mut out, mut out_len) = (std::ptr::null_mut(), 0usize);
+    unsafe {
+        let status = bb_avm_trace(inputs.as_ptr(), inputs.len(), &mut out, &mut out_len);
+        let bytes = std::slice::from_raw_parts(out, out_len).to_vec();
+        bb_ipc_ffi_free(out);
+        if status == 0 { Ok(bytes) } else { Err(String::from_utf8_lossy(&bytes).into_owned()) }
+    }
 }
 
 /// bb's handlers in this process; [`Backend`] for the generated client.
