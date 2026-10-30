@@ -8,6 +8,8 @@ use super::poly::Polynomial;
 use ark_ec::AffineRepr;
 use ark_ec::CurveGroup;
 use std::io::Read;
+#[cfg(not(target_family = "wasm"))]
+use rayon::prelude::*;
 use std::path::PathBuf;
 
 /// `$CRS_PATH`, else `$HOME/.bb-crs` (bb `bb_crs_path`).
@@ -26,7 +28,20 @@ pub fn crs_dir() -> PathBuf {
 /// `bn254_g1.mont`: raw little-endian Montgomery limbs, 64 bytes per point. bb reduces coordinates
 /// only to `[0, 2p)`, so they are canonicalised on load; bb-ref writes canonical ones, which bb
 /// reads unchanged. One file thus serves both, including from a read-only `~/.bb-crs`.
-pub fn load_bn254_g1(n: usize) -> Vec<G1Affine> {
+///
+/// Natively that cache is mapped rather than read ([`map_mont_cache`]): bb-ref's points have its
+/// layout, so once its coordinates are canonical a load costs nothing up front and every process on
+/// a box shares one copy of the pages.
+pub fn load_bn254_g1(n: usize) -> Points<G1Affine> {
+    #[cfg(not(target_family = "wasm"))]
+    if let Some(points) = map_mont_cache(&crs_dir().join("bn254_g1.mont"), n) {
+        return points;
+    }
+    Points::Owned(load_bn254_g1_files(n))
+}
+
+/// The first `n` points from bb's files: its Montgomery cache, else the raw setup (writing the cache).
+fn load_bn254_g1_files(n: usize) -> Vec<G1Affine> {
     use rayon::prelude::*;
     let mont_path = crs_dir().join("bn254_g1.mont");
     if let Some(points) = read_mont_cache(&mont_path, n) {
@@ -42,17 +57,114 @@ pub fn load_bn254_g1(n: usize) -> Vec<G1Affine> {
         .map(|c| G1Affine::new_unchecked(from_bytes_be::<Fq>(&c[0..32]), from_bytes_be::<Fq>(&c[32..64])))
         .collect();
     assert_eq!(points[0], G1Affine::generator(), "unexpected first CRS point");
-    // Best-effort cache write (atomic rename; concurrent losers overwrite with identical bytes).
-    // Only grow the cache: a smaller load must not truncate a bigger one.
-    if std::fs::metadata(&mont_path).map_or(0, |m| m.len()) < (n * 64) as u64 {
-        write_mont_cache(&mont_path, &points);
-    }
+    write_mont_cache(&mont_path, &points, None);
     points
 }
 
+/// SRS points, owned or mapped read-only from the Montgomery cache; either way a `[G]`.
+pub enum Points<G> {
+    Owned(Vec<G>),
+    #[cfg(not(target_family = "wasm"))]
+    Mapped { map: *mut libc::c_void, map_len: usize, points: *const G, len: usize },
+}
+
+// A mapping is read-only memory: shared freely, unmapped once.
+unsafe impl<G: Send> Send for Points<G> {}
+unsafe impl<G: Sync> Sync for Points<G> {}
+
+impl<G> std::ops::Deref for Points<G> {
+    type Target = [G];
+    fn deref(&self) -> &[G] {
+        match self {
+            Points::Owned(v) => v,
+            #[cfg(not(target_family = "wasm"))]
+            Points::Mapped { points, len, .. } => unsafe { std::slice::from_raw_parts(*points, *len) },
+        }
+    }
+}
+
+impl<G> Drop for Points<G> {
+    fn drop(&mut self) {
+        #[cfg(not(target_family = "wasm"))]
+        if let Points::Mapped { map, map_len, .. } = self {
+            unsafe { libc::munmap(*map, *map_len) };
+        }
+    }
+}
+
+// The Montgomery cache is bb-ref's point layout: x then y, 2^256-domain limbs, no stored flag.
+#[cfg(not(target_family = "wasm"))]
+const _: () = assert!(
+    std::mem::size_of::<G1Affine>() == 64
+        && std::mem::offset_of!(G1Affine, x) == 0
+        && std::mem::offset_of!(G1Affine, y) == 32
+);
+
+/// The first `n` points of bb's Montgomery cache, mapped read-only. Mapping needs canonical
+/// coordinates; bb reduces them only to `[0, 2p)`, so a cache not yet known canonical is checked
+/// once and, if bb left coarse ones, rewritten canonical (bb reads either). A marker beside it
+/// records the file (size, mtime, inode) found canonical, so later loads skip the check; a cache
+/// rewritten since (bb grows it) no longer matches and is checked again. `None` when the cache is
+/// missing or short, or coarse in a read-only directory: the caller reads it instead.
+#[cfg(not(target_family = "wasm"))]
+fn map_mont_cache(path: &std::path::Path, n: usize) -> Option<Points<G1Affine>> {
+    let marker = path.with_extension("mont.canonical");
+    let meta = std::fs::metadata(path).ok()?;
+    if meta.len() < (n * 64) as u64 {
+        return None;
+    }
+    let stamp = file_stamp(&meta);
+    if std::fs::read_to_string(&marker).ok().as_deref() != Some(&stamp) {
+        let total = meta.len() as usize / 64;
+        let points = map_file(path, total)?;
+        if !points.par_iter().all(|p| is_canonical(&p.x) && is_canonical(&p.y)) {
+            drop(points);
+            write_mont_cache(path, &read_mont_cache(path, total)?, Some(&stamp));
+        }
+        let meta = std::fs::metadata(path).ok()?;
+        let fresh = map_file(path, meta.len() as usize / 64)?;
+        if !fresh.par_iter().all(|p| is_canonical(&p.x) && is_canonical(&p.y)) {
+            return None;
+        }
+        let _lock = CrsLock::take(path);
+        let _ = std::fs::write(&marker, file_stamp(&meta));
+    }
+    let points = map_file(path, n)?;
+    assert_eq!(points[0], G1Affine::generator(), "corrupt Montgomery SRS cache {}", path.display());
+    Some(points)
+}
+
+/// Whether the raw Montgomery limbs of `f` are below the modulus (as bb's coarse form need not be).
+#[cfg(not(target_family = "wasm"))]
+fn is_canonical(f: &Fq) -> bool {
+    use ark_ff::PrimeField;
+    let l = unsafe { &*(f as *const Fq as *const [u64; 4]) };
+    let p = Fq::MODULUS.0;
+    (0..4).rev().map(|k| l[k].cmp(&p[k])).find(|o| o.is_ne()) == Some(std::cmp::Ordering::Less)
+}
+
+/// The first `n` points of `path`, mapped read-only.
+#[cfg(not(target_family = "wasm"))]
+fn map_file(path: &std::path::Path, n: usize) -> Option<Points<G1Affine>> {
+    use std::os::fd::AsRawFd;
+    let f = std::fs::File::open(path).ok()?;
+    let map_len = n * 64;
+    if n == 0 || f.metadata().ok()?.len() < map_len as u64 {
+        return None;
+    }
+    let map = unsafe { libc::mmap(std::ptr::null_mut(), map_len, libc::PROT_READ, libc::MAP_SHARED, f.as_raw_fd(), 0) };
+    if map == libc::MAP_FAILED {
+        return None;
+    }
+    Some(Points::Mapped { map, map_len, points: map as *const G1Affine, len: n })
+}
+
 /// Write `points` as the Montgomery-limb cache: canonical limbs in the shared 2^256-domain format
-/// (see [`read_mont_cache`]), via an atomic rename (concurrent losers write the same points).
-fn write_mont_cache(path: &std::path::Path, points: &[G1Affine]) {
+/// (see [`read_mont_cache`]), via a private temporary and an atomic rename, under bb's `crs.lock`
+/// (the lock bb takes around its own CRS writes). It never shrinks the cache: a smaller or
+/// equal-size write is skipped, except `replacing` an equal-size file still as stamped (its
+/// canonical rewrite), so concurrent writers of different sizes cannot truncate it.
+fn write_mont_cache(path: &std::path::Path, points: &[G1Affine], replacing: Option<&str>) {
     let mut out: Vec<u8> = Vec::with_capacity(points.len() * 64);
     let unfix = crate::base::wasm::stored_to_shared();
     for p in points {
@@ -67,9 +179,49 @@ fn write_mont_cache(path: &std::path::Path, points: &[G1Affine]) {
             }
         }
     }
-    let tmp = path.with_extension("mont.tmp");
-    if std::fs::write(&tmp, &out).is_ok() {
-        let _ = std::fs::rename(&tmp, path);
+    let _lock = CrsLock::take(path);
+    let current = std::fs::metadata(path).ok();
+    let size = current.as_ref().map_or(0, |m| m.len());
+    let stale = match replacing {
+        Some(stamp) => size == out.len() as u64 && current.as_ref().map(file_stamp).as_deref() == Some(stamp),
+        None => size < out.len() as u64,
+    };
+    if !stale {
+        return;
+    }
+    static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = path.with_extension(format!("mont.{}.{seq}.tmp", std::process::id()));
+    if std::fs::write(&tmp, &out).is_err() || std::fs::rename(&tmp, path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
+
+/// A file's identity for the canonical marker: size, mtime and inode.
+fn file_stamp(m: &std::fs::Metadata) -> String {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        format!("{} {} {} {}", m.len(), m.mtime(), m.mtime_nsec(), m.ino())
+    }
+    #[cfg(not(unix))]
+    format!("{}", m.len())
+}
+
+/// bb's `FileLockGuard` on `crs.lock` beside the cache: an exclusive `flock`, released on drop.
+/// No lock when the directory cannot hold one (read-only; its writes fail anyway).
+struct CrsLock(#[allow(dead_code)] Option<std::fs::File>);
+
+impl CrsLock {
+    fn take(cache: &std::path::Path) -> Self {
+        let lock = cache.with_file_name("crs.lock");
+        let f = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(lock).ok();
+        #[cfg(unix)]
+        if let Some(f) = &f {
+            use std::os::fd::AsRawFd;
+            unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) };
+        }
+        Self(f)
     }
 }
 
@@ -322,7 +474,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("bbref-srs-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("bn254_g1.mont");
-        write_mont_cache(&path, &points);
+        write_mont_cache(&path, &points, None);
         assert_eq!(read_mont_cache(&path, n).unwrap(), points);
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -376,7 +528,7 @@ mod tests {
 /// (an Arc clone); keys built outside a server share nothing and own their exact slice. Deref to
 /// `[G]` keeps every `key.points[..]` call site oblivious.
 pub struct PointsView<G> {
-    pool: std::sync::Arc<Vec<G>>,
+    pool: std::sync::Arc<Points<G>>,
     len: usize,
 }
 
@@ -434,23 +586,23 @@ pub struct Srs {
 /// A point pool of `n` points, loaded by `load` on first use (`n == 0`: empty).
 #[derive(Clone)]
 struct Pool<G> {
-    cell: std::sync::Arc<std::sync::OnceLock<std::sync::Arc<Vec<G>>>>,
+    cell: std::sync::Arc<std::sync::OnceLock<std::sync::Arc<Points<G>>>>,
     n: usize,
-    load: fn(usize) -> Vec<G>,
+    load: fn(usize) -> Points<G>,
 }
 
 impl<G> Pool<G> {
-    fn new(n: usize, load: fn(usize) -> Vec<G>) -> Self {
+    fn new(n: usize, load: fn(usize) -> Points<G>) -> Self {
         Self { cell: Default::default(), n, load }
     }
     fn filled(points: Vec<G>) -> Self {
         let n = points.len();
         let cell = std::sync::OnceLock::new();
-        let _ = cell.set(std::sync::Arc::new(points));
-        Self { cell: std::sync::Arc::new(cell), n, load: |_| vec![] }
+        let _ = cell.set(std::sync::Arc::new(Points::Owned(points)));
+        Self { cell: std::sync::Arc::new(cell), n, load: |_| Points::Owned(vec![]) }
     }
     /// The pool if it can serve `k` points (loading it then, once), else `None`.
-    fn serving(&self, k: usize) -> Option<&std::sync::Arc<Vec<G>>> {
+    fn serving(&self, k: usize) -> Option<&std::sync::Arc<Points<G>>> {
         (self.n >= k).then(|| self.cell.get_or_init(|| std::sync::Arc::new((self.load)(self.n))))
     }
 }
@@ -461,7 +613,7 @@ impl Default for Srs {
     fn default() -> Self {
         Self {
             bn254: Pool::new(0, load_bn254_g1),
-            grumpkin: Pool::new(0, load_grumpkin_g1),
+            grumpkin: Pool::new(0, |n| Points::Owned(load_grumpkin_g1(n))),
         }
     }
 }
@@ -473,7 +625,7 @@ impl Srs {
     pub fn lazy(bn254_n: usize, grumpkin_n: usize) -> Self {
         Self {
             bn254: Pool::new(bn254_n, load_bn254_g1),
-            grumpkin: Pool::new(grumpkin_n, load_grumpkin_g1),
+            grumpkin: Pool::new(grumpkin_n, |n| Points::Owned(load_grumpkin_g1(n))),
         }
     }
 
@@ -747,7 +899,7 @@ impl CommitmentKey {
     pub fn empty() -> Self {
         Self {
             points: PointsView {
-                pool: std::sync::Arc::new(vec![]),
+                pool: std::sync::Arc::new(Points::Owned(vec![])),
                 len: 0,
             },
             phi: PhiTable::default(),
@@ -761,7 +913,7 @@ impl GrumpkinKey {
     pub fn new(num_points: usize) -> Self {
         Self {
             points: PointsView {
-                pool: std::sync::Arc::new(load_grumpkin_g1(num_points)),
+                pool: std::sync::Arc::new(Points::Owned(load_grumpkin_g1(num_points))),
                 len: num_points,
             },
             phi: PhiTable::default(),
@@ -784,6 +936,58 @@ mod pool_tests {
         });
         assert_eq!(got, Some(&[7u64][..]));
         assert_eq!(t.get_or_build(|| unreachable!()), Some(&[7u64][..]));
+    }
+
+    /// The mapped Montgomery cache serves exactly the points read from the setup, and a cache with
+    /// bb's coarse coordinates is made canonical (and marked) before it is mapped.
+    #[cfg(not(target_family = "wasm"))]
+    #[test]
+    fn mont_cache_maps_after_canonicalising() {
+        if crate::testutil::crs_or_skip().is_none() {
+            return;
+        }
+        use ark_ff::PrimeField;
+        let n = 1 << 10;
+        let points = load_bn254_g1_files(n);
+        let path = std::env::temp_dir().join(format!("bbref-map-test-{}.mont", std::process::id()));
+        write_mont_cache(&path, &points, None);
+        // bb's coarse form: x + p for the second point.
+        let mut bytes = std::fs::read(&path).unwrap();
+        let mut carry = 0u128;
+        for (k, w) in Fq::MODULUS.0.iter().enumerate() {
+            let at = 64 + 8 * k;
+            let sum = u64::from_le_bytes(bytes[at..at + 8].try_into().unwrap()) as u128 + *w as u128 + carry;
+            bytes[at..at + 8].copy_from_slice(&(sum as u64).to_le_bytes());
+            carry = sum >> 64;
+        }
+        std::fs::write(&path, &bytes).unwrap();
+        let mapped = map_mont_cache(&path, n / 2).expect("cache maps");
+        assert!(matches!(mapped, Points::Mapped { .. }));
+        assert_eq!(&mapped[..], &points[..n / 2]);
+        assert!(path.with_extension("mont.canonical").exists());
+        assert!(map_mont_cache(&path, n + 1).is_none(), "too few points");
+        let _ = std::fs::remove_file(path.with_extension("mont.canonical"));
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    /// Concurrent cache writers of different sizes leave the largest: none truncates another.
+    #[test]
+    fn concurrent_mont_cache_writes_never_shrink() {
+        if crate::testutil::crs_or_skip().is_none() {
+            return;
+        }
+        let points = load_bn254_g1_files(1 << 12);
+        let dir = std::env::temp_dir().join(format!("bbref-race-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bn254_g1.mont");
+        std::thread::scope(|s| {
+            for k in 0..8 {
+                let (path, points) = (&path, &points);
+                s.spawn(move || write_mont_cache(path, &points[..(1 << 12) >> (k % 4)], None));
+            }
+        });
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), (1 << 12) * 64);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// Server pools load on the first key request and hand out Arc views of the one load (rounded

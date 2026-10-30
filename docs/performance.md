@@ -189,7 +189,7 @@ ports of the [chonk-golf](https://github.com/olehmisar/chonk-golf) patch series 
   repeated scalars; equal scalars are summed once (batched-affine clusters) and the MSM runs over
   the distinct ones. Gated on a sample of the polynomial.
 - **Bounded scratch:** `batch_commit` caps in-flight MSM scratch at bb's 32 MiB budget; scratch
-  freed at last use. The Montgomery-form SRS is cached on disk in bb's format (`bn254_g1.mont` in `$CRS_PATH`, default `~/.bb-crs`; bb's coarsely reduced coordinates are canonicalised on load).
+  freed at last use. The Montgomery-form SRS is cached on disk in bb's format (`bn254_g1.mont` in `$CRS_PATH`, default `~/.bb-crs`), which is bb-ref's point layout, so natively it is mapped read-only rather than read: a load costs nothing up front, a fresh server starts in milliseconds, and every process on a box shares one copy of the pages (a fresh process proving a small rollup: 0.88 GB peak RSS mapped vs 1.87 GB read). Mapping needs canonical coordinates and bb reduces only to `[0, 2p)`, so a cache bb wrote is rewritten canonical once (bb reads either), under bb's `crs.lock` and never shrinking it; `bn254_g1.mont.canonical` records the file found canonical. Server pools load on their first key request.
 - **IPA SRS fold two rounds at a time** (bb `batch_two_round_fold`, `fold.rs`) on one shared
   doubling chain with the `u1·u2` product GLV-split; packed on wasm (`ipafold.rs`), IFMA natively.
 - The op queue sums its `mul_accumulate` terms as one MSM at `eq_and_reset`.
