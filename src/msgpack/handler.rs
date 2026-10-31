@@ -732,20 +732,28 @@ impl Handler for BbRefHandler {
 
     #[cfg(feature = "bb-avm")]
     fn avm_prove(&mut self, cmd: BbAvmProve, respond: Responder<BbAvmProveResponse>) {
-        super::bb_avm::forward(respond, |bb| bb.avm_prove(&cmd.inputs));
+        run_catching(respond, || {
+            let (proof, _) = super::bb_avm::avm_prove(&cmd.inputs, &self.srs)?;
+            Ok(BbAvmProveResponse { proof: proof.iter().map(fr_to_wire).collect(), stats: Vec::new() })
+        });
     }
 
     #[cfg(feature = "bb-avm")]
     fn avm_verify(&mut self, cmd: BbAvmVerify, respond: Responder<BbAvmVerifyResponse>) {
-        super::bb_avm::forward(respond, |bb| bb.avm_verify(cmd.proof, &cmd.public_inputs));
+        run_catching(respond, || {
+            let proof: Vec<FrField> = cmd.proof.iter().map(fr_from_wire).collect();
+            Ok(BbAvmVerifyResponse { verified: super::bb_avm::avm_verify(&proof, &cmd.public_inputs)? })
+        });
     }
 
     #[cfg(feature = "bb-avm")]
     fn avm_check_circuit(&mut self, cmd: BbAvmCheckCircuit, respond: Responder<BbAvmCheckCircuitResponse>) {
-        super::bb_avm::forward(respond, |bb| bb.avm_check_circuit(&cmd.inputs));
+        run_catching(respond, || {
+            Ok(BbAvmCheckCircuitResponse { passed: super::bb_avm::avm_check_circuit(&cmd.inputs, &self.srs)?, stats: Vec::new() })
+        });
     }
 
-    // The AVM is bb's own (the `bb-avm` feature) or unsupported.
+    // The AVM needs bb's simulation and trace generation (the `bb-avm` feature).
     #[cfg(not(feature = "bb-avm"))]
     unsupported! {
         avm_prove: BbAvmProve => BbAvmProveResponse,

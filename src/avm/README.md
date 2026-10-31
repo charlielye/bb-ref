@@ -1,13 +1,15 @@
 [◄ bb-ref](../../README.md)
 
-# avm — the AVM verifier
+# avm — the AVM prover and verifier
 
-bb's AVM2 proofs checked without bb's AVM prover: natively (`verifier.rs::verify`) and as bb's
+bb's AVM2 proofs, proven over bb's trace (`prover.rs`, byte-identical to bb's: the AVM proof has no
+ZK randomness) and checked natively (`verifier.rs::verify`) and as bb's
 two-layer AVM recursive verifier, the public tx base rollup's AVM recursion constraint. Its inner
 MegaAvm circuit (`recursive.rs`) verifies the AVM proof with the EC work deferred to the op queue;
 `two_layer.rs` proves that circuit (MegaAvm Honk, then Goblin: ECCVM, TripleIPA, Translator, on one
-transcript) and verifies those proofs in the rollup's Ultra circuit. All gate-exact against bb;
-there is no AVM prover or simulator here.
+transcript) and verifies those proofs in the rollup's Ultra circuit. All gate-exact against bb.
+The simulator and trace generator are bb's, linked in (the `bb-avm` feature,
+`src/msgpack/bb_avm.rs`); bb's AVM prover, verifier and check-circuit are not.
 
 *Unfamiliar name? Every recurring term is defined in [docs/glossary.md](../../docs/glossary.md).*
 
@@ -29,6 +31,8 @@ order ([docs/gate-exactness.md](../../docs/gate-exactness.md)).
 | `tables.rs` | parses the tables once |
 | `relations.rs` | the interpreter, plus bb's log-derivative lookup/permutation body |
 | `poseidon2_perm.rs` | the one relation bb hand-writes (`vm2/optimized/`) instead of generating |
+| `program.rs` | the relations compiled for the prover: straight-line programs evaluated over a whole edge, each value at only as many points as its degree needs |
+| `prover.rs` | the prover over bb's sparse trace (bb `AvmProver::construct_proof`) |
 | `verifier.rs` | the verifier, generic over native and in-circuit types |
 | `recursive.rs` | bb's inner MegaAvm circuit: op-queue prefix, witnesses, fixed VK, the verifier, published outputs |
 | `two_layer.rs` | the inner proofs, the outer verification of them, and the transcript-hash binding (bb `TwoLayerAvmRecursiveVerifier`) |

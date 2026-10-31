@@ -105,6 +105,13 @@ fn compute_inverses(polys: &mut [Poly], p: &RelationParams<Fr>) {
     }
 }
 
+/// The public-input columns the verifier reads, from the trace's `public_inputs_cols_*`.
+pub fn public_input_columns(polys: &[Poly]) -> Vec<Vec<Fr>> {
+    let l = layout();
+    let column = |i: usize, len: usize| (0..len).map(|j| polys[l.col(&format!("public_inputs_cols_{i}_"))].at(j)).collect();
+    l.public_input_column_lengths.iter().enumerate().map(|(i, &len)| column(i, len)).collect()
+}
+
 /// bb `AvmProver::construct_proof` over the trace's unshifted columns (the derived ones empty).
 pub fn prove(mut polys: Vec<Poly>, srs: &Srs) -> Vec<Fr> {
     let l = layout();
@@ -114,10 +121,9 @@ pub fn prove(mut polys: Vec<Poly>, srs: &Srs) -> Vec<Fr> {
     let (np, nw) = (l.num_precomputed, l.num_wires);
     let mut t = Transcript::<<Bn254 as Curve>::TF, <Bn254 as Curve>::Hash>::new();
     t.add_to_hash_buffer("avm_vk_hash", &l.vk_hash);
-    for (i, &len) in l.public_input_column_lengths.iter().enumerate() {
-        let column = &polys[l.col(&format!("public_inputs_cols_{i}_"))];
-        for j in 0..len {
-            t.add_to_hash_buffer("public_input", &column.at(j));
+    for column in public_input_columns(&polys) {
+        for v in &column {
+            t.add_to_hash_buffer("public_input", v);
         }
     }
 

@@ -24,8 +24,8 @@ underneath.
    `CircuitVerify`, the Chonk session (`ChonkStart/Load/Accumulate/Prove/Verify/ComputeVk`,
    proof compression), the VK-as-fields and Poseidon2 helpers, `Init` and SRS init; the rest
    (AVM, other crypto helpers, batch verification, Solidity) answer "unsupported command".
-   With `--features bb-avm` the AVM commands go to bb's own handlers linked in-process
-   (`src/msgpack/bb_avm.rs`). Circuits that verify an AVM proof (the public tx base rollup) are
+   With `--features bb-avm` the AVM commands run bb's simulation and trace generation linked
+   in-process, and bb-ref proves and verifies (`src/msgpack/bb_avm.rs`). Circuits that verify an AVM proof (the public tx base rollup) are
    bb-ref's own in every build.
    bb's server is generated from this schema by `/ipc-codegen`; **bb-ref's is generated from
    the same schema** — `ipc-codegen --lang rust --server` emits a `Handler` trait, `dispatch()` and

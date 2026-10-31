@@ -1,5 +1,5 @@
 diff --git a/barretenberg/cpp/src/CMakeLists.txt b/barretenberg/cpp/src/CMakeLists.txt
-index 7a22bd6f316..f5581815e48 100644
+index 7a22bd6f316..f5bd1c1c974 100644
 --- a/barretenberg/cpp/src/CMakeLists.txt
 +++ b/barretenberg/cpp/src/CMakeLists.txt
 @@ -243,6 +243,18 @@ if(NOT WASM)
@@ -7,7 +7,7 @@ index 7a22bd6f316..f5581815e48 100644
          $<TARGET_OBJECTS:vm2_stub>
      )
 +    # bb-external-avm: the same archive with the AVM (vm2) in place of vm2_stub, so an FFI consumer
-+    # can serve the AVM commands and AVM-recursing circuits in-process.
++    # can run the AVM simulation and trace generation in-process (vm2/trace_ffi.cpp).
 +    if(AVM)
 +        add_library(
 +            bb-external-avm
@@ -21,41 +21,17 @@ index 7a22bd6f316..f5581815e48 100644
  endif()
  
  if(WASM)
-diff --git a/barretenberg/cpp/src/barretenberg/bbapi/ffi_dispatcher.cpp b/barretenberg/cpp/src/barretenberg/bbapi/ffi_dispatcher.cpp
-index f75b5ae832f..b60de6ab52b 100644
---- a/barretenberg/cpp/src/barretenberg/bbapi/ffi_dispatcher.cpp
-+++ b/barretenberg/cpp/src/barretenberg/bbapi/ffi_dispatcher.cpp
-@@ -12,6 +12,7 @@
- #include "barretenberg/bbapi/bbapi_shared.hpp"
- 
- #include "barretenberg/bbapi/generated/bb_ffi.hpp"
-+#include "barretenberg/srs/global_crs.hpp"
- 
- namespace bb::bbapi {
- 
-@@ -30,3 +31,12 @@ AsyncDispatchHandler& ipc_ffi_dispatcher()
- }
- 
- } // namespace bb::bbapi
-+
-+/**
-+ * @brief Points the global CRS factories at a directory, as bb's CLI does at startup: points are read from there on
-+ * first use and downloaded into it when missing. A library has no CLI, so an FFI consumer calls this before proving.
-+ */
-+IPC_FFI_EXPORT void bb_ipc_ffi_init_crs(const char* path)
-+{
-+    bb::srs::init_net_crs_factory(path);
-+}
 diff --git a/barretenberg/cpp/src/barretenberg/vm2/trace_ffi.cpp b/barretenberg/cpp/src/barretenberg/vm2/trace_ffi.cpp
 new file mode 100644
-index 00000000000..9cda6ae8f98
+index 00000000000..668c10be148
 --- /dev/null
 +++ b/barretenberg/cpp/src/barretenberg/vm2/trace_ffi.cpp
-@@ -0,0 +1,56 @@
+@@ -0,0 +1,105 @@
 +#include <cstdint>
 +#include <cstdlib>
 +#include <cstring>
 +#include <exception>
++#include <functional>
 +#include <vector>
 +
 +#include "barretenberg/vm2/common/avm_io.hpp"
@@ -63,42 +39,20 @@ index 00000000000..9cda6ae8f98
 +#include "barretenberg/vm2/simulation_helper.hpp"
 +#include "barretenberg/vm2/tracegen_helper.hpp"
 +
++namespace {
++
++using namespace bb::avm2;
++
 +/**
-+ * @brief The AVM trace for an FFI prover: simulates the proving inputs' hints and generates the full trace (interactions
-+ * included), as AvmAPI::prove does before proving.
-+ * @details On success (returns 0) `*out` holds, for every column in `Column` order, a little-endian u32 entry count
-+ * followed by that many (u32 row, 4 little-endian u64 canonical limbs) non-zero entries. On failure (returns 1) it holds
-+ * the error message. Either way `*out` is malloc'd and the caller frees it.
++ * @brief Runs `fill` into a byte buffer: on success (0) `*out` holds what it wrote; on failure (1) the error message.
++ * Either way `*out` is malloc'd and the caller frees it.
 + */
-+extern "C" __attribute__((visibility("default"))) int bb_avm_trace(const uint8_t* input,
-+                                                                   size_t input_len,
-+                                                                   uint8_t** out,
-+                                                                   size_t* out_len)
++int respond(const std::function<void(std::vector<uint8_t>&)>& fill, uint8_t** out, size_t* out_len)
 +{
-+    using namespace bb::avm2;
 +    std::vector<uint8_t> buf;
 +    int status = 0;
-+    auto put = [&](const void* p, size_t n) {
-+        const auto* b = static_cast<const uint8_t*>(p);
-+        buf.insert(buf.end(), b, b + n);
-+    };
 +    try {
-+        auto inputs = AvmProvingInputs::from(std::vector<uint8_t>(input, input + input_len));
-+        auto events = AvmSimulationHelper().simulate_for_witgen(inputs.hints);
-+        auto trace = AvmTraceGenHelper().generate_trace(std::move(events), inputs.public_inputs);
-+        for (size_t c = 0; c < tracegen::TraceContainer::num_columns(); c++) {
-+            const size_t count_at = buf.size();
-+            uint32_t count = 0;
-+            put(&count, 4);
-+            trace.visit_column(static_cast<Column>(c), [&](uint32_t row, const FF& value) {
-+                const auto canonical = value.from_montgomery_form();
-+                put(&row, 4);
-+                put(canonical.data, 32);
-+                count++;
-+            });
-+            std::memcpy(buf.data() + count_at, &count, 4);
-+            trace.clear_column(static_cast<Column>(c));
-+        }
++        fill(buf);
 +    } catch (const std::exception& e) {
 +        buf.assign(e.what(), e.what() + std::strlen(e.what()));
 +        status = 1;
@@ -107,4 +61,74 @@ index 00000000000..9cda6ae8f98
 +    *out = static_cast<uint8_t*>(std::malloc(buf.size() > 0 ? buf.size() : 1));
 +    std::memcpy(*out, buf.data(), buf.size());
 +    return status;
++}
++
++void put(std::vector<uint8_t>& buf, const void* p, size_t n)
++{
++    const auto* b = static_cast<const uint8_t*>(p);
++    buf.insert(buf.end(), b, b + n);
++}
++
++void put_field(std::vector<uint8_t>& buf, const FF& value)
++{
++    const auto canonical = value.from_montgomery_form();
++    put(buf, canonical.data, 32);
++}
++
++} // namespace
++
++/**
++ * @brief The AVM trace for an FFI prover: simulates the proving inputs' hints and generates the full trace (interactions
++ * included), as AvmAPI::prove does before proving.
++ * @details For every column in `Column` order: a little-endian u32 entry count followed by that many (u32 row, 4
++ * little-endian u64 canonical limbs) non-zero entries.
++ */
++extern "C" __attribute__((visibility("default"))) int bb_avm_trace(const uint8_t* input,
++                                                                   size_t input_len,
++                                                                   uint8_t** out,
++                                                                   size_t* out_len)
++{
++    return respond(
++        [&](std::vector<uint8_t>& buf) {
++            auto inputs = AvmProvingInputs::from(std::vector<uint8_t>(input, input + input_len));
++            auto events = AvmSimulationHelper().simulate_for_witgen(inputs.hints);
++            auto trace = AvmTraceGenHelper().generate_trace(std::move(events), inputs.public_inputs);
++            for (size_t c = 0; c < tracegen::TraceContainer::num_columns(); c++) {
++                const size_t count_at = buf.size();
++                uint32_t count = 0;
++                put(buf, &count, 4);
++                trace.visit_column(static_cast<Column>(c), [&](uint32_t row, const FF& value) {
++                    put(buf, &row, 4);
++                    put_field(buf, value);
++                    count++;
++                });
++                std::memcpy(buf.data() + count_at, &count, 4);
++                trace.clear_column(static_cast<Column>(c));
++            }
++        },
++        out,
++        out_len);
++}
++
++/**
++ * @brief The verifier's public input columns (`PublicInputs::to_columns`) of serialized public inputs, as AvmAPI::verify
++ * reads them: for every column a little-endian u32 length, then its values as 4 little-endian u64 canonical limbs.
++ */
++extern "C" __attribute__((visibility("default"))) int bb_avm_public_inputs(const uint8_t* input,
++                                                                           size_t input_len,
++                                                                           uint8_t** out,
++                                                                           size_t* out_len)
++{
++    return respond(
++        [&](std::vector<uint8_t>& buf) {
++            for (const auto& column : PublicInputs::from(std::vector<uint8_t>(input, input + input_len)).to_columns()) {
++                const auto len = static_cast<uint32_t>(column.size());
++                put(buf, &len, 4);
++                for (const auto& value : column) {
++                    put_field(buf, value);
++                }
++            }
++        },
++        out,
++        out_len);
 +}
