@@ -1,5 +1,6 @@
 #![doc = include_str!("README.md")]
 pub mod poseidon2_perm;
+pub mod program;
 pub mod prover;
 pub mod recursive;
 pub mod two_layer;

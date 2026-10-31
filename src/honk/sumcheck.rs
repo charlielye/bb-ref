@@ -61,6 +61,31 @@ pub trait RelationSet<F: FieldLike> {
     fn partial_length(&self, _r: usize) -> usize {
         usize::MAX
     }
+    /// Subrelation `j`'s univariate length, at most the relation's: the accumulator is extended
+    /// from that many points.
+    fn subrelation_length(&self, r: usize, _j: usize) -> usize {
+        self.partial_length(r)
+    }
+    /// Whether `accumulate_points` evaluates relation `r` (instead of `accumulate` per point).
+    fn has_points(&self, _r: usize) -> bool {
+        false
+    }
+    /// Relation `r` over all the points of the edge `row0 + k·delta` at once, each subrelation at
+    /// its `subrelation_length` points, into `acc` (point-major, `num_subrelations` per point);
+    /// `regs` is scratch.
+    #[allow(clippy::too_many_arguments)]
+    fn accumulate_points(
+        &self,
+        _r: usize,
+        _acc: &mut [F],
+        _row0: &[F],
+        _delta: &[F],
+        _p: &RelationParams<F>,
+        _scaling: &F,
+        _regs: &mut Vec<F>,
+    ) {
+        unreachable!("accumulate_points without has_points")
+    }
     /// Whether `accumulate_graded` is implemented (the coefficient-basis edge path, `graded.rs`).
     fn supports_graded(&self) -> bool {
         false
@@ -757,6 +782,11 @@ impl<F: FieldLike + Copy> Accumulators<F> {
         let start = self.offsets[ri] + k * self.ns[ri];
         &mut self.data[start..start + self.ns[ri]]
     }
+    /// Every point of relation `ri`.
+    fn relation(&mut self, ri: usize) -> &mut [F] {
+        let end = self.offsets.get(ri + 1).copied().unwrap_or(self.data.len());
+        &mut self.data[self.offsets[ri]..end]
+    }
     fn at(&self, ri: usize, j: usize, k: usize) -> F {
         self.data[self.offsets[ri] + k * self.ns[ri] + j]
     }
@@ -849,6 +879,9 @@ struct Scratch<F: NativeField> {
     skip_end: Vec<usize>,
     /// How many of `skip_cols` (a prefix) may hold non-zero values in `row0`/`row1`.
     skip_filled: usize,
+    /// Per relation: evaluated by `accumulate_points`.
+    points: Vec<bool>,
+    regs: Vec<F>,
     /// Per relation: from this row on it vanishes (`RoundProver::relation_ends`).
     rel_end: Vec<usize>,
     /// Membership mask of `skip_cols`, so the active-column fill skips what is already filled.
@@ -897,6 +930,8 @@ impl<F: NativeField> Scratch<F> {
             skip_cols,
             skip_filled: 0,
             rel_end: rel_end.to_vec(),
+            points: (0..rels.num_relations()).map(|r| rels.has_points(r)).collect(),
+            regs: Vec::new(),
             in_skip: Vec::new(),
             graded: false,
             graded_rel: Vec::new(),
@@ -1037,7 +1072,7 @@ impl<F: FieldLike + Copy> ExtensionWeights<F> {
         k: usize,
         d: usize,
     ) -> F {
-        let len = rels.partial_length(ri).min(d);
+        let len = rels.subrelation_length(ri, j).min(d);
         if k < len {
             acc.at(ri, j, k)
         } else {
@@ -1314,7 +1349,7 @@ fn accumulate_edge<F: NativeField>(
     for ri in 0..rels.num_relations() {
         s.active[ri] = 2 * e < s.rel_end[ri] && !rels.skip(ri, &s.row0, &s.row1);
         if s.active[ri] {
-            if !(s.graded && s.graded_rel[ri]) && !(s.wide && s.wide_rel[ri]) {
+            if !(s.graded && s.graded_rel[ri]) && !(s.wide && s.wide_rel[ri]) && !s.points[ri] {
                 num_points = num_points.max(s.len[ri]);
             }
             for &j in &used[ri] {
@@ -1407,12 +1442,18 @@ fn accumulate_edge<F: NativeField>(
             }
         }
     }
-    if (0..rels.num_relations()).all(|ri| !s.active[ri] || (s.graded && s.graded_rel[ri]) || (s.wide && s.wide_rel[ri])) {
-        return;
-    }
     let stats = relation_stats_enabled();
     let mut ext_ns = 0u128;
     let mut rel_ns = vec![0u128; if stats { rels.num_relations() } else { 0 }];
+    for ri in 0..rels.num_relations() {
+        if s.active[ri] && s.points[ri] {
+            let t0 = stats.then(std::time::Instant::now);
+            rels.accumulate_points(ri, acc.relation(ri), &s.row0, &s.delta, params, scaling, &mut s.regs);
+            if let Some(t0) = t0 {
+                rel_ns[ri] += t0.elapsed().as_nanos();
+            }
+        }
+    }
     for k in 0..num_points {
         let t0 = stats.then(std::time::Instant::now);
         for &j in &s.cols {
@@ -1426,7 +1467,7 @@ fn accumulate_edge<F: NativeField>(
             ext_ns += t0.elapsed().as_nanos();
         }
         for ri in 0..rels.num_relations() {
-            if !s.active[ri] || k >= s.len[ri] || (s.graded && s.graded_rel[ri]) || (s.wide && s.wide_rel[ri]) {
+            if !s.active[ri] || k >= s.len[ri] || (s.graded && s.graded_rel[ri]) || (s.wide && s.wide_rel[ri]) || s.points[ri] {
                 continue;
             }
             let t0 = stats.then(std::time::Instant::now);
@@ -1715,7 +1756,8 @@ where
     fn ensure_weights(&mut self, rels: &impl RelationSet<F>, params: &RelationParams<F>, alphas: &[F], d: usize) {
         if self.ext.weights.is_empty() {
             self.folded = rels.fold_separators(params, alphas);
-            self.ext = ExtensionWeights::new((0..rels.num_relations()).map(|r| rels.partial_length(r)), d);
+            let lengths = (0..rels.num_relations()).flat_map(|r| (0..rels.num_subrelations(r)).map(move |j| (r, j)));
+            self.ext = ExtensionWeights::new(lengths.map(|(r, j)| rels.subrelation_length(r, j)), d);
             self.used = used_columns(rels, self.table.len(), params);
             let zeros = vec![F::zero(); self.table.len()];
             let params = self.folded.as_ref().unwrap_or(params);

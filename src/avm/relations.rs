@@ -4,6 +4,7 @@
 //! every expression is evaluated in bb's C++ order (aliases first, operands left to right).
 
 use super::poseidon2_perm;
+use super::program::programs;
 use super::tables::{relations, Body, Expr};
 use crate::base::field::{FieldLike, Fr};
 use crate::honk::relations::RelationParams;
@@ -75,6 +76,24 @@ impl<F: FieldLike<Native = Fr>> RelationSet<F> for AvmRelations {
     }
     fn partial_length(&self, r: usize) -> usize {
         relations()[r].partial_length
+    }
+    fn subrelation_length(&self, r: usize, j: usize) -> usize {
+        programs()[r].as_ref().map_or(relations()[r].partial_length, |p| p.points(j))
+    }
+    fn has_points(&self, r: usize) -> bool {
+        programs()[r].is_some()
+    }
+    fn accumulate_points(
+        &self,
+        r: usize,
+        acc: &mut [F],
+        row0: &[F],
+        delta: &[F],
+        p: &RelationParams<F>,
+        scaling: &F,
+        regs: &mut Vec<F>,
+    ) {
+        programs()[r].as_ref().unwrap().accumulate(acc, row0, delta, p, scaling, regs);
     }
     fn offset_only(&self, _r: usize) -> bool {
         false
