@@ -73,6 +73,9 @@ impl<F: FieldLike<Native = Fr>> RelationSet<F> for AvmRelations {
     fn linearly_independent(&self, r: usize, j: usize) -> bool {
         !matches!(relations()[r].body, Body::Interaction { .. }) || j == 0
     }
+    fn partial_length(&self, r: usize) -> usize {
+        relations()[r].partial_length
+    }
     fn offset_only(&self, _r: usize) -> bool {
         false
     }
@@ -86,6 +89,34 @@ impl<F: FieldLike<Native = Fr>> RelationSet<F> for AvmRelations {
             sum.is_zero()
         };
         !cols.is_empty() && zero(row0) && zero(row1)
+    }
+    fn relation_columns(&self, r: usize) -> Option<Vec<usize>> {
+        fn walk(e: &Expr, out: &mut Vec<usize>) {
+            match e {
+                Expr::Col(i) => out.push(*i),
+                Expr::Const(_) | Expr::Alias(_) => {}
+                Expr::Add(a, b) | Expr::Sub(a, b) | Expr::Mul(a, b) => {
+                    walk(a, out);
+                    walk(b, out);
+                }
+                Expr::Neg(a) => walk(a, out),
+            }
+        }
+        let mut cols = Vec::new();
+        match &relations()[r].body {
+            Body::Generated { lets, subs } => lets.iter().chain(subs).for_each(|e| walk(e, &mut cols)),
+            Body::Handwritten => return None,
+            Body::Interaction { src_sel, dst_sel, inverses, counts, src, dst } => {
+                cols.extend([*src_sel, *dst_sel, *inverses].into_iter().chain(*counts).chain(src.iter().copied()).chain(dst.iter().copied()))
+            }
+        }
+        cols.sort_unstable();
+        cols.dedup();
+        Some(cols)
+    }
+    fn vanishing_columns(&self, r: usize) -> Option<Vec<usize>> {
+        let cols = &relations()[r].skip;
+        (!cols.is_empty()).then(|| cols.clone())
     }
     fn skip_columns(&self) -> Option<Vec<usize>> {
         let mut cols: Vec<usize> = relations().iter().flat_map(|r| r.skip.iter().copied()).collect();

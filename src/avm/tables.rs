@@ -83,6 +83,9 @@ pub enum Body {
 pub struct Relation {
     pub name: &'static str,
     pub num_subrelations: usize,
+    /// bb's max subrelation partial length, or for an interaction its degree in the edge variable
+    /// plus one: the points the prover evaluates before extending.
+    pub partial_length: usize,
     pub body: Body,
     /// bb `skip()`: the relation vanishes on an edge where the sum of these columns is zero on
     /// both rows (empty: it never skips).
@@ -154,7 +157,7 @@ fn parse_relations(l: &Layout) -> Vec<Relation> {
             "relation" => {
                 let mut it = rest.split(' ');
                 let name = it.next().unwrap();
-                let num_subrelations = it.next().unwrap().split(',').count();
+                let lengths: Vec<usize> = it.next().unwrap().split(',').map(|n| n.parse().unwrap()).collect();
                 let body = match it.next() {
                     Some("handwritten") => Body::Handwritten,
                     None => Body::Generated {
@@ -166,7 +169,8 @@ fn parse_relations(l: &Layout) -> Vec<Relation> {
                 aliases.clear();
                 out.push(Relation {
                     name,
-                    num_subrelations,
+                    num_subrelations: lengths.len(),
+                    partial_length: *lengths.iter().max().unwrap(),
                     body,
                     skip: Vec::new(),
                 });
@@ -201,6 +205,8 @@ fn parse_relations(l: &Layout) -> Vec<Relation> {
                 out.push(Relation {
                     name: head_fields[0],
                     num_subrelations: 2,
+                    // t0·t1·inverse, and the selector·term·inverse sums (times the counts).
+                    partial_length: if counts.is_some() { 5 } else { 4 },
                     skip: vec![inverses],
                     body: Body::Interaction {
                         src_sel: l.col(head_fields[1]),
@@ -221,6 +227,7 @@ fn parse_relations(l: &Layout) -> Vec<Relation> {
         }
     }
     assert_eq!(out.iter().map(|r| r.num_subrelations).sum::<usize>(), l.num_subrelations);
+    assert!(out.iter().all(|r| r.partial_length <= l.max_partial_length));
     out
 }
 

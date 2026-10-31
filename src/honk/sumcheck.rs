@@ -47,6 +47,15 @@ pub trait RelationSet<F: FieldLike> {
     fn skip_columns(&self) -> Option<Vec<usize>> {
         None
     }
+    /// Every column relation `r` reads, if known (`None`: found by probing, `used_columns`).
+    fn relation_columns(&self, _r: usize) -> Option<Vec<usize>> {
+        None
+    }
+    /// Columns whose vanishing on both rows of an edge implies `skip(r)` (`None`: no such set).
+    /// Past the last of their non-zero rows the edge loop drops the relation without testing it.
+    fn vanishing_columns(&self, _r: usize) -> Option<Vec<usize>> {
+        None
+    }
     /// The relation's univariate length (bb's max subrelation partial length): the prover only
     /// evaluates it at that many points and extends the accumulator afterwards.
     fn partial_length(&self, _r: usize) -> usize {
@@ -833,8 +842,15 @@ struct Scratch<F: NativeField> {
     /// Columns read by the edge's active relations: the only ones stepped.
     cols: Vec<usize>,
     mark: Vec<bool>,
-    /// Columns the skip predicates read: filled for every edge before the skips run.
+    /// Columns the skip predicates read, latest-ending first: filled for every edge before the
+    /// skips run, except those past their end, which hold zero.
     skip_cols: Vec<usize>,
+    /// Row end of each of `skip_cols` (`column_end`).
+    skip_end: Vec<usize>,
+    /// How many of `skip_cols` (a prefix) may hold non-zero values in `row0`/`row1`.
+    skip_filled: usize,
+    /// Per relation: from this row on it vanishes (`RoundProver::relation_ends`).
+    rel_end: Vec<usize>,
     /// Membership mask of `skip_cols`, so the active-column fill skips what is already filled.
     in_skip: Vec<bool>,
     /// Coefficient-basis path (every relation's univariate fits `GRADED_MAX_LEN`): the edge rows as
@@ -861,7 +877,11 @@ struct Scratch<F: NativeField> {
 }
 
 impl<F: NativeField> Scratch<F> {
-    fn new(rels: &impl RelationSet<F>, num_columns: usize, d: usize) -> Self {
+    fn new(rels: &impl RelationSet<F>, table: &[Column<F>], rel_end: &[usize], d: usize) -> Self {
+        let num_columns = table.len();
+        let mut skip_cols = rels.skip_columns().unwrap_or_else(|| (0..num_columns).collect());
+        debug_assert!(skip_cols.iter().all(|&j| j < num_columns));
+        skip_cols.sort_by_key(|&j| std::cmp::Reverse(column_end(table, j)));
         Self {
             row0: vec![F::zero(); num_columns],
             row1: vec![F::zero(); num_columns],
@@ -873,11 +893,10 @@ impl<F: NativeField> Scratch<F> {
                 .collect(),
             cols: Vec::with_capacity(num_columns),
             mark: vec![false; num_columns],
-            skip_cols: {
-                let sc = rels.skip_columns().unwrap_or_else(|| (0..num_columns).collect());
-                debug_assert!(sc.iter().all(|&j| j < num_columns));
-                sc
-            },
+            skip_end: skip_cols.iter().map(|&j| column_end(table, j)).collect(),
+            skip_cols,
+            skip_filled: 0,
+            rel_end: rel_end.to_vec(),
             in_skip: Vec::new(),
             graded: false,
             graded_rel: Vec::new(),
@@ -928,9 +947,9 @@ impl<F: NativeField> Scratch<F> {
     }
 }
 
-/// The columns each relation reads, found by re-randomizing one column at a time: a body that
-/// depends on a column changes value with overwhelming probability (Schwartz-Zippel), so the
-/// edge extension can skip the others (bb `LazyExtendedEdges`).
+/// The columns each relation reads (bb `LazyExtendedEdges`), so the edge extension can skip the
+/// others: as the relation set reports them, or found by re-randomizing one column at a time (a
+/// body that depends on a column changes value with overwhelming probability, Schwartz-Zippel).
 fn used_columns<F: FieldLike + Copy>(
     rels: &impl RelationSet<F>,
     num_columns: usize,
@@ -948,6 +967,9 @@ fn used_columns<F: FieldLike + Copy>(
     };
     (0..rels.num_relations())
         .map(|r| {
+            if let Some(cols) = rels.relation_columns(r) {
+                return cols;
+            }
             let base = eval(r, &row);
             let mut probe = row.clone();
             (0..num_columns)
@@ -1122,6 +1144,7 @@ static SLOT_BUSY_NS: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new
 fn accumulate_edges_serial<F: NativeField>(
     rels: &(impl RelationSet<F> + Sync),
     used: &[Vec<usize>],
+    rel_end: &[usize],
     table: &[Column<F>],
     edges: std::ops::Range<usize>,
     params: &RelationParams<F>,
@@ -1133,7 +1156,7 @@ where
 {
     let params_uni = lift_params(params);
     let mut acc = Accumulators::new(rels, d);
-    let mut scratch = Scratch::new(rels, table.len(), d);
+    let mut scratch = Scratch::new(rels, table, rel_end, d);
     for e in edges {
         accumulate_edge(rels, used, table, e, params, &params_uni, &pows.at(e), &mut acc, &mut scratch);
     }
@@ -1149,6 +1172,7 @@ const SERIAL_EDGES: usize = 8;
 fn accumulate_edges<F: NativeField>(
     rels: &(impl RelationSet<F> + Sync),
     used: &[Vec<usize>],
+    rel_end: &[usize],
     table: &[Column<F>],
     edges: std::ops::Range<usize>,
     head: Option<std::ops::Range<usize>>,
@@ -1161,7 +1185,7 @@ where
 {
     // A few edges cost less than waking the pool (~100us per round).
     if edges.len() <= SERIAL_EDGES {
-        let serial = |e| accumulate_edges_serial(rels, used, table, e, params, pows, d);
+        let serial = |e| accumulate_edges_serial(rels, used, rel_end, table, e, params, pows, d);
         return (serial(edges), head.map(serial));
     }
     let params_uni = lift_params(params);
@@ -1192,7 +1216,7 @@ where
         let t0 = detail.then(std::time::Instant::now);
         let mut guard = slots[w].lock().unwrap();
         let (acc, scratch) = guard
-            .get_or_insert_with(|| (Accumulators::new(rels, d), Scratch::new(rels, table.len(), d)));
+            .get_or_insert_with(|| (Accumulators::new(rels, d), Scratch::new(rels, table, rel_end, d)));
         let mut did_head = false;
         loop {
             let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1203,7 +1227,7 @@ where
                 let h = head.clone().unwrap();
                 let mut hg = head_slot.lock().unwrap();
                 let (hacc, hscratch) =
-                    hg.get_or_insert_with(|| (Accumulators::new(rels, d), Scratch::new(rels, table.len(), d)));
+                    hg.get_or_insert_with(|| (Accumulators::new(rels, d), Scratch::new(rels, table, rel_end, d)));
                 for e in h {
                     accumulate_edge(rels, used, table, e, params, params_uni, &pows.at(e), hacc, hscratch);
                 }
@@ -1272,17 +1296,23 @@ fn accumulate_edge<F: NativeField>(
     acc: &mut Accumulators<F>,
     s: &mut Scratch<F>,
 ) {
-    for &j in &s.skip_cols {
+    let live = s.skip_end.partition_point(|&end| end > 2 * e);
+    for &j in &s.skip_cols[..live] {
         s.row0[j] = column_value(table, j, 2 * e);
         s.row1[j] = column_value(table, j, 2 * e + 1);
     }
+    for &j in s.skip_cols.get(live..s.skip_filled).unwrap_or_default() {
+        s.row0[j] = F::zero();
+        s.row1[j] = F::zero();
+    }
+    s.skip_filled = live;
     if rels.skip_row(&s.row0, &s.row1) {
         return;
     }
     let mut num_points = 0;
     s.cols.clear();
     for ri in 0..rels.num_relations() {
-        s.active[ri] = !rels.skip(ri, &s.row0, &s.row1);
+        s.active[ri] = 2 * e < s.rel_end[ri] && !rels.skip(ri, &s.row0, &s.row1);
         if s.active[ri] {
             if !(s.graded && s.graded_rel[ri]) && !(s.wide && s.wide_rel[ri]) {
                 num_points = num_points.max(s.len[ri]);
@@ -1297,7 +1327,7 @@ fn accumulate_edge<F: NativeField>(
     }
     // Prefetch the edge two ahead: its ~40 interleaved column streams outrun the hardware prefetchers.
     #[cfg(target_arch = "x86_64")]
-    for &j in s.cols.iter().chain(&s.skip_cols) {
+    for &j in s.cols.iter().chain(&s.skip_cols[..live]) {
         if let Some(r) = column_ref(table, j, 2 * e + 4) {
             unsafe { std::arch::x86_64::_mm_prefetch(r as *const F as *const i8, std::arch::x86_64::_MM_HINT_T0) };
         }
@@ -1550,6 +1580,16 @@ fn column_ref<'t, F>(table: &'t [Column<F>], j: usize, i: usize) -> Option<&'t F
     }
 }
 
+/// Row past which column `j` is zero.
+fn column_end<F>(table: &[Column<F>], j: usize) -> usize {
+    match &table[j] {
+        Column::Borrowed(st, s) => st + s.len(),
+        Column::Own(st, v) => st + v.len(),
+        Column::ShiftOf(k) => column_end(table, *k).saturating_sub(1),
+        Column::Folded(st, s, _) => (st + s.len()).div_ceil(2),
+    }
+}
+
 /// Value of column `j` at row `i` (zero past the column's end).
 fn column_value<F: FieldLike + Copy>(table: &[Column<F>], j: usize, i: usize) -> F {
     match &table[j] {
@@ -1613,6 +1653,8 @@ pub struct RoundProver<'a, F> {
     ext: ExtensionWeights<F>,
     /// Columns read by each relation (`used_columns`), found on the first round.
     used: Vec<Vec<usize>>,
+    /// Per relation: it is zero on a row of zeros, so it vanishes past its columns' ends.
+    vanishes: Vec<bool>,
     /// Round-0 gate separators; round r's are the stride-2^r subsequence, so they are built once.
     pows0: Vec<F>,
     /// The relation parameters with the separator-folding constants (`fold_separators`), if any.
@@ -1663,6 +1705,7 @@ where
             active_prefix_end,
             ext: ExtensionWeights { weights: vec![] },
             used: vec![],
+            vanishes: vec![],
             pows0: vec![],
             folded: None,
             late_tables: false,
@@ -1674,7 +1717,27 @@ where
             self.folded = rels.fold_separators(params, alphas);
             self.ext = ExtensionWeights::new((0..rels.num_relations()).map(|r| rels.partial_length(r)), d);
             self.used = used_columns(rels, self.table.len(), params);
+            let zeros = vec![F::zero(); self.table.len()];
+            let params = self.folded.as_ref().unwrap_or(params);
+            self.vanishes = (0..rels.num_relations())
+                .map(|r| {
+                    let mut acc = vec![F::zero(); rels.num_subrelations(r)];
+                    rels.accumulate(r, &mut acc, &zeros, params, &F::one());
+                    acc.iter().all(|a| a.is_zero())
+                })
+                .collect();
         }
+    }
+    /// The row from which each relation is zero on every edge: past the ends of the columns it
+    /// reads (if it vanishes on zeros), or of its `vanishing_columns`.
+    fn relation_ends(&self, rels: &impl RelationSet<F>) -> Vec<usize> {
+        let end = |cols: &[usize]| cols.iter().map(|&j| column_end(&self.table, j)).max().unwrap_or(0);
+        (0..rels.num_relations())
+            .map(|r| {
+                let read = if self.vanishes[r] { end(&self.used[r]) } else { usize::MAX };
+                read.min(rels.vanishing_columns(r).map_or(usize::MAX, |c| end(&c)))
+            })
+            .collect()
     }
 
     /// bb `compute_edge_ranges`: the edges to evaluate this round, after the disabled head.
@@ -1737,6 +1800,9 @@ where
             let t_edges = std::time::Instant::now();
             let _ge = crate::base::bench::Scope::new("sumcheck/accumulate_edge_chunks");
             let head_range = self.row_disabling.then(|| 0..self.excluded_head / 2);
+            // Past every relation's end the edges contribute nothing.
+            let rel_end = self.relation_ends(rels);
+            let live_edges = rel_end.iter().max().map_or(0, |e| e.div_ceil(2));
             let mut head_acc: Option<Accumulators<F>> = None;
             let acc = self
                 .edge_ranges(round_size)
@@ -1744,7 +1810,8 @@ where
                 .enumerate()
                 .map(|(ri, edges)| {
                     let head = if ri == 0 { head_range.clone() } else { None };
-                    let (a, h) = accumulate_edges(rels, &self.used, &self.table, edges, head, params, pows, d);
+                    let edges = edges.start.min(live_edges)..edges.end.min(live_edges);
+                    let (a, h) = accumulate_edges(rels, &self.used, &rel_end, &self.table, edges, head, params, pows, d);
                     if h.is_some() {
                         head_acc = h;
                     }
@@ -1756,6 +1823,7 @@ where
                 head_acc = Some(accumulate_edges_serial(
                     rels,
                     &self.used,
+                    &rel_end,
                     &self.table,
                     head_range.clone().unwrap(),
                     params,
@@ -1811,7 +1879,7 @@ where
                 .map(|i| Column::Own(0, vec![self.current(i), F::zero()]))
                 .collect();
             let params_uni = lift_params(params);
-            let mut scratch = Scratch::new(rels, edge_table.len(), d);
+            let mut scratch = Scratch::new(rels, &edge_table, &vec![usize::MAX; rels.num_relations()], d);
             accumulate_edge(
                 rels,
                 &self.used,
