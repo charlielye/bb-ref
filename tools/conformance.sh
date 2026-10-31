@@ -8,7 +8,8 @@
 # beside it (`.goldens.zst`); --with-bb re-proves through bb ($BB, default ./bin/bb, the pin's
 # bb-avm) instead of reading them. bb-ref is built here with `--features bb-avm` (it needs
 # libbb-avm-sim.a: ./pin/build.sh --avm-lib), or is $BBREF, which must have the AVM too. Anything
-# missing fails. A difference is reported as the frame index and command that first diverged --
+# missing fails. Each accepted verify is also replayed tampered (tools/lib/tamper.py) and must be
+# rejected. A difference is reported as the frame index and command that first diverged --
 # `tools/lib/replay.py --extract N` cuts that frame (with the preceding frames of its connection,
 # since Chonk sequences are stateful) into a standalone corpus for a fast repro loop.
 set -euo pipefail
@@ -64,4 +65,14 @@ for CORPUS in "${CORPORA[@]}"; do
         exit 1
     fi
     echo "CONFORMANT: $(python3 tools/lib/replay.py --count "$out/bb.resp") responses byte-identical"
+    # Rejection: every proof bb accepted, with a public input changed, gets bb's answer (not
+    # verified). The AVM corpus records its tampered verifies itself.
+    zstd -dcq "$CORPUS" > "$out/corpus.req"
+    n=$(python3 tools/lib/tamper.py "$out/corpus.req" "$out/bb.resp" "$out/bad.req" "$out/bad.resp")
+    [ "$n" -gt 0 ] || continue
+    $WITH_BB && { "$BB" msgpack run --input "$out/bad.req" 2>/dev/null | cmp -s - "$out/bad.resp" ||
+        { echo "bb did not reject a tampered proof"; keep; exit 1; }; }
+    "$BBREF" msgpack run --input "$out/bad.req" 2>/dev/null | cmp -s - "$out/bad.resp" ||
+        { echo "DIVERGED: bb-ref did not reject a tampered proof as bb does"; keep; exit 1; }
+    echo "REJECTED: $n tampered proofs, as bb"
 done

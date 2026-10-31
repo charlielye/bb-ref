@@ -30,7 +30,9 @@ underneath.
    (`src/msgpack/bb_avm.rs`); the AVM corpus (`tools/regen/regen_avm_corpus.sh`: AvmProve,
    AvmCheckCircuit, AvmVerify on recorded inputs, bb's stage timings emptied in the goldens) is
    replayed by `tools/conformance.sh` with the rollup corpus. Circuits that verify an AVM proof (the public tx base rollup) are
-   bb-ref's own in every build.
+   bb-ref's own in every build. Rejection is checked too: the AVM corpus records tampered
+   verifies, and `conformance.sh` replays every rollup verify bb accepted with a public input
+   changed (`tools/lib/tamper.py`), which bb-ref must reject with bb's answer.
    bb's server is generated from this schema by `/ipc-codegen`; **bb-ref's is generated from
    the same schema** — `ipc-codegen --lang rust --server` emits a `Handler` trait, `dispatch()` and
    `handle_request(handler, bytes) -> Vec<u8>`, the exact analogue of bb's `make_bb_handler`,
