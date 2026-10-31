@@ -1,0 +1,10 @@
+# tools/build_time.sh (16 jobs); bbbench, 2026-10-31, pin 1117683, bb-ref 4ec9af0
+16 jobs, 16 CPUs (AMD EPYC 9R14)
+                              from scratch              own code only
+                       bb  bb-ref    ratio        bb  bb-ref    ratio
+with the AVM         289s     65s    0.22x      282s     52s    0.18x
+without the AVM      129s     59s    0.46x      128s     48s    0.38x
+
+binary, stripped          bb     bb-ref
+with the AVM        153.5 MB    33.6 MB
+without the AVM      51.2 MB    23.6 MB

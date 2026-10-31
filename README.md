@@ -20,7 +20,8 @@ These are the project's binding goals — changes should be judged against them:
 | **Bit parity**: VKs bit-exact, proofs byte-exact, both directions, including the wire protocol | holds — every VK, proof and wire response checked is byte-equal, and bb-ref rejects tampered proofs as bb does ([what is checked](#parity)) |
 | **Circuit gate parity**: every selector, wire and copy-cycle identical to bb's ([docs/gate-exactness.md](docs/gate-exactness.md)) | holds — 41 stdlib gadget programs compared gate for gate, plus the VK sweeps ([parity](#parity)) |
 | **Replay the rollup through bb and bb-ref and get the same root proof** | holds — 63/63 `rollup-1117683` corpus responses byte-identical, `rollup_root` included, and 28/28 of the AVM corpus (prove, check circuit, verify) (`tools/conformance.sh`) |
-| **At parity or better with bb in performance, memory usage and wasm size** (against stock bb at the pin) | Chonk time **0.46×** native, **0.68×** wasm; memory **0.8–0.9×**; wasm module **2.1× smaller** ([speed and memory](#speed-and-memory)) |
+| **At parity or better with bb in performance, memory usage and wasm size** (against stock bb at the pin) | Chonk time **0.46×** native, **0.68×** wasm; the rollup **0.45×**; the AVM 1.05× (short of parity); memory **0.8–0.9×**; wasm module **2.1× smaller** ([speed and memory](#speed-and-memory), [binary size](#binary-size)) |
+| **Fast to build**: a from-scratch release build well under bb's, like for like | **0.22×** bb's time with the AVM, **0.46×** without, on 16 cores ([build time](#build-time)) |
 | **95%+ test coverage on the critical paths**, without redundant tests | core **95%** standalone, plus full soundness sweeps ([docs/testing.md](docs/testing.md)) |
 | **Documentation an engineer can descend**: each component's purpose without the math; first use of any odd name links to its explanation | [tour](docs/tour.md) → module READMEs → [glossary](docs/glossary.md) |
 | **A maintenance process for bb divergence**: diagnose and resolve drift quickly as bb moves | the pin + regen + divergence ladder ([docs/oracle.md](docs/oracle.md)) |
@@ -87,15 +88,56 @@ was 0.47×); tables of record in [bench-results/](bench-results/), method in [do
 Flows use the sponsored fee payer unless marked `private_fpc`, and an ecdsar1 account unless
 marked schnorr. With wasm wide arithmetic (node 27 nightly), bb-ref's wasm total drops to 0.56×.
 
-**Wasm module size** (what the browser downloads): bb.js-api's threads module is 18.15 MB
-(4.03 MB gzipped); bb-ref.js's, Chonk-only and stripped, is **8.63 MB (2.12 MB gzipped)**.
+The rollup and AVM corpora (real recorded server traffic, `tools/bench.sh --pair`), native, 16
+threads, the same box, replayed through bb-avm and then bb-ref (with the AVM) one after the other,
+2026-10-31, bb-ref `4ec9af0` ([bench-results/rollup.txt](bench-results/rollup.txt)):
 
-The whole rollup corpus (62 server operations, native, 16 threads) ran in 0.46× bb's time at 1.03×
-its peak memory (2026-10-14, older pin `3b2c553`). The rollup and AVM tables at the current pin
-come with the next bench-box run.
+| corpus operation | n | bb | bb-ref | ratio |
+| --- | ---: | ---: | ---: | ---: |
+| PrivateTxBaseRollup prove | 9 | 103.86 s | 42.63 s | 0.41× |
+| RootRollup prove | 2 | 64.57 s | 30.98 s | 0.48× |
+| CheckpointRootRollup prove | 2 | 46.23 s | 21.27 s | 0.46× |
+| CheckpointRootSingleBlockRollup prove | 2 | 40.80 s | 18.50 s | 0.45× |
+| the other 8 rollup circuits' proves | 15 | 44.89 s | 21.79 s | 0.49× |
+| BbCircuitVerify | 32 | 0.52 s | 0.43 s | 0.83× |
+| BbInit | 1 | 0.00 s | 0.00 s | |
+| **rollup total** (peak RSS 12.02 GB → 11.24 GB) | **63** | **300.89 s** | **135.61 s** | **0.45×** |
+| BbAvmProve | 7 | 56.88 s | 54.60 s | 0.96× |
+| BbAvmCheckCircuit | 7 | 29.74 s | 36.68 s | 1.23× |
+| BbAvmVerify | 14 | 1.66 s | 1.43 s | 0.86× |
+| **AVM total** (peak RSS 12.16 GB → 9.96 GB) | **28** | **88.28 s** | **92.71 s** | **1.05×** |
+
+The AVM is the one place short of parity: its simulation and trace generation are bb's own code in
+both binaries, so only the proving and checking around them differ, and bb-ref's circuit check is
+the slower part.
 
 Try it in a browser: **[charlielye.github.io/bb-ref](https://charlielye.github.io/bb-ref/)** proves
 the same flows with both engines side by side ([js/](js/README.md)).
+
+### Build time
+
+A release build from scratch on 16 cores (an EPYC 9R14 bench box, standing in for a workstation),
+single run, `tools/build_time.sh`. bb builds with its release preset (zig's clang, libc++) and
+`ninja bb-avm` or `ninja bb`; bb-ref with `cargo build --release`, plus `--features bb-avm` for the
+AVM. *Own code only* rebuilds each side with its third-party dependencies already built (bb's
+`_deps/`; bb-ref's crates, ipc-runtime included). bb-ref's AVM build links bb's simulation and
+trace generation (`libbb-avm-sim.a`), which is bb's code: it is built beforehand and not timed,
+as bb's prebuilt avm-transpiler is not either.
+
+| | bb | bb-ref | ratio | own code: bb | bb-ref | ratio |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| with the AVM | 289 s | 65 s | **0.22×** | 282 s | 52 s | **0.18×** |
+| without the AVM | 129 s | 59 s | **0.46×** | 128 s | 48 s | **0.38×** |
+
+### Binary size
+
+Native, stripped, from the same builds: bb-avm is 153.5 MB against bb-ref's 33.6 MB with the AVM
+(**4.6× smaller**, bb's linked simulation included); bb is 51.2 MB against 23.6 MB without it
+(**2.2×**).
+
+Wasm (what the browser downloads, as published on the [bench page](https://charlielye.github.io/bb-ref/)):
+bb.js-api's threads module is 18.15 MB (4.03 MB gzipped); bb-ref.js's, Chonk-only and stripped,
+is **8.48 MB (2.05 MB gzipped)**, 2.1× smaller.
 
 ### Parity
 

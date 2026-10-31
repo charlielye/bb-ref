@@ -1,23 +1,38 @@
-rollup corpus rollup-3b2c553, sequential replay, 16 threads, seed 12345, 2026-10-14, host ip-172-31-27-76, bb: pinned bb (3b2c5536), bb-ref: ef4534e
+# tools/bench.sh <corpus> --pair bb-avm bb-ref-avm --threads 16; bbbench (EPYC 9R14, 16 CPUs), 2026-10-31, pin 1117683, bb-ref 4ec9af0
+
 threads: 16 (both binaries)
 
 bb vs bb-ref (sequential replay of the same corpus)
 
 operation                                                 n         bb     bb-ref   ref/bb
 ------------------------------------------------------------------------------------------
-BbCircuitProve PrivateTxBaseRollupArtifact                9     93.62s     40.75s    0.44x
-BbCircuitProve RootRollupArtifact                         2     66.19s     31.85s    0.48x
-BbCircuitProve CheckpointRootRollupArtifact               2     47.47s     21.32s    0.45x
-BbCircuitProve CheckpointRootSingleBlockRollupArtifact    2     40.75s     18.27s    0.45x
-BbCircuitProve BlockRootRollupArtifact                    2     12.71s      6.32s    0.50x
-BbCircuitProve BlockRootSingleTxRollupArtifact            4     12.16s      6.83s    0.56x
-BbCircuitProve InboxParity64Artifact                      4      9.57s      3.84s    0.40x
-BbCircuitProve TxMergeRollupArtifact                      1      6.12s      2.93s    0.48x
-BbCircuitProve BlockMergeRollupArtifact                   1      6.09s      2.95s    0.48x
-BbCircuitProve CheckpointMergeRollupArtifact              1      5.27s      3.05s    0.58x
-BbCircuitVerify                                          32      0.49s      0.39s    0.80x
-BbCircuitProve BlockRootNoTxsRollupArtifact               1      0.46s      0.25s    0.54x
-BbCircuitProve CheckpointPaddingRollupArtifact            1      0.17s      0.13s    0.75x
+BbCircuitProve PrivateTxBaseRollupArtifact                9    103.86s     42.63s    0.41x
+BbCircuitProve RootRollupArtifact                         2     64.57s     30.98s    0.48x
+BbCircuitProve CheckpointRootRollupArtifact               2     46.23s     21.27s    0.46x
+BbCircuitProve CheckpointRootSingleBlockRollupArtifact    2     40.80s     18.50s    0.45x
+BbCircuitProve BlockRootRollupArtifact                    2     12.70s      5.90s    0.46x
+BbCircuitProve BlockRootSingleTxRollupArtifact            4     12.57s      6.22s    0.49x
+BbCircuitProve TxMergeRollupArtifact                      1      6.59s      2.81s    0.43x
+BbCircuitProve BlockMergeRollupArtifact                   1      5.97s      2.86s    0.48x
+BbCircuitProve CheckpointMergeRollupArtifact              1      5.33s      2.91s    0.55x
+BbCircuitProve InboxParity4Artifact                       4      1.03s      0.72s    0.70x
+BbCircuitProve BlockRootNoTxsRollupArtifact               1      0.53s      0.25s    0.48x
+BbCircuitVerify                                          32      0.52s      0.43s    0.83x
+BbCircuitProve CheckpointPaddingRollupArtifact            1      0.17s      0.12s    0.70x
+BbInit                                                    1      0.00s      0.00s    1.03x
 ------------------------------------------------------------------------------------------
-TOTAL                                                    62    301.06s    138.87s    0.46x
-peak RSS: bb 12.56GB, bb-ref 12.89GB
+TOTAL                                                    63    300.89s    135.61s    0.45x
+peak RSS: bb 12.02GB, bb-ref 11.24GB
+
+threads: 16 (both binaries)
+
+bb vs bb-ref (sequential replay of the same corpus)
+
+operation            n         bb     bb-ref   ref/bb
+-----------------------------------------------------
+BbAvmProve           7     56.88s     54.60s    0.96x
+BbAvmCheckCircuit    7     29.74s     36.68s    1.23x
+BbAvmVerify         14      1.66s      1.43s    0.86x
+-----------------------------------------------------
+TOTAL               28     88.28s     92.71s    1.05x
+peak RSS: bb 12.16GB, bb-ref 9.96GB
