@@ -34,7 +34,10 @@ await initSrs(api, {
   grumpkin: read('grumpkin_g1_v2.flat.dat', (1 << 16) * 64),
 });
 console.log(`${which}: ${threads} threads, module + SRS ready in ${(performance.now() - t).toFixed(0)} ms`);
-for (const flow of flows) {
+for (const [i, flow] of flows.entries()) {
+  // Init again restarts a seeded stream, so each flow starts where a fresh process would (its
+  // golden), as the page does.
+  if (env.BB_RNG_SEED && i > 0) await api.init({ warmup: false });
   const steps = await decodeIvcInputs(unpack, readFileSync(join(FLOWS, flow, 'ivc-inputs.msgpack')));
   const r = await proveFlow(api, steps);
   const sha = await sha256Hex(r.proofBytes);
