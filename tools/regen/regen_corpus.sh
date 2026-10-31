@@ -52,7 +52,7 @@ else
     # The labs checkout's own pre-commit hook formats with labs' unlinked dependencies; the build
     # commits the use-local marker inside labs, so hooks are off for it.
     GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null make -C "$TREE" labs-yarn-project
-    ninja -C "$TREE/barretenberg/cpp/build" bb-avm
+    "$ROOT/pin/build.sh" --avm
     echo "$PIN" > "$BUILT_MARKER"
 fi
 

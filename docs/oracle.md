@@ -53,7 +53,7 @@ Not everything can be compared the same way, because bb draws randomness. Three 
 
 | pattern | what it proves | cost |
 |---|---|---|
-| VK-hash sweep (`backend_vk_hash_sweep`) | circuit structure equals bb's, per artifact, no witnesses needed | seconds/circuit |
+| VK-hash sweep (`vk_hash_sweep`) | circuit structure equals bb's, per artifact, no witnesses needed | seconds/circuit |
 | write-VK instance diff (`backend_write_vk_instance_diff`) | every deterministic polynomial over the full trace; pinpoints the first divergent gate row | ~1 min |
 | instance + proof diff (`check_nozk*`) | everything: witness columns, VK, proof bytes | minutes |
 | stdlib micro-oracle (`BbRefDump.Stdlib` programs, `tests/stdlib.rs`) | one expression or gadget, gate-exact, in isolation | ~10 s round trip |
@@ -89,16 +89,21 @@ Re-pointing bb-ref at a new bb commit is a deliberate procedure, in this order:
 
 1. Rebase the pin branch onto it (drop patches that landed upstream), update `tools/PIN`, rename
    `tests/data/<pin7>` and `tests/common/mod.rs`'s `PIN`, and stage the submodule (`regen_corpus.sh`
-   runs `git submodule update`, which would otherwise reset the tree to the old pin).
-2. Build in the tree: `pin/build.sh --noir`, `dsl_tests` (the dumper), the protocol and mock
+   runs `git submodule update`, which would otherwise reset the tree to the old pin). Rebase
+   `pin/bb-avm-sim.patch` until `git -C pin/aztec-packages apply --check ../bb-avm-sim.patch` passes.
+2. Build in the tree: `pin/build.sh --noir --avm --avm-lib` (bb's release toolchain, zig + libc++,
+   only: the AVM's trace generation sorts with ties, so a libstdc++ build's fixtures differ), `dsl_tests` (the dumper), the protocol and mock
    circuits (`noir-projects/fnd/*/bootstrap.sh build`), `barretenberg/acir_tests` (compile), and
    `make labs-yarn-project` (the mock-stack witness generator and the corpus driver). Download the
    pinned flows: `barretenberg/cpp/scripts/chonk_inputs.sh download
    barretenberg/cpp/chonk-pinned-flows` (where the regen scripts look; `BB_FLOWS` overrides).
 3. `dev/regen_msgpack.sh` and `dev/regen_avm.py`, then every `tools/regen/regen_*.sh`: chonk flows, protocol, ultra, acir
-   (mock stack), merge, vk hashes, mega-app VKs, corpus (`--harvest` after any protocol change),
-   and backend last (its rollup circuits are extracted from the corpus).
-4. Run the full suite and `tools/conformance.sh` on the new corpus.
+   (mock stack), merge, vk hashes, mega-app VKs, avm (`--inputs` after a protocol change) then the
+   avm corpus (it reads `avm/avm_inputs.bin`), public base (needs an outside `BbCircuitProve`
+   capture), corpus (`--harvest` after any protocol change), and backend last (its rollup circuits
+   are extracted from the corpus).
+4. Run the full suite, and `tools/conformance.sh` on the new corpus and, with a `bb-avm` build
+   (`BBREF=…`), on `tools/corpus/avm-<pin7>.corpus.zst`.
 
 Divergences found are chased with the ladder above — they are the changelog of what bb changed,
 which is half the value of maintaining the mirror. The 2026-10-16 re-pin (3b2c553 → d43209d, the

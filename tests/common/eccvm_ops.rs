@@ -1,4 +1,4 @@
-//! Deterministic ECCVM op queues shared by the M8/M9 tests and mirrored in bb's `BbRefDump.Eccvm`.
+//! Deterministic ECCVM op queues shared by the ECCVM trace and proof tests and mirrored in bb's `BbRefDump.Eccvm`.
 #![allow(dead_code)]
 use ark_ec::{AffineRepr, CurveGroup};
 use bb_ref::base::field::FieldLike;
@@ -69,7 +69,7 @@ pub fn g1_times(k: u64) -> G1Affine {
     (G1Affine::generator() * Fr::from(k)).into_affine()
 }
 
-/// Subtable `i` of the M6/M10 fixtures: `((1 + i) % 10) + 1` triples of add / mul (with a >128-bit
+/// Subtable `i` of the merge and Translator fixtures: `((1 + i) % 10) + 1` triples of add / mul (with a >128-bit
 /// scalar) / eq_and_reset (bb `populate_subtable_deterministic`).
 pub fn populate_subtable(q: &mut EccOpQueue, i: usize) {
     for j in 0..((1 + i) % 10) + 1 {

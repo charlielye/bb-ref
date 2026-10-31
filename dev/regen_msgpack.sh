@@ -23,4 +23,4 @@ for f in bb_types.rs bb_server.rs bb_client.rs bb_ffi.rs; do
     echo "updated src/msgpack/generated/$f"
   fi
 done
-echo "regen_msgpack: done (schema hash $(/usr/bin/grep -o 'SCHEMA_HASH: &str = \"[a-f0-9]*\"' "$here/src/msgpack/generated/bb_types.rs" | cut -d'"' -f2 | head -c 12)…)"
+echo "regen_msgpack: done (schema hash $(grep -o 'SCHEMA_HASH: &str = \"[a-f0-9]*\"' "$here/src/msgpack/generated/bb_types.rs" | cut -d'"' -f2 | head -c 12)…)"

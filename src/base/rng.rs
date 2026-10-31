@@ -218,22 +218,15 @@ where
     P::BaseField: PrimeField,
 {
     use ark_ff::{Field, Zero};
-    let modulus: num_bigint::BigUint = P::BaseField::MODULUS.into();
-    assert_eq!(
-        &modulus % 4u64,
-        num_bigint::BigUint::from(3u64),
-        "sqrt convention needs q ≡ 3 mod 4"
-    );
-    let exponent: num_bigint::BigUint = (&modulus + 1u64) >> 2;
-    let limbs = exponent.to_u64_digits();
+    assert_eq!(P::BaseField::MODULUS.as_ref()[0] % 4, 3, "sqrt convention needs q ≡ 3 mod 4");
     loop {
         let x: P::BaseField = global_field();
         let mut yy = x.square() * x + P::COEFF_B;
         if !P::COEFF_A.is_zero() {
             yy += x * P::COEFF_A;
         }
-        let y = yy.pow(&limbs);
-        if y.square() == yy {
+        // arkworks' sqrt for q ≡ 3 mod 4 is bb's root, `pow((q+1)/4)`.
+        if let Some(y) = yy.sqrt() {
             let _z: P::BaseField = global_field();
             return ark_ec::short_weierstrass::Affine::<P>::new_unchecked(x, y);
         }

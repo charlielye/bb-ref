@@ -1,4 +1,4 @@
-//! M2 exit: proving from bb's dumped proving instance reproduces bb's proof byte-for-byte (non-ZK)
+//! Proving from bb's dumped proving instance reproduces bb's proof byte-for-byte (non-ZK)
 //! and yields proofs the Rust verifier accepts (ZK). Requires the `instance/` dumps produced by the
 //! bb-side `BbRefDump` gtest (regenerable, not committed).
 use crate::common;

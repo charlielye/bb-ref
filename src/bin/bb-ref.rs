@@ -124,15 +124,6 @@ fn write_words(path: &Path, words: &[U256]) {
     std::fs::write(path, bytes).unwrap();
 }
 
-/// The same precomputed commitments under the keccak codec (bb `UltraKeccakFlavor::VerificationKey`).
-fn as_keccak_vk(vk: Vk<Bn254>) -> Vk<KeccakBn254> {
-    Vk::<KeccakBn254> {
-        log_circuit_size: vk.log_circuit_size,
-        num_public_inputs: vk.num_public_inputs,
-        pub_inputs_offset: vk.pub_inputs_offset,
-        comms: vk.comms,
-    }
-}
 
 fn write_vk_files(out: &Path, vk: &Vk<Bn254>) {
     std::fs::write(out.join("vk"), vk.to_bytes()).unwrap();
@@ -226,8 +217,7 @@ fn main() {
 
     // Thread count: RAYON_NUM_THREADS (`num_threads(0)` reads it), else bb's HARDWARE_CONCURRENCY
     // (what bb.js and other hosts set to size a lane), else the cores capped at 48: beyond that the
-    // MSM-heavy phases slow down (arkworks' parallel MSM splits into few windows; oversubscription
-    // costs more than it gains). On wasm the workers' stacks are heap blocks that every
+    // MSM-heavy phases slow down (oversubscription costs more than it gains). On wasm the workers' stacks are heap blocks that every
     // linear-memory high-water includes: 1 MiB (as bb) instead of std's 2 MiB saves 8 MiB at 8
     // threads. wasm stacks have no guard page and an overflow silently corrupts the heap below; the
     // deepest worker stack measured is ~158 KB (ECCVM relations, sumcheck round, accumulate_edge).
@@ -330,7 +320,7 @@ fn main() {
             std::fs::create_dir_all(&out).unwrap();
             let write_vk = flags.contains_key("--write_vk");
             if keccak {
-                let vk = as_keccak_vk(inst.compute_vk(&ck));
+                let vk = bb_ref::msgpack::handler::as_keccak_vk(inst.compute_vk(&ck));
                 let proof = prove_ultra_as::<KeccakBn254>(&mut inst, &vk, &bb_ref::base::srs::Srs::default(), &mut rng);
                 write_words(&out.join("public_inputs"), &proof[..num_user_pis]);
                 write_words(&out.join("proof"), &proof[num_user_pis..]);
@@ -357,7 +347,7 @@ fn main() {
             std::fs::create_dir_all(&out).unwrap();
             let vk = inst.compute_vk(&ck);
             if keccak {
-                let vk = as_keccak_vk(vk);
+                let vk = bb_ref::msgpack::handler::as_keccak_vk(vk);
                 std::fs::write(out.join("vk"), vk.to_bytes()).unwrap();
                 std::fs::write(out.join("vk_hash"), u256_to_bytes_be(&vk.hash())).unwrap();
             } else {

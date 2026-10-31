@@ -9,7 +9,6 @@ ark-ff = { version = "0.6", features = ["parallel", "asm"] }
 ark-ec = { version = "0.6", features = ["parallel"] }
 ark-bn254 = "0.6"
 ark-grumpkin = "0.6"
-ark-serialize = "0.6"
 ark-std = "0.6"
 serde = { version = "1", features = ["derive"] }
 rmp-serde = "1.3"
@@ -26,9 +25,6 @@ num-bigint = "0.4"
 ark-secp256r1 = "0.6.0"
 ark-secp256k1 = "0.6.0"
 dhat = { version = "0.3.3", optional = true }
-
-[target.'cfg(target_family = "wasm")'.dependencies]
-getrandom = { version = "0.2", features = ["js"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 mimalloc = { version = "0.1", optional = true }
@@ -55,15 +51,14 @@ opt-level = 1
 opt-level = 1
 
 [features]
-# Heap profiling: dhat replaces mimalloc as the global allocator and writes dhat-heap.json.
+# Heap profiling: dhat replaces the global allocator (the arena, or mimalloc) and writes dhat-heap.json.
 heap-profile = ["dep:dhat"]
 # A/B reference: mimalloc instead of the system allocator.
 mimalloc = ["dep:mimalloc"]
-dhat = ["dep:dhat"]
 # The FFI exports (src/msgpack/ffi.rs) for a cdylib build: tools/build_bb_ref_js.sh.
 ffi = []
-# Native only: link bb's AVM (`libbb-external-avm.a`: `./pin/build.sh --avm-lib`) and forward the
-# AVM commands and AVM-verifying circuits to it.
+# Native only: link bb's AVM simulation and trace generation (`libbb-avm-sim.a`:
+# `./pin/build.sh --avm-lib`) for the AVM commands; bb-ref proves, verifies and checks the circuit.
 bb-avm = []
 
 [lints.rust]

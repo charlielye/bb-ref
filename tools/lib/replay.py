@@ -75,9 +75,9 @@ def main():
         print(f"\n{bad}/{len(left)} responses diverged")
         if bad:
             print("repro one:  replay.py --extract <corpus> <frame> -o frame.corpus")
-        return
         if len(left) != len(right):
             print(f"response count differs: bb {len(left)}, bb-ref {len(right)}")
+        return
     elif mode == "--extract":
         upto = int(sys.argv[3])
         out = sys.argv[sys.argv.index("-o") + 1] if "-o" in sys.argv else f"frame{upto}.corpus"

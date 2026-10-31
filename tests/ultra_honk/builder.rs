@@ -1,4 +1,4 @@
-//! M3 exit: circuits built from ACIR by the Rust builder reproduce bb's proving instance exactly —
+//! Circuits built from ACIR by the Rust builder reproduce bb's proving instance exactly —
 //! every polynomial, the VK, and (non-ZK) the proof are byte-identical to bb's dumps; ZK proofs
 //! from Rust-built instances verify. Needs the `instance/` dumps and the acir_tests programs.
 use crate::common;

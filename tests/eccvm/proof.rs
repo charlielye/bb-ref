@@ -1,4 +1,4 @@
-//! M9 exit: the ECCVM prover/verifier round-trip in Rust, the fixed VK matches bb's constants, Rust
+//! The ECCVM prover/verifier round-trip in Rust, the fixed VK matches bb's constants, Rust
 //! verifies bb's ECCVM proofs (`BbRefDump.EccvmProof` fixtures) and writes its own proofs for bb to
 //! verify (`tools/regen/regen_merge.sh` runs that step).
 use crate::common;

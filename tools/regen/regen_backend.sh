@@ -1,5 +1,5 @@
 #!/bin/bash
-# B0+: backend (server protocol) circuit fixtures under tests/data/<pin7>/:
+# Backend (server protocol) circuit fixtures under tests/data/<pin7>/:
 #   backend/<name>/{program.json,witness.gz}   artifact compiled+executed with the PINNED nargo
 #   instance/backend/<name>/                   bb UltraHonk instance dumps (gitignored; BbRefDump.UltraInstance)
 #   backend_vk_hash/<name>                     bb's non-ZK UltraHonk vk_hash per artifact
@@ -59,7 +59,7 @@ rm -rf "$WS"
 
 # bb's vk_hash for every server artifact in the pinned target/ (the node's production set), with the
 # node's per-circuit flags (yarn-project/bb-prover/src/honk.ts). rollup_tx_base_public needs AVM
-# recursion, which the stock bb binary refuses — expected to fail until the AVM is in scope.
+# recursion, which the stock bb binary refuses: tests/public_base.rs covers it.
 TGT=$REPO/noir-projects/fnd/noir-protocol-circuits/target
 for j in "$TGT"/inbox_parity_*.json "$TGT"/rollup_*.json "$TGT"/chonk_verifier_public.json; do
   name=$(basename "$j" .json)
@@ -79,7 +79,7 @@ for j in "$TGT"/inbox_parity_*.json "$TGT"/rollup_*.json "$TGT"/chonk_verifier_p
   fi
   rm -rf "$T"
 done
-# B5: UltraKeccak fixtures — bb proofs/VKs for a few acir_tests programs, non-ZK (byte-exact
+# UltraKeccak fixtures — bb proofs/VKs for a few acir_tests programs, non-ZK (byte-exact
 # oracle) and ZK (verify-only oracle). ACIR_TESTS points at the pinned acir_tests checkout.
 ACIR_TESTS=${ACIR_TESTS:-$REPO/barretenberg/acir_tests/acir_tests}
 for prog in a_1_mul array_dynamic unsafe_range_constraint; do
@@ -114,7 +114,7 @@ python3 "$F/backend_from_corpus.py" "$CORPUS" "$OUT/backend"
     || echo "backend witness dump FAILED for $name (single-threaded bb trips its slab-allocator bound on some 2^22+ circuits)"
 done
 
-# B6: the harvested rollup_root proven with the seeded engine (keccak; seed-deterministic even
+# The harvested rollup_root proven with the seeded engine (keccak; seed-deterministic even
 # multithreaded — all draws happen in the single-threaded phases). HARDWARE_CONCURRENCY=1 is NOT
 # set: it trips a slab-allocator bound on the 2^23 circuit.
 mkdir -p "$OUT/instance/backend/rollup_root/seeded"

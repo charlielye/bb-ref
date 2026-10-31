@@ -1,11 +1,11 @@
-//! M5 exit: HyperNova folding, multilinear batching and the decider reproduce bb byte-for-byte on
+//! HyperNova folding, multilinear batching and the decider reproduce bb byte-for-byte on
 //! script-built Mega circuits (`BbRefDump.Folding` fixtures), and the Rust verifiers accept bb's
 //! proofs and rebuild the same accumulator.
 mod common;
 use bb_ref::base::field::{from_bytes_be, Fr};
 use bb_ref::base::io::decode_fields;
 use bb_ref::base::srs::bn254_g2;
-use bb_ref::base::{Bn254, CommitmentKey, Fq, G1Affine, NativeTranscript, OsRng, Vk};
+use bb_ref::base::{Bn254, CommitmentKey, Fq, G1Affine, OsRng, Vk};
 use bb_ref::circuit::{Builder, EccOpQueue};
 use bb_ref::honk::decider::{decider_prove, decider_verify};
 use bb_ref::honk::hypernova::{FoldingProver, FoldingVerifier, ProverClaim, VerifierClaim};
@@ -168,5 +168,3 @@ fn fold_single_app() {
     check_folding("single_app", &[("mega_app", &MEGA_APP)], false);
 }
 
-#[allow(dead_code)]
-fn _unused(_: NativeTranscript) {}

@@ -10,8 +10,6 @@ use crate::base::poseidon2::round_constants;
 use crate::base::{Fq, Fr, G1Affine, Rng};
 
 pub const NUM_BUS_COLUMNS: usize = 7;
-pub const KERNEL_CALLDATA: usize = 0;
-pub const APP_CALLDATA: usize = 1;
 pub const RETURNDATA: usize = 6;
 
 /// One databus column: witness indices of its entries and how often each was read.

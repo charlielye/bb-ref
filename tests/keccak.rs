@@ -1,4 +1,4 @@
-//! B5: the UltraKeccak flavor. Non-ZK proofs, VKs and vk_hashes are byte-equal to
+//! The UltraKeccak flavor. Non-ZK proofs, VKs and vk_hashes are byte-equal to
 //! `bb prove --scheme ultra_honk --oracle_hash keccak --disable_zk --write_vk`; bb's ZK proofs
 //! verify (fixtures under `keccak/`, produced by `tools/regen/regen_backend.sh`).
 

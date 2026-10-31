@@ -6,8 +6,9 @@
 against stock bb at the pin ([`tools/PIN`](../tools/PIN)), with every proof byte-identical to
 bb's. This page records where bb-ref stands against that goal, how to reproduce the numbers, which
 optimizations own them and where they live in the code, and what was tried and rejected. The raw,
-chronological record (every measurement, retraction and dead end) is
-[`bench-results/LADDER.md`](../bench-results/LADDER.md); this file is the curated view.
+chronological record (measurements, retractions and dead ends through 2026-10-14) is
+[`bench-results/LADDER.md`](../bench-results/LADDER.md); this file is the curated view, and the
+later work is recorded here and in the commit messages.
 
 No optimization here changes an output bit: each was gated on byte-identical seeded proofs against
 bb and the full test suite.
@@ -96,7 +97,8 @@ there: a Zen 3 workstation once called a 7.7% win ~1%.
 `BBREF_BENCH=1` (`src/base/bench.rs`), with bb's scope names. Finer probes: `BBREF_ROUND_DETAIL=1`
 (per-round breakdown of the sumcheck univariate), `BBREF_TIMING_RELATIONS=1` (time and active edges
 per relation),
-`BBREF_MSM_TIMING`, `BBREF_COMMIT_TIMING`. A/B switches on one binary: `BBREF_NO_IFMA=1`,
+`BBREF_MSM_TIMING`, `BBREF_COMMIT_TIMING`; `BBREF_TIMING=1` prints live phase marks (the AVM
+prover's among them) and `BBREF_TIMING_RSS=1` adds the process RSS at each. A/B switches on one binary: `BBREF_NO_IFMA=1`,
 `BBREF_DEDUP=0`, `BBREF_GLV_LOG2`, `BBREF_TINY_MSM_MAX`. Heap profile: `--features heap-profile`
 (dhat), aggregated by `tools/heap_agg.py`.
 

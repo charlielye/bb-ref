@@ -23,7 +23,8 @@ underneath.
    settings{ipa_accumulation, oracle_hash_type, disable_zk} }`, `CircuitComputeVk`,
    `CircuitVerify`, the Chonk session (`ChonkStart/Load/Accumulate/Prove/Verify/ComputeVk`,
    proof compression), the VK-as-fields and Poseidon2 helpers, `Init` and SRS init; the rest
-   (AVM, other crypto helpers, batch verification, Solidity) answer "unsupported command".
+   (AVM without `--features bb-avm`, other crypto helpers, batch verification, Solidity) answer
+   "unsupported command".
    With `--features bb-avm` the AVM commands run bb's simulation and trace generation linked
    in-process (`libbb-avm-sim.a`), and bb-ref proves, verifies and checks the circuit
    (`src/msgpack/bb_avm.rs`); the AVM corpus (`tools/regen/regen_avm_corpus.sh`: AvmProve,
@@ -51,9 +52,8 @@ underneath.
    (no reconstruction, nothing to guess). Replay is a byte pump: feed the stream to
    `bb msgpack run --input -` and `bb-ref msgpack run --input -`, compare the response streams.
    This works verbatim because the transport has no handshake and the envelope's request id is
-   client-assigned and merely echoed on the response — so recorded ids replay as-is. bb-ref
-   serves only that file/stdin mode today; serving `.sock`/SHM (what the node spawns, and so
-   what dropping bb-ref in via `BB_BINARY_PATH` needs) is open.
+   client-assigned and merely echoed on the response — so recorded ids replay as-is. bb-ref also
+   serves `.sock`/SHM, what the node spawns, through ipc-runtime ([src/msgpack](../src/msgpack/README.md)).
 
    *Capture must be a single sequential session*: with several requests in flight, response
    order is nondeterministic even against one bb. The proxy records per connection, and the
@@ -151,5 +151,5 @@ invalidates the leaf assets) plus ~7 min of proving.
 - Land the pin branch's commits upstream (the bb.js-api PR with `Init`, BB_RNG_SEED, the RNG tape,
   BB_RNG_COUNT, envelope file framing, the BB_POOL_SIZE labs patch, the dumper), converging the pin
   to a bare release tag with a downloadable binary.
-- Extend the corpus beyond the private rollup path: public txs (AVM-adjacent frames stay
-  replay-skipped), and the chonk wire sessions as a second recorded stream.
+- Extend the rollup corpus beyond the private path: public txs (their AVM frames replay under a
+  `bb-avm` build, as the AVM corpus does), and the chonk wire sessions as a second recorded stream.

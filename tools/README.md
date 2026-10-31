@@ -27,8 +27,9 @@ our own, no rehydration step, and what we test is what the node actually sent.
 | `corpus/leaf-assets/` | real client-proven txs + the chain state they anchor to; gitignored, regenerated rarely |
 | `corpus/rollup-<pin7>.corpus.zst` | the corpus itself; gitignored, ~80 MB (1.6 GB raw) |
 | `corpus/rollup-<pin7>.goldens.zst` | bb's recorded responses to it, committed: conformance replays only bb-ref |
-| `lib/` | support: `replay.py` (list/diff/extract), `bench.py`, `bb_capture_proxy.py` (records a run) |
-| `regen/` | all regenerators: `regen_corpus.sh` plus the `tests/data/` fixture generators (`regen_*.sh`, `env.sh`) |
+| `corpus/avm-<pin7>.{corpus,goldens}.zst` | the AVM corpus (AvmProve, AvmCheckCircuit, AvmVerify of real and tampered proofs on recorded inputs), both committed; replays into a `--features bb-avm` build (`BBREF=… conformance.sh`) |
+| `lib/` | support: `replay.py` (list/diff/extract), `bench.py`, `bb_capture_proxy.py` (records a run), `avm_corpus.py` (AVM corpus frames, normalized goldens) |
+| `regen/` | all regenerators: `regen_corpus.sh`, `regen_avm_corpus.sh`, plus the `tests/data/` fixture generators (`regen_*.sh`, `env.sh`, `avm_dump.cpp`) |
 
 ## The rest
 

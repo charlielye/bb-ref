@@ -38,7 +38,6 @@ pub const NUM_MASKED_ROWS_END: usize = NUM_RANDOM_OPS_END * 2;
 pub const MAX_RANDOM_VALUES_PER_ORDERED: usize = CONCATENATION_GROUP_SIZE * NUM_MASKED_ROWS_END;
 pub const RANDOMNESS_START: usize = 2;
 pub const SORTED_STEPS_COUNT: usize = ((1 << MICRO_LIMB_BITS) / SORT_STEP as usize) + 1;
-pub const MASKING_OVERFLOW_COLUMN: usize = MAX_RANDOM_VALUES_PER_ORDERED * (NUM_ORDERED - 1) / NUM_ORDERED;
 pub const NUM_ORDERED: usize = 5;
 pub const NUM_OP_QUEUE_WIRES: usize = 4;
 /// Mini-circuit wires other than the four op-queue wires: 13 limb wires and 64 micro-limb wires.
@@ -248,7 +247,6 @@ pub const FIRST_WIRE: usize = 12;
 pub const FIRST_ORDERED: usize = 93;
 pub const FIRST_CONCATENATED: usize = 99;
 pub const FIRST_SHIFTED: usize = 104;
-pub const FIRST_ORDERED_SHIFT: usize = 184;
 
 /// The entity at index `i`.
 pub fn ent(i: usize) -> Ent {

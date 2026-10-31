@@ -1,4 +1,4 @@
-//! M16 exit: the real protocol kernels. `bb write_vk --scheme chonk` on every private/hiding
+//! The real protocol kernels. `bb write_vk --scheme chonk` on every private/hiding
 //! kernel artifact is byte-equal to Rust's VK (and to the artifact's), and where a bb instance dump
 //! exists the circuits agree polynomial-for-polynomial.
 mod common;

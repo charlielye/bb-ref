@@ -1,5 +1,5 @@
 #!/bin/bash
-# M1: bb UltraHonk proofs of acir_tests programs, ZK and non-ZK, for the verifier oracle
+# bb UltraHonk proofs of acir_tests programs, ZK and non-ZK, for the verifier oracle
 # (tests/ultra_honk/verify.rs, vk_format.rs): tests/data/<pin7>/ultra/<program>/{zk,nozk}/
 # {proof,public_inputs,vk,vk_hash}. Seeded and single-threaded so a rerun writes the same bytes.
 set -e

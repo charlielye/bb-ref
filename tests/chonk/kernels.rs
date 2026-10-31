@@ -1,4 +1,4 @@
-//! M14 exit: real recursive kernels. Rust's mock IVC (bb's mock circuit producer + the ported
+//! Real recursive kernels. Rust's mock IVC (bb's mock circuit producer + the ported
 //! `complete_kernel_circuit_logic`) reproduces every circuit of bb's mock IVC polynomial-for-polynomial
 //! and VK-for-VK, its ChonkProof verifies natively and in bb, and with bb's RNG tape the proof is
 //! byte-identical.

@@ -28,7 +28,7 @@ use crate::honk::pcs::{
 use crate::honk::prover_instance::ProverInstance;
 use crate::honk::relations::RelationParams;
 use crate::honk::sumcheck::{
-    alpha_powers, evaluate_univariate, full_relation_value, gate_separator_factor, CommittedRounds, HonkRelations,
+    alpha_powers, full_relation_value, gate_separator_factor, CommittedRounds, HonkRelations,
     RelationSet, RoundProver, ZkData,
 };
 
@@ -292,7 +292,6 @@ where
         round_evaluations[i - 1][2] = chained;
     }
     round_evaluations[JOINT_LOG_N - 1][2] = full_value;
-    let _ = evaluate_univariate::<Fr>;
 
     // --- joint PCS ---
     let concat_shift_evals = crate::goblin::translator::concat_shift_evaluations(&trans_evals, &challenge);

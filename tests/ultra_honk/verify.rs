@@ -1,4 +1,4 @@
-//! M1 exit: the Rust verifier accepts bb's UltraHonk proofs (ZK and non-ZK) and rejects tampering.
+//! The Rust verifier accepts bb's UltraHonk proofs (ZK and non-ZK) and rejects tampering.
 use crate::common;
 use bb_ref::base::field::FieldLike;
 use bb_ref::base::io::decode_fields;

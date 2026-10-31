@@ -26,7 +26,8 @@ node js/chonk-bench/build-site.mjs <dir>  # the same page as a static site (--pu
 | `Init` (bb's schema) | the session's first command, which the generated clients send: bb-ref builds its rayon pool and seeds `BB_RNG_SEED` there (a library has no `main`), then the optional warmup, after which a seeded stream restarts |
 | `build.rs` | for a wasi `cdylib` with `ffi`: links wasi-libc's `crt1-reactor.o` (rustc otherwise links it as a command, wrapping every export in constructor/destructor runs) |
 
-Only the wasm transport: bb-ref has no socket or shared-memory server for the process backends.
+Only the wasm transport: the process backends (socket, shared memory) are the native binary's,
+`bb-ref msgpack run --input <path>.sock|.shm` ([src/msgpack](../src/msgpack/README.md)).
 Only threads modules (the bench page is cross-origin isolated): `bb-ref-threads.wasm`, and
 `bb-ref-wide-threads.wasm` (`--cfg wasm_wide`), which the package picks where the engine has
 wide arithmetic. One module serves any thread count; with one thread no worker starts.

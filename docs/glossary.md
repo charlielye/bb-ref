@@ -8,6 +8,15 @@ story in order; this is the lookup table for when a name appears without context
 
 ---
 
+### AVM
+
+the Aztec Virtual Machine: public functions execute in it, and an AVM proof shows a public
+transaction ran correctly. bb simulates it and generates its ~3,200-column trace (linked in under
+the `bb-avm` feature); bb-ref proves, verifies and checks that trace over relation tables
+generated from bb-pilcom's output, and verifies AVM proofs in-circuit for the public tx base
+rollup through bb's two-layer verifier (an inner MegaAvm circuit, proven with Goblin, and its
+verifier in the outer circuit). [`src/avm`](../src/avm/README.md).
+
 ### Barycentric extension
 
 evaluating a polynomial at a new point directly from its values

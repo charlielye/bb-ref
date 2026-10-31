@@ -1,4 +1,4 @@
-//! B2 exit: the generic Ultra verifier runs in-circuit over ULTRA arithmetic (non-goblin bn254
+//! The generic Ultra verifier runs in-circuit over ULTRA arithmetic (non-goblin bn254
 //! biggroup, native scalars) and reproduces bb's recursive-verifier circuit polynomial for
 //! polynomial (`BbRefDump.UltraRecursion`, seeded: the verifier's masked batch_muls draw from the
 //! engine).

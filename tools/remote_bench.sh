@@ -21,7 +21,6 @@ gates)
     ssh "$HOST" "cd bb-ref && IN=\$HOME/chonk-pinned-flows/ecdsar1+transfer_0_recursions+sponsored_fpc/ivc-inputs.msgpack \
       && printf 'chonk flow: ' && $R /usr/bin/time -f '%es' ./target/push-bb-ref prove --scheme chonk --ivc_inputs_path \$IN -o /tmp/push_out 2>&1 >/dev/null | tail -1 \
       && printf 'PTBR frame: ' && $R /usr/bin/time -f '%es' ./target/push-bb-ref msgpack run --input \$HOME/PrivateTxBaseRollup.frame 2>&1 >/dev/null | tail -1"
-    echo "references: bb chonk 1.79s, bb PTBR 8.53s (same box, 32 threads)"
     ;;
 msm)
     cargo build --release --quiet --example msmbench

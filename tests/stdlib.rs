@@ -1,4 +1,4 @@
-//! M13 exit: the in-circuit primitives (field ops, Poseidon2 sponge, transcript, goblin group ops,
+//! The in-circuit primitives (field ops, Poseidon2 sponge, transcript, goblin group ops,
 //! pairing-point aggregation, kernel IO) emit exactly bb's gates: every polynomial and the VK of
 //! each `BbRefDump.Stdlib` program match.
 mod common;
@@ -571,63 +571,11 @@ fn ecdsa_r1(ctx: &Ctx) {
     result.assert_equal(&BoolT::constant(true));
 }
 
-/// Reference Keccak-f[1600] (FIPS 202).
-fn keccak_f1600(state: &mut [u64; 25]) {
-    const RC: [u64; 24] = [
-        0x0000000000000001,
-        0x0000000000008082,
-        0x800000000000808a,
-        0x8000000080008000,
-        0x000000000000808b,
-        0x0000000080000001,
-        0x8000000080008081,
-        0x8000000000008009,
-        0x000000000000008a,
-        0x0000000000000088,
-        0x0000000080008009,
-        0x000000008000000a,
-        0x000000008000808b,
-        0x800000000000008b,
-        0x8000000000008089,
-        0x8000000000008003,
-        0x8000000000008002,
-        0x8000000000000080,
-        0x000000000000800a,
-        0x800000008000000a,
-        0x8000000080008081,
-        0x8000000000008080,
-        0x0000000080000001,
-        0x8000000080008008,
-    ];
-    const ROT: [u32; 25] = [
-        0, 1, 62, 28, 27, 36, 44, 6, 55, 20, 3, 10, 43, 25, 39, 41, 45, 15, 21, 8, 18, 2, 61, 56, 14,
-    ];
-    for rc in RC {
-        let c: [u64; 5] = std::array::from_fn(|x| (0..5).fold(0, |acc, y| acc ^ state[y * 5 + x]));
-        let d: [u64; 5] = std::array::from_fn(|x| c[(x + 4) % 5] ^ c[(x + 1) % 5].rotate_left(1));
-        for i in 0..25 {
-            state[i] ^= d[i % 5];
-        }
-        let mut b = [0u64; 25];
-        for y in 0..5 {
-            for x in 0..5 {
-                b[((2 * x + 3 * y) % 5) * 5 + y] = state[y * 5 + x].rotate_left(ROT[y * 5 + x]);
-            }
-        }
-        for y in 0..5 {
-            for x in 0..5 {
-                state[y * 5 + x] = b[y * 5 + x] ^ (!b[y * 5 + (x + 1) % 5] & b[y * 5 + (x + 2) % 5]);
-            }
-        }
-        state[0] ^= rc;
-    }
-}
-
 fn keccak_permutation(ctx: &Ctx) {
     let mut native: [u64; 25] = std::array::from_fn(|i| (i as u64 + 1).wrapping_mul(0x9e3779b97f4a7c15));
     let state: [FieldT; 25] = std::array::from_fn(|i| w(ctx, native[i]));
     let out = keccak::permutation_opcode(ctx, &state);
-    keccak_f1600(&mut native);
+    bb_ref::base::keccak::keccak_f1600(&mut native);
     for (o, e) in out.iter().zip(native) {
         assert_eq!(o.get_value(), Fr::from(e), "keccak-f[1600] output");
         o.assert_equal(&w(ctx, e));

@@ -237,6 +237,10 @@ verifies the one accumulated claim in full, in-circuit.
 `rollup_root` is proven with the Keccak transcript, and the Solidity contract verifies it:
 one pairing on L1 stands for every private transaction in the epoch.
 
+Public transactions add one input to their leaf: the public tx base rollup also verifies an
+[AVM](glossary.md#avm) proof of the transaction's public execution, through bb's two-layer AVM
+verifier ([`src/avm`](../src/avm/README.md)).
+
 ---
 
 ## Where to go deeper
@@ -254,7 +258,9 @@ purpose, how it fits, a per-file map, and its traps:
 | the IVC driver, ChonkProof, proof compression | [`src/chonk`](../src/chonk/README.md) |
 | how Noir circuits arrive | [`src/acir`](../src/acir/README.md) |
 | rollup-side recursion and IPA accumulation | [`src/rollup`](../src/rollup/README.md) |
+| public execution: the AVM prover and verifier | [`src/avm`](../src/avm/README.md) |
 | the wire protocol bb-ref serves | [`src/msgpack`](../src/msgpack/README.md) |
+| the commands, corpus and regenerators | [`tools`](../tools/README.md) |
 | running it in a browser: wasm, bb-ref.js, the bench page | [`js`](../js/README.md) |
 | why the code looks the way it does | [gate-exactness.md](gate-exactness.md) |
 | how fast it is, and why | [performance.md](performance.md) |

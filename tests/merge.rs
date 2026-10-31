@@ -1,4 +1,4 @@
-//! M6 exit: the Goblin merge and batch merge proofs reproduce bb byte-for-byte on a deterministic op
+//! The Goblin merge and batch merge proofs reproduce bb byte-for-byte on a deterministic op
 //! queue (`BbRefDump.Merge` fixtures; the random ZK prefix is injected from the dump), and the Rust
 //! verifiers accept them.
 mod common;

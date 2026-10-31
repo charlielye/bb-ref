@@ -27,3 +27,4 @@ tools/corpus/*.corpus.zst
 # The AVM corpus is a few MB of proving inputs: committed with its goldens.
 !tools/corpus/avm-*.corpus.zst
 tools/corpus/leaf-assets/
+__pycache__/

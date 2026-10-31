@@ -1,9 +1,9 @@
 #!/bin/bash
-# M15: bb's view of the mock-protocol circuits (tests/data/<pin7>/acir/, committed):
+# bb's view of the mock-protocol circuits (tests/data/<pin7>/acir/, committed):
 #   programs/*.json          the Noir artifacts (noir-projects/fnd/mock-protocol-circuits/target)
 #   vks/<name>.vk            `bb write_vk --scheme chonk --circuit_kind ...` per artifact
 #   mock_<c>_<r>/            ivc-inputs.msgpack (tools/regen/write_mock_ivc_inputs.mjs over labs' ivc-integration), bb's proof + vk
-#   mock_1_1_tape/           the same flow proven with bb seeded via BB_RNG_SEED (in the pinned tree)
+#   mock_1_1_tape/           the same flow proven with bb's draws recorded via BB_RNG_TAPE_OUT (in the pinned tree)
 #   mock_1_1_seed/           the same flow proven with bb's seeded debug engine (BB_RNG_SEED=12345)
 #   rust_1_1/                bb verifies the Rust proof of mock_1_1 when tests/acir.rs has written it
 set -e

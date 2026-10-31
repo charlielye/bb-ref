@@ -1,4 +1,4 @@
-//! M7 exit: the TripleIPA over Grumpkin reproduces bb byte-for-byte on deterministic inputs
+//! The TripleIPA over Grumpkin reproduces bb byte-for-byte on deterministic inputs
 //! (`BbRefDump.TripleIpa` fixtures) and the Rust verifier accepts it.
 mod common;
 use bb_ref::base::io::decode_fields;

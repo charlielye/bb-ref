@@ -37,16 +37,12 @@ pub fn polys_from_trace(bytes: &[u8]) -> Vec<Poly> {
     starts
         .into_par_iter()
         .map(|(from, count)| {
-            let entry = |k: usize| {
-                let e = &bytes[from + 36 * k..from + 36 * (k + 1)];
-                let limbs: [u64; 4] = std::array::from_fn(|i| u64::from_le_bytes(e[4 + 8 * i..12 + 8 * i].try_into().unwrap()));
-                (u32::from_le_bytes(e[..4].try_into().unwrap()) as usize, Fr::from_bigint(BigInt(limbs)).expect("non-canonical trace value"))
-            };
-            let rows = (0..count).map(|k| entry(k).0 + 1).max().unwrap_or(0);
-            let mut coeffs = vec![Fr::zero(); rows];
+            let row = |k: usize| u32_at(from + 36 * k) as usize;
+            let mut coeffs = vec![Fr::zero(); (0..count).map(|k| row(k) + 1).max().unwrap_or(0)];
             for k in 0..count {
-                let (row, v) = entry(k);
-                coeffs[row] = v;
+                let e = &bytes[from + 36 * k + 4..from + 36 * (k + 1)];
+                let limbs: [u64; 4] = std::array::from_fn(|i| u64::from_le_bytes(e[8 * i..8 * i + 8].try_into().unwrap()));
+                coeffs[row(k)] = Fr::from_bigint(BigInt(limbs)).expect("non-canonical trace value");
             }
             Poly::from_coeffs(coeffs)
         })
@@ -121,10 +117,13 @@ pub fn check_circuit(mut polys: Vec<Poly>) -> Result<(), String> {
     let num_rows = polys.iter().map(Poly::len).max().unwrap_or(0);
     let zero_sums = || (0..rels.num_relations()).map(|r| vec![Fr::zero(); rels.num_subrelations(r)]).collect::<Vec<_>>();
     let one = Fr::one();
+    // Each worker reuses one row buffer: a row is ~100 KB, above the arena's small-block size.
     let sums = (0..num_rows)
         .into_par_iter()
-        .try_fold(zero_sums, |mut sums, i| {
-            let row: Vec<Fr> = (0..l.num_all()).map(|e| entity_at(&polys, e, i)).collect();
+        .try_fold(
+            || (zero_sums(), vec![Fr::zero(); l.num_all()]),
+            |(mut sums, mut row), i| {
+            row.iter_mut().enumerate().for_each(|(e, v)| *v = entity_at(&polys, e, i));
             for (r, sum) in sums.iter_mut().enumerate() {
                 if rels.skip(r, &row, &row) {
                     continue;
@@ -138,8 +137,9 @@ pub fn check_circuit(mut polys: Vec<Poly>) -> Result<(), String> {
                     sum[j] += v;
                 }
             }
-            Ok(sums)
+            Ok((sums, row))
         })
+        .map(|r| r.map(|(sums, _)| sums))
         .try_reduce(zero_sums, |mut a, b| {
             a.iter_mut().flatten().zip(b.iter().flatten()).for_each(|(x, y)| *x += y);
             Ok(a)
@@ -155,7 +155,10 @@ pub fn check_circuit(mut polys: Vec<Poly>) -> Result<(), String> {
 /// The public-input columns the verifier reads, from the trace's `public_inputs_cols_*`.
 fn public_input_columns(polys: &[Poly]) -> Vec<Vec<Fr>> {
     let l = layout();
-    let column = |i: usize, len: usize| (0..len).map(|j| polys[l.col(&format!("public_inputs_cols_{i}_"))].at(j)).collect();
+    let column = |i: usize, len: usize| {
+        let col = &polys[l.col(&format!("public_inputs_cols_{i}_"))];
+        (0..len).map(|j| col.at(j)).collect()
+    };
     l.public_input_column_lengths.iter().enumerate().map(|(i, &len)| column(i, len)).collect()
 }
 

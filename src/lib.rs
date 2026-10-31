@@ -1,7 +1,9 @@
-//! bb-ref: a minimal, single-threaded Rust re-implementation of barretenberg's UltraHonk and Chonk.
+//! bb-ref: a minimal Rust re-implementation of barretenberg's proving stack (UltraHonk, Chonk, the
+//! rollup, the AVM).
 //!
-//! Module layering (each module depends only on those to its left):
-//! `base` <- `circuit` <- `stdlib` <- `honk` <- `goblin` <- `chonk` <- `acir`
+//! Module layering (each module depends only on those to its left, apart from test code and
+//! sumcheck's Translator hook):
+//! `base` <- `circuit` <- `stdlib` <- `honk` <- `goblin` <- `rollup` <- `chonk` <- `avm` <- `acir`
 //!
 //! `msgpack` sits above all of them: bb's wire protocol (generated from the pin's schema) served
 //! over the same functions. Nothing below depends on it.

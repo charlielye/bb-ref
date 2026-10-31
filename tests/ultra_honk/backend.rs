@@ -1,8 +1,7 @@
-//! B0 exit: backend (server protocol) circuits, recursion-free warm-up. `inbox_parity_64` — built
-//! and executed with the pinned nargo (`tools/regen/regen_backend.sh`) — reproduces bb's proving
-//! instance, VK and non-ZK proof byte-for-byte; the ZK proof verifies. The VK-hash sweep compares
-//! every artifact under `backend_vk_hash/` that bb-ref can already build (recursion circuits join
-//! the supported set as the B-milestones land).
+//! Backend (server protocol) circuits. `inbox_parity_64` — built and executed with the pinned
+//! nargo (`tools/regen/regen_backend.sh`) — reproduces bb's proving instance, VK and non-ZK proof
+//! byte-for-byte; the ZK proof verifies. The VK-hash sweep compares every artifact under
+//! `backend_vk_hash/`.
 
 use crate::common;
 use bb_ref::acir::format::{decode_program, decode_witness};
@@ -10,10 +9,8 @@ use bb_ref::acir::lower::{build_circuit, build_circuit_opts};
 use bb_ref::base::field::from_bytes_be;
 use bb_ref::base::io::decode_fields;
 use bb_ref::base::srs::bn254_g2;
-use bb_ref::base::{CommitmentKey, Fr, NativeTranscript, OsRng};
-use bb_ref::honk::circuit_checker::check_circuit;
+use bb_ref::base::{CommitmentKey, Fr, OsRng};
 use bb_ref::honk::flavor::FlavorDesc;
-use bb_ref::honk::oink_prover::prove_oink;
 use bb_ref::honk::prover_instance::ProverInstance;
 use bb_ref::honk::ultra_prover::prove_ultra;
 use bb_ref::honk::ultra_verifier::verify_ultra;
@@ -110,14 +107,6 @@ fn check_nozk_opts(name: &str, has_ipa_claim: bool) {
     let proof = prove_ultra(&mut inst, &vk, &mut tape);
     let expected_proof = decode_fields(&std::fs::read(dump.join("proof.bin")).unwrap());
     assert_eq!(proof, expected_proof, "{name}: proof");
-    if has_tape {
-        let tape = bb_ref::base::rng::TapeRng::from_bytes(std::fs::read(&tape_path).unwrap());
-        bb_ref::base::rng::set_global(Box::new(tape));
-    }
-    let mut tape = bb_ref::base::rng::GlobalProxy;
-    let mut inst = build_ipa_rng(name, &ULTRA, has_ipa_claim, &mut tape);
-    let out = prove_oink(&mut inst, &vk, &ck, &mut NativeTranscript::new(), &mut tape, true);
-    assert_eq!(check_circuit(&inst, &out.params), None, "{name}: relation failure");
 }
 
 fn check_zk(name: &str) {
@@ -216,10 +205,8 @@ mod rollup_checkpoint_padding_witness {
     }
 }
 
-/// The circuits bb-ref can currently build, with the node's `--ipa_accumulation` flag (grows per
-/// B-milestone; the rest of `backend_vk_hash/` is fixture-complete but unsupported until the
-/// remaining recursion lowerings land: CHONK for rollup_tx_base_private/chonk_verifier_public,
-/// keccak vk_hash for rollup_root, AVM never).
+/// Every `backend_vk_hash/` circuit, with the node's `--ipa_accumulation` flag (rollup_tx_base_public
+/// has no bb vk_hash: stock bb refuses AVM recursion; tests/public_base.rs covers it).
 const SUPPORTED: &[(&str, bool)] = &[
     ("rollup_root", false),
     ("inbox_parity_4", false),

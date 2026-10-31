@@ -18,7 +18,7 @@ Run `tools/check.sh` for the standalone gate, `cargo nextest run --release` for 
 The suite has two tiers. The default keeps it under 30 s (a README goal): each differential test
 runs its smallest real cases — the VK-hash sweep's six fastest circuits, one pinned Chonk flow —
 and the full-size ones (the rollup root, the public tx base rollup, the large rollup circuits,
-every Chonk flow, the server oracle's Chonk transfer) skip with a note. `BBREF_FULL=1` runs them
+every Chonk flow, the server oracle's Chonk transfer and inbox_parity_64 case) skip with a note. `BBREF_FULL=1` runs them
 all (65 s, bounded by the keccak rollup root's 65 s). nextest runs every test in its own process, in parallel; `cargo test` works too but runs the
 test binaries one at a time (~55 s).
 

@@ -1,4 +1,4 @@
-//! B3 exit: RollupIO end to end in-circuit — an inner rollup proof (random-claim RollupIO) is
+//! RollupIO end to end in-circuit — an inner rollup proof (random-claim RollupIO) is
 //! recursively verified, its IPA claim reduced to an accumulator and re-proven, and the outer
 //! circuit publishes RollupIO; every polynomial matches bb (`BbRefDump.UltraRollupRecursion`,
 //! seeded).

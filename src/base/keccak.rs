@@ -83,11 +83,8 @@ pub fn keccak256(data: &[u8]) -> [u8; 32] {
 }
 
 pub fn u256_to_bytes_be(v: &U256) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    for (i, limb) in v.0.iter().enumerate() {
-        out[32 - 8 * (i + 1)..32 - 8 * i].copy_from_slice(&limb.to_be_bytes());
-    }
-    out
+    use ark_ff::BigInteger;
+    v.to_bytes_be().try_into().unwrap()
 }
 
 pub struct Keccak256;

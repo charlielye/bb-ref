@@ -484,10 +484,15 @@ mod tests {
     #[test]
     fn ingress_authenticates_and_decompresses() {
         let dir = crs_dir();
+        let head = |f: &str, n: usize| -> std::io::Result<Vec<u8>> {
+            let mut v = vec![0u8; n];
+            std::io::Read::read_exact(&mut std::fs::File::open(dir.join(f))?, &mut v)?;
+            Ok(v)
+        };
         let (Ok(comp), Ok(raw), Ok(grum)) = (
-            std::fs::read(dir.join("bn254_g1_compressed.dat")),
-            std::fs::read(dir.join("bn254_g1.dat")),
-            std::fs::read(dir.join("grumpkin_g1_v2.flat.dat")),
+            head("bn254_g1_compressed.dat", BN254_CHUNK_BYTES),
+            head("bn254_g1.dat", (1 << 17) * 64),
+            head("grumpkin_g1_v2.flat.dat", GRUMPKIN_CHUNK_BYTES),
         ) else {
             eprintln!("skipping: no CRS files");
             return;

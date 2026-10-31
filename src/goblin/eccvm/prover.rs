@@ -18,7 +18,7 @@ use crate::honk::pcs::{
     eccvm_challenge_coeffs, shplonk_batch_claim, shplonk_prove, small_ipa_prover_claims, small_subgroup_ipa_prove,
     small_subgroup_ipa_prove_core, LibraPolys, ProverClaim, VerifierOpeningClaim,
 };
-use crate::honk::sumcheck::{interpolate_on_subgroup, prove_sumcheck, subgroup_domain, SumcheckSpec, ZkData};
+use crate::honk::sumcheck::{interpolate_on_subgroup, prove_sumcheck, SumcheckSpec, ZkData};
 use ark_ec::CurveGroup;
 
 pub const NUM_TRANSLATION_EVALUATIONS: usize = 5;
@@ -326,7 +326,6 @@ pub fn eccvm_prove(q: &EccOpQueue, ck: &GrumpkinKey, t: &mut NativeTranscript, r
     triple_ipa_prove(ck, &input, &mut ipa_transcript);
     drop(_ge5);
     crate::base::timing::phase("  eccvm: triple ipa");
-    let _ = subgroup_domain::<Grumpkin>;
     EccvmProverOutput {
         ipa_proof: ipa_transcript.export_proof(),
         evaluation_challenge_x: x,

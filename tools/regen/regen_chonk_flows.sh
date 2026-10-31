@@ -1,5 +1,5 @@
 #!/bin/bash
-# M12: bb Chonk proofs of the pinned real transaction flows (verifier-side oracle for Rust). With the
+# Bb Chonk proofs of the pinned real transaction flows (verifier-side oracle for Rust). With the
 # fixture engine patch, BB_RNG_SEED makes bb draw from its seeded debug engine single-threaded, so the
 # proofs are also the byte-exact targets of `tests/chonk.rs (native)::pinned_flows_byte_exact_with_seed`.
 # Requires the flows at $FLOWS (bb's pinned chonk inputs, `barretenberg/cpp/scripts/chonk_inputs.sh download`).

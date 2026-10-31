@@ -22,6 +22,10 @@ export BB_RNG_SEED
 # recording never used. A corpus carrying ZK or Chonk proving does need the thread count it was
 # recorded at (those masking draws are per-thread): set HARDWARE_CONCURRENCY to match it.
 
+case $(basename "$CORPUS") in avm-*)
+    grep -qa 'unsupported command: BbAvmProve' "$BBREF" 2>/dev/null &&
+        { echo "$BBREF has no AVM: the AVM corpus needs a \`--features bb-avm\` build (BBREF=…)"; exit 1; } ;;
+esac
 decompress() { case "$CORPUS" in *.zst) zstd -dcq "$CORPUS";; *) cat "$CORPUS";; esac; }
 
 # Kept on divergence: the two streams ARE the evidence, and regenerating them costs minutes.

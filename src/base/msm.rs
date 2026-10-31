@@ -1,6 +1,6 @@
 //! Pippenger MSM with batched-affine bucket accumulation (bb `scalar_multiplication_fast`, minimal
 //! port: signed Booth digits, counting-sort schedules, pair tree-reduction sharing one Montgomery
-//! inversion per batch, segmented running-sum bucket reduce; no GLV, no dedup pre-pass).
+//! inversion per batch, segmented running-sum bucket reduce).
 //!
 //! Affine addition costs ~6 muls plus an amortized share of one inversion, against ~14 for the
 //! Jacobian adds inside arkworks' `msm_unchecked` — that difference is most of bb's MSM advantage.
@@ -1451,8 +1451,7 @@ mod tests {
 
 /// The MSM entry point for code generic over `AffineRepr` (the commitment key).
 pub trait BatchMsm: AffineRepr {
-    fn batch_msm(points: &[Self], scalars: &[Self::ScalarField]) -> Self::Group;
-    /// `batch_msm` with a precomputed endomorphism table covering `points`.
+    /// The MSM, with a precomputed endomorphism table covering `points` if given.
     fn batch_msm_with_phi(points: &[Self], scalars: &[Self::ScalarField], phi: Option<&[Self]>) -> Self::Group;
     /// The GLV companion table `phi[i] = (beta * x_i, -y_i)`.
     fn phi_table(points: &[Self]) -> Vec<Self>;
@@ -1465,9 +1464,6 @@ where
     P::BaseField: crate::base::wasm::QuadConsts + crate::base::endo::EndoField,
     P::ScalarField: crate::base::endo::EndoField,
 {
-    fn batch_msm(points: &[Self], scalars: &[Self::ScalarField]) -> Projective<P> {
-        msm(points, scalars)
-    }
     fn batch_msm_with_phi(points: &[Self], scalars: &[Self::ScalarField], phi: Option<&[Self]>) -> Projective<P> {
         msm_with_phi(points, scalars, phi)
     }

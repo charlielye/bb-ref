@@ -1,4 +1,4 @@
-//! M10 exit: the Translator circuit built in Rust matches bb wire-for-wire, its proving key (with
+//! The Translator circuit built in Rust matches bb wire-for-wire, its proving key (with
 //! bb's masking values injected) matches column-for-column including `z_perm`, and all eight
 //! relations vanish on it (`BbRefDump.Translator` fixture).
 mod common;

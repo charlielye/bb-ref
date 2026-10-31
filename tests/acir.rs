@@ -1,4 +1,4 @@
-//! M15 exit: ACIR ingestion of the protocol subset. Every mock-protocol circuit's Chonk VK (apps,
+//! ACIR ingestion of the protocol subset. Every mock-protocol circuit's Chonk VK (apps,
 //! kernels built against bb's mocked IVC state, the hiding kernel) is byte-equal to bb's and to the
 //! artifact's; Rust proves the mock transaction flows bb's TS harness produces (`ivc-inputs.msgpack`)
 //! and verifies bb's proofs of them; with bb's RNG tape the Rust proof is byte-identical.

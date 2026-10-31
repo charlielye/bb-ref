@@ -1,4 +1,5 @@
-// bb-ref AVM fixture dumper, compiled against the pin's libbb-external-avm.a by regen_avm.sh.
+// bb-ref AVM fixture dumper, linked by regen_avm.sh against the pin's AVM archives
+// (`pin/build.sh --avm`: barretenberg, vm2, vm2_sim, env).
 //
 //   avm_dump <avm_inputs.bin> <out_dir> [--inner]
 //

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regenerate tests/data/<pin>/vk_sha256_mega_app/<program>: the sha256 of bb's MegaApp (chonk app) VK for every
 # acir_tests program whose opcodes are within the bb-ref subset (AssertZero, RANGE, Poseidon2, memory).
-# Usage: tools/regen/regen_vk_hashes.sh [acir_tests_dir] [bb_binary]
+# Usage: tools/regen/regen_mega_app_vks.sh [acir_tests_dir] [bb_binary]
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 source "$here/env.sh"

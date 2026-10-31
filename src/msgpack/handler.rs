@@ -763,7 +763,7 @@ impl Handler for BbRefHandler {
     }
 
     // Everything below is outside bb-ref's scope (crypto helpers, raw curve ops, batch
-    // verification, proof compression, Solidity output).
+    // verification, Solidity output).
     unsupported! {
         circuit_stats: BbCircuitStats => BbCircuitStatsResponse,
         chonk_verify_from_fields: BbChonkVerifyFromFields => BbChonkVerifyFromFieldsResponse,

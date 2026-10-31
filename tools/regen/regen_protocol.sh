@@ -1,5 +1,5 @@
 #!/bin/bash
-# M16: `bb write_vk --scheme chonk --circuit_kind ...` on the real protocol kernels
+# `bb write_vk --scheme chonk --circuit_kind ...` on the real protocol kernels
 # (noir-projects/fnd/noir-protocol-circuits/target, referenced in place; the artifacts are large).
 set -e
 F=$(cd "$(dirname "$0")" && pwd)

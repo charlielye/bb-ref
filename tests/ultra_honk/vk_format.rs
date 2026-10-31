@@ -1,4 +1,4 @@
-//! M0 exit: bb's `vk` file round-trips byte-for-byte and hashes to bb's `vk_hash`.
+//! Bb's `vk` file round-trips byte-for-byte and hashes to bb's `vk_hash`.
 use crate::common;
 use bb_ref::base::field::{from_bytes_be, Fr};
 use bb_ref::base::{Bn254, Vk};

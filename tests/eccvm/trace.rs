@@ -1,4 +1,4 @@
-//! M8 exit: the ECCVM trace built in Rust matches bb column-for-column on deterministic op queues
+//! The ECCVM trace built in Rust matches bb column-for-column on deterministic op queues
 //! (`BbRefDump.Eccvm` fixtures, masked rows 1..3 excluded) and every ECCVM relation vanishes on it.
 use crate::common;
 use bb_ref::base::field::from_bytes_be;

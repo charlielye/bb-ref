@@ -1,4 +1,4 @@
-//! M4 exit: Mega circuits (op queue, databus, bilinear gates, compressed Poseidon2) match bb —
+//! Mega circuits (op queue, databus, bilinear gates, compressed Poseidon2) match bb —
 //! `bb write_vk --scheme chonk --circuit_kind app` for every acir_tests program in the supported
 //! subset, and (where dumped) bb's MegaApp proving instance and Oink proof.
 mod common;

@@ -1,4 +1,4 @@
-//! M11 exit: the joint MegaZK + Translator proof (`BbRefDump.Batched` fixture). Rust verifies bb's
+//! The joint MegaZK + Translator proof (`BbRefDump.Batched` fixture). Rust verifies bb's
 //! Oink + joint proofs; Rust's own proofs verify in Rust and are written for bb's verify mode;
 //! tampering is rejected.
 mod common;

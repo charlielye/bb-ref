@@ -1,4 +1,4 @@
-//! M12 exit: Chonk end-to-end natively. Rust verifies bb's mock IVC proof (real recursive kernels)
+//! Chonk end-to-end natively. Rust verifies bb's mock IVC proof (real recursive kernels)
 //! and bb's proofs of the pinned real transaction flows; proof field/msgpack layouts round-trip.
 //! (Rust proving the IVC is exercised with real kernels in `m14_kernels.rs`.)
 use crate::common;

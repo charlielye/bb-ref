@@ -19,7 +19,8 @@ public-input columns (`public_inputs.rs`) are bb-ref's.
 The AVM has ~300 relations generated from PIL (bb-pilcom), ~13k lines of constraint expressions,
 plus 404 lookups and permutations over ~3,200 columns. bb compiles them five times over (prover,
 verifier, check-circuit, tests, in-circuit), which is most of its AVM build time. A verifier
-evaluates each relation once, at one point, so bb-ref interprets them instead:
+evaluates each relation once, at one point, so bb-ref interprets them there (the prover, which
+needs every row, runs them compiled to straight-line programs from the same tables):
 `dev/regen_avm.py` turns the pin's bb-pilcom output into two committed tables, and
 `relations.rs` evaluates them as a sumcheck `RelationSet` over any `FieldLike`. Expressions keep
 bb's C++ evaluation order (aliases first, operands left to right), which in-circuit is the gate

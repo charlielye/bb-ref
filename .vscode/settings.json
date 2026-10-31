@@ -2,15 +2,15 @@
   // The pin submodule is a full aztec-packages checkout (incl. noir-repo's cargo workspace and
   // C++ build dirs). Letting rust-analyzer index it overflows its span interner, which kills the
   // proc-macro server (InternId::MAX panic) and turns every derive into phantom type errors.
-  "rust-analyzer.files.excludeDirs": ["pin", "fixtures", "dev"],
+  "rust-analyzer.files.excludeDirs": ["pin", "tests/data", "dev"],
   "files.watcherExclude": {
     "**/pin/**": true,
-    "**/fixtures/data/**": true,
+    "**/tests/data/**": true,
     "**/target/**": true
   },
   "search.exclude": {
     "**/pin/**": true,
-    "**/fixtures/data/**": true
+    "**/tests/data/**": true
   },
   "cSpell.enabled": false
 }

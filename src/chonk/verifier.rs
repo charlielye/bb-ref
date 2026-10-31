@@ -45,8 +45,6 @@ impl<C: Curve> HidingKernelIo<C> {
     }
 }
 
-impl HidingKernelIo<Bn254> {
-}
 
 /// bb `ChonkVerifier<false>::verify`: the hiding kernel Oink, its IO consistency, the merge, the
 /// ECCVM, the joint MegaZK + Translator proof, and finally the TripleIPA accumulator.

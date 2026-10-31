@@ -17,6 +17,7 @@ fn main() {
         println!("cargo:rerun-if-env-changed=BB_AVM_LIB_DIR");
         println!("cargo:rerun-if-env-changed=BB_AVM_CXX_LIB");
         println!("cargo:rerun-if-env-changed=BB_AVM_CXX_LIB_DIR");
+        println!("cargo:rerun-if-env-changed=AZTEC_REPO");
         let dir = std::env::var("BB_AVM_LIB_DIR").unwrap_or_else(|_| {
             let repo = std::env::var("AZTEC_REPO")
                 .unwrap_or(format!("{}/pin/aztec-packages", std::env::var("CARGO_MANIFEST_DIR").unwrap()));
