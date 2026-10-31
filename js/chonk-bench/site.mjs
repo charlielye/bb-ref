@@ -16,7 +16,7 @@ export const CRS = process.env.CRS_PATH ?? join(process.env.HOME, '.bb-crs');
 
 // The packages the page loads. `SITE_PKG=<site>/pkg` takes them from a built site instead (CI's
 // update of the published page, which rebuilds only bb-ref's wasm modules).
-const SITE_PKG = process.env.SITE_PKG;
+export const SITE_PKG = process.env.SITE_PKG;
 export const PACKAGES = SITE_PKG
   ? Object.fromEntries(['bb-ref.js', 'bb.js-api', 'ipc-runtime', 'msgpackr'].map(p => [p, join(SITE_PKG, p)]))
   : {

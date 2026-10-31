@@ -10,10 +10,10 @@
 // gh-pages is one commit with no history, replaced on every publish, so that old wasm modules and
 // flows do not pile up in the repository.
 import { execFileSync } from 'node:child_process';
-import { closeSync, copyFileSync, mkdirSync, mkdtempSync, openSync, readSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, copyFileSync, cpSync, mkdirSync, mkdtempSync, openSync, readSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { CRS, CRS_FILES, FLOWS, HERE, PACKAGES, flows, modules, pin7 } from './site.mjs';
+import { CRS, CRS_FILES, FLOWS, HERE, PACKAGES, SITE_PKG, flows, modules, pin7 } from './site.mjs';
 
 const run = (cmd, args, opts = {}) => execFileSync(cmd, args, { encoding: 'utf8', ...opts });
 
@@ -41,6 +41,11 @@ function build(out) {
 
   for (const [name, dir] of Object.entries(PACKAGES)) {
     const root = realpathSync(dir);
+    // A built site's packages (SITE_PKG) are their published files already.
+    if (SITE_PKG) {
+      cpSync(root, join(out, 'pkg', name), { recursive: true });
+      continue;
+    }
     const [{ files }] = JSON.parse(run('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], { cwd: root }));
     for (const { path } of files) copy(join(root, path), join(out, 'pkg', name, path));
   }
