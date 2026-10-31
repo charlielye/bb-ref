@@ -6,8 +6,6 @@
 use crate::base::field::{from_u256, u256, u256_low_bits, u256_num_bits, u256_shr, FieldLike, U256};
 use crate::base::{Fq, Fr, G1Affine, Poly, Rng};
 use ark_ec::{AffineRepr, CurveGroup};
-use ark_ff::PrimeField;
-use std::sync::OnceLock;
 
 /// Bits per coordinate limb pair (`2 * NUM_LIMB_BITS_IN_FIELD_SIMULATION`).
 const CHUNK_BITS: u32 = 136;
@@ -545,8 +543,9 @@ impl EccOpQueue {
         let (z_1, z_2) = if u256_num_bits(&k) <= 128 {
             (scalar, Fr::zero())
         } else {
-            let (k1, k2) = split_into_endomorphism_scalars(k);
-            (from_u256(k1), from_u256(k2))
+            let (k1, k2) = crate::base::endo::glv_split(&scalar);
+            let half = |h: [u64; 2]| from_u256(U256::new([h[0], h[1], 0, 0]));
+            (half(k1), half(k2))
         };
         let op = UltraOp {
             op_code,
@@ -570,89 +569,4 @@ fn split_coordinate(c: &Fq) -> (Fr, Fr) {
         from_u256(u256_low_bits(v, CHUNK_BITS)),
         from_u256(u256_shr(v, CHUNK_BITS)),
     )
-}
-
-fn mul_wide(a: &[u64; 4], b: &[u64; 4]) -> [u64; 8] {
-    let mut r = [0u64; 8];
-    for i in 0..4 {
-        let mut carry = 0u128;
-        for j in 0..4 {
-            let t = a[i] as u128 * b[j] as u128 + r[i + j] as u128 + carry;
-            r[i + j] = t as u64;
-            carry = t >> 64;
-        }
-        r[i + 4] = carry as u64;
-    }
-    r
-}
-
-fn fr_from_limbs(l: [u64; 4]) -> Fr {
-    let mut bytes = [0u8; 32];
-    for (i, limb) in l.iter().enumerate() {
-        bytes[i * 8..i * 8 + 8].copy_from_slice(&limb.to_le_bytes());
-    }
-    Fr::from_le_bytes_mod_order(&bytes)
-}
-
-/// The cube root of unity `β` used by bb's GLV decomposition (bb stores it in Montgomery form).
-pub fn cube_root_of_unity() -> Fr {
-    static B: OnceLock<Fr> = OnceLock::new();
-    *B.get_or_init(|| {
-        let mont = fr_from_limbs([
-            0x93e7cede4a0329b3,
-            0x7d4fdca77a96c167,
-            0x8be4ba08b19a750a,
-            0x1cbd5653a5661c25,
-        ]);
-        let r = Fr::from(2u64).pow_u64(256);
-        mont * r.invert()
-    })
-}
-
-/// bb `field::split_into_endomorphism_scalars`: `k = k1 - k2·λ` with both parts below 2^128.
-fn split_into_endomorphism_scalars(k: U256) -> (U256, U256) {
-    const G1: [u64; 4] = [0x7a7bd9d4391eb18d, 0x4ccef014a773d2cf, 2, 0];
-    const G2: [u64; 4] = [0xd91d232ec7e0b3d7, 2, 0, 0];
-    const MINUS_B1: [u64; 4] = [0x8211bbeb7d4f1128, 0x6f4d8248eeb859fc, 0, 0];
-    const B2: [u64; 4] = [0x89d3256894d213e3, 0, 0, 0];
-    let kl = k.0;
-    if kl[2] == 0 && kl[3] == 0 && kl[1] >> 63 == 0 {
-        return (k, U256::zero());
-    }
-    let hi = |p: [u64; 8]| [p[4], p[5], p[6], p[7]];
-    let lo = |p: [u64; 8]| [p[0], p[1], p[2], p[3]];
-    let c1_hi = hi(mul_wide(&G2, &kl));
-    let c2_hi = hi(mul_wide(&G1, &kl));
-    let q1 = lo(mul_wide(&c1_hi, &MINUS_B1));
-    let q2 = lo(mul_wide(&c2_hi, &B2));
-    let mut t1 = fr_from_limbs(q2) - fr_from_limbs(q1);
-    if u256(&t1).0[2] != 0 || u256(&t1).0[3] != 0 {
-        t1 += fr_from_limbs(MINUS_B1);
-    }
-    let t2 = t1 * cube_root_of_unity() + fr_from_limbs(kl);
-    (u256_low_bits(u256(&t2), 128), u256_low_bits(u256(&t1), 128))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cube_root_is_a_primitive_cube_root() {
-        let b = cube_root_of_unity();
-        assert_ne!(b, Fr::one());
-        assert_eq!(b * b * b, Fr::one());
-    }
-
-    /// `k == k1 - k2·λ` where `λ` is the scalar acting as `x ↦ βx` on the curve.
-    #[test]
-    fn endomorphism_split_reconstructs_scalar() {
-        let beta = cube_root_of_unity();
-        let k = Fr::from(7u64).pow_u64(1000);
-        let (k1, k2) = split_into_endomorphism_scalars(u256(&k));
-        let (k1, k2): (Fr, Fr) = (from_u256(k1), from_u256(k2));
-        // k1 - k2·λ = k for λ = -β (bb's convention: k2 is negated); check both candidates.
-        assert!(k1 - k2 * beta == k || k1 + k2 * beta == k || k1 - k2 * beta * beta == k || k1 + k2 * beta * beta == k);
-        assert!(u256_num_bits(&u256(&k1)) <= 128 && u256_num_bits(&u256(&k2)) <= 128);
-    }
 }

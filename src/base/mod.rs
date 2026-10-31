@@ -35,10 +35,8 @@ pub use srs::{CommitmentKey, GrumpkinKey};
 pub use transcript::{NativeTranscript, Transcript};
 pub use vk::Vk;
 
-/// The Grumpkin GLV endomorphism (`λ·(x, y) = (β·x, y)`) with bb's lattice constants for the
-/// scalar-field split (`Bn254FqParams::endo_*`; the cube roots are bb's Montgomery limbs, which
-/// arkworks shares). Verified on first use: the split's field identity is asserted per call, and
-/// the (λ, β) pairing is checked on the generator here.
+/// The Grumpkin GLV endomorphism (`λ·(x, y) = (β·x, y)`), the cube roots of `endo::EndoField`.
+/// Verified on first use: the (λ, β) pairing is checked on the generator.
 pub fn grumpkin_endo() -> &'static fold::Endo<GrumpkinConfig> {
     use ark_ec::{AffineRepr, CurveGroup};
     static ENDO: std::sync::LazyLock<fold::Endo<GrumpkinConfig>> = std::sync::LazyLock::new(|| {
@@ -56,14 +54,7 @@ pub fn grumpkin_endo() -> &'static fold::Endo<GrumpkinConfig> {
             GrumpkinAffine::new_unchecked(g.x * beta, g.y),
             "λ and β do not pair"
         );
-        fold::Endo {
-            lambda,
-            beta,
-            g1: [0x7a7bd9d4391eb18d, 0x4ccef014a773d2cf, 0x2, 0],
-            g2: [0xd91d232ec7e0b3d2, 0x2, 0, 0],
-            minus_b1: [0x8211bbeb7d4f1129, 0x6f4d8248eeb859fc, 0, 0],
-            b2: [0x89d3256894d213e2, 0, 0, 0],
-        }
+        fold::Endo { lambda, beta }
     });
     &ENDO
 }

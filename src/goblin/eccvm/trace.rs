@@ -2,6 +2,7 @@
 //! `precomputed_tables_builder.hpp`, `msm_builder.hpp`, and `ECCVMFlavor::ProverPolynomials`).
 
 use super::*;
+use crate::base::endo::EndoField;
 use crate::base::field::{from_hex, from_u256, u256_shr, FieldLike, U256};
 use crate::base::{Fr, G1Affine};
 use crate::circuit::op_queue::{EccOpQueue, EccvmOp};
@@ -33,21 +34,6 @@ pub fn offset_generator_base() -> G1Affine {
 pub fn offset_generator() -> G1Affine {
     static P: OnceLock<G1Affine> = OnceLock::new();
     *P.get_or_init(|| (offset_generator_base() * Fr::from(2u64).pow_u64(124)).into_affine())
-}
-
-/// The cube root of unity `β` in Fq of the GLV endomorphism `(x, y) ↦ (βx, y)` (bb stores it in
-/// Montgomery form).
-pub fn fq_cube_root_of_unity() -> Fq {
-    static B: OnceLock<Fq> = OnceLock::new();
-    *B.get_or_init(|| {
-        let mont: Fq = from_u256(U256::new([
-            0x71930c11d782e155,
-            0xa6bb947cffbe3323,
-            0xaa303344d4741444,
-            0x2c3b3f0d26594943,
-        ]));
-        mont * Fq::from(2u64).pow_u64(256).invert()
-    })
 }
 
 fn xy(p: &Proj) -> (Fq, Fq) {
@@ -152,7 +138,7 @@ pub fn get_msms(ops: &[EccvmOp]) -> Vec<Vec<ScalarMul>> {
                     active.push(make(op.z1, op.base_point));
                 }
                 if !op.z2.is_zero() {
-                    let endo = G1Affine::new_unchecked(op.base_point.x * fq_cube_root_of_unity(), -op.base_point.y);
+                    let endo = G1Affine::new_unchecked(op.base_point.x * <Fq as EndoField>::cube_root(), -op.base_point.y);
                     active.push(make(op.z2, endo));
                 }
             }

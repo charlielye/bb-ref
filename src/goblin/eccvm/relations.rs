@@ -1,8 +1,9 @@
 //! The eight ECCVM relations (bb `relations/ecc_vm/*_impl.hpp`), written once over `FieldLike` in
 //! bb's operation order. A row is the slice of all 119 entity values (`Ent` order).
 
-use super::trace::{fq_cube_root_of_unity, offset_generator, offset_generator_base};
+use super::trace::{offset_generator, offset_generator_base};
 use super::{Ent, LAST_ADDITION_ROUND};
+use crate::base::endo::EndoField;
 use crate::base::field::{FieldLike, NativeField};
 use crate::base::Fq;
 use crate::honk::relations::RelationParams;
@@ -877,7 +878,7 @@ pub fn set_denominator<T: FieldLike<Native = Fq>>(r: &[T], p: &RelationParams<T>
         let tmul = v(transcript_mul);
         let lookup_first = -z1_zero + &one;
         let lookup_second = -z2_zero + &one;
-        let cube_root = T::constant(fq_cube_root_of_unity());
+        let cube_root = T::constant(<Fq as EndoField>::cube_root());
         let input1 =
             tpc.clone() + &(px.clone() * beta) + &(py.clone() * beta_sqr) + &(z1 * beta_cube) + &second_term_tag;
         let input2 =

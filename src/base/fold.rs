@@ -18,80 +18,11 @@ use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{AdditiveGroup, Field, One, PrimeField};
 use rayon::prelude::*;
 
-/// The curve's GLV endomorphism data plus the scalar-field lattice constants of bb's
-/// `split_into_endomorphism_scalars` (for Grumpkin's scalar field these are bb's
-/// `Bn254FqParams::endo_*`).
+/// The curve's GLV endomorphism: `λ` in the scalar field and `β` in the base field, matched so
+/// `λ·(x, y) = (β·x, y)`; the scalar split is `endo::glv_split`.
 pub struct Endo<P: SWCurveConfig> {
-    /// `λ` in the scalar field and `β` in the base field, matched so `λ·(x, y) = (β·x, y)`.
     pub lambda: P::ScalarField,
     pub beta: P::BaseField,
-    pub g1: [u64; 4],
-    pub g2: [u64; 4],
-    pub minus_b1: [u64; 4],
-    pub b2: [u64; 4],
-}
-
-/// The 512-bit product of two 4-limb integers (bb `field::mul_512`).
-fn mul_512(a: &[u64; 4], b: &[u64; 4]) -> [u64; 8] {
-    let mut out = [0u64; 8];
-    for i in 0..4 {
-        let mut carry = 0u128;
-        for j in 0..4 {
-            let t = a[i] as u128 * b[j] as u128 + out[i + j] as u128 + carry;
-            out[i + j] = t as u64;
-            carry = t >> 64;
-        }
-        let mut k = i + 4;
-        while carry > 0 {
-            let t = out[k] as u128 + carry;
-            out[k] = t as u64;
-            carry = t >> 64;
-            k += 1;
-        }
-    }
-    out
-}
-
-/// A 256-bit integer as a (reduced) scalar-field element.
-fn field_from_limbs<F: PrimeField>(l: [u64; 4]) -> F {
-    let s64 = F::from(1u128 << 64);
-    let s128 = s64 * s64;
-    F::from(l[0]) + F::from(l[1]) * s64 + F::from(l[2]) * s128 + F::from(l[3]) * s128 * s64
-}
-
-impl<P: SWCurveConfig> Endo<P> {
-    /// `k ≡ k1 − k2·λ (mod r)` with `k1, k2 < 2^128` (bb `split_into_endomorphism_scalars`);
-    /// the identity is asserted on every call — the split feeds proof data.
-    pub fn split(&self, k: &P::ScalarField) -> ([u64; 2], [u64; 2]) {
-        let raw: [u64; 4] = k.into_bigint().as_ref().try_into().unwrap();
-        // c = high halves of g·k; q = low halves of c·(-b1), c·b2; k2 = q2 − q1 in the field.
-        let c1: [u64; 4] = mul_512(&self.g2, &raw)[4..].try_into().unwrap();
-        let c2: [u64; 4] = mul_512(&self.g1, &raw)[4..].try_into().unwrap();
-        let q1: [u64; 4] = mul_512(&c1, &self.minus_b1)[..4].try_into().unwrap();
-        let q2: [u64; 4] = mul_512(&c2, &self.b2)[..4].try_into().unwrap();
-        let mut t1 = field_from_limbs::<P::ScalarField>(q2) - field_from_limbs::<P::ScalarField>(q1);
-        // Negative-k2 fix: when t1's raw value exceeds 128 bits, shift it by |b1| (bb's comment:
-        // ~2^-64 of inputs).
-        if t1.into_bigint().as_ref()[2..].iter().any(|&l| l != 0) {
-            t1 += field_from_limbs::<P::ScalarField>(self.minus_b1);
-        }
-        let t2 = t1 * self.lambda + k;
-        let (k1r, k2r) = (t2.into_bigint(), t1.into_bigint());
-        let (k1r, k2r) = (k1r.as_ref(), k2r.as_ref());
-        assert!(
-            k1r[2] == 0 && k1r[3] == 0 && k2r[2] == 0 && k2r[3] == 0,
-            "endomorphism split exceeded 128 bits"
-        );
-        let (k1, k2) = ([k1r[0], k1r[1]], [k2r[0], k2r[1]]);
-        let s64 = P::ScalarField::from(1u128 << 64);
-        let val = |v: [u64; 2]| P::ScalarField::from(v[0]) + P::ScalarField::from(v[1]) * s64;
-        assert_eq!(
-            val(k1) - val(k2) * self.lambda,
-            *k,
-            "endomorphism split identity failed"
-        );
-        (k1, k2)
-    }
 }
 
 /// Signed 4-bit Booth digits of a ≤128-bit value, lowest window first.
@@ -238,6 +169,7 @@ pub fn fold_points_two_rounds<P: SWCurveConfig>(
 ) -> Vec<Affine<P>>
 where
     P::BaseField: NativeField,
+    P::ScalarField: super::endo::EndoField,
 {
     let q = g.len() / 4;
     let (p0, rest) = g.split_at(q);
@@ -251,7 +183,7 @@ where
                 .collect::<Vec<_>>(),
         );
     }
-    let (k1, k2) = endo.split(&u12);
+    let (k1, k2) = super::endo::glv_split(&u12);
     let low2 = |s: &P::ScalarField| {
         let b = s.into_bigint();
         let l = b.as_ref();

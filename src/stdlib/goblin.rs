@@ -5,10 +5,10 @@
 
 use super::field::{Ctx, FieldT};
 use crate::base::codec::Transcriptable;
+use crate::base::endo::EndoField;
 use crate::base::field::{from_u256, u256, u256_low_bits, u256_shr, FieldLike, U256};
 use crate::base::group::GroupLike;
 use crate::base::{Fq, Fr, G1Affine};
-use crate::circuit::op_queue::cube_root_of_unity;
 use ark_ec::AffineRepr;
 use ark_ff::BigInteger;
 use std::fmt;
@@ -233,7 +233,7 @@ impl GroupLike<FieldT> for GoblinElement {
             if !scalar_is_one {
                 let z_1 = FieldT::from_witness_index(&ctx, t.z_1);
                 let z_2 = FieldT::from_witness_index(&ctx, t.z_2);
-                let beta = FieldT::constant(cube_root_of_unity());
+                let beta = FieldT::constant(<Fr as EndoField>::cube_root());
                 scalar.assert_equal(&(&z_1 - &(&z_2 * &beta)));
             }
         }
