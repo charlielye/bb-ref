@@ -14,8 +14,8 @@ These are the project's binding goals — changes should be judged against them:
 
 | goal | state |
 | --- | --- |
-| **Minimum lines of code** for a bit-parity reference implementation, in modern idiomatic Rust | **16.5%** of bb's C++ implementation, AVM included and generated code excluded on both sides (`tools/loc.sh`) |
-| **A test suite under 30 s**: the default run (`cargo nextest run --release`) keeps every differential test's smallest real cases; `BBREF_FULL=1` adds every full-size byte-exactness case | **12 s**, 235 tests, on the shared dev box under load at nice 19 |
+| **Minimum lines of code** for a bit-parity reference implementation, in modern idiomatic Rust | **16.7%** of bb's C++ implementation, AVM included and generated code excluded on both sides (`tools/loc.sh`) |
+| **A test suite under 30 s**: the default run (`cargo nextest run --release`) keeps every differential test's smallest real cases; `BBREF_FULL=1` adds every full-size byte-exactness case | **6 s**, 200 tests, every fixture required, on the shared dev box under load at nice 19 |
 | **Lean on stable, mature dependencies** instead of handwriting (fields/curves: arkworks; msgpack: rmp-serde; parallelism: rayon) | holds, with one deliberate exception: the hot field kernels (ADX and IFMA Montgomery multiply, bb's wasm 29-bit and wide multiplies, Bernstein–Yang inverse) and the MSM are ported from bb for speed; arkworks still supplies the field and curve framework, the pairing and G2 ([src/base](src/base/README.md)) |
 | **Bit parity**: VKs bit-exact, proofs byte-exact, both directions, including the wire protocol | holds — every VK and pinned flow byte-equal; bb-ref's proofs are bb's byte for byte, and bb-ref accepts every rollup and AVM proof bb accepts and rejects them tampered, as bb does (`tools/conformance.sh`) |
 | **Circuit gate parity**: every selector, wire and copy-cycle identical to bb's ([docs/gate-exactness.md](docs/gate-exactness.md)) | holds — enforced by the write-VK oracles and stdlib micro-oracles |
