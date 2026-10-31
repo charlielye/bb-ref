@@ -104,13 +104,24 @@ fn avm_prover_matches_bb() {
         Ok(path) => std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}")),
         Err(_) => common::read("avm/avm_inputs.bin"),
     };
+    // Peak resident memory since the last call (Linux: `VmHWM`, reset through `clear_refs`).
+    let peak_gb = || {
+        let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+        let kb = status.lines().find_map(|l| l.strip_prefix("VmHWM:")).and_then(|v| v.trim().trim_end_matches(" kB").parse::<f64>().ok());
+        let _ = std::fs::write("/proc/self/clear_refs", "5");
+        kb.unwrap_or(0.0) / (1 << 20) as f64
+    };
+    peak_gb();
     let t = Instant::now();
     let trace = bb_avm::avm_trace(&inputs).expect("bb trace");
     let t_trace = t.elapsed();
+    let mem_trace = peak_gb();
     let t = Instant::now();
-    let proof = bb_ref::avm::prover::prove(bb_ref::avm::prover::polys_from_trace(&trace), &Default::default());
-    let t_ours = t.elapsed();
+    let polys = bb_ref::avm::prover::polys_from_trace(&trace);
     drop(trace);
+    let proof = bb_ref::avm::prover::prove(polys, &Default::default());
+    let t_ours = t.elapsed();
+    let mem_ours = peak_gb();
     // bb's AVM prover needs more stack than a test thread's 2 MiB.
     let bb_inputs = inputs.clone();
     let t = Instant::now();
@@ -124,12 +135,14 @@ fn avm_prover_matches_bb() {
         .map(|b| Fr::from_be_bytes_mod_order(&b.0))
         .collect();
     let t_bb = t.elapsed();
+    let mem_bb = peak_gb();
     eprintln!(
         "AVM: bb simulate+trace {:.2} s; bb-ref prove {:.2} s; bb simulate+trace+prove {:.2} s",
         t_trace.as_secs_f64(),
         t_ours.as_secs_f64(),
         t_bb.as_secs_f64()
     );
+    eprintln!("AVM peak RSS: bb simulate+trace {mem_trace:.2} GB; bb-ref prove {mem_ours:.2} GB; bb simulate+trace+prove {mem_bb:.2} GB");
     assert_eq!(proof.len(), expected.len());
     let first = proof.iter().zip(&expected).position(|(a, b)| a != b);
     assert_eq!(first, None, "first differing proof field");
