@@ -10,15 +10,21 @@ export const HERE = new URL('.', import.meta.url).pathname;
 const ROOT = join(HERE, '../..');
 // Read per call: a re-pin renames the fixture directory under a running server.
 export const pin7 = () => readFileSync(join(ROOT, 'tools/PIN'), 'utf8').slice(0, 7);
-export const FLOWS = process.env.BB_FLOWS ?? join(ROOT, 'pin/aztec-packages/barretenberg/cpp/chonk-pinned-flows');
+// The pinned flows, as vendored for the tests (tools/regen/regen_inputs.sh; unpacked by the suite).
+export const FLOWS = process.env.BB_FLOWS ?? join(ROOT, 'tests/data', pin7(), 'inputs/chonk_flows');
 export const CRS = process.env.CRS_PATH ?? join(process.env.HOME, '.bb-crs');
 
-export const PACKAGES = {
-  'bb-ref.js': join(HERE, 'node_modules/bb-ref.js'),
-  'bb.js-api': join(HERE, 'node_modules/@aztec-foundation/bb.js-api'),
-  'ipc-runtime': join(ROOT, 'pin/aztec-packages/ipc-runtime/ts'),
-  msgpackr: join(HERE, 'node_modules/msgpackr'),
-};
+// The packages the page loads. `SITE_PKG=<site>/pkg` takes them from a built site instead (CI's
+// update of the published page, which rebuilds only bb-ref's wasm modules).
+const SITE_PKG = process.env.SITE_PKG;
+export const PACKAGES = SITE_PKG
+  ? Object.fromEntries(['bb-ref.js', 'bb.js-api', 'ipc-runtime', 'msgpackr'].map(p => [p, join(SITE_PKG, p)]))
+  : {
+      'bb-ref.js': join(HERE, 'node_modules/bb-ref.js'),
+      'bb.js-api': join(HERE, 'node_modules/@aztec-foundation/bb.js-api'),
+      'ipc-runtime': join(ROOT, 'pin/aztec-packages/ipc-runtime/ts'),
+      msgpackr: join(HERE, 'node_modules/msgpackr'),
+    };
 
 /** The CRS prefix the flows need: [file, bytes] (2^19 BN254 points, [x]_2, 2^16 Grumpkin points). */
 export const CRS_FILES = {

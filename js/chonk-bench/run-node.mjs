@@ -8,8 +8,8 @@ import { decodeIvcInputs, initSrs, proveFlow, sha256Hex } from './flow.mjs';
 
 const ROOT = new URL('../..', import.meta.url).pathname;
 const which = process.argv[2] ?? 'bb-ref';
-const FLOWS = process.env.BB_FLOWS ?? join(ROOT, 'pin/aztec-packages/barretenberg/cpp/chonk-pinned-flows');
 const PIN7 = readFileSync(join(ROOT, 'tools/PIN'), 'utf8').slice(0, 7);
+const FLOWS = process.env.BB_FLOWS ?? join(ROOT, 'tests/data', PIN7, 'inputs/chonk_flows');
 const CRS = process.env.CRS_PATH ?? join(process.env.HOME, '.bb-crs');
 const threads = Number(process.env.THREADS ?? 8);
 const flows = process.argv.slice(3).length

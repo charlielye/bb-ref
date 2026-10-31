@@ -31,18 +31,7 @@ node --experimental-strip-types --experimental-transform-types --no-warnings \
   --package-wasm-wide-threads-module bb-ref-wide-threads.wasm \
   --ipc-runtime-dependency "file:$(realpath --relative-to="$PKG" "$REPO/ipc-runtime/ts")" > /dev/null
 
-# bb-ref's library as a cdylib: the crate is an rlib + bin, so the crate type is chosen here.
-PKG_ARGS=(--cfg chonk_only -C link-arg=--strip-all)
-cargo rustc --quiet --lib --crate-type cdylib --features ffi --profile lto --target wasm32-wasip1-threads -- "${PKG_ARGS[@]}"
-tools/wasm_check.sh target/wasm32-wasip1-threads/lto/bb_ref.wasm
-mkdir -p "$PKG/wasm"
-cp target/wasm32-wasip1-threads/lto/bb_ref.wasm "$PKG/wasm/bb-ref-threads.wasm"
-# RUSTFLAGS replaces .cargo/config.toml's wasm flags, so they are all restated; its own target dir
-# keeps the default build's artifacts.
-RUSTFLAGS="-C target-feature=+simd128,+wide-arithmetic -C link-arg=--max-memory=4294967296 -C llvm-args=-max-store-memcpy=48 -C llvm-args=-max-store-memset=48 --cfg wasm_wide" \
-  CARGO_TARGET_DIR=target/wide cargo rustc --quiet --lib --crate-type cdylib --features ffi --profile lto --target wasm32-wasip1-threads -- "${PKG_ARGS[@]}"
-tools/wasm_check.sh target/wide/wasm32-wasip1-threads/lto/bb_ref.wasm
-cp target/wide/wasm32-wasip1-threads/lto/bb_ref.wasm "$PKG/wasm/bb-ref-wide-threads.wasm"
+tools/build_bb_ref_wasm.sh "$PKG/wasm"
 
 # The runtime the package imports is the pin's, built in place.
 [ -d "$REPO/ipc-runtime/ts/dest" ] || (cd "$REPO/ipc-runtime/ts" && yarn build)

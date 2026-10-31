@@ -15,3 +15,36 @@ jobs:
       - run: tools/fetch_crs.sh
       - run: tools/check.sh
       - run: cargo nextest run --release
+
+  # The bench page (charlielye.github.io/bb-ref): bb-ref's wasm modules rebuilt into the published
+  # site and the site force-pushed as gh-pages' one commit. The rest of the site (bb's package,
+  # bb-ref.js's generated wrapper, the CRS) changes only with the pin; a re-pin publishes it from
+  # a machine with the pin built (js/README.md).
+  pages:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1-threads
+      - uses: Swatinem/rust-cache@v2
+      - run: tools/fetch_crs.sh 19
+      - name: Publish
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          pin=$(cut -c1-7 tools/PIN)
+          git fetch -q origin gh-pages && mkdir ../site && git archive FETCH_HEAD | tar -x -C ../site
+          [ "$(cat ../site/api/pin 2>/dev/null)" = "$pin" ] ||
+            { echo "gh-pages is not for pin $pin: publish it with the pin built (js/README.md)"; exit 1; }
+          tools/build_bb_ref_wasm.sh ../site/pkg/bb-ref.js/wasm
+          zstd -dcq --long=31 tests/data/$pin/inputs/chonk_flows.tar.zst | tar -x -C tests/data/$pin/inputs
+          git config --global user.name github-actions
+          git config --global user.email github-actions@users.noreply.github.com
+          git config --global http.https://github.com/.extraheader \
+            "AUTHORIZATION: basic $(echo -n "x-access-token:$TOKEN" | base64 -w0)"
+          SITE_PKG=$PWD/../site/pkg node js/chonk-bench/build-site.mjs --publish

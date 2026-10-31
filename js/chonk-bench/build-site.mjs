@@ -46,6 +46,7 @@ function build(out) {
   }
 
   mkdirSync(join(out, 'api'), { recursive: true });
+  writeFileSync(join(out, 'api/pin'), pin7());
   const list = flows();
   writeFileSync(join(out, 'api/flows.json'), JSON.stringify(list));
   writeFileSync(join(out, 'api/modules.json'), JSON.stringify(modules()));

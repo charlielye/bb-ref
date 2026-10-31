@@ -41,7 +41,11 @@ point, 2^16 Grumpkin points, read from `$CRS_PATH`, default `~/.bb-crs`), each p
 sizes (raw and gzip -9), and the cross-origin isolation headers threads require. `site.mjs` is that
 catalogue, shared with `build-site.mjs`, which writes the same tree out as static files;
 `--publish [remote]` force-pushes it as a single-commit `gh-pages` branch, served at
-<https://charlielye.github.io/bb-ref/>. GitHub Pages cannot send the isolation headers, so
+<https://charlielye.github.io/bb-ref/>. CI does that on every push to master
+(`.github/workflows/test.yml`), rebuilding only bb-ref's wasm modules
+(`tools/build_bb_ref_wasm.sh`) into the published site, whose other parts depend only on the pin.
+After a re-pin, publish once from a machine with the pin built (`tools/build_bb_ref_js.sh`, then
+`build-site.mjs --publish`); until then CI's page update fails, naming the stale pin. GitHub Pages cannot send the isolation headers, so
 `coi.js` registers itself as a service worker that adds them (a no-op where the server sends them).
 
 Each flow runs through either package with the same command sequence (`flow.mjs`, also used by the
