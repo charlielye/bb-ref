@@ -17,14 +17,17 @@ mkdir -p "$here/bin"
 use_local=false
 [[ ${1:-} == "--local" ]] && use_local=true
 
-built=${AZTEC_REPO:-$here/pin/aztec-packages}/barretenberg/cpp/build/bin/bb
+bin=${AZTEC_REPO:-$here/pin/aztec-packages}/barretenberg/cpp/build/bin
+# bb-avm (./pin/build.sh --avm) is bb plus the AVM, which the AVM corpus needs.
+built=$bin/bb-avm
+[ -x "$built" ] || built=$bin/bb
 
 # A built pin wins when asked for, and is also the sane default if it is already there: a developer
 # who built it means to test it.
 if $use_local || [ -x "$built" ]; then
   if [ ! -x "$built" ]; then
     echo "bootstrap: no built bb at $built" >&2
-    echo "           git submodule update --init --depth 1 pin/aztec-packages && ./pin/build.sh" >&2
+    echo "           git submodule update --init --depth 1 pin/aztec-packages && ./pin/build.sh --avm" >&2
     exit 1
   fi
   ln -sfn "$built" "$here/bin/bb"
@@ -32,7 +35,7 @@ if $use_local || [ -x "$built" ]; then
   exit 0
 fi
 
-version=$(cat "$here/pin/VERSION" 2>/dev/null || true)
+version=$(grep -v '^#' "$here/pin/VERSION" 2>/dev/null | tr -d '[:space:]' || true)
 if [ -z "$version" ]; then
   echo "bootstrap: pin/VERSION is empty — the pin is a branch, not a release, so there is no" >&2
   echo "           binary to download yet. Build it instead:" >&2

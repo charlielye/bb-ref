@@ -16,8 +16,8 @@ The same handler also sits behind an in-process FFI for the bb-ref.js wasm modul
 |---|---|
 | `generated/` | **do not edit** — generated from the pin's `bb_schema.json` by ipc-codegen (`dev/regen_msgpack.sh`). One schema defines bb's wire surface; bb's server and this one are both generated from it, so encodings match by construction |
 | `generated/bb_types.rs` | every command/response struct |
-| `generated/bb_server.rs`, `bb_client.rs`, `bb_ffi.rs` | dispatch, a Rust client (used by tests), the `export_bb_ffi!` C-ABI entry points |
-| `generated/backend.rs`, `error.rs`, `mod.rs` | static siblings the script leaves alone: the byte-backend trait, the error envelope |
+| `generated/bb_server.rs`, `bb_ffi.rs` | dispatch, the `export_bb_ffi!` C-ABI entry points |
+| `generated/error.rs`, `mod.rs` | static siblings the script leaves alone: the error envelope |
 | `handler.rs` | the hand-written part: each command mapped onto the modules below — same flavor dispatch, proof splits, self-verification, and error responses as bb's `bbapi_*.cpp` adapters; commands outside the proving surface answer `unsupported command` (under `--cfg chonk_only`, the bb-ref.js build, so do the Ultra commands, letting the linker drop the Ultra/rollup code) |
 | `ffi.rs` | the `ffi`-feature cdylib exports over the handler, driven by bb-ref.js (`tools/build_bb_ref_js.sh`) |
 | `bb_avm.rs` | the `bb-avm` feature: bb's AVM simulation and trace generation linked in-process (`libbb-avm-sim.a`, `./pin/build.sh --avm-lib`, entry point in `pin/bb-avm-sim.patch`); bb-ref's prover, verifier and circuit check serve the AVM commands (`avm_prove`, `avm_verify`, `avm_check_circuit`) over it |

@@ -109,39 +109,6 @@ fn avm_inner_circuit_matches_bb() {
     assert!(witness_diffs.is_empty(), "witness columns differ: {witness_diffs:?}");
 }
 
-/// The AVM commands through the server's handler, as bb.js sends them, on bb's simulation and trace
-/// generation (linked in): the proof is bb's (`avm/proof.bin`; the AVM proof has no ZK randomness),
-/// it verifies and a tampered one does not, and the circuit check passes. Timings against bb and
-/// other inputs are the AVM corpus's (`tools/regen/regen_avm_corpus.sh`).
-#[cfg(feature = "bb-avm")]
-#[test]
-fn avm_commands_match_bb() {
-    use bb_ref::msgpack::generated::backend::Backend;
-    use bb_ref::msgpack::generated::bb_client::BbApi;
-    use bb_ref::msgpack::generated::error::Result;
-    struct Server(bb_ref::msgpack::handler::BbRefHandler);
-    impl Backend for Server {
-        fn call(&mut self, input: &[u8]) -> Result<Vec<u8>> {
-            Ok(bb_ref::msgpack::generated::bb_server::handle_request(&mut self.0, input))
-        }
-        fn destroy(&mut self) -> Result<()> {
-            Ok(())
-        }
-    }
-    let inputs = common::read("avm/avm_inputs.bin");
-    let mut server = BbApi::new(Server(bb_ref::msgpack::handler::BbRefHandler::new(Default::default())));
-    let proof = server.avm_prove(&inputs).unwrap().proof;
-    let first = proof.iter().map(|b| Fr::from_be_bytes_mod_order(&b.0)).zip(fixture().0).position(|(a, b)| a != b);
-    assert_eq!((proof.len(), first), (fixture().0.len(), None), "proof length, first differing field");
-    let public_inputs = public_inputs_msgpack(&inputs);
-    assert!(server.avm_verify(proof.clone(), public_inputs).unwrap().verified);
-    let mut tampered = proof;
-    let last = tampered.len() - 10;
-    tampered[last].0[31] ^= 1;
-    assert!(!server.avm_verify(tampered, public_inputs).unwrap().verified);
-    assert!(server.avm_check_circuit(&inputs).unwrap().passed);
-}
-
 /// The circuit check names the relation a corrupted trace breaks, and the row.
 #[cfg(feature = "bb-avm")]
 #[test]
