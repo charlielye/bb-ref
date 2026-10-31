@@ -397,53 +397,28 @@ impl<P: BigGroupCurve> Element<P> {
 
     /// bb `add_internal`: complete addition, without the standard-form fixup.
     pub fn add_internal(&self, other: &Self) -> Self {
-        let x_coordinates_match = other.x.eq(&self.x);
-        let y_coordinates_match = self.y.eq(&other.y);
-        let infinity_predicate = x_coordinates_match.and(&y_coordinates_match.not());
-        let double_predicate = x_coordinates_match.and(&y_coordinates_match);
-        let lhs_infinity = self.is_point_at_infinity();
-        let rhs_infinity = other.is_point_at_infinity();
-        let has_infinity_input = lhs_infinity.or(&rhs_infinity);
-        let add_lambda_numerator = other.y.sub(&self.y);
-        let dbl_lambda_numerator = self.dbl_lambda_numerator();
-        let lambda_numerator =
-            Fq::<P>::conditional_assign(&double_predicate, &dbl_lambda_numerator, &add_lambda_numerator);
-        let add_lambda_denominator = other.x.sub(&self.x);
-        let dbl_lambda_denominator = self.y.add(&self.y);
-        let mut lambda_denominator =
-            Fq::<P>::conditional_assign(&double_predicate, &dbl_lambda_denominator, &add_lambda_denominator);
-        let safe_denominator_needed = has_infinity_input.or(&infinity_predicate);
-        lambda_denominator =
-            Fq::<P>::conditional_assign(&safe_denominator_needed, &Fq::<P>::one(), &lambda_denominator);
-        let lambda = lambda_numerator.div(&lambda_denominator);
-        let neg_ox = other.x.neg();
-        let neg_x = self.x.neg();
-        let mut x3 = lambda.sqradd(&[neg_ox, neg_x]);
-        let x_minus_x3 = self.x.sub(&x3);
-        let neg_y = self.y.neg();
-        let mut y3 = lambda.madd(&x_minus_x3, &[neg_y]);
-        x3 = Fq::<P>::conditional_assign(&lhs_infinity, &other.x, &x3);
-        y3 = Fq::<P>::conditional_assign(&lhs_infinity, &other.y, &y3);
-        x3 = Fq::<P>::conditional_assign(&rhs_infinity, &self.x, &x3);
-        y3 = Fq::<P>::conditional_assign(&rhs_infinity, &self.y, &y3);
-        let result_is_infinity = infinity_predicate
-            .and(&has_infinity_input.not())
-            .or(&lhs_infinity.and(&rhs_infinity));
-        Self::with_infinity(x3, y3, &result_is_infinity, false)
+        self.add_or_subtract_internal(other, false)
     }
     pub fn add(&self, other: &Self) -> Self {
         self.add_internal(other).get_standard_form()
     }
     /// bb `subtract_internal`.
     pub fn subtract_internal(&self, other: &Self) -> Self {
+        self.add_or_subtract_internal(other, true)
+    }
+    /// `self ± other` (bb's two bodies, which differ only in `other.y`'s sign).
+    fn add_or_subtract_internal(&self, other: &Self, subtract: bool) -> Self {
         let x_coordinates_match = other.x.eq(&self.x);
         let y_coordinates_match = self.y.eq(&other.y);
-        let infinity_predicate = x_coordinates_match.and(&y_coordinates_match);
-        let double_predicate = x_coordinates_match.and(&y_coordinates_match.not());
+        let (infinity_predicate, double_predicate) = if subtract {
+            (x_coordinates_match.and(&y_coordinates_match), x_coordinates_match.and(&y_coordinates_match.not()))
+        } else {
+            (x_coordinates_match.and(&y_coordinates_match.not()), x_coordinates_match.and(&y_coordinates_match))
+        };
         let lhs_infinity = self.is_point_at_infinity();
         let rhs_infinity = other.is_point_at_infinity();
         let has_infinity_input = lhs_infinity.or(&rhs_infinity);
-        let add_lambda_numerator = other.y.neg().sub(&self.y);
+        let add_lambda_numerator = if subtract { other.y.neg() } else { other.y.clone() }.sub(&self.y);
         let dbl_lambda_numerator = self.dbl_lambda_numerator();
         let lambda_numerator =
             Fq::<P>::conditional_assign(&double_predicate, &dbl_lambda_numerator, &add_lambda_numerator);
@@ -462,8 +437,8 @@ impl<P: BigGroupCurve> Element<P> {
         let neg_y = self.y.neg();
         let mut y3 = lambda.madd(&x_minus_x3, &[neg_y]);
         x3 = Fq::<P>::conditional_assign(&lhs_infinity, &other.x, &x3);
-        let neg_oy = other.y.neg();
-        y3 = Fq::<P>::conditional_assign(&lhs_infinity, &neg_oy, &y3);
+        let other_y = if subtract { other.y.neg() } else { other.y.clone() };
+        y3 = Fq::<P>::conditional_assign(&lhs_infinity, &other_y, &y3);
         x3 = Fq::<P>::conditional_assign(&rhs_infinity, &self.x, &x3);
         y3 = Fq::<P>::conditional_assign(&rhs_infinity, &self.y, &y3);
         let result_is_infinity = infinity_predicate

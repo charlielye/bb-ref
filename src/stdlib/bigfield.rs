@@ -426,26 +426,12 @@ impl<N: PrimeField> BigField<N> {
                 && b.is_constant() == c.is_constant()
                 && c.is_constant() == d.is_constant()
         );
-        let ctx = a.ctx.clone();
-        let limbs = [
-            Limb::new(a.clone(), Self::default_maximum_limb()),
-            Limb::new(b.clone(), Self::default_maximum_limb()),
-            Limb::new(c.clone(), Self::default_maximum_limb()),
-            Limb::new(
-                d.clone(),
-                if can_overflow {
-                    Self::default_maximum_limb()
-                } else {
-                    Self::default_maximum_most_significant_limb()
-                },
-            ),
-        ];
         let mut prime = d.mul(&FieldT::constant(shift_k(3))).add_two(
             &c.mul(&FieldT::constant(shift_k(2))),
             &b.mul(&FieldT::constant(shift_k(1))),
         );
         prime += a;
-        Self::from_state(ctx, limbs, prime)
+        Self::unsafe_construct_from_limbs_with_prime(a, b, c, d, &prime, can_overflow)
     }
 
     /// bb `unsafe_construct_from_limbs` with an explicit prime limb.
@@ -894,16 +880,6 @@ impl<N: PrimeField> BigField<N> {
         Self::zero_with_ctx(self.ctx.clone()).sub(self)
     }
 
-    fn compute_quotient_remainder_values(a: &Self, b: &Self, to_add: &[Self]) -> (BigUint, BigUint) {
-        let mut add_values = BigUint::from(0u64);
-        for add in to_add {
-            add.reduction_check();
-            add_values += add.get_value();
-        }
-        let modulus = Self::modulus();
-        let v = a.get_value() * b.get_value() + add_values;
-        (&v / &modulus, &v % &modulus)
-    }
     /// `(reduction required, quotient bits)` for a product with these bounds (bb `get_quotient_reduction_info`).
     fn get_quotient_reduction_info(
         as_max: &[BigUint],
@@ -934,32 +910,7 @@ impl<N: PrimeField> BigField<N> {
     }
 
     pub fn mul(&self, other: &Self) -> Self {
-        self.reduction_check();
-        other.reduction_check();
-        let ctx = self.ctx_of(other);
-        let (quotient_value, remainder_value) = Self::compute_quotient_remainder_values(self, other, &[]);
-        if self.is_constant() && other.is_constant() {
-            return Self::constant(ctx, &remainder_value);
-        }
-        let (reduction_required, num_quotient_bits) = Self::get_quotient_reduction_info(
-            &[self.get_maximum_value()],
-            &[other.get_maximum_value()],
-            &[],
-            &[Self::default_maximum_remainder()],
-        );
-        if reduction_required {
-            if self.get_maximum_value() > other.get_maximum_value() {
-                self.self_reduce();
-            } else {
-                other.self_reduce();
-            }
-            return self.mul(other);
-        }
-        let ctx = ctx.unwrap();
-        let quotient = Self::create_from_u512_as_witness(&ctx, &quotient_value, false, num_quotient_bits);
-        let remainder = Self::create_from_u512_as_witness(&ctx, &remainder_value, false, 0);
-        Self::unsafe_evaluate_multiply_add(self, other, &[], &quotient, &[remainder.clone()]);
-        remainder
+        self.madd(other, &[])
     }
 
     pub fn div(&self, other: &Self) -> Self {
@@ -1038,65 +989,11 @@ impl<N: PrimeField> BigField<N> {
     }
 
     pub fn sqr(&self) -> Self {
-        self.reduction_check();
-        let (quotient_value, remainder_value) = Self::compute_quotient_remainder_values(self, self, &[]);
-        if self.is_constant() {
-            return Self::constant(self.ctx.clone(), &remainder_value);
-        }
-        let (reduction_required, num_quotient_bits) = Self::get_quotient_reduction_info(
-            &[self.get_maximum_value()],
-            &[self.get_maximum_value()],
-            &[],
-            &[Self::default_maximum_remainder()],
-        );
-        if reduction_required {
-            self.self_reduce();
-            return self.sqr();
-        }
-        let ctx = self.ctx.clone().unwrap();
-        let quotient = Self::create_from_u512_as_witness(&ctx, &quotient_value, false, num_quotient_bits);
-        let remainder = Self::create_from_u512_as_witness(&ctx, &remainder_value, false, 0);
-        Self::unsafe_evaluate_multiply_add(self, self, &[], &quotient, &[remainder.clone()]);
-        remainder
+        self.madd(self, &[])
     }
 
     pub fn sqradd(&self, to_add: &[Self]) -> Self {
-        assert!(to_add.len() <= MAXIMUM_SUMMAND_COUNT);
-        self.reduction_check();
-        let ctx = self.ctx.clone();
-        let mut add_values = BigUint::from(0u64);
-        let mut add_constant = true;
-        for a in to_add {
-            a.reduction_check();
-            add_values += a.get_value();
-            add_constant = add_constant && a.is_constant();
-        }
-        let modulus = Self::modulus();
-        let (left, right) = (self.get_value(), self.get_value());
-        if self.is_constant() {
-            if add_constant {
-                return Self::constant(ctx, &((&left * &right + &add_values) % &modulus));
-            }
-            let mut new_to_add: Vec<Self> = to_add.to_vec();
-            new_to_add.push(Self::constant(ctx, &((&left * &right) % &modulus)));
-            return Self::sum(&new_to_add);
-        }
-        let (reduction_required, num_quotient_bits) = Self::get_quotient_reduction_info(
-            &[self.get_maximum_value()],
-            &[self.get_maximum_value()],
-            to_add,
-            &[Self::default_maximum_remainder()],
-        );
-        if reduction_required {
-            self.self_reduce();
-            return self.sqradd(to_add);
-        }
-        let v = &left * &right + &add_values;
-        let ctx = ctx.unwrap();
-        let quotient = Self::create_from_u512_as_witness(&ctx, &(&v / &modulus), false, num_quotient_bits);
-        let remainder = Self::create_from_u512_as_witness(&ctx, &(&v % &modulus), false, 0);
-        Self::unsafe_evaluate_multiply_add(self, self, to_add, &quotient, &[remainder.clone()]);
-        remainder
+        self.madd(self, to_add)
     }
 
     pub fn pow(&self, exponent: u32) -> Self {
@@ -1515,20 +1412,12 @@ impl<N: PrimeField> BigField<N> {
             assert!(self.get_value() % Self::modulus() < *upper_limit);
             return;
         }
-        let ctx = self.ctx.clone().unwrap();
-        let w = self.limb_witness_indices();
-        ctx.borrow_mut()
-            .range_constrain_two_limbs(w[0], w[1], NUM_LIMB_BITS as usize, NUM_LIMB_BITS as usize);
-        ctx.borrow_mut().range_constrain_two_limbs(
-            w[2],
-            w[3],
-            NUM_LIMB_BITS as usize,
-            Self::num_last_limb_bits() as usize,
-        );
+        self.range_constrain_limbs();
         self.unsafe_assert_less_than(upper_limit);
     }
 
-    pub fn is_less_than(&self, upper_limit: &BigUint) -> BoolT {
+    /// Each limb to its width (the top one to the last limb's bits), two limbs per gate.
+    fn range_constrain_limbs(&self) {
         let ctx = self.ctx.clone().unwrap();
         let w = self.limb_witness_indices();
         ctx.borrow_mut()
@@ -1539,6 +1428,10 @@ impl<N: PrimeField> BigField<N> {
             NUM_LIMB_BITS as usize,
             Self::num_last_limb_bits() as usize,
         );
+    }
+
+    pub fn is_less_than(&self, upper_limit: &BigUint) -> BoolT {
+        self.range_constrain_limbs();
         let limit = |a: u64, b: u64| FieldT::constant(fr(&slice(upper_limit, a, b)));
         let u0 = limit(0, NUM_LIMB_BITS);
         let u1 = limit(NUM_LIMB_BITS, NUM_LIMB_BITS * 2);
@@ -1771,20 +1664,11 @@ impl<N: PrimeField> BigField<N> {
         let mut limb_0_accumulator = vec![remainders[0].limb_element(0)];
         let mut limb_2_accumulator = vec![remainders[0].limb_element(2)];
         let mut prime_limb_accumulator = vec![remainders[0].prime_limb()];
-        for r in &remainders[1..] {
-            limb_0_accumulator.push(r.limb_element(0));
-            limb_0_accumulator.push(r.limb_element(1).mul(&shift_1));
-            limb_2_accumulator.push(r.limb_element(2));
-            limb_2_accumulator.push(r.limb_element(3).mul(&shift_1));
-            prime_limb_accumulator.push(r.prime_limb());
-        }
-        for a in to_add {
-            limb_0_accumulator.push(a.limb_element(0).neg());
-            limb_0_accumulator.push(a.limb_element(1).neg().mul(&shift_1));
-            limb_2_accumulator.push(a.limb_element(2).neg());
-            limb_2_accumulator.push(a.limb_element(3).neg().mul(&shift_1));
-            prime_limb_accumulator.push(a.prime_limb().neg());
-        }
+        Self::accumulate_terms(
+            &remainders[1..],
+            to_add,
+            [&mut limb_0_accumulator, &mut limb_2_accumulator, &mut prime_limb_accumulator],
+        );
         let t0 = remainders[0].limb_element(1);
         let t1 = remainders[0].limb_element(3);
         let not_plain = |t: &FieldT| t.additive_constant != Fr::zero() || t.multiplicative_constant != Fr::one();
@@ -1827,13 +1711,37 @@ impl<N: PrimeField> BigField<N> {
         );
         let lo = FieldT::from_witness_index(&ctx, lo_idx).add(&borrow_lo);
         let hi = FieldT::from_witness_index(&ctx, hi_idx);
-        if carry_lo_msb <= 70 && carry_hi_msb <= 70 {
+        Self::range_constrain_carries(&ctx, &lo, &hi, carry_lo_msb, carry_hi_msb);
+    }
+
+    /// The remainders past the first and the addends, into the limb-0, limb-2 and prime-limb sums of
+    /// the multiplication's remainder (addends negated, odd limbs shifted onto the even ones).
+    fn accumulate_terms(remainders: &[Self], to_add: &[Self], [l0, l2, prime]: [&mut Vec<FieldT>; 3]) {
+        let shift_1 = FieldT::constant(shift_k(1));
+        for r in remainders {
+            l0.push(r.limb_element(0));
+            l0.push(r.limb_element(1).mul(&shift_1));
+            l2.push(r.limb_element(2));
+            l2.push(r.limb_element(3).mul(&shift_1));
+            prime.push(r.prime_limb());
+        }
+        for a in to_add {
+            l0.push(a.limb_element(0).neg());
+            l0.push(a.limb_element(1).neg().mul(&shift_1));
+            l2.push(a.limb_element(2).neg());
+            l2.push(a.limb_element(3).neg().mul(&shift_1));
+            prime.push(a.prime_limb().neg());
+        }
+    }
+
+    /// The multiplication's two carries: one two-limb range gate when both fit 70 bits.
+    fn range_constrain_carries(ctx: &Ctx, lo: &FieldT, hi: &FieldT, lo_bits: u64, hi_bits: u64) {
+        if lo_bits <= 70 && hi_bits <= 70 {
             let (hi, lo) = (hi.get_witness_index(), lo.get_witness_index());
-            ctx.borrow_mut()
-                .range_constrain_two_limbs(hi, lo, carry_hi_msb as usize, carry_lo_msb as usize);
+            ctx.borrow_mut().range_constrain_two_limbs(hi, lo, hi_bits as usize, lo_bits as usize);
         } else {
-            hi.create_range_constraint(carry_hi_msb);
-            lo.create_range_constraint(carry_lo_msb);
+            hi.create_range_constraint(hi_bits);
+            lo.create_range_constraint(lo_bits);
         }
     }
 
@@ -1895,7 +1803,6 @@ impl<N: PrimeField> BigField<N> {
                 x.clone()
             }
         };
-        let shift_1 = FieldT::constant(shift_k(1));
         let mut limb_0_accumulator: Vec<FieldT> = vec![];
         let mut limb_2_accumulator: Vec<FieldT> = vec![];
         let mut prime_limb_accumulator: Vec<FieldT> = vec![];
@@ -1921,20 +1828,11 @@ impl<N: PrimeField> BigField<N> {
             limb_2_accumulator.push(r0.limb_element(2));
             prime_limb_accumulator.push(r0.prime_limb());
         }
-        for r in remainders.iter().skip(1) {
-            limb_0_accumulator.push(r.limb_element(0));
-            limb_0_accumulator.push(r.limb_element(1).mul(&shift_1));
-            limb_2_accumulator.push(r.limb_element(2));
-            limb_2_accumulator.push(r.limb_element(3).mul(&shift_1));
-            prime_limb_accumulator.push(r.prime_limb());
-        }
-        for a in to_add {
-            limb_0_accumulator.push(a.limb_element(0).neg());
-            limb_0_accumulator.push(a.limb_element(1).neg().mul(&shift_1));
-            limb_2_accumulator.push(a.limb_element(2).neg());
-            limb_2_accumulator.push(a.limb_element(3).neg().mul(&shift_1));
-            prime_limb_accumulator.push(a.prime_limb().neg());
-        }
+        Self::accumulate_terms(
+            remainders.get(1..).unwrap_or_default(),
+            to_add,
+            [&mut limb_0_accumulator, &mut limb_2_accumulator, &mut prime_limb_accumulator],
+        );
         let fix_field = |f: FieldT| {
             if f.is_constant() {
                 let idx = ctx.borrow_mut().put_constant_variable(f.get_value());
@@ -1979,14 +1877,7 @@ impl<N: PrimeField> BigField<N> {
         assert!(max_lo_bits > 2 * NUM_LIMB_BITS && max_hi_bits > 2 * NUM_LIMB_BITS);
         let carry_lo_msb = max_lo_bits - 2 * NUM_LIMB_BITS;
         let carry_hi_msb = max_hi_bits - 2 * NUM_LIMB_BITS;
-        if carry_lo_msb <= 70 && carry_hi_msb <= 70 {
-            let (hi, lo) = (hi.get_witness_index(), lo.get_witness_index());
-            ctx.borrow_mut()
-                .range_constrain_two_limbs(hi, lo, carry_hi_msb as usize, carry_lo_msb as usize);
-        } else {
-            hi.create_range_constraint(carry_hi_msb);
-            lo.create_range_constraint(carry_lo_msb);
-        }
+        Self::range_constrain_carries(&ctx, &lo, &hi, carry_lo_msb, carry_hi_msb);
     }
 }
 
