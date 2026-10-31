@@ -15,21 +15,14 @@ use bb_ref::honk::ULTRA;
 use bb_ref::rollup::{set_ultra_pairing_points_public, verify_recursive_ultra, vk_to_witnesses_ultra};
 use bb_ref::stdlib::io::proof_to_witnesses;
 use std::cell::RefCell;
-use std::path::PathBuf;
 use std::rc::Rc;
-
-fn acir_tests_dir() -> PathBuf {
-    std::env::var("ACIR_TESTS").map(PathBuf::from).unwrap_or_else(|_| {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pin/aztec-packages/barretenberg/acir_tests/acir_tests")
-    })
-}
 
 #[test]
 fn ultra_recursive_verifier_matches_bb() {
     let dump = common::fixture_dir("instance/ultra_recursion/a_1_mul");
     common::require(dump.join("vk"), "regen_merge.sh");
     // The inner proof: a_1_mul with non-ZK UltraHonk (deterministic, byte-exact vs bb since M3).
-    let target = acir_tests_dir().join("a_1_mul/target");
+    let target = common::acir_tests().join("a_1_mul/target");
     let circuit = decode_program(&std::fs::read(target.join("program.json")).unwrap());
     let witness = decode_witness(&std::fs::read(target.join("witness.gz")).unwrap(), &mut OsRng);
     let mut inner_builder = build_circuit(&circuit, Some(&witness));

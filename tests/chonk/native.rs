@@ -85,12 +85,7 @@ fn pinned_flows_byte_exact_with_seed() {
     use bb_ref::base::rng::DebugRng;
     use bb_ref::base::CommitmentKey;
     let root = common::fixture_dir("chonk_flows");
-    let flows = std::env::var("BB_FLOWS")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| {
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("pin/aztec-packages/barretenberg/cpp/chonk-pinned-flows")
-        });
+    let flows = common::chonk_flows();
     let mut n = 0;
     for e in std::fs::read_dir(common::require(root, "regen_chonk_flows.sh")).unwrap() {
         let dir = e.unwrap().path();
@@ -98,7 +93,7 @@ fn pinned_flows_byte_exact_with_seed() {
         let inputs = flows.join(&name).join("ivc-inputs.msgpack");
         assert!(
             inputs.exists(),
-            "{} missing: barretenberg/cpp/scripts/chonk_inputs.sh download",
+            "{} missing: tools/regen/regen_inputs.sh",
             inputs.display()
         );
         if !common::in_tier(&name, name != "ecdsar1+transfer_0_recursions+sponsored_fpc") {

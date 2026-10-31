@@ -100,8 +100,9 @@ Re-pointing bb-ref at a new bb commit is a deliberate procedure, in this order:
 3. `dev/regen_msgpack.sh` and `dev/regen_avm.py`, then every `tools/regen/regen_*.sh`: chonk flows, protocol, ultra, acir
    (mock stack), merge, vk hashes, mega-app VKs, avm (`--inputs` after a protocol change) then the
    avm corpus (it reads `avm/avm_inputs.bin`), public base (needs an outside `BbCircuitProve`
-   capture), corpus (`--harvest` after any protocol change), and backend last (its rollup circuits
-   are extracted from the corpus).
+   capture), corpus (`--harvest` after any protocol change), backend (its rollup circuits
+   are extracted from the corpus), inputs (the pin build outputs the tests read, vendored) and
+   wire last (bb's answers to `tests/msgpack_server.rs`'s frames, recorded from `bin/bb`).
 4. Run the full suite, and `tools/conformance.sh` (both new corpora).
 
 Divergences found are chased with the ladder above — they are the changelog of what bb changed,

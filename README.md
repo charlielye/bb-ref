@@ -167,6 +167,7 @@ tools/coverage.sh                    # line coverage of the standalone test set
 tools/loc.sh [--no-tests]            # bb C++ vs bb-ref Rust, side by side
 tools/build_bb_ref_js.sh             # generate + build js/bb-ref.js; then node js/chonk-bench/serve.mjs
 node js/chonk-bench/build-site.mjs --publish   # publish the bench page to GitHub Pages
+tools/fetch_crs.sh                   # the SRS, on a machine without bb (CI: .github/workflows/test.yml)
 cargo nextest run --release          # the suite: differential + standalone, smallest real cases (<30 s)
 BBREF_FULL=1 cargo nextest run --release   # plus every full-size byte-exactness case
 ```

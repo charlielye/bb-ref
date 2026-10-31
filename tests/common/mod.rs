@@ -6,16 +6,18 @@ pub const PIN: &str = "1117683";
 
 pub fn fixture_dir(rel: &str) -> PathBuf {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data").join(PIN);
-    if let Some(name) = rel.strip_prefix("instance/").and_then(|r| r.split('/').next()) {
-        unpack(&root.join("instance"), name);
+    let mut parts = rel.split('/');
+    if let (Some(dir @ ("instance" | "inputs")), Some(name)) = (parts.next(), parts.next()) {
+        unpack(&root.join(dir), name);
     }
     root.join(rel)
 }
 
-/// Instance dumps are committed as `instance/<name>.tar.zst` (tools/regen/pack.sh) and unpacked
-/// here on first use, and again when the archive is newer than the unpacked copy's `.unpacked`
-/// stamp. A directory without a stamp is a regen's fresh output and is left alone. One process
-/// unpacks at a time (test binaries run in parallel).
+/// Instance dumps and the pin's build outputs the tests read are committed as
+/// `{instance,inputs}/<name>.tar.zst` (tools/regen/pack.sh) and unpacked here on first use, and
+/// again when the archive is newer than the unpacked copy's `.unpacked` stamp. A directory without
+/// a stamp is a regen's fresh output and is left alone. One process unpacks at a time (test
+/// binaries run in parallel).
 fn unpack(dir: &Path, name: &str) {
     let mtime = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
     let (archive, out) = (dir.join(format!("{name}.tar.zst")), dir.join(name));
@@ -33,7 +35,11 @@ fn unpack(dir: &Path, name: &str) {
     if stale() {
         let tmp = dir.join(format!(".{name}.{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
-        let cmd = format!("zstd -dcq --long=31 '{}' | tar -x -C '{}'", archive.display(), tmp.display());
+        let cmd = format!(
+            "zstd -dcq --long=31 '{}' | tar -x -C '{}'",
+            archive.display(),
+            tmp.display()
+        );
         let ok = std::process::Command::new("sh")
             .args(["-c", &cmd])
             .status()
@@ -44,6 +50,19 @@ fn unpack(dir: &Path, name: &str) {
         std::fs::rename(tmp.join(name), &out).unwrap();
         std::fs::remove_dir_all(&tmp).unwrap();
     }
+}
+
+/// The pin's build outputs the tests read, vendored (tools/regen/regen_inputs.sh): acir_tests
+/// programs (`<prog>/target/{program.json,witness.gz}`), protocol circuit artifacts
+/// (`<name>.json`) and the pinned Chonk flows (`<flow>/ivc-inputs.msgpack`).
+pub fn acir_tests() -> PathBuf {
+    fixture_dir("inputs/acir_tests")
+}
+pub fn protocol_circuits() -> PathBuf {
+    fixture_dir("inputs/protocol_circuits")
+}
+pub fn chonk_flows() -> PathBuf {
+    fixture_dir("inputs/chonk_flows")
 }
 
 /// The full suite (`BBREF_FULL=1`): every full-size byte-exactness case. The default run keeps each

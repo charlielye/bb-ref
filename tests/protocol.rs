@@ -5,7 +5,6 @@ use bb_ref::acir::{build_circuit_mega, decode_program};
 use bb_ref::base::{CommitmentKey, OsRng};
 use bb_ref::chonk::ivc::CircuitKind;
 use bb_ref::honk::prover_instance::ProverInstance;
-use std::path::PathBuf;
 
 const KERNELS: [(&str, CircuitKind); 8] = [
     ("private_kernel_init", CircuitKind::Kernel),
@@ -18,19 +17,12 @@ const KERNELS: [(&str, CircuitKind); 8] = [
     ("hiding_kernel_to_rollup", CircuitKind::HidingKernel),
 ];
 
-fn protocol_circuits_dir() -> PathBuf {
-    std::env::var("PROTOCOL_CIRCUITS")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("pin/aztec-packages/noir-projects/fnd/noir-protocol-circuits/target")
-        })
-}
-
 fn artifact(name: &str) -> Vec<u8> {
-    let path = protocol_circuits_dir().join(format!("{name}.json"));
-    std::fs::read(&path)
-        .unwrap_or_else(|e| panic!("{}: {e} (the pin's compiled noir-protocol-circuits)", path.display()))
+    let path = common::require(
+        common::protocol_circuits().join(format!("{name}.json")),
+        "regen_inputs.sh",
+    );
+    std::fs::read(path).unwrap()
 }
 
 /// Filter with `BBREF_KERNEL=<name>` to run one kernel.

@@ -32,4 +32,4 @@ PY
 "$BB" write_vk -t noir-rollup-no-zk -b "$OUT/program.json" -o "$OUT"
 BB_RNG_SEED=7 HARDWARE_CONCURRENCY=1 "$BB" prove -t noir-rollup-no-zk -b "$OUT/program.json" -w "$OUT/witness.gz" -k "$OUT/vk" -o "$OUT"
 echo "regen_public_base: wrote $OUT"
-"$F/pack.sh" public_tx_base
+"$F/pack.sh" instance/public_tx_base

@@ -1,0 +1,17 @@
+# The suite needs nothing outside the repo but the SRS: every fixture, bb's recorded answers and
+# the pin's build outputs it reads are committed (tests/data/), so there is no pin to set up.
+name: test
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: taiki-e/install-action@nextest
+      - uses: Swatinem/rust-cache@v2
+      - run: tools/fetch_crs.sh
+      - run: tools/check.sh
+      - run: cargo nextest run --release

@@ -14,16 +14,9 @@ use bb_ref::honk::prover_instance::ProverInstance;
 use bb_ref::honk::ultra_prover::prove_ultra;
 use bb_ref::honk::ultra_verifier::verify_ultra;
 use bb_ref::honk::{FlavorDesc, ULTRA, ULTRA_ZK};
-use std::path::PathBuf;
-
-fn acir_tests_dir() -> PathBuf {
-    std::env::var("ACIR_TESTS_DIR").map(PathBuf::from).unwrap_or_else(|_| {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pin/aztec-packages/barretenberg/acir_tests/acir_tests")
-    })
-}
 
 fn build(prog: &str, flavor: &'static FlavorDesc) -> ProverInstance {
-    let dir = acir_tests_dir().join(prog).join("target");
+    let dir = common::acir_tests().join(prog).join("target");
     let circuit = decode_program(&std::fs::read(dir.join("program.json")).expect("program.json"));
     let witness = decode_witness(&std::fs::read(dir.join("witness.gz")).expect("witness.gz"), &mut OsRng);
     let mut builder = build_circuit(&circuit, Some(&witness));
@@ -126,7 +119,7 @@ fn vk_hash_sweep() {
     for path in &entries {
         let prog = path.file_name().unwrap().to_str().unwrap();
         let expected: Fr = from_bytes_be(&std::fs::read(path).unwrap());
-        let target = acir_tests_dir().join(prog).join("target");
+        let target = common::acir_tests().join(prog).join("target");
         let circuit = decode_program(&std::fs::read(target.join("program.json")).unwrap());
         let mut builder = build_circuit(&circuit, None);
         let inst = ProverInstance::from_builder(&ULTRA, &mut builder, &mut OsRng);

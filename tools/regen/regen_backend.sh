@@ -108,4 +108,4 @@ BB_RNG_SEED=12345 "$BB" prove --scheme ultra_honk --disable_zk --oracle_hash kec
 echo "backend witness golden rollup_root"
 
 echo "backend fixtures regenerated under $OUT"
-"$F/pack.sh" backend
+"$F/pack.sh" instance/backend

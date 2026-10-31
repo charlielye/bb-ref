@@ -1,8 +1,9 @@
-//! Differential oracle for the msgpack server: the same request frames through `bin/bb msgpack
-//! run` (the pin-built bb) and through bb-ref's handler, response streams compared frame by frame.
-//! Both sides run seeded, so every response — proofs included — must be byte-identical; error
-//! responses are compared by shape where bb's message text is legitimately different (noted
-//! per case).
+//! Differential oracle for the msgpack server: request frames through bb-ref's handler, compared
+//! frame by frame with bb's answers to the same frames, recorded from `bin/bb msgpack run` (the
+//! pin-built bb) under `tests/data/<pin7>/wire/` with a digest of the frames by tools/regen/regen_wire.sh (this test with
+//! `BBREF_RECORD_WIRE=1`). Both sides run seeded, so every response — proofs included — must be
+//! byte-identical; error responses are compared by shape where bb's message text is legitimately
+//! different (noted per case).
 
 mod common;
 use bb_ref::acir::format::gunzip;
@@ -36,10 +37,6 @@ use std::process::Command as Proc;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
-fn fixture(rel: &str) -> PathBuf {
-    repo_root().join("tests/data").join(common::PIN).join(rel)
 }
 
 /// The raw gzipped ACIR buffer out of a program.json wrapper.
@@ -78,41 +75,46 @@ fn split_frames(stream: &[u8]) -> Vec<Vec<u8>> {
     frames
 }
 
-/// Runs the frames through `bin/bb msgpack run` with the given env, and through a fresh seeded
-/// in-process handler, returning both response streams split into frames.
+/// bb's recorded answers to the frames (recording them first under `BBREF_RECORD_WIRE`, by
+/// running `bin/bb msgpack run` with the given env), and a fresh seeded in-process handler's, both
+/// split into frames.
 fn run_both(name: &str, cmds: &[Command], threads: Option<u32>) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
-    let dir = std::env::temp_dir().join(format!("bbref-msgpack-{name}-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let input = dir.join("frames.bin");
     let mut all = Vec::new();
     for (n, c) in cmds.iter().enumerate() {
         all.extend_from_slice(&encode_frame(c, n as u64 + 1));
     }
-    std::fs::write(&input, &all).unwrap();
-
-    let bb = repo_root().join("bin/bb");
-    assert!(bb.exists(), "bin/bb missing: ./pin/build.sh --avm");
-    let mut proc = Proc::new(&bb);
-    proc.args(["msgpack", "run", "--input"])
-        .arg(&input)
-        .env("BB_RNG_SEED", "12345");
-    if let Some(t) = threads {
-        proc.env("HARDWARE_CONCURRENCY", t.to_string());
+    let dir = common::fixture_dir("wire");
+    let (req, resp) = (dir.join(format!("{name}.req.sha256")), dir.join(format!("{name}.resp")));
+    let digest = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&all));
+    if std::env::var_os("BBREF_RECORD_WIRE").is_some() {
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&req, &digest).unwrap();
+        let frames = std::env::temp_dir().join(format!("bbref-wire-{name}-{}", std::process::id()));
+        std::fs::write(&frames, &all).unwrap();
+        let bb = repo_root().join("bin/bb");
+        assert!(bb.exists(), "bin/bb missing: ./pin/build.sh --avm && ./bootstrap.sh");
+        let mut proc = Proc::new(&bb);
+        proc.args(["msgpack", "run", "--input"])
+            .arg(&frames)
+            .env("BB_RNG_SEED", "12345");
+        if let Some(t) = threads {
+            proc.env("HARDWARE_CONCURRENCY", t.to_string());
+        }
+        let out = proc.output().expect("running bin/bb");
+        assert!(
+            out.status.success(),
+            "bb msgpack run failed for {name}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        std::fs::write(&resp, &out.stdout).unwrap();
+        std::fs::remove_file(frames).unwrap();
     }
-    let out = proc.output().expect("running bin/bb");
+    let recorded = std::fs::read_to_string(common::require(req, "regen_wire.sh")).unwrap();
     assert!(
-        out.status.success(),
-        "bb msgpack run failed for {name}: {}",
-        String::from_utf8_lossy(&out.stderr)
-            .chars()
-            .rev()
-            .take(2000)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect::<String>()
+        recorded == digest,
+        "{name}: the frames differ from the recording: tools/regen/regen_wire.sh"
     );
-    let bb_frames = split_frames(&out.stdout);
+    let bb_frames = split_frames(&std::fs::read(resp).unwrap());
 
     set_global(Box::new(DebugRng::new(12345)));
     let mut handler = BbRefHandler::new(bb_ref::base::srs::Srs::default());
@@ -220,14 +222,9 @@ fn circuit_case(name: &str, dir: &Path, oracle: &str, ipa: bool, threads: Option
 /// The transfer pinned flow driven as bb drives it over the wire: ChonkStart, then per step
 /// ChonkLoad + ChonkAccumulate, ChonkProve, and a ChonkVerify of the produced proof.
 fn chonk_case() {
-    let flow = std::env::var("BB_FLOWS")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| repo_root().join("pin/aztec-packages/barretenberg/cpp/chonk-pinned-flows"))
-        .join("ecdsar1+transfer_0_recursions+sponsored_fpc/ivc-inputs.msgpack");
-    assert!(
-        flow.exists(),
-        "{} missing: barretenberg/cpp/scripts/chonk_inputs.sh download",
-        flow.display()
+    let flow = common::require(
+        common::chonk_flows().join("ecdsar1+transfer_0_recursions+sponsored_fpc/ivc-inputs.msgpack"),
+        "regen_inputs.sh",
     );
     #[derive(Deserialize)]
     struct StepRaw {
@@ -291,16 +288,22 @@ fn msgpack_server_oracle() {
     if common::in_tier("msgpack oracle: inbox_parity_64", true) {
         circuit_case(
             "inbox_parity_64",
-            &fixture("backend/inbox_parity_64"),
+            &common::fixture_dir("backend/inbox_parity_64"),
             "poseidon2",
             false,
             None,
         );
     }
-    circuit_case("a_1_mul_keccak", &fixture("keccak/a_1_mul"), "keccak", false, None);
+    circuit_case(
+        "a_1_mul_keccak",
+        &common::fixture_dir("keccak/a_1_mul"),
+        "keccak",
+        false,
+        None,
+    );
     circuit_case(
         "inbox_parity_4",
-        &fixture("backend/inbox_parity_4"),
+        &common::fixture_dir("backend/inbox_parity_4"),
         "poseidon2",
         false,
         None,

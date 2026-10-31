@@ -7,16 +7,9 @@ use bb_ref::base::{CommitmentKey, OsRng};
 use bb_ref::honk::prover_instance::ProverInstance;
 use bb_ref::honk::MEGA_APP;
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
-
-fn acir_tests_dir() -> PathBuf {
-    std::env::var("ACIR_TESTS_DIR").map(PathBuf::from).unwrap_or_else(|_| {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pin/aztec-packages/barretenberg/acir_tests/acir_tests")
-    })
-}
 
 fn mega_app_instance(prog: &str) -> ProverInstance {
-    let dir = acir_tests_dir().join(prog).join("target");
+    let dir = common::acir_tests().join(prog).join("target");
     let circuit = decode_program(&std::fs::read(dir.join("program.json")).expect("program.json"));
     let mut builder = build_circuit_mega(&circuit, None, None, &mut OsRng);
     ProverInstance::from_builder(&MEGA_APP, &mut builder, &mut OsRng)

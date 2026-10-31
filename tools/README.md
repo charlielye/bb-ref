@@ -29,7 +29,7 @@ our own, no rehydration step, and what we test is what the node actually sent.
 | `corpus/rollup-<pin7>.goldens.zst` | bb's recorded responses to it, committed: conformance replays only bb-ref |
 | `corpus/avm-<pin7>.{corpus,goldens}.zst` | the AVM corpus (AvmProve, AvmCheckCircuit, AvmVerify of real and tampered proofs on recorded inputs), both committed; replayed by conformance.sh with the rollup corpus |
 | `lib/` | support: `replay.py` (list/diff/extract), `bench.py`, `bb_capture_proxy.py` (records a run), `avm_corpus.py` (AVM corpus frames, normalized goldens), `tamper.py` (the rejection frames) |
-| `regen/` | all regenerators: `regen_corpus.sh`, `regen_avm_corpus.sh`, plus the `tests/data/` fixture generators (`regen_*.sh`, `env.sh`, `avm_dump.cpp`) and `pack.sh` (instance dumps into their committed archives) |
+| `regen/` | all regenerators: `regen_corpus.sh`, `regen_avm_corpus.sh`, plus the `tests/data/` fixture generators (`regen_*.sh`, `env.sh`, `avm_dump.cpp`) `regen_inputs.sh` (the pin build outputs the tests read), `regen_wire.sh` (bb's answers to the msgpack test's frames) and `pack.sh` (instance dumps and inputs into their committed archives) |
 
 ## The rest
 
@@ -37,6 +37,7 @@ our own, no rehydration step, and what we test is what the node actually sent.
 |---|---|
 | `check.sh` | the standalone gate: warning-free build, unit tests with `tests/data` hidden |
 | `coverage.sh` | line coverage of the standalone test set (report only) |
+| `fetch_crs.sh [k]` | the first 2^k BN254 SRS points and the Grumpkin SRS into `~/.bb-crs` (CI; bb fetches its own) |
 | `loc.sh [--no-tests]` | bb C++ vs bb-ref Rust line counts, like for like (see the header) |
 | `build_time.sh` | from-scratch build times, bb vs bb-ref |
 | `build_bb_ref_js.sh` | generate + build `js/bb-ref.js` (see [js/README.md](../js/README.md)) |

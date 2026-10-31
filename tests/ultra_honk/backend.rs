@@ -104,13 +104,10 @@ fn artifact(name: &str) -> std::path::PathBuf {
     if copied.exists() {
         return copied;
     }
-    let root = std::env::var("PROTOCOL_CIRCUITS").unwrap_or_else(|_| {
-        format!(
-            "{}/pin/aztec-packages/noir-projects/fnd/noir-protocol-circuits/target",
-            env!("CARGO_MANIFEST_DIR")
-        )
-    });
-    std::path::PathBuf::from(root).join(format!("{name}.json"))
+    common::require(
+        common::protocol_circuits().join(format!("{name}.json")),
+        "regen_inputs.sh",
+    )
 }
 
 /// The VK hash of one `backend_vk_hash/` artifact against bb's (rollup_root's is the UltraKeccak

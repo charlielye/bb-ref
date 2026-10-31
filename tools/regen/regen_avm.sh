@@ -45,4 +45,4 @@ rm -rf "$DATA/instance/avm_inner"
 mkdir -p "$DATA/instance"
 mv "$TMP/out/inner" "$DATA/instance/avm_inner"
 echo "regen_avm: wrote $OUT and $DATA/instance/avm_inner"
-"$F/pack.sh" avm_inner
+"$F/pack.sh" instance/avm_inner

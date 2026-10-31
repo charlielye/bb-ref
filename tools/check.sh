@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # The standalone gate: unit tests must pass with no bb binary, no corpus, no tests/data.
-# CI runs this in a bare checkout; the differential suites (cargo test --release) are a separate,
-# artifact-dependent job.
+# CI (.github/workflows/test.yml) runs it before the suite.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # Hide the fixture layer so a test that quietly depends on it fails here, not on a contributor's machine.
