@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regenerates the AVM verifier fixtures: tests/data/<pin7>/avm/ (committed: the AVM proving inputs,
-# bb's proof of them and the flattened public-input columns) and instance/avm_inner/ (gitignored,
-# ~0.5 GB: bb's inner MegaAvm recursive verifier circuit for that proof).
+# bb's proof of them and the flattened public-input columns) and instance/avm_inner/ (packed by
+# pack.sh; ~0.5 GB unpacked: bb's inner MegaAvm recursive verifier circuit for that proof).
 #
 #   regen_avm.sh            reuse the committed avm/avm_inputs.bin
 #   regen_avm.sh --inputs   re-dump fresh inputs from yarn-project's AVM test first (needs labs built)
@@ -45,3 +45,4 @@ rm -rf "$DATA/instance/avm_inner"
 mkdir -p "$DATA/instance"
 mv "$TMP/out/inner" "$DATA/instance/avm_inner"
 echo "regen_avm: wrote $OUT and $DATA/instance/avm_inner"
+"$F/pack.sh" avm_inner

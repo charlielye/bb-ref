@@ -34,7 +34,7 @@ def fixture_name(artifact: str) -> str:
 
 def main():
     corpus, out = sys.argv[1], sys.argv[2]
-    stream = subprocess.run(["zstd", "-dc", corpus], check=True, capture_output=True).stdout
+    stream = subprocess.run(["zstd", "-dc", "--long=31", corpus], check=True, capture_output=True).stdout
     seen = set()
     i = 0
     while i < len(stream):

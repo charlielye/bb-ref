@@ -1,12 +1,49 @@
 //! Shared helpers for differential tests against bb fixtures.
 #![allow(dead_code)]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub const PIN: &str = "1117683";
 
 pub fn fixture_dir(rel: &str) -> PathBuf {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data").join(PIN);
+    if let Some(name) = rel.strip_prefix("instance/").and_then(|r| r.split('/').next()) {
+        unpack(&root.join("instance"), name);
+    }
     root.join(rel)
+}
+
+/// Instance dumps are committed as `instance/<name>.tar.zst` (tools/regen/pack.sh) and unpacked
+/// here on first use, and again when the archive is newer than the unpacked copy's `.unpacked`
+/// stamp. A directory without a stamp is a regen's fresh output and is left alone. One process
+/// unpacks at a time (test binaries run in parallel).
+fn unpack(dir: &Path, name: &str) {
+    let mtime = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    let (archive, out) = (dir.join(format!("{name}.tar.zst")), dir.join(name));
+    let stale = || {
+        mtime(&archive).is_some_and(|a| match mtime(&out.join(".unpacked")) {
+            Some(stamp) => stamp < a,
+            None => !out.exists(),
+        })
+    };
+    if !stale() {
+        return;
+    }
+    let lock = std::fs::File::create(dir.join(".unpack.lock")).unwrap();
+    lock.lock().unwrap();
+    if stale() {
+        let tmp = dir.join(format!(".{name}.{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let cmd = format!("zstd -dcq --long=31 '{}' | tar -x -C '{}'", archive.display(), tmp.display());
+        let ok = std::process::Command::new("sh")
+            .args(["-c", &cmd])
+            .status()
+            .is_ok_and(|s| s.success());
+        assert!(ok, "unpacking {} failed (needs zstd and tar)", archive.display());
+        std::fs::File::create(tmp.join(name).join(".unpacked")).unwrap();
+        let _ = std::fs::remove_dir_all(&out);
+        std::fs::rename(tmp.join(name), &out).unwrap();
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
 }
 
 /// The full suite (`BBREF_FULL=1`): every full-size byte-exactness case. The default run keeps each

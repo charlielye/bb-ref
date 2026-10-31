@@ -25,11 +25,11 @@ our own, no rehydration step, and what we test is what the node actually sent.
 | `corpus/driver.ts` | composes the recipe epochs and proves them through one pooled bb |
 | `corpus/harvest.ts` | proves the leaf assets (`regen_corpus.sh --harvest`, or when they are missing) |
 | `corpus/leaf-assets/` | real client-proven txs + the chain state they anchor to; gitignored, regenerated rarely |
-| `corpus/rollup-<pin7>.corpus.zst` | the corpus itself; gitignored, ~80 MB (1.6 GB raw) |
+| `corpus/rollup-<pin7>.corpus.zst` | the corpus itself, committed; ~80 MB (1.6 GB raw) |
 | `corpus/rollup-<pin7>.goldens.zst` | bb's recorded responses to it, committed: conformance replays only bb-ref |
 | `corpus/avm-<pin7>.{corpus,goldens}.zst` | the AVM corpus (AvmProve, AvmCheckCircuit, AvmVerify of real and tampered proofs on recorded inputs), both committed; replayed by conformance.sh with the rollup corpus |
 | `lib/` | support: `replay.py` (list/diff/extract), `bench.py`, `bb_capture_proxy.py` (records a run), `avm_corpus.py` (AVM corpus frames, normalized goldens), `tamper.py` (the rejection frames) |
-| `regen/` | all regenerators: `regen_corpus.sh`, `regen_avm_corpus.sh`, plus the `tests/data/` fixture generators (`regen_*.sh`, `env.sh`, `avm_dump.cpp`) |
+| `regen/` | all regenerators: `regen_corpus.sh`, `regen_avm_corpus.sh`, plus the `tests/data/` fixture generators (`regen_*.sh`, `env.sh`, `avm_dump.cpp`) and `pack.sh` (instance dumps into their committed archives) |
 
 ## The rest
 

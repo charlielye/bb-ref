@@ -38,9 +38,10 @@ Not everything can be compared the same way, because bb draws randomness. Three 
   driven by `BBREF_*` env vars. Beyond the bb.js-api PR, the pin branch touches bb production
   code only with env-gated hooks (`BB_RNG_SEED`/`BB_RNG_TAPE_*` in `numeric/random/engine.cpp`,
   `BB_RNG_COUNT` in `api/api_msgpack.cpp`) and the msgpack file mode's envelope framing.
-- **Regen scripts** (`tools/regen/regen_*.sh`): rebuild every fixture from the pin. Small
-  fixtures are committed under `tests/data/<pin7>/`; bulky instance dumps are gitignored
-  and regenerated on demand.
+- **Regen scripts** (`tools/regen/regen_*.sh`): rebuild every fixture from the pin. Fixtures
+  are committed under `tests/data/<pin7>/`; the bulky instance dumps as one zstd archive each
+  (`instance/<name>.tar.zst`, written by `tools/regen/pack.sh` at the end of each regen), which
+  the tests unpack on first use (`tests/common/mod.rs`).
 - **Harvested fixtures**: circuits whose witnesses embed real recursive proofs (the rollup
   tree) cannot be executed from sample inputs — they are harvested from a live proving run
   (`BB_DEBUG_OUTPUT_DIR` on yarn-project's prover test dumps each operation's bytecode,

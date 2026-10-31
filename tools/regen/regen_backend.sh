@@ -1,7 +1,7 @@
 #!/bin/bash
 # Backend (server protocol) circuit fixtures under tests/data/<pin7>/:
 #   backend/<name>/{program.json,witness.gz}   artifact compiled+executed with the PINNED nargo
-#   instance/backend/<name>/                   bb UltraHonk instance dumps (gitignored; BbRefDump.UltraInstance)
+#   instance/backend/<name>/                   bb UltraHonk instance dumps (BbRefDump.UltraInstance; packed by pack.sh)
 #   backend_vk_hash/<name>                     bb's non-ZK UltraHonk vk_hash per artifact
 #
 # The committed noir-protocol-circuits/target artifacts predate the crates (stale compiler, removed
@@ -108,3 +108,4 @@ BB_RNG_SEED=12345 "$BB" prove --scheme ultra_honk --disable_zk --oracle_hash kec
 echo "backend witness golden rollup_root"
 
 echo "backend fixtures regenerated under $OUT"
+"$F/pack.sh" backend

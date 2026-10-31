@@ -49,14 +49,14 @@ keep() { trap - EXIT; echo "streams kept in $out"; }
 for CORPUS in "${CORPORA[@]}"; do
     echo "corpus:  $CORPUS"
     if $WITH_BB; then
-        zstd -dcq "$CORPUS" | "$BB" msgpack run --input - > "$out/bb.resp" 2>"$out/bb.err" || {
+        zstd -dcq --long=31 "$CORPUS" | "$BB" msgpack run --input - > "$out/bb.resp" 2>"$out/bb.err" || {
             echo "bb failed:"; tail -3 "$out/bb.err"; exit 1; }
         # bb's AVM responses carry its stage timings; the goldens and bb-ref leave them empty.
         python3 tools/lib/avm_corpus.py goldens "$out/bb.norm" "$out/bb.resp" && mv "$out/bb.norm" "$out/bb.resp"
     else
-        zstd -dcq "${CORPUS%.corpus.zst}.goldens.zst" > "$out/bb.resp"
+        zstd -dcq --long=31 "${CORPUS%.corpus.zst}.goldens.zst" > "$out/bb.resp"
     fi
-    zstd -dcq "$CORPUS" | "$BBREF" msgpack run --input - > "$out/ref.resp" 2>"$out/ref.err" || {
+    zstd -dcq --long=31 "$CORPUS" | "$BBREF" msgpack run --input - > "$out/ref.resp" 2>"$out/ref.err" || {
         echo "bb-ref failed:"; tail -3 "$out/ref.err"; exit 1; }
     if ! cmp -s "$out/bb.resp" "$out/ref.resp"; then
         echo "DIVERGED:"
@@ -67,7 +67,7 @@ for CORPUS in "${CORPORA[@]}"; do
     echo "CONFORMANT: $(python3 tools/lib/replay.py --count "$out/bb.resp") responses byte-identical"
     # Rejection: every proof bb accepted, with a public input changed, gets bb's answer (not
     # verified). The AVM corpus records its tampered verifies itself.
-    zstd -dcq "$CORPUS" > "$out/corpus.req"
+    zstd -dcq --long=31 "$CORPUS" > "$out/corpus.req"
     n=$(python3 tools/lib/tamper.py "$out/corpus.req" "$out/bb.resp" "$out/bad.req" "$out/bad.resp")
     [ "$n" -gt 0 ] || continue
     $WITH_BB && { "$BB" msgpack run --input "$out/bad.req" 2>/dev/null | cmp -s - "$out/bad.resp" ||

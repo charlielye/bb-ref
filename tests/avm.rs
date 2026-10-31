@@ -70,8 +70,8 @@ fn avm_public_inputs_match_bb() {
     assert_eq!(columns, fixture().1);
 }
 
-/// bb's inner MegaAvm recursive verifier circuit for the fixture proof (`avm_dump --inner`, gitignored
-/// under instance/avm_inner): every polynomial, the public inputs and the VK. Only the op queue's
+/// bb's inner MegaAvm recursive verifier circuit for the fixture proof (`avm_dump --inner`, under
+/// instance/avm_inner): every polynomial, the public inputs and the VK. Only the op queue's
 /// random ops may differ.
 #[test]
 fn avm_inner_circuit_matches_bb() {

@@ -130,7 +130,7 @@ Only the first is the common case; the other two exist so that heavier work is o
 
 | tier | who | needs | how |
 |---|---|---|---|
-| **1. Verify bb-ref** | anyone with the corpus | the corpus + goldens pairs (`tools/corpus/{rollup,avm}-<pin7>.{corpus,goldens}.zst`; all committed but the ~80 MB rollup corpus) and `libbb-avm-sim.a` (`./pin/build.sh --avm-lib`) | `tools/conformance.sh` — builds bb-ref with `bb-avm` and replays it against the recorded bb answers |
+| **1. Verify bb-ref** | anyone with the corpus | the corpus + goldens pairs (`tools/corpus/{rollup,avm}-<pin7>.{corpus,goldens}.zst`, committed) and `libbb-avm-sim.a` (`./pin/build.sh --avm-lib`) | `tools/conformance.sh` — builds bb-ref with `bb-avm` and replays it against the recorded bb answers |
 | **2. Re-prove bb too** | anyone distrusting the goldens, or testing an unreleased bb | + the pin's bb-avm (`./pin/build.sh --avm`) | `tools/conformance.sh --with-bb` |
 | **3. Rebuild the corpus** | maintainers, once per pin | + the pin's labs workspace built, an AVM-capable bb, ~13 min | `tools/regen/regen_corpus.sh [--harvest]` |
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerates the merge / batch merge fixtures under tests/data/<pin7>/instance/merge/ (gitignored) with the
+# Regenerates the merge / batch merge fixtures under tests/data/<pin7>/instance/merge/ and the other instance dumps with the
 # bb-side dumper (BbRefDump in the pinned tree, built into dsl_tests).
 set -euo pipefail
 F=$(cd "$(dirname "$0")" && pwd)
@@ -69,3 +69,5 @@ HARDWARE_CONCURRENCY=1 BB_RNG_SEED=12345 BBREF_INNER_PROGRAM=$ACIR/a_1_mul/targe
 # Ultra recursion with IPA accumulation (RollupIO; seeded inner witnesses + IPA randomness)
 mkdir -p $T/ultra_rollup_recursion
 HARDWARE_CONCURRENCY=1 BB_RNG_SEED=12345 BBREF_OUT=$T/ultra_rollup_recursion "$BIN" --gtest_filter='BbRefDump.UltraRollupRecursion'
+# Pack the dumps into the committed archives (pack.sh leaves unchanged ones alone)
+"$F/pack.sh"

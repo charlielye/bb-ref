@@ -5,9 +5,11 @@
 Two complementary layers, and the claim each one carries:
 
 1. **Differential** (`tests/*.rs` reading `tests/data/`, `tools/conformance.sh` replaying a
-   corpus): byte-for-byte equivalence with the pinned bb on real inputs. This is the accept path —
-   bb's outputs are all valid, so it can never show that bb-ref *rejects* anything. A missing
-   fixture fails its test, naming the `tools/regen/` script that writes it.
+   corpus): byte-for-byte equivalence with the pinned bb on real inputs. This is mostly the accept path —
+   bb's outputs are all valid; `conformance.sh` also replays every accepted rollup proof tampered,
+   which bb-ref must reject. Every fixture is committed (instance dumps as `.tar.zst` archives,
+   unpacked on first use); a missing one fails its test, naming the `tools/regen/` script that
+   writes it.
 2. **Standalone** (inline `#[cfg(test)]` + `tests/{soundness,relations}.rs` + the `api_boundary`
    module): runs with no bb binary, no corpus, no `tests/data` — `tools/check.sh` enforces this by
    hiding the fixture layer. Valid artifacts are proven in-process; this layer carries the

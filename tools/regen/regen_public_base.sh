@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Regenerates the public tx base rollup fixture under tests/data/<pin7>/instance/public_tx_base/
-# (gitignored, ~60 MB) from one recorded CircuitProve frame payload for PublicTxBase (e.g. a jaws
+# (packed by pack.sh) from one recorded CircuitProve frame payload for PublicTxBase (e.g. a jaws
 # capture: `*-req-BbCircuitProve.msgpack`). The witness embeds a real AVM proof, which the repo's
 # sample Prover.toml does not.
 #
@@ -32,3 +32,4 @@ PY
 "$BB" write_vk -t noir-rollup-no-zk -b "$OUT/program.json" -o "$OUT"
 BB_RNG_SEED=7 HARDWARE_CONCURRENCY=1 "$BB" prove -t noir-rollup-no-zk -b "$OUT/program.json" -w "$OUT/witness.gz" -k "$OUT/vk" -o "$OUT"
 echo "regen_public_base: wrote $OUT"
+"$F/pack.sh" public_tx_base

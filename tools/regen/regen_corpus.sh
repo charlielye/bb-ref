@@ -86,10 +86,10 @@ FRAMES=$(mktemp -d); trap 'rm -rf "$FRAMES"' EXIT
 step "packing"
 # One pooled bb means one connection carries the whole rollup; anything else is a stray client.
 STREAM=$(ls -S "$FRAMES"/*.req | head -1)
-zstd -3 -T0 -q -f -o "$OUT/rollup-${PIN:0:7}.corpus.zst" "$STREAM"
+zstd -19 --long=31 -T0 -q -f -o "$OUT/rollup-${PIN:0:7}.corpus.zst" "$STREAM"
 # The captured responses ARE bb's answers for these exact frames: pack them as the goldens so
 # conformance replays only bb-ref (~9 min) instead of re-proving through bb as well.
-zstd -3 -T0 -q -f -o "$OUT/rollup-${PIN:0:7}.goldens.zst" "${STREAM%.req}.resp"
+zstd -19 --long=31 -T0 -q -f -o "$OUT/rollup-${PIN:0:7}.goldens.zst" "${STREAM%.req}.resp"
 printf '\ncorpus: %s (%s)\n' "$OUT/rollup-${PIN:0:7}.corpus.zst" \
     "$(du -h "$OUT/rollup-${PIN:0:7}.corpus.zst" | cut -f1)"
 echo "verify it:  tools/conformance.sh   (regen only produces; conformance/bench consume)"

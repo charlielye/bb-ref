@@ -24,7 +24,7 @@ def read(path):
     data = open(path, "rb").read() if path != "-" else sys.stdin.buffer.read()
     if data[:4] == b"\x28\xb5\x2f\xfd":  # zstd magic
         import subprocess
-        data = subprocess.run(["zstd", "-dcq", path], capture_output=True, check=True).stdout
+        data = subprocess.run(["zstd", "-dcq", "--long=31", path], capture_output=True, check=True).stdout
     elif data[:2] == b"\x1f\x8b":
         data = gzip.decompress(data)
     return data
