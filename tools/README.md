@@ -37,7 +37,7 @@ our own, no rehydration step, and what we test is what the node actually sent.
 |---|---|
 | `check.sh` | the standalone gate: warning-free build, unit tests with `tests/data` hidden |
 | `coverage.sh` | line coverage of the standalone test set (report only) |
-| `loc.sh [--no-tests]` | bb C++ vs bb-ref Rust line counts (no benchmarks, no generated code) |
+| `loc.sh [--no-tests]` | bb C++ vs bb-ref Rust line counts, like for like (see the header) |
 | `build_time.sh` | from-scratch build times, bb vs bb-ref |
 | `build_bb_ref_js.sh` | generate + build `js/bb-ref.js` (see [js/README.md](../js/README.md)) |
 | `wasm_check.sh [module]` | fails a wasm module built without `.cargo/config.toml`'s wasm flags |

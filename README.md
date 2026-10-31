@@ -14,13 +14,13 @@ These are the project's binding goals — changes should be judged against them:
 
 | goal | state |
 | --- | --- |
-| **Minimum lines of code** for a bit-parity reference implementation, in modern idiomatic Rust | **16.7%** of bb's C++ implementation, AVM included and generated code excluded on both sides (`tools/loc.sh`) |
+| **Minimum lines of code** for a bit-parity reference implementation, in modern idiomatic Rust | **36%** of bb's C++ like for like, **23%** counting tests ([by component](#size)) |
 | **A test suite under 30 s**: the default run (`cargo nextest run --release`) keeps every differential test's smallest real cases; `BBREF_FULL=1` adds every full-size byte-exactness case | **6 s**, 200 tests, every fixture required, on the shared dev box under load at nice 19 |
 | **Lean on stable, mature dependencies** instead of handwriting (fields/curves: arkworks; msgpack: rmp-serde; parallelism: rayon) | holds, with one deliberate exception: the hot field kernels (ADX and IFMA Montgomery multiply, bb's wasm 29-bit and wide multiplies, Bernstein–Yang inverse) and the MSM are ported from bb for speed; arkworks still supplies the field and curve framework, the pairing and G2 ([src/base](src/base/README.md)) |
-| **Bit parity**: VKs bit-exact, proofs byte-exact, both directions, including the wire protocol | holds — every VK and pinned flow byte-equal; bb-ref's proofs are bb's byte for byte, and bb-ref accepts every rollup and AVM proof bb accepts and rejects them tampered, as bb does (`tools/conformance.sh`) |
-| **Circuit gate parity**: every selector, wire and copy-cycle identical to bb's ([docs/gate-exactness.md](docs/gate-exactness.md)) | holds — enforced by the write-VK oracles and stdlib micro-oracles |
+| **Bit parity**: VKs bit-exact, proofs byte-exact, both directions, including the wire protocol | holds — every VK, proof and wire response checked is byte-equal, and bb-ref rejects tampered proofs as bb does ([what is checked](#parity)) |
+| **Circuit gate parity**: every selector, wire and copy-cycle identical to bb's ([docs/gate-exactness.md](docs/gate-exactness.md)) | holds — 41 stdlib gadget programs compared gate for gate, plus the VK sweeps ([parity](#parity)) |
 | **Replay the rollup through bb and bb-ref and get the same root proof** | holds — 63/63 `rollup-1117683` corpus responses byte-identical, `rollup_root` included, and 28/28 of the AVM corpus (prove, check circuit, verify) (`tools/conformance.sh`) |
-| **At parity or better with bb in performance, memory usage and wasm size** (against stock bb at the pin) | time: **0.46×** native, **0.68×** wasm; wasm memory **0.81–0.94×**; wasm module **2.1× smaller**; native memory **0.77–0.88×** ([results](#results), [docs/performance.md](docs/performance.md)) |
+| **At parity or better with bb in performance, memory usage and wasm size** (against stock bb at the pin) | Chonk time **0.46×** native, **0.68×** wasm; memory **0.8–0.9×**; wasm module **2.1× smaller** ([speed and memory](#speed-and-memory)) |
 | **95%+ test coverage on the critical paths**, without redundant tests | core **95%** standalone, plus full soundness sweeps ([docs/testing.md](docs/testing.md)) |
 | **Documentation an engineer can descend**: each component's purpose without the math; first use of any odd name links to its explanation | [tour](docs/tour.md) → module READMEs → [glossary](docs/glossary.md) |
 | **A maintenance process for bb divergence**: diagnose and resolve drift quickly as bb moves | the pin + regen + divergence ladder ([docs/oracle.md](docs/oracle.md)) |
@@ -34,6 +34,32 @@ system libc++ to link it) for the three AVM commands, so one binary serves the w
 time: Solidity verifier generation, Starknet oracle hash.
 
 ## Results
+
+### Size
+
+`tools/loc.sh` counts like for like: generated code and benchmarks are out on both sides, and so
+are the parts of bb that bb-ref has no counterpart for or links rather than ports. Code lines
+without tests (bb's `*.test.cpp`, bb-ref's `tests/`; bb-ref's inline unit tests stay counted):
+
+| component | bb (C++) | bb-ref (Rust) | ratio |
+| --- | ---: | ---: | ---: |
+| base: fields, curves, MSM, hashes, polynomials, SRS, transcripts | 33,514 | 9,484 | 28% |
+| honk: flavors, relations, sumcheck, PCS, Ultra, HyperNova | 21,787 | 7,187 | 33% |
+| stdlib + rollup: in-circuit types and verifiers | 19,896 | 8,889 | 45% |
+| acir: ACIR ingestion and opcode lowering | 14,901 | 2,399 | 16% |
+| goblin: merge, IPA, ECCVM, Translator | 7,328 | 5,757 | 79% |
+| circuit: the builders, op queue, plookup tables | 7,046 | 4,309 | 61% |
+| msgpack + CLI: the wire protocol server | 6,249 | 1,110 | 18% |
+| avm: prover, verifier, circuit check | 4,237 | 1,807 | 43% |
+| chonk: the client IVC | 3,371 | 1,463 | 43% |
+| **total** | **118,396** | **42,445** | **36%** |
+
+With tests on both sides it is 46,659 against 204,479 lines (**23%**). Left out of bb's count: the
+AVM's simulation and trace generation (27,928 lines, which bb-ref links from bb), the AVM fuzzer
+and the node module (19,836), SMT and formal verification, analysis tools, world-state DBs,
+Solidity and Starknet (7,477), and vendored CLI11.
+
+### Speed and memory
 
 Chonk (client IVC) proving over the 11 pinned transaction flows, stock bb at the pin against
 bb-ref, both seeded, 8 threads, on a 16-core Zen 4 box (bbbench). Time is wall, best of 3; ratio is
@@ -64,8 +90,31 @@ marked schnorr. With wasm wide arithmetic (node 27 nightly), bb-ref's wasm total
 **Wasm module size** (what the browser downloads): bb.js-api's threads module is 18.15 MB
 (4.03 MB gzipped); bb-ref.js's, Chonk-only and stripped, is **8.63 MB (2.12 MB gzipped)**.
 
+The whole rollup corpus (62 server operations, native, 16 threads) ran in 0.46× bb's time at 1.03×
+its peak memory (2026-10-14, older pin `3b2c553`). The rollup and AVM tables at the current pin
+come with the next bench-box run.
+
 Try it in a browser: **[charlielye.github.io/bb-ref](https://charlielye.github.io/bb-ref/)** proves
 the same flows with both engines side by side ([js/](js/README.md)).
+
+### Parity
+
+Every check below runs in the suite (the largest circuits with `BBREF_FULL=1`) or in
+`tools/conformance.sh`, against fixtures regenerated from the pin by bb itself ([docs/oracle.md](docs/oracle.md)):
+
+- **VKs.** 486 acir_tests programs, each as an Ultra VK hash and a MegaApp VK; 17 rollup and
+  protocol circuits; the 8 private and hiding kernels.
+- **Gates.** 41 stdlib gadget programs (bigfield, biggroup, ECDSA, SHA-256, Keccak, Blake2s/3,
+  AES, Poseidon2, …): every selector, wire and copy cycle equal to bb's, the first differing row
+  reported otherwise ([docs/gate-exactness.md](docs/gate-exactness.md)).
+- **Proofs.** Byte-identical to bb's: the 11 pinned Chonk flows, seeded; the ZK provers (Ultra ZK,
+  ECCVM, the joint MegaZK + Translator proof, Chonk) on bb's recorded randomness; every non-ZK
+  proof outright.
+- **The wire.** The rollup corpus (a whole epoch as a real prover sent it to bb) gets 63/63
+  responses byte-identical, the root rollup included; the AVM corpus 28/28 (prove, check circuit,
+  verify).
+- **Rejection.** All 32 rollup proofs bb accepted, replayed with a public input changed, are
+  rejected with bb's answer; the AVM corpus carries its own tampered verifies.
 
 ## The pin
 
