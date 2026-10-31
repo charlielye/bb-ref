@@ -79,9 +79,8 @@ fn corpus_replay() {
         for (idx, ((req_id, payload), (gold_id, gold_payload))) in requests.iter().zip(&golden).enumerate() {
             assert_eq!(req_id, gold_id, "{conn}#{idx}: response id mismatch in the recording");
             let cmd = command_name(payload);
-            // The AVM is permanently out of bb-ref's scope; its frames stay in the corpus (they
-            // are part of the recorded epoch) but are not replayed.
-            if cmd.starts_with("BbAvm") {
+            // The AVM needs bb's simulation and trace generation (the `bb-avm` feature).
+            if cfg!(not(feature = "bb-avm")) && cmd.starts_with("BbAvm") {
                 skipped += 1;
                 continue;
             }

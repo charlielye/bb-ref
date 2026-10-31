@@ -2,6 +2,7 @@
 pub mod poseidon2_perm;
 pub mod program;
 pub mod prover;
+pub mod public_inputs;
 pub mod recursive;
 pub mod two_layer;
 pub mod relations;

@@ -733,7 +733,7 @@ impl Handler for BbRefHandler {
     #[cfg(feature = "bb-avm")]
     fn avm_prove(&mut self, cmd: BbAvmProve, respond: Responder<BbAvmProveResponse>) {
         run_catching(respond, || {
-            let (proof, _) = super::bb_avm::avm_prove(&cmd.inputs, &self.srs)?;
+            let proof = super::bb_avm::avm_prove(&cmd.inputs, &self.srs)?;
             Ok(BbAvmProveResponse { proof: proof.iter().map(fr_to_wire).collect(), stats: Vec::new() })
         });
     }
@@ -749,7 +749,8 @@ impl Handler for BbRefHandler {
     #[cfg(feature = "bb-avm")]
     fn avm_check_circuit(&mut self, cmd: BbAvmCheckCircuit, respond: Responder<BbAvmCheckCircuitResponse>) {
         run_catching(respond, || {
-            Ok(BbAvmCheckCircuitResponse { passed: super::bb_avm::avm_check_circuit(&cmd.inputs, &self.srs)?, stats: Vec::new() })
+            super::bb_avm::avm_check_circuit(&cmd.inputs)?;
+            Ok(BbAvmCheckCircuitResponse { passed: true, stats: Vec::new() })
         });
     }
 

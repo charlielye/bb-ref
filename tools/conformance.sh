@@ -13,6 +13,8 @@ cd "$(dirname "$0")/.."
 
 CORPUS=${1:?usage: conformance.sh <corpus[.zst]> [bb-binary]}
 BB=${2:-./bin/bb}
+# The AVM corpus needs a `--features bb-avm` build.
+BBREF=${BBREF:-./target/release/bb-ref}
 : "${BB_RNG_SEED:=12345}" # the corpus was recorded seeded; replays must match it
 export BB_RNG_SEED
 # Threads are deliberately NOT pinned. Non-ZK proving -- the whole rollup tree -- is
@@ -31,7 +33,7 @@ echo "corpus:  $CORPUS"
 GOLDENS=${CORPUS%.corpus.zst}.goldens.zst
 if [ -f "$GOLDENS" ] && [ "${3:-}" != "--with-bb" ]; then
     echo "goldens: $GOLDENS (bb replay skipped; --with-bb forces it)"
-    decompress | ./target/release/bb-ref msgpack run --input - > "$out/ref.resp" 2>"$out/ref.err" || {
+    decompress | "$BBREF" msgpack run --input - > "$out/ref.resp" 2>"$out/ref.err" || {
         echo "bb-ref failed:"; tail -3 "$out/ref.err"; exit 1; }
     zstd -dcq "$GOLDENS" > "$out/bb.resp"
     if cmp -s "$out/bb.resp" "$out/ref.resp"; then
@@ -46,7 +48,9 @@ fi
 echo "bb:      $BB"
 decompress | "$BB" msgpack run --input - > "$out/bb.resp" 2>"$out/bb.err" || {
     echo "bb failed:"; tail -3 "$out/bb.err"; exit 1; }
-decompress | ./target/release/bb-ref msgpack run --input - > "$out/ref.resp" 2>"$out/ref.err" || {
+# bb's AVM responses carry its stage timings; the goldens and bb-ref leave them empty.
+python3 tools/lib/avm_corpus.py goldens "$out/bb.norm" "$out/bb.resp" && mv "$out/bb.norm" "$out/bb.resp"
+decompress | "$BBREF" msgpack run --input - > "$out/ref.resp" 2>"$out/ref.err" || {
     echo "bb-ref failed:"; tail -3 "$out/ref.err"; exit 1; }
 
 if cmp -s "$out/bb.resp" "$out/ref.resp"; then

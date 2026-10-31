@@ -20,7 +20,7 @@ The same handler also sits behind an in-process FFI for the bb-ref.js wasm modul
 | `generated/backend.rs`, `error.rs`, `mod.rs` | static siblings the script leaves alone: the byte-backend trait, the error envelope |
 | `handler.rs` | the hand-written part: each command mapped onto the modules below — same flavor dispatch, proof splits, self-verification, and error responses as bb's `bbapi_*.cpp` adapters; commands outside the proving surface answer `unsupported command` (under `--cfg chonk_only`, the bb-ref.js build, so do the Ultra commands, letting the linker drop the Ultra/rollup code) |
 | `ffi.rs` | the `ffi`-feature cdylib exports over the handler, driven by bb-ref.js (`tools/build_bb_ref_js.sh`) |
-| `bb_avm.rs` | the `bb-avm` feature: bb's AVM simulation and trace generation linked in-process (`libbb-external-avm.a`, `./pin/build.sh --avm-lib`, entry points in `pin/bb-avm.patch`), which bb-ref's prover and verifier serve the AVM commands (`avm_prove`, `avm_verify`, `avm_check_circuit`) over |
+| `bb_avm.rs` | the `bb-avm` feature: bb's AVM simulation and trace generation linked in-process (`libbb-avm-sim.a`, `./pin/build.sh --avm-lib`, entry point in `pin/bb-avm-sim.patch`); bb-ref's prover, verifier and circuit check serve the AVM commands (`avm_prove`, `avm_verify`, `avm_check_circuit`) over it |
 
 The handler owns the `Srs` (loaded once at server startup and injected — [`base/srs.rs`](../base/srs.rs))
 and draws all randomness from the session-global source, so `BB_RNG_SEED` governs reproducibility

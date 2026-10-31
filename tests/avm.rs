@@ -50,6 +50,27 @@ fn avm_tampered_proof_or_public_inputs_rejected() {
     assert!(!verify(&proof[1..], &columns, &g2), "short proof accepted");
 }
 
+/// The fixture inputs' `publicInputs` (a map of `hints` then `publicInputs`), as a client sends them
+/// with `AvmVerify`.
+fn public_inputs_msgpack(inputs: &[u8]) -> &[u8] {
+    use serde::Deserialize;
+    let mut rest = &inputs[3..];
+    let mut de = rmp_serde::Deserializer::new(&mut rest);
+    assert_eq!(String::deserialize(&mut de).unwrap(), "hints");
+    serde::de::IgnoredAny::deserialize(&mut de).unwrap();
+    assert_eq!(String::deserialize(&mut de).unwrap(), "publicInputs");
+    drop(de);
+    rest
+}
+
+/// bb `PublicInputs::to_columns` on the fixture inputs gives the fixture's public-input columns.
+#[test]
+fn avm_public_inputs_match_bb() {
+    let inputs = common::read("avm/avm_inputs.bin");
+    let columns = bb_ref::avm::public_inputs::public_input_columns(public_inputs_msgpack(&inputs)).unwrap();
+    assert_eq!(columns, fixture().1);
+}
+
 /// bb's inner MegaAvm recursive verifier circuit for the fixture proof (`avm_dump --inner`, gitignored
 /// under instance/avm_inner): every polynomial, the public inputs and the VK. Only the op queue's
 /// random ops may differ.
@@ -91,125 +112,50 @@ fn avm_inner_circuit_matches_bb() {
     assert!(witness_diffs.is_empty(), "witness columns differ: {witness_diffs:?}");
 }
 
-/// bb itself in this process, through its FFI entry (in the `bb-external-avm` archive; bb-ref's
-/// own code links only bb's AVM simulation and trace generation).
-#[cfg(feature = "bb-avm")]
-struct InProcessBb;
-
-#[cfg(feature = "bb-avm")]
-impl bb_ref::msgpack::generated::backend::Backend for InProcessBb {
-    fn call(&mut self, input: &[u8]) -> bb_ref::msgpack::generated::error::Result<Vec<u8>> {
-        extern "C" {
-            fn bb_ipc_ffi_entry(input: *const u8, input_len: usize, output: *mut *mut u8, output_len: *mut usize);
-            fn bb_ipc_ffi_free(ptr: *mut u8);
-        }
-        let (mut out, mut out_len) = (std::ptr::null_mut(), 0usize);
-        unsafe {
-            bb_ipc_ffi_entry(input.as_ptr(), input.len(), &mut out, &mut out_len);
-            let response = std::slice::from_raw_parts(out, out_len).to_vec();
-            bb_ipc_ffi_free(out);
-            Ok(response)
-        }
-    }
-
-    fn destroy(&mut self) -> bb_ref::msgpack::generated::error::Result<()> {
-        Ok(())
-    }
-}
-
-/// bb-ref's AVM prover on bb's trace of the fixture inputs (bb's simulation and trace generation,
-/// linked in) against bb's own proof from the same process: the AVM proof has no ZK randomness, so
-/// the two are identical, and bb-ref verifies it (bb's `AvmVerify` path, through bb's public-input
-/// columns). `BBREF_AVM_INPUTS=<avm_inputs.bin>` runs it on other inputs (bb-prover writes them
-/// under `BB_DEBUG_OUTPUT_DIR`) and reports both provers' times.
+/// The AVM commands through the server's handler, as bb.js sends them, on bb's simulation and trace
+/// generation (linked in): the proof is bb's (`avm/proof.bin`; the AVM proof has no ZK randomness),
+/// it verifies and a tampered one does not, and the circuit check passes. Timings against bb and
+/// other inputs are the AVM corpus's (`tools/regen/regen_avm_corpus.sh`).
 #[cfg(feature = "bb-avm")]
 #[test]
-fn avm_prover_matches_bb() {
-    use bb_ref::msgpack::bb_avm;
+fn avm_commands_match_bb() {
+    use bb_ref::msgpack::generated::backend::Backend;
     use bb_ref::msgpack::generated::bb_client::BbApi;
-    use std::time::Instant;
-    let inputs = match std::env::var("BBREF_AVM_INPUTS") {
-        Ok(path) => std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}")),
-        Err(_) => common::read("avm/avm_inputs.bin"),
-    };
-    // Peak resident memory since the last call (Linux: `VmHWM`, reset through `clear_refs`).
-    let peak_gb = || {
-        let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
-        let kb = status.lines().find_map(|l| l.strip_prefix("VmHWM:")).and_then(|v| v.trim().trim_end_matches(" kB").parse::<f64>().ok());
-        let _ = std::fs::write("/proc/self/clear_refs", "5");
-        kb.unwrap_or(0.0) / (1 << 20) as f64
-    };
-    peak_gb();
-    let t = Instant::now();
-    let trace = bb_avm::avm_trace(&inputs).expect("bb trace");
-    let t_trace = t.elapsed();
-    let mem_trace = peak_gb();
-    let t = Instant::now();
-    let polys = bb_ref::avm::prover::polys_from_trace(&trace);
-    drop(trace);
-    let proof = bb_ref::avm::prover::prove(polys, &Default::default());
-    let t_ours = t.elapsed();
-    let mem_ours = peak_gb();
-    // bb's CRS as bb.js sends it: the raw points of the AVM's fixed trace size, and g2.
-    let crs = bb_ref::base::srs::crs_dir();
-    let n = 1usize << layout().max_trace_log_size;
-    let mut points = vec![0u8; 64 * n];
-    std::io::Read::read_exact(&mut std::fs::File::open(crs.join("bn254_g1.dat")).unwrap(), &mut points).unwrap();
-    let g2 = std::fs::read(crs.join("bn254_g2.dat")).unwrap();
-    let mut bb = BbApi::new(InProcessBb);
-    bb.srs_init_srs(&points, n as u32, &g2).expect("bb CRS");
-    drop(points);
-    // bb's AVM prover needs more stack than a test thread's 2 MiB.
-    let bb_inputs = inputs.clone();
-    let t = Instant::now();
-    let expected: Vec<Fr> = std::thread::Builder::new()
-        .stack_size(64 << 20)
-        .spawn(move || bb.avm_prove(&bb_inputs).expect("bb proof").proof)
-        .unwrap()
-        .join()
-        .unwrap()
-        .iter()
-        .map(|b| Fr::from_be_bytes_mod_order(&b.0))
-        .collect();
-    let t_bb = t.elapsed();
-    let mem_bb = peak_gb();
-    eprintln!(
-        "AVM: bb simulate+trace {:.2} s; bb-ref prove {:.2} s; bb simulate+trace+prove {:.2} s",
-        t_trace.as_secs_f64(),
-        t_ours.as_secs_f64(),
-        t_bb.as_secs_f64()
-    );
-    eprintln!("AVM peak RSS: bb simulate+trace {mem_trace:.2} GB; bb-ref prove {mem_ours:.2} GB; bb simulate+trace+prove {mem_bb:.2} GB");
-    assert_eq!(proof.len(), expected.len());
-    let first = proof.iter().zip(&expected).position(|(a, b)| a != b);
-    assert_eq!(first, None, "first differing proof field");
-    if std::env::var_os("BBREF_AVM_INPUTS").is_none() {
-        // The inputs' `publicInputs` (a map of `hints` then `publicInputs`), as a client sends them.
-        use serde::Deserialize;
-        let mut rest = &inputs[3..];
-        let mut de = rmp_serde::Deserializer::new(&mut rest);
-        assert_eq!(String::deserialize(&mut de).unwrap(), "hints");
-        serde::de::IgnoredAny::deserialize(&mut de).unwrap();
-        assert_eq!(String::deserialize(&mut de).unwrap(), "publicInputs");
-        drop(de);
-        // The server's AVM commands, as bb.js sends them.
-        struct Server(bb_ref::msgpack::handler::BbRefHandler);
-        impl bb_ref::msgpack::generated::backend::Backend for Server {
-            fn call(&mut self, input: &[u8]) -> bb_ref::msgpack::generated::error::Result<Vec<u8>> {
-                Ok(bb_ref::msgpack::generated::bb_server::handle_request(&mut self.0, input))
-            }
-            fn destroy(&mut self) -> bb_ref::msgpack::generated::error::Result<()> {
-                Ok(())
-            }
+    use bb_ref::msgpack::generated::error::Result;
+    struct Server(bb_ref::msgpack::handler::BbRefHandler);
+    impl Backend for Server {
+        fn call(&mut self, input: &[u8]) -> Result<Vec<u8>> {
+            Ok(bb_ref::msgpack::generated::bb_server::handle_request(&mut self.0, input))
         }
-        let mut server = BbApi::new(Server(bb_ref::msgpack::handler::BbRefHandler::new(Default::default())));
-        let served = server.avm_prove(&inputs).unwrap().proof;
-        assert!(served.iter().map(|b| Fr::from_be_bytes_mod_order(&b.0)).eq(expected.iter().copied()), "served proof");
-        assert!(server.avm_verify(served.clone(), rest).unwrap().verified);
-        let mut tampered = served;
-        let last = tampered.len() - 10;
-        tampered[last].0[31] ^= 1;
-        assert!(!server.avm_verify(tampered, rest).unwrap().verified);
-        assert!(server.avm_check_circuit(&inputs).unwrap().passed);
+        fn destroy(&mut self) -> Result<()> {
+            Ok(())
+        }
     }
+    let inputs = common::read("avm/avm_inputs.bin");
+    let mut server = BbApi::new(Server(bb_ref::msgpack::handler::BbRefHandler::new(Default::default())));
+    let proof = server.avm_prove(&inputs).unwrap().proof;
+    let first = proof.iter().map(|b| Fr::from_be_bytes_mod_order(&b.0)).zip(fixture().0).position(|(a, b)| a != b);
+    assert_eq!((proof.len(), first), (fixture().0.len(), None), "proof length, first differing field");
+    let public_inputs = public_inputs_msgpack(&inputs);
+    assert!(server.avm_verify(proof.clone(), public_inputs).unwrap().verified);
+    let mut tampered = proof;
+    let last = tampered.len() - 10;
+    tampered[last].0[31] ^= 1;
+    assert!(!server.avm_verify(tampered, public_inputs).unwrap().verified);
+    assert!(server.avm_check_circuit(&inputs).unwrap().passed);
+}
+
+/// The circuit check names the relation a corrupted trace breaks, and the row.
+#[cfg(feature = "bb-avm")]
+#[test]
+fn avm_check_circuit_localizes_corruption() {
+    use bb_ref::avm::prover::{check_circuit, polys_from_trace};
+    let polys = polys_from_trace(&bb_ref::msgpack::bb_avm::avm_trace(&common::read("avm/avm_inputs.bin")).unwrap());
+    let l = layout();
+    let col = (l.num_precomputed..l.num_precomputed + l.num_wires).find(|&c| polys[c].len() > 10 && polys[c].at(5) != Fr::from(0u64)).unwrap();
+    let mut bad = polys.clone();
+    bad[col] = bb_ref::base::poly::Poly::from_coeffs((0..bad[col].len()).map(|r| bad[col].at(r) + Fr::from((r == 5) as u64)).collect());
+    let err = check_circuit(bad).unwrap_err();
+    assert!(err.starts_with("Relation "), "{err}");
+    check_circuit(polys).unwrap();
 }

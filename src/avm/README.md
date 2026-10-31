@@ -8,8 +8,9 @@ two-layer AVM recursive verifier, the public tx base rollup's AVM recursion cons
 MegaAvm circuit (`recursive.rs`) verifies the AVM proof with the EC work deferred to the op queue;
 `two_layer.rs` proves that circuit (MegaAvm Honk, then Goblin: ECCVM, TripleIPA, Translator, on one
 transcript) and verifies those proofs in the rollup's Ultra circuit. All gate-exact against bb.
-The simulator and trace generator are bb's, linked in (the `bb-avm` feature,
-`src/msgpack/bb_avm.rs`); bb's AVM prover, verifier and check-circuit are not.
+The simulator and trace generator are bb's (`libbb-avm-sim.a`, the `bb-avm` feature,
+`src/msgpack/bb_avm.rs`); the prover, verifier, circuit check (`prover.rs::check_circuit`) and
+public-input columns (`public_inputs.rs`) are bb-ref's.
 
 *Unfamiliar name? Every recurring term is defined in [docs/glossary.md](../../docs/glossary.md).*
 
@@ -33,6 +34,7 @@ order ([docs/gate-exactness.md](../../docs/gate-exactness.md)).
 | `poseidon2_perm.rs` | the one relation bb hand-writes (`vm2/optimized/`) instead of generating |
 | `program.rs` | the relations compiled for the prover: straight-line programs evaluated over a whole edge, each value at only as many points as its degree needs |
 | `prover.rs` | the prover over bb's sparse trace (bb `AvmProver::construct_proof`) |
+| `public_inputs.rs` | bb's `PublicInputs` msgpack into the verifier's columns (bb `to_columns`) |
 | `verifier.rs` | the verifier, generic over native and in-circuit types |
 | `recursive.rs` | bb's inner MegaAvm circuit: op-queue prefix, witnesses, fixed VK, the verifier, published outputs |
 | `two_layer.rs` | the inner proofs, the outer verification of them, and the transcript-hash binding (bb `TwoLayerAvmRecursiveVerifier`) |
@@ -43,7 +45,8 @@ order ([docs/gate-exactness.md](../../docs/gate-exactness.md)).
   operation order is the specification; reproducing bb-pilcom's lowering from PIL would be a second
   place to drift. The parser rejects any construct it does not know, so a template change at a
   re-pin fails the regen loudly.
-- **Re-pin:** `dev/regen_avm.py`, then `tools/regen/regen_avm.sh` (needs `pin/build.sh --avm-lib`).
+- **Re-pin:** `dev/regen_avm.py`, then `tools/regen/regen_avm.sh` and `tools/regen/regen_avm_corpus.sh`
+  (both need bb's own AVM, `pin/build.sh --avm`; bb-ref's `bb-avm` build needs `--avm-lib`).
   `tests/avm.rs` then checks a real bb proof verifies, tampering is rejected, and bb-ref's inner
   circuit equals bb's dump: every polynomial, public input and the VK. `tests/public_base.rs`
   (fixture: `tools/regen/regen_public_base.sh` on a recorded PublicTxBase request) checks the whole

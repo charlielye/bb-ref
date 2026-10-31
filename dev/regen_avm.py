@@ -79,6 +79,10 @@ def constants():
         if not m:
             fail(f"no {name}")
         out[name] = int(m.group(1))
+    # Where PublicInputs::to_columns puts each public input (vm2/common/avm_io.cpp).
+    out["rows"] = {m.group(1): int(m.group(2)) for m in re.finditer(r"#define AVM_PUBLIC_INPUTS_(\w+)_ROW_IDX (\d+)\b", az)}
+    m = re.search(r"#define FLAT_PUBLIC_LOGS_HEADER_LENGTH (\d+)\b", az)
+    out["rows"]["PUBLIC_LOGS_HEADER_LENGTH"] = int(m.group(1))
     m = re.search(r"MAX_AVM_TRACE_LOG_SIZE = (\d+);", (VM2 / "common/constants.hpp").read_text())
     out["MAX_AVM_TRACE_LOG_SIZE"] = int(m.group(1))
     if out["AVM_NUM_PUBLIC_INPUT_COLUMNS"] != 4:
@@ -387,6 +391,7 @@ def main():
         f"counts {len(pre)} {len(wires)} {len(derived)} {len(shifted)}",
         f"vk_hash {vk_hash}",
     ]
+    lay += [f"public_input_row {name} {row}" for name, row in sorted(consts["rows"].items())]
     lay += [f"vk {p[0]} {p[1]}" if p else "vk infinity" for p in vk]
     lay += ["columns"] + columns
 

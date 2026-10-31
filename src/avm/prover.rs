@@ -105,8 +105,55 @@ fn compute_inverses(polys: &mut [Poly], p: &RelationParams<Fr>) {
     }
 }
 
+/// bb `run_check_circuit`: every relation on every row of the trace, with random `beta, gamma`
+/// and the inverses they give. A linearly independent subrelation must vanish on each row (where
+/// its relation's skip condition does not hold); every subrelation must sum to zero over the trace.
+pub fn check_circuit(mut polys: Vec<Poly>) -> Result<(), String> {
+    use crate::honk::sumcheck::RelationSet;
+    let l = layout();
+    let params = RelationParams {
+        beta: crate::base::rng::global_field(),
+        gamma: crate::base::rng::global_field(),
+        ..Default::default()
+    };
+    compute_inverses(&mut polys, &params);
+    let rels: &(dyn RelationSet<Fr> + Sync) = &AvmRelations;
+    let num_rows = polys.iter().map(Poly::len).max().unwrap_or(0);
+    let zero_sums = || (0..rels.num_relations()).map(|r| vec![Fr::zero(); rels.num_subrelations(r)]).collect::<Vec<_>>();
+    let one = Fr::one();
+    let sums = (0..num_rows)
+        .into_par_iter()
+        .try_fold(zero_sums, |mut sums, i| {
+            let row: Vec<Fr> = (0..l.num_all()).map(|e| entity_at(&polys, e, i)).collect();
+            for (r, sum) in sums.iter_mut().enumerate() {
+                if rels.skip(r, &row, &row) {
+                    continue;
+                }
+                let mut acc = vec![Fr::zero(); sum.len()];
+                rels.accumulate(r, &mut acc, &row, &params, &one);
+                for (j, v) in acc.iter().enumerate() {
+                    if rels.linearly_independent(r, j) && !v.is_zero() {
+                        return Err(format!("Relation {}, subrelation {j} failed at row {i}", relations()[r].name));
+                    }
+                    sum[j] += v;
+                }
+            }
+            Ok(sums)
+        })
+        .try_reduce(zero_sums, |mut a, b| {
+            a.iter_mut().flatten().zip(b.iter().flatten()).for_each(|(x, y)| *x += y);
+            Ok(a)
+        })?;
+    for (r, sum) in sums.iter().enumerate() {
+        if let Some(j) = sum.iter().position(|v| !v.is_zero()) {
+            return Err(format!("Relation {}, subrelation {j} failed.", relations()[r].name));
+        }
+    }
+    Ok(())
+}
+
 /// The public-input columns the verifier reads, from the trace's `public_inputs_cols_*`.
-pub fn public_input_columns(polys: &[Poly]) -> Vec<Vec<Fr>> {
+fn public_input_columns(polys: &[Poly]) -> Vec<Vec<Fr>> {
     let l = layout();
     let column = |i: usize, len: usize| (0..len).map(|j| polys[l.col(&format!("public_inputs_cols_{i}_"))].at(j)).collect();
     l.public_input_column_lengths.iter().enumerate().map(|(i, &len)| column(i, len)).collect()

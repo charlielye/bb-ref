@@ -25,7 +25,10 @@ underneath.
    proof compression), the VK-as-fields and Poseidon2 helpers, `Init` and SRS init; the rest
    (AVM, other crypto helpers, batch verification, Solidity) answer "unsupported command".
    With `--features bb-avm` the AVM commands run bb's simulation and trace generation linked
-   in-process, and bb-ref proves and verifies (`src/msgpack/bb_avm.rs`). Circuits that verify an AVM proof (the public tx base rollup) are
+   in-process (`libbb-avm-sim.a`), and bb-ref proves, verifies and checks the circuit
+   (`src/msgpack/bb_avm.rs`); the AVM corpus (`tools/regen/regen_avm_corpus.sh`: AvmProve,
+   AvmCheckCircuit, AvmVerify on recorded inputs, bb's stage timings emptied in the goldens) is
+   replayed with `BBREF=<bb-avm build> tools/conformance.sh tools/corpus/avm-<pin>.corpus.zst`. Circuits that verify an AVM proof (the public tx base rollup) are
    bb-ref's own in every build.
    bb's server is generated from this schema by `/ipc-codegen`; **bb-ref's is generated from
    the same schema** — `ipc-codegen --lang rust --server` emits a `Handler` trait, `dispatch()` and

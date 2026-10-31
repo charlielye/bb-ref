@@ -4,7 +4,8 @@
 //! wasi-libc's `crt1-reactor.o` defines `_initialize`, which the host calls once, and with it
 //! wasm-ld exports the functions as they are. The link args apply to the cdylib only.
 //!
-//! The `bb-avm` feature links bb's `libbb-external-avm.a` (`./pin/build.sh --avm-lib`, or from
+//! The `bb-avm` feature links bb's AVM simulation and trace generation, `libbb-avm-sim.a`
+//! (`./pin/build.sh --avm-lib`, which applies `pin/bb-avm-sim.patch`; or from
 //! `$BB_AVM_LIB_DIR`) and the C++ runtime it was built against: `$BB_AVM_CXX_LIB`, comma-separated
 //! rustc link specs, default `c++` (bb's release preset uses libc++; barretenberg-rs links
 //! `bb-external` the same way). A portable binary links like bb's release `bb-avm`, through zig with
@@ -19,11 +20,11 @@ fn main() {
         let dir = std::env::var("BB_AVM_LIB_DIR").unwrap_or_else(|_| {
             let repo = std::env::var("AZTEC_REPO")
                 .unwrap_or(format!("{}/pin/aztec-packages", std::env::var("CARGO_MANIFEST_DIR").unwrap()));
-            format!("{repo}/barretenberg/cpp/build/lib")
+            format!("{repo}/barretenberg/cpp/build-avm-sim/lib")
         });
-        println!("cargo:rerun-if-changed={dir}/libbb-external-avm.a");
+        println!("cargo:rerun-if-changed={dir}/libbb-avm-sim.a");
         println!("cargo:rustc-link-search=native={dir}");
-        println!("cargo:rustc-link-lib=static=bb-external-avm");
+        println!("cargo:rustc-link-lib=static=bb-avm-sim");
         if let Ok(cxx_dir) = std::env::var("BB_AVM_CXX_LIB_DIR") {
             println!("cargo:rustc-link-search=native={cxx_dir}");
         }

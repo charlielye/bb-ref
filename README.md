@@ -29,8 +29,8 @@ bb-ref proves and verifies the AVM (public-transaction execution), natively, and
 in-circuit, so it builds and proves the public tx base rollup, which recursively verifies one
 through bb's two-layer AVM verifier ([src/avm](src/avm/README.md)). The AVM's simulation and trace
 generation stay bb's: native builds with `--features bb-avm` link them in-process
-(`./pin/build.sh --avm-lib` first; bb's release toolchain, zig 0.15.1, and the system libc++ to
-link it) for the three AVM commands, so one binary serves the whole prover. Out of scope at this
+(`libbb-avm-sim.a`: `./pin/build.sh --avm-lib` first; bb's release toolchain, zig 0.15.1, and the
+system libc++ to link it) for the three AVM commands, so one binary serves the whole prover. Out of scope at this
 time: Solidity verifier generation, Starknet oracle hash.
 
 ## Results

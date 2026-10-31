@@ -24,6 +24,8 @@ pub struct Layout {
     pub vk_hash: Fr,
     /// The fixed commitments to the precomputed columns (bb `AvmHardCodedVKAndHash`).
     pub vk: Vec<G1Affine>,
+    /// Where bb's `PublicInputs::to_columns` puts each public input: `AVM_PUBLIC_INPUTS_<name>_ROW_IDX`.
+    pub public_input_rows: HashMap<&'static str, usize>,
     /// Every entity in bb's `ColumnAndShifts` order: precomputed, wires, derived, shifted.
     pub columns: Vec<&'static str>,
     pub index: HashMap<&'static str, usize>,
@@ -106,6 +108,7 @@ fn parse_layout() -> Layout {
     let mut lines = LAYOUT.lines().filter(|l| !l.starts_with('#'));
     let mut fields: HashMap<&str, Vec<&str>> = HashMap::new();
     let mut vk = Vec::new();
+    let mut public_input_rows = HashMap::new();
     for line in lines.by_ref() {
         if line == "columns" {
             break;
@@ -119,6 +122,8 @@ fn parse_layout() -> Layout {
                 [x, y] => G1Affine::new_unchecked(from_hex(x), from_hex(y)),
                 _ => panic!("bad vk line {line}"),
             });
+        } else if key == "public_input_row" {
+            public_input_rows.insert(rest[0], rest[1].parse().unwrap());
         } else {
             fields.insert(key, rest);
         }
@@ -140,6 +145,7 @@ fn parse_layout() -> Layout {
         num_shifted: counts[3],
         vk_hash: from_hex(fields["vk_hash"][0]),
         vk,
+        public_input_rows,
         columns,
         index,
     };

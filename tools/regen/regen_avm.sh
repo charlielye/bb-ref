@@ -6,13 +6,17 @@
 #   regen_avm.sh            reuse the committed avm/avm_inputs.bin
 #   regen_avm.sh --inputs   re-dump fresh inputs from yarn-project's AVM test first (needs labs built)
 #
-# Needs the pin's AVM archive (`pin/build.sh --avm-lib`), which the dumper (avm_dump.cpp) links.
+# The dumper (avm_dump.cpp) links the pin's AVM build (`pin/build.sh --avm`: bb's release
+# toolchain, zig's clang and libc++). bb's AVM trace depends on the C++ standard library, so the
+# fixture proof is the one the published bb-avm gives.
 set -euo pipefail
 F=$(cd "$(dirname "$0")" && pwd)
 source "$F/env.sh"
 CPP=$REPO/barretenberg/cpp
-ARCHIVE=$BUILD/lib/libbb-external-avm.a
-[ -f "$ARCHIVE" ] || { echo "missing $ARCHIVE: run pin/build.sh --avm-lib" >&2; exit 1; }
+LIBS="vm2 vm2_sim barretenberg env"
+for l in $LIBS; do
+  [ -f "$BUILD/lib/lib$l.a" ] || { echo "missing $BUILD/lib/lib$l.a: run pin/build.sh --avm" >&2; exit 1; }
+done
 OUT=$DATA/avm
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -26,13 +30,13 @@ if [ "${1:-}" = "--inputs" ]; then
   cp "$TMP"/dump/avm-check-circuit-001/avm_inputs.bin "$OUT/avm_inputs.bin"
 fi
 
-clang++ -DMSGPACK_NO_BOOST -DMSGPACK_USE_STD_VARIANT_ADAPTOR -DNO_PAR_ALGOS \
+"$CPP/scripts/zig-c++.sh" -target x86_64-linux-gnu.2.35 -DMSGPACK_NO_BOOST -DMSGPACK_USE_STD_VARIANT_ADAPTOR -DNO_PAR_ALGOS \
   -I"$CPP/src" -I"$BUILD/_deps/msgpack-c/src/msgpack-c/include" -I"$BUILD/_deps/tracy-src/public" \
   -I"$BUILD/_deps/libdeflate-src" -I"$BUILD/_deps/nlohmann_json-src/include" -I"$REPO/ipc-runtime/cpp" \
   -O2 -std=gnu++20 -fbracket-depth=1024 -march=skylake -pthread -fconstexpr-steps=100000000 \
   -Wno-deprecated-declarations -Wno-vla-cxx-extension \
-  "$F/avm_dump.cpp" "$ARCHIVE" "$BUILD/_deps/libdeflate-build/libdeflate.a" "$BUILD/lib/liblmdblib.a" \
-  -lstdc++ -o "$TMP/avm_dump"
+  "$F/avm_dump.cpp" -Wl,--start-group $(for l in $LIBS; do echo "$BUILD/lib/lib$l.a"; done) -Wl,--end-group \
+  "$BUILD/_deps/libdeflate-build/libdeflate.a" -o "$TMP/avm_dump"
 
 # Seeded so the op queue's random ops are reproducible (the test masks them anyway).
 BB_RNG_SEED=1 "$TMP/avm_dump" "$OUT/avm_inputs.bin" "$TMP/out" --inner
