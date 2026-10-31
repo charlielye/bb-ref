@@ -67,10 +67,7 @@ fn read_proof(dump: &Path, name: &str) -> Vec<Fr> {
 #[test]
 fn merge_hiding_kernel() {
     let dump = common::fixture_dir("instance/merge/merge_3");
-    if !dump.join("merge_proof.bin").exists() {
-        eprintln!("skipping merge_3: no dump");
-        return;
-    }
+    common::require(dump.join("merge_proof.bin"), "regen_merge.sh");
     let mut q = op_queue_with(3);
     inject_zk_ops(&mut q, &dump);
     q.initialize_new_subtable();
@@ -111,10 +108,7 @@ fn merge_hiding_kernel() {
 
 fn check_batch_merge(name: &str, n: usize, m: usize) {
     let dump = common::fixture_dir(&format!("instance/merge/{name}"));
-    if !dump.join("batch_merge_proof.bin").exists() {
-        eprintln!("skipping {name}: no dump");
-        return;
-    }
+    common::require(dump.join("batch_merge_proof.bin"), "regen_merge.sh");
     let mut q = op_queue_with(n);
     q.add_batch_merge_separators();
     inject_zk_ops(&mut q, &dump);

@@ -6,7 +6,7 @@ The main commands, in the order you use them.
 
 ```
 regen/regen_corpus.sh [--harvest]       rebuild the corpus from the pinned aztec-packages (~13 min once built)
-conformance.sh <corpus> [bb] [--with-bb]  replay it into bb-ref against the recorded goldens (--with-bb re-proves bb too)
+conformance.sh [corpus] [--with-bb]     replay the pin's corpora (or one) into bb-ref against bb's goldens (--with-bb re-proves bb)
 bench.sh <corpus> [bb|--both|--pair <bb> <bb-ref>] [--threads n]   per-operation timings, frame by frame
 bench_chonk.sh [flow ...] [--threads n] [--reps n]   chonk (client IVC) proving over the pinned tx flows, bb vs bb-ref
 ```
@@ -27,7 +27,7 @@ our own, no rehydration step, and what we test is what the node actually sent.
 | `corpus/leaf-assets/` | real client-proven txs + the chain state they anchor to; gitignored, regenerated rarely |
 | `corpus/rollup-<pin7>.corpus.zst` | the corpus itself; gitignored, ~80 MB (1.6 GB raw) |
 | `corpus/rollup-<pin7>.goldens.zst` | bb's recorded responses to it, committed: conformance replays only bb-ref |
-| `corpus/avm-<pin7>.{corpus,goldens}.zst` | the AVM corpus (AvmProve, AvmCheckCircuit, AvmVerify of real and tampered proofs on recorded inputs), both committed; replays into a `--features bb-avm` build (`BBREF=… conformance.sh`) |
+| `corpus/avm-<pin7>.{corpus,goldens}.zst` | the AVM corpus (AvmProve, AvmCheckCircuit, AvmVerify of real and tampered proofs on recorded inputs), both committed; replayed by conformance.sh with the rollup corpus |
 | `lib/` | support: `replay.py` (list/diff/extract), `bench.py`, `bb_capture_proxy.py` (records a run), `avm_corpus.py` (AVM corpus frames, normalized goldens) |
 | `regen/` | all regenerators: `regen_corpus.sh`, `regen_avm_corpus.sh`, plus the `tests/data/` fixture generators (`regen_*.sh`, `env.sh`, `avm_dump.cpp`) |
 

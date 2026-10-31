@@ -45,10 +45,7 @@ fn input<'a>(log_n: usize, ck: &GrumpkinKey, polys: &'a [Polynomial<Fq>]) -> Tri
 
 fn check(log_n: usize) {
     let dump = common::fixture_dir(&format!("instance/ipa/log_{log_n}"));
-    if !dump.join("triple_ipa_proof.bin").exists() {
-        eprintln!("skipping ipa/log_{log_n}: no dump");
-        return;
-    }
+    common::require(dump.join("triple_ipa_proof.bin"), "regen_merge.sh");
     let ck = GrumpkinKey::new(1 << log_n);
     let polys = make_polys(log_n);
     let input = input(log_n, &ck, &polys);

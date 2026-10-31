@@ -1,6 +1,5 @@
 //! The real protocol kernels. `bb write_vk --scheme chonk` on every private/hiding
-//! kernel artifact is byte-equal to Rust's VK (and to the artifact's), and where a bb instance dump
-//! exists the circuits agree polynomial-for-polynomial.
+//! kernel artifact (tools/regen/regen_protocol.sh) is byte-equal to Rust's VK and to the artifact's.
 mod common;
 use bb_ref::acir::{build_circuit_mega, decode_program};
 use bb_ref::base::{CommitmentKey, OsRng};
@@ -28,16 +27,9 @@ fn protocol_circuits_dir() -> PathBuf {
         })
 }
 
-fn instance(name: &str, kind: CircuitKind) -> Option<(ProverInstance, bb_ref::circuit::Builder)> {
+fn artifact(name: &str) -> Vec<u8> {
     let path = protocol_circuits_dir().join(format!("{name}.json"));
-    let Ok(artifact) = std::fs::read(&path) else {
-        eprintln!("skipping {name}: no artifact at {}", path.display());
-        return None;
-    };
-    let circuit = decode_program(&artifact);
-    let mut builder = build_circuit_mega(&circuit, None, None, &mut OsRng);
-    let inst = ProverInstance::from_builder(kind.flavor(), &mut builder, &mut OsRng);
-    Some((inst, builder))
+    std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e} (the pin's compiled noir-protocol-circuits)", path.display()))
 }
 
 /// Filter with `BBREF_KERNEL=<name>` to run one kernel.
@@ -53,56 +45,16 @@ fn selected() -> Vec<(&'static str, CircuitKind)> {
 #[test]
 fn protocol_kernel_vks_match_bb() {
     for (name, kind) in selected() {
-        let Some((inst, _)) = instance(name, kind) else {
-            continue;
-        };
+        let artifact = artifact(name);
+        let circuit = decode_program(&artifact);
+        let mut builder = build_circuit_mega(&circuit, None, None, &mut OsRng);
+        let inst = ProverInstance::from_builder(kind.flavor(), &mut builder, &mut OsRng);
         let vk = inst.compute_vk(&CommitmentKey::new(inst.max_end_index)).to_bytes();
-        let fixture = common::fixture_dir(&format!("protocol/vks/{name}.vk"));
-        if fixture.exists() {
-            assert_eq!(
-                vk,
-                std::fs::read(fixture).unwrap(),
-                "{name}: VK differs from bb write_vk's"
-            );
-        }
-        let json: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(protocol_circuits_dir().join(format!("{name}.json"))).unwrap())
-                .unwrap();
-        if let Some(bytes) = json["verificationKey"]["bytes"].as_str() {
-            assert_eq!(
-                vk,
-                hex::decode(bytes).unwrap(),
-                "{name}: VK differs from the artifact's"
-            );
-        }
+        let fixture = common::require(common::fixture_dir(&format!("protocol/vks/{name}.vk")), "regen_protocol.sh");
+        assert_eq!(vk, std::fs::read(fixture).unwrap(), "{name}: VK differs from bb write_vk's");
+        let json: serde_json::Value = serde_json::from_slice(&artifact).unwrap();
+        let bytes = json["verificationKey"]["bytes"].as_str().expect("artifact verificationKey");
+        assert_eq!(vk, hex::decode(bytes).unwrap(), "{name}: VK differs from the artifact's");
         eprintln!("{name}: VK matches");
-    }
-}
-
-/// bb `BbRefDump.AcirMega` dumps (`tools/regen/regen_protocol.sh`): the gate-level diff.
-#[test]
-fn protocol_kernel_circuits_match_bb() {
-    for (name, kind) in selected() {
-        let dump = common::fixture_dir(&format!("instance/protocol/{name}"));
-        if !dump.join("vk").exists() {
-            eprintln!("skipping {name}: no dump");
-            continue;
-        }
-        let Some((inst, builder)) = instance(name, kind) else {
-            continue;
-        };
-        let expected = ProverInstance::load_dump(kind.flavor(), &dump);
-        assert_eq!(inst.dyadic_size, expected.dyadic_size, "{name}: dyadic size");
-        assert_eq!(
-            inst.public_inputs.len(),
-            expected.public_inputs.len(),
-            "{name}: public input count"
-        );
-        // witnesses depend on the mocked IVC's random proof values (and on ZK masking): compare the
-        // precomputed polynomials, i.e. what the VK commits to
-        let m = inst.layout.num_masking;
-        let compare: Vec<usize> = (m..m + inst.layout.num_precomputed).collect();
-        common::assert_polys_equal(name, &inst, &expected, &builder, &compare);
-        eprintln!("{name}: circuit matches");
     }
 }

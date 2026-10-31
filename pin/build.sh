@@ -95,4 +95,4 @@ echo "  bb:   $repo/barretenberg/cpp/build/bin/bb"
 $build_avm && echo "  bb-avm: $repo/barretenberg/cpp/build/bin/bb-avm"
 $build_avm_lib && echo "  avm:  $repo/barretenberg/cpp/build-avm-sim/lib/libbb-avm-sim.a" \
   "(portable bb-ref: CXXSTDLIB=c++ cargo zigbuild --release --features bb-avm --target x86_64-unknown-linux-gnu.2.35)"
-$build_noir && echo "  nargo/noir-execute: $repo/noir/noir-repo/target/release/"
+if $build_noir; then echo "  nargo/noir-execute: $repo/noir/noir-repo/target/release/"; fi

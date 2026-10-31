@@ -93,27 +93,11 @@ for prog in a_1_mul array_dynamic unsafe_range_constraint; do
   echo "keccak $prog"
 done
 
-# Real-witness instance dumps (BbRefDump.UltraInstance + BBREF_IPA + RNG tape) for every rollup
-# circuit. Their program.json/witness.gz come from the conformance corpus (tools/regen/regen_corpus.sh
-# proves whole epochs through bb and records the stream), which carries each circuit with a real
-# witness, block_merge and checkpoint_padding included; settings.json is the node's flags for it.
+# Every rollup circuit with a real witness, from the conformance corpus (tools/regen/regen_corpus.sh
+# proves whole epochs through bb and records the stream), block_merge and checkpoint_padding
+# included; settings.json is the node's flags for it.
 CORPUS=${CORPUS:-$ROOT/tools/corpus/rollup-$PIN7.corpus.zst}
 python3 "$F/backend_from_corpus.py" "$CORPUS" "$OUT/backend"
-# Each dump is every polynomial of a 2^22-2^23-row circuit, ~5 GB apiece (~60 GB for the set, plus
-# the write-VK dumps below): opt in with BBREF_BACKEND_DUMPS=1. Without them the real-witness tests
-# skip and the VK sweep and conformance corpus still cover these circuits.
-[ -n "${BBREF_BACKEND_DUMPS:-}" ] && for d in "$OUT"/backend/rollup_*/; do
-  name=$(basename "$d")
-  [ "$name" = rollup_root ] && continue  # keccak, 2^23: proven seeded below instead of dumped
-  ipa=$(python3 -c 'import json, sys; print(1 if json.load(open(sys.argv[1]))["ipa_accumulation"] else "")' "$d/settings.json")
-  mkdir -p "$OUT/instance/backend/$name"
-  HARDWARE_CONCURRENCY=1 BB_RNG_TAPE_OUT="$OUT/instance/backend/$name/rng_tape.bin" BBREF_IPA=$ipa \
-    BBREF_PROGRAM=$OUT/backend/$name/program.json BBREF_WITNESS=$OUT/backend/$name/witness.gz \
-    BBREF_OUT="$OUT/instance/backend/$name" "$DSL" --gtest_filter='BbRefDump.UltraInstance' \
-    && echo "backend witness dump $name" \
-    || echo "backend witness dump FAILED for $name (single-threaded bb trips its slab-allocator bound on some 2^22+ circuits)"
-done
-
 # The harvested rollup_root proven with the seeded engine (keccak; seed-deterministic even
 # multithreaded — all draws happen in the single-threaded phases). HARDWARE_CONCURRENCY=1 is NOT
 # set: it trips a slab-allocator bound on the 2^23 circuit.
@@ -122,14 +106,5 @@ BB_RNG_SEED=12345 "$BB" prove --scheme ultra_honk --disable_zk --oracle_hash kec
   -b "$OUT/backend/rollup_root/program.json" -w "$OUT/backend/rollup_root/witness.gz" \
   --write_vk -o "$OUT/instance/backend/rollup_root/seeded"
 echo "backend witness golden rollup_root"
-
-# B4b: write-VK instance dumps for the chonk-recursion circuits (BbRefDump.UltraWriteVk); witness
-# polynomials are mock-random so only precomputed + sigma/id are comparable (backend_write_vk_instance_diff).
-[ -n "${BBREF_BACKEND_DUMPS:-}" ] && for name in chonk_verifier_public rollup_tx_base_private; do
-  mkdir -p "$OUT/instance/backend_wvk/$name"
-  HARDWARE_CONCURRENCY=1 BB_RNG_SEED=12345 BBREF_IPA=1 BBREF_PROGRAM=$TGT/$name.json \
-    BBREF_OUT="$OUT/instance/backend_wvk/$name" "$DSL" --gtest_filter='BbRefDump.UltraWriteVk'
-  echo "backend_wvk $name"
-done
 
 echo "backend fixtures regenerated under $OUT"

@@ -19,7 +19,7 @@ These are the project's binding goals — changes should be judged against them:
 | **Lean on stable, mature dependencies** instead of handwriting (fields/curves: arkworks; msgpack: rmp-serde; parallelism: rayon) | holds, with one deliberate exception: the hot field kernels (ADX and IFMA Montgomery multiply, bb's wasm 29-bit and wide multiplies, Bernstein–Yang inverse) and the MSM are ported from bb for speed; arkworks still supplies the field and curve framework, the pairing and G2 ([src/base](src/base/README.md)) |
 | **Bit parity**: VKs bit-exact, proofs byte-exact, both directions, including the wire protocol | holds — every VK and pinned flow byte-equal |
 | **Circuit gate parity**: every selector, wire and copy-cycle identical to bb's ([docs/gate-exactness.md](docs/gate-exactness.md)) | holds — enforced by the write-VK oracles and stdlib micro-oracles |
-| **Replay the rollup through bb and bb-ref and get the same root proof** | holds — 63/63 `rollup-1117683` corpus responses byte-identical, `rollup_root` included, and 28/28 of the AVM corpus (prove, check circuit, verify) with a `bb-avm` build (`tools/conformance.sh`) |
+| **Replay the rollup through bb and bb-ref and get the same root proof** | holds — 63/63 `rollup-1117683` corpus responses byte-identical, `rollup_root` included, and 28/28 of the AVM corpus (prove, check circuit, verify) (`tools/conformance.sh`) |
 | **At parity or better with bb in performance, memory usage and wasm size** (against stock bb at the pin) | time: **0.46×** native, **0.68×** wasm; wasm memory **0.81–0.94×**; wasm module **2.1× smaller**; native memory **0.77–0.88×** ([results](#results), [docs/performance.md](docs/performance.md)) |
 | **95%+ test coverage on the critical paths**, without redundant tests | core **95%** standalone, plus full soundness sweeps ([docs/testing.md](docs/testing.md)) |
 | **Documentation an engineer can descend**: each component's purpose without the math; first use of any odd name links to its explanation | [tour](docs/tour.md) → module READMEs → [glossary](docs/glossary.md) |
@@ -109,7 +109,7 @@ graph LR
 
 ```sh
 tools/regen/regen_corpus.sh          # rebuild the corpus from the pinned tree (produce-only)
-tools/conformance.sh <corpus.zst>    # replay it into bb-ref vs recorded bb goldens, byte compare
+tools/conformance.sh                 # replay the rollup and AVM corpora into bb-ref vs bb's goldens
 tools/bench.sh <corpus.zst> --both   # per-operation timings, bb vs bb-ref (--threads <n>)
 tools/bench_chonk.sh                 # client-IVC proving over the pinned tx flows, bb vs bb-ref
 tools/bench_chonk_wasm.sh v8         # the same on wasm (v8 or wasmtime)

@@ -47,41 +47,26 @@ fn mock_protocol_vks_match_bb() {
         let json: serde_json::Value = serde_json::from_slice(&artifact).unwrap();
         let in_artifact = hex::decode(json["verificationKey"]["bytes"].as_str().unwrap()).unwrap();
         assert_eq!(vk, in_artifact, "{name}: VK differs from the artifact's");
-        let fixture = common::fixture_dir(&format!("acir/vks/{name}.vk"));
-        if fixture.exists() {
-            assert_eq!(
-                vk,
-                std::fs::read(fixture).unwrap(),
-                "{name}: VK differs from bb write_vk's"
-            );
-        }
+        let fixture = common::require(common::fixture_dir(&format!("acir/vks/{name}.vk")), "regen_acir.sh");
+        assert_eq!(vk, std::fs::read(fixture).unwrap(), "{name}: VK differs from bb write_vk's");
     }
 }
 
 /// Rust verifies bb's proofs of the mock flows; the hiding kernel's pinned VK is bb's output VK.
 #[test]
 fn mock_flows_bb_proofs_verify() {
-    let mut n = 0;
     for flow in ["mock_1_1", "mock_2_2", "mock_1_1_tape"] {
-        let dir = common::fixture_dir(&format!("acir/{flow}"));
-        if !dir.join("proof").exists() {
-            eprintln!("skipping {flow}: no bb proof");
-            continue;
-        }
+        let dir = common::require(common::fixture_dir(&format!("acir/{flow}")), "regen_acir.sh");
         let vk = read_hiding_vk(&dir.join("vk"));
         let proof = ChonkProof::from_fields(&decode_fields(&std::fs::read(dir.join("proof")).unwrap()));
         assert!(verify(&vk, &proof), "{flow}: bb proof rejected");
-        if let Ok(inputs) = std::fs::read(dir.join("ivc-inputs.msgpack")) {
-            let steps = decode_steps(&inputs);
-            assert_eq!(
-                steps.last().unwrap().vk.to_bytes(),
-                vk.to_bytes(),
-                "{flow}: pinned hiding VK vs bb's output VK"
-            );
-        }
-        n += 1;
+        let steps = decode_steps(&common::read(&format!("acir/{}/ivc-inputs.msgpack", flow.trim_end_matches("_tape"))));
+        assert_eq!(
+            steps.last().unwrap().vk.to_bytes(),
+            vk.to_bytes(),
+            "{flow}: pinned hiding VK vs bb's output VK"
+        );
     }
-    eprintln!("verified {n} bb mock flows");
 }
 
 /// Rust proves mock_1_1 (checking every step's pinned VK against its circuit), verifies the proof,
@@ -103,11 +88,7 @@ fn mock_flow_rust_proof() {
 #[test]
 fn mock_flow_byte_exact_with_seed() {
     use bb_ref::base::rng::DebugRng;
-    let dir = common::fixture_dir("acir/mock_1_1_seed");
-    if !dir.join("proof").exists() {
-        eprintln!("skipping acir seed: no dump");
-        return;
-    }
+    let dir = common::require(common::fixture_dir("acir/mock_1_1_seed"), "regen_acir.sh");
     let mut rng = DebugRng::new(12345);
     let steps = decode_steps(&common::read("acir/mock_1_1/ivc-inputs.msgpack"));
     let (proof, vk) = prove_steps(steps, CommitmentKey::new(1 << 17), &mut rng, false, false);
@@ -122,11 +103,7 @@ fn mock_flow_byte_exact_with_seed() {
 /// With bb's RNG tape the whole ChonkProof of mock_1_1 is byte-identical to bb's.
 #[test]
 fn mock_flow_byte_exact_with_tape() {
-    let dir = common::fixture_dir("acir/mock_1_1_tape");
-    if !dir.join("rng_tape.bin").exists() {
-        eprintln!("skipping acir tape: no dump");
-        return;
-    }
+    let dir = common::require(common::fixture_dir("acir/mock_1_1_tape"), "regen_acir.sh");
     let mut tape = TapeRng::from_bytes(std::fs::read(dir.join("rng_tape.bin")).unwrap());
     let steps = decode_steps(&common::read("acir/mock_1_1/ivc-inputs.msgpack"));
     let (proof, vk) = prove_steps(steps, CommitmentKey::new(1 << 17), &mut tape, true, false);

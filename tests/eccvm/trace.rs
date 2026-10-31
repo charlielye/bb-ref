@@ -16,25 +16,22 @@ fn check(kind: &str) {
     polys.set_shifted();
 
     let dump = common::fixture_dir(&format!("instance/eccvm/{kind}"));
-    if let Ok(bytes) = std::fs::read(dump.join("eccvm_columns.bin")) {
-        let num_rows = u32::from_be_bytes(bytes[..4].try_into().unwrap()) as usize;
-        let at = |e: usize, r: usize| {
-            from_bytes_be::<Fq>(&bytes[4 + 32 * (e * num_rows + r)..4 + 32 * (e * num_rows + r) + 32])
+    let bytes = std::fs::read(common::require(dump.join("eccvm_columns.bin"), "regen_merge.sh")).unwrap();
+    let num_rows = u32::from_be_bytes(bytes[..4].try_into().unwrap()) as usize;
+    let at = |e: usize, r: usize| {
+        from_bytes_be::<Fq>(&bytes[4 + 32 * (e * num_rows + r)..4 + 32 * (e * num_rows + r) + 32])
+    };
+    for e in 0..NUM_ALL_ENTITIES {
+        let first_row = if e >= FIRST_SHIFTED {
+            TRACE_OFFSET - 1
+        } else {
+            TRACE_OFFSET
         };
-        for e in 0..NUM_ALL_ENTITIES {
-            let first_row = if e >= FIRST_SHIFTED {
-                TRACE_OFFSET - 1
-            } else {
-                TRACE_OFFSET
-            };
-            for r in (0..1).chain(first_row..num_rows) {
-                if e < FIRST_SHIFTED && r == 0 || r >= first_row {
-                    assert_eq!(polys.cols[e].coeffs[r], at(e, r), "{kind}: entity {e} row {r}");
-                }
+        for r in (0..1).chain(first_row..num_rows) {
+            if e < FIRST_SHIFTED && r == 0 || r >= first_row {
+                assert_eq!(polys.cols[e].coeffs[r], at(e, r), "{kind}: entity {e} row {r}");
             }
         }
-    } else {
-        eprintln!("skipping eccvm/{kind} column comparison: no dump");
     }
 
     let row = TRACE_OFFSET + 3;

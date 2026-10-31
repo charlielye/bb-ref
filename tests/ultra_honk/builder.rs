@@ -1,6 +1,7 @@
 //! Circuits built from ACIR by the Rust builder reproduce bb's proving instance exactly —
 //! every polynomial, the VK, and (non-ZK) the proof are byte-identical to bb's dumps; ZK proofs
-//! from Rust-built instances verify. Needs the `instance/` dumps and the acir_tests programs.
+//! from Rust-built instances verify. Needs the `instance/<prog>/{nozk,zk}` dumps (tools/regen/regen_merge.sh) and the
+//! acir_tests programs.
 use crate::common;
 use bb_ref::acir::{build_circuit, decode_program, decode_witness};
 use bb_ref::base::field::{from_bytes_be, Fr};
@@ -32,11 +33,7 @@ fn build(prog: &str, flavor: &'static FlavorDesc) -> ProverInstance {
 
 /// Every polynomial and all metadata equal bb's dump; then the non-ZK proof is byte-equal.
 fn check_nozk(prog: &str) {
-    let dump = common::fixture_dir(&format!("instance/{prog}/nozk"));
-    if !dump.join("proof.bin").exists() {
-        eprintln!("skipping {prog}: no instance dump");
-        return;
-    }
+    let dump = common::require(common::fixture_dir(&format!("instance/{prog}/nozk")), "regen_merge.sh");
     let mut inst = build(prog, &ULTRA);
     let expected = ProverInstance::load_dump(&ULTRA, &dump);
     assert_eq!(inst.dyadic_size, expected.dyadic_size, "{prog}: dyadic size");
@@ -80,11 +77,7 @@ fn check_nozk(prog: &str) {
 }
 
 fn check_zk(prog: &str) {
-    let dump = common::fixture_dir(&format!("instance/{prog}/zk"));
-    if !dump.join("vk").exists() {
-        eprintln!("skipping {prog}: no instance dump");
-        return;
-    }
+    let dump = common::require(common::fixture_dir(&format!("instance/{prog}/zk")), "regen_merge.sh");
     let mut inst = build(prog, &ULTRA_ZK);
     let ck = CommitmentKey::new(inst.max_end_index);
     let vk = inst.compute_vk(&ck);

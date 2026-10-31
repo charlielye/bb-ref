@@ -25,6 +25,12 @@ pub fn in_tier(case: &str, full_only: bool) -> bool {
     true
 }
 
+/// A fixture every run needs: panics naming the regen script (under tools/regen/) that writes it.
+pub fn require(path: PathBuf, regen: &str) -> PathBuf {
+    assert!(path.exists(), "missing fixture {}: run tools/regen/{regen}", path.display());
+    path
+}
+
 pub fn read(rel: &str) -> Vec<u8> {
     let p = fixture_dir(rel);
     std::fs::read(&p).unwrap_or_else(|e| panic!("missing fixture {}: {e}", p.display()))

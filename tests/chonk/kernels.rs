@@ -91,10 +91,7 @@ fn run_ivc(rng: &mut dyn Rng, compare_with: Option<&Path>) -> (Chonk, ChonkProof
 #[test]
 fn mock_ivc_kernels_match_bb() {
     let dump = common::fixture_dir("instance/chonk/bb_2apps");
-    if !dump.join("circuit_0/vk").exists() {
-        eprintln!("skipping kernels: no per-circuit dump");
-        return;
-    }
+    common::require(dump.join("circuit_0/vk"), "regen_merge.sh");
     let (ivc, proof) = run_ivc(&mut OsRng, Some(&dump));
     assert_eq!(
         ivc.hiding_vk().to_bytes(),
@@ -115,10 +112,7 @@ fn mock_ivc_kernels_match_bb() {
 #[test]
 fn mock_ivc_byte_exact_with_tape() {
     let dump = common::fixture_dir("instance/chonk/bb_2apps_tape");
-    if !dump.join("rng_tape.bin").exists() {
-        eprintln!("skipping kernels tape: no dump");
-        return;
-    }
+    common::require(dump.join("rng_tape.bin"), "regen_merge.sh");
     let mut tape = TapeRng::from_bytes(std::fs::read(dump.join("rng_tape.bin")).unwrap());
     let (ivc, proof) = run_ivc(&mut tape, None);
     assert_eq!(

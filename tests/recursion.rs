@@ -27,10 +27,7 @@ fn acir_tests_dir() -> PathBuf {
 #[test]
 fn ultra_recursive_verifier_matches_bb() {
     let dump = common::fixture_dir("instance/ultra_recursion/a_1_mul");
-    if !dump.join("vk").exists() {
-        eprintln!("skipping ultra recursion: no dump");
-        return;
-    }
+    common::require(dump.join("vk"), "regen_merge.sh");
     // The inner proof: a_1_mul with non-ZK UltraHonk (deterministic, byte-exact vs bb since M3).
     let target = acir_tests_dir().join("a_1_mul/target");
     let circuit = decode_program(&std::fs::read(target.join("program.json")).unwrap());

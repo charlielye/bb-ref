@@ -92,4 +92,4 @@ zstd -3 -T0 -q -f -o "$OUT/rollup-${PIN:0:7}.corpus.zst" "$STREAM"
 zstd -3 -T0 -q -f -o "$OUT/rollup-${PIN:0:7}.goldens.zst" "${STREAM%.req}.resp"
 printf '\ncorpus: %s (%s)\n' "$OUT/rollup-${PIN:0:7}.corpus.zst" \
     "$(du -h "$OUT/rollup-${PIN:0:7}.corpus.zst" | cut -f1)"
-echo "verify it:  tools/conformance.sh $OUT/rollup-${PIN:0:7}.corpus.zst   (regen only produces; conformance/bench consume)"
+echo "verify it:  tools/conformance.sh   (regen only produces; conformance/bench consume)"

@@ -21,8 +21,8 @@ fn verify(proof: &[Fr], ipa_proof: &[Fr], ck: &GrumpkinKey) -> bool {
     out.ok && triple_ipa_verify(ck, &out.triple_ipa_claim, &mut NativeTranscript::from_proof(ipa_proof))
 }
 
-fn read_proof(path: &Path) -> Option<Vec<Fr>> {
-    std::fs::read(path).ok().map(|b| decode_fields(&b))
+fn read_proof(path: &Path) -> Vec<Fr> {
+    decode_fields(&std::fs::read(common::require(path.to_path_buf(), "regen_merge.sh")).unwrap())
 }
 
 fn write_proof(path: &Path, proof: &[Fr]) {
@@ -63,21 +63,15 @@ fn eccvm_prove_and_verify() {
     let mut tampered_ipa = out.ipa_proof.clone();
     *tampered_ipa.last_mut().unwrap() += Fr::from(1u64);
     assert!(!verify(&proof, &tampered_ipa, &ck), "tampered IPA proof rejected");
-    if let Some(bb_proof) = read_proof(&common::fixture_dir("instance/eccvm_proof/base/eccvm_proof.bin")) {
-        assert_eq!(proof.len(), bb_proof.len(), "proof length matches bb");
-    }
+    let bb_proof = read_proof(&common::fixture_dir("instance/eccvm_proof/base/eccvm_proof.bin"));
+    assert_eq!(proof.len(), bb_proof.len(), "proof length matches bb");
 }
 
 #[test]
 fn verify_bb_eccvm_proof() {
     let dump = common::fixture_dir("instance/eccvm_proof/base");
-    let (Some(proof), Some(ipa_proof)) = (
-        read_proof(&dump.join("eccvm_proof.bin")),
-        read_proof(&dump.join("ipa_proof.bin")),
-    ) else {
-        eprintln!("skipping: no bb ECCVM proof dump");
-        return;
-    };
+    let proof = read_proof(&dump.join("eccvm_proof.bin"));
+    let ipa_proof = read_proof(&dump.join("ipa_proof.bin"));
     let ck = GrumpkinKey::new(FIXED_SIZE);
     assert!(verify(&proof, &ipa_proof, &ck), "bb's ECCVM proof verifies in Rust");
 }
@@ -86,10 +80,7 @@ fn verify_bb_eccvm_proof() {
 #[test]
 fn eccvm_proof_byte_exact_with_tape() {
     let dir = common::fixture_dir("instance/eccvm_proof/base_tape");
-    if !dir.join("rng_tape.bin").exists() {
-        eprintln!("skipping eccvm tape: no dump");
-        return;
-    }
+    common::require(dir.join("rng_tape.bin"), "regen_merge.sh");
     let mut tape = TapeRng::from_bytes(std::fs::read(dir.join("rng_tape.bin")).unwrap());
     let ck = GrumpkinKey::new(FIXED_SIZE);
     let q = build_ops("base");

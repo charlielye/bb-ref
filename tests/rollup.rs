@@ -52,10 +52,7 @@ fn build_inner(ctx: &Rc<RefCell<Builder>>) {
 #[test]
 fn ultra_rollup_recursion_matches_bb() {
     let dump = common::fixture_dir("instance/ultra_rollup_recursion");
-    if !dump.join("vk").exists() {
-        eprintln!("skipping rollup recursion: no dump");
-        return;
-    }
+    common::require(dump.join("vk"), "regen_merge.sh");
     set_global(Box::new(DebugRng::new(12345)));
 
     // Inner rollup circuit and combined honk+ipa proof.
@@ -71,18 +68,15 @@ fn ultra_rollup_recursion_matches_bb() {
     let ck = CommitmentKey::new(inner_inst.max_end_index);
     let inner_vk = inner_inst.compute_vk(&ck);
     let inner_proof = prove_ultra(&mut inner_inst, &inner_vk, &mut OsRng);
-    if dump.join("inner_vk").exists() {
-        assert_eq!(
-            inner_vk.to_bytes(),
-            std::fs::read(dump.join("inner_vk")).unwrap(),
-            "inner VK"
-        );
-        let bb_inner = bb_ref::base::io::decode_fields(&std::fs::read(dump.join("inner_proof.bin")).unwrap());
-        assert_eq!(inner_proof.len(), bb_inner.len(), "inner proof length");
-        for (k, (a, b)) in inner_proof.iter().zip(&bb_inner).enumerate() {
-            assert_eq!(a, b, "inner proof field {k}");
-        }
-        eprintln!("inner vk+proof byte-equal to bb");
+    assert_eq!(
+        inner_vk.to_bytes(),
+        std::fs::read(dump.join("inner_vk")).unwrap(),
+        "inner VK"
+    );
+    let bb_inner = bb_ref::base::io::decode_fields(&std::fs::read(dump.join("inner_proof.bin")).unwrap());
+    assert_eq!(inner_proof.len(), bb_inner.len(), "inner proof length");
+    for (k, (a, b)) in inner_proof.iter().zip(&bb_inner).enumerate() {
+        assert_eq!(a, b, "inner proof field {k}");
     }
 
     // Outer circuit: recursive verify, single-claim IPA accumulation, RollupIO publish.

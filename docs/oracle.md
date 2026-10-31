@@ -54,10 +54,9 @@ Not everything can be compared the same way, because bb draws randomness. Three 
 | pattern | what it proves | cost |
 |---|---|---|
 | VK-hash sweep (`vk_hash_sweep`) | circuit structure equals bb's, per artifact, no witnesses needed | seconds/circuit |
-| write-VK instance diff (`backend_write_vk_instance_diff`) | every deterministic polynomial over the full trace; pinpoints the first divergent gate row | ~1 min |
 | instance + proof diff (`check_nozk*`) | everything: witness columns, VK, proof bytes | minutes |
 | stdlib micro-oracle (`BbRefDump.Stdlib` programs, `tests/stdlib.rs`) | one expression or gadget, gate-exact, in isolation | ~10 s round trip |
-| end-to-end flows (pinned chonk flows: `tests/chonk/native.rs`, `tests/flows.rs`) | whole transactions verify and re-prove byte-exact | minutes |
+| end-to-end flows (pinned chonk flows: `tests/chonk/native.rs`) | whole transactions verify and re-prove byte-exact | minutes |
 
 When a big oracle fails, **reduce to a micro-oracle**: add a named program to the dumper
 reproducing the suspect expression over deterministic witnesses, mirror it in
@@ -102,8 +101,7 @@ Re-pointing bb-ref at a new bb commit is a deliberate procedure, in this order:
    avm corpus (it reads `avm/avm_inputs.bin`), public base (needs an outside `BbCircuitProve`
    capture), corpus (`--harvest` after any protocol change), and backend last (its rollup circuits
    are extracted from the corpus).
-4. Run the full suite, and `tools/conformance.sh` on the new corpus and, with a `bb-avm` build
-   (`BBREF=…`), on `tools/corpus/avm-<pin7>.corpus.zst`.
+4. Run the full suite, and `tools/conformance.sh` (both new corpora).
 
 Divergences found are chased with the ladder above — they are the changelog of what bb changed,
 which is half the value of maintaining the mirror. The 2026-10-16 re-pin (3b2c553 → d43209d, the

@@ -29,7 +29,7 @@ underneath.
    in-process (`libbb-avm-sim.a`), and bb-ref proves, verifies and checks the circuit
    (`src/msgpack/bb_avm.rs`); the AVM corpus (`tools/regen/regen_avm_corpus.sh`: AvmProve,
    AvmCheckCircuit, AvmVerify on recorded inputs, bb's stage timings emptied in the goldens) is
-   replayed with `BBREF=<bb-avm build> tools/conformance.sh tools/corpus/avm-<pin>.corpus.zst`. Circuits that verify an AVM proof (the public tx base rollup) are
+   replayed by `tools/conformance.sh` with the rollup corpus. Circuits that verify an AVM proof (the public tx base rollup) are
    bb-ref's own in every build.
    bb's server is generated from this schema by `/ipc-codegen`; **bb-ref's is generated from
    the same schema** — `ipc-codegen --lang rust --server` emits a `Handler` trait, `dispatch()` and
@@ -128,12 +128,12 @@ Only the first is the common case; the other two exist so that heavier work is o
 
 | tier | who | needs | how |
 |---|---|---|---|
-| **1. Verify bb-ref** | anyone with the corpus | the corpus + goldens pair (`tools/corpus/rollup-<pin7>.{corpus,goldens}.zst`; goldens committed, the ~80 MB corpus gitignored) | `tools/conformance.sh tools/corpus/rollup-<pin7>.corpus.zst` — replays bb-ref only, against the recorded bb answers |
-| **2. Re-prove bb too** | anyone distrusting the goldens, or testing an unreleased bb | + a bb built from the `pin/aztec-packages` submodule | `tools/conformance.sh <corpus> ./bin/bb --with-bb` |
+| **1. Verify bb-ref** | anyone with the corpus | the corpus + goldens pairs (`tools/corpus/{rollup,avm}-<pin7>.{corpus,goldens}.zst`; all committed but the ~80 MB rollup corpus) and `libbb-avm-sim.a` (`./pin/build.sh --avm-lib`) | `tools/conformance.sh` — builds bb-ref with `bb-avm` and replays it against the recorded bb answers |
+| **2. Re-prove bb too** | anyone distrusting the goldens, or testing an unreleased bb | + the pin's bb-avm (`./pin/build.sh --avm`) | `tools/conformance.sh --with-bb` |
 | **3. Rebuild the corpus** | maintainers, once per pin | + the pin's labs workspace built, an AVM-capable bb, ~13 min | `tools/regen/regen_corpus.sh [--harvest]` |
 
-Tier 1 needs no submodule, no C++ toolchain and no noir: the goldens ARE bb's recorded answers, so
-only bb-ref runs. Tier 3 is produce-only (harvest + drive + pack; it never replays) and works from
+Tier 1 runs no bb and needs no noir: the goldens ARE bb's recorded answers. It needs the submodule
+only for bb's AVM simulation and trace generation, which bb-ref links. Tier 3 is produce-only (harvest + drive + pack; it never replays) and works from
 a clean checkout — the pinned tree carries nothing but reviewable commits.
 
 ## The corpus

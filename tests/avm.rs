@@ -80,10 +80,7 @@ fn avm_inner_circuit_matches_bb() {
     use bb_ref::honk::flavor::MEGA_AVM;
     use bb_ref::honk::prover_instance::ProverInstance;
     let dump = common::fixture_dir("instance/avm_inner");
-    if !dump.join("vk").exists() {
-        eprintln!("skipping: no inner circuit dump");
-        return;
-    }
+    common::require(dump.join("vk"), "regen_avm.sh");
     let (proof, columns) = fixture();
     let mut builder = bb_ref::avm::recursive::inner_circuit(&proof, &columns);
     assert!(builder.failed.is_none(), "builder failure {:?}", builder.failed);

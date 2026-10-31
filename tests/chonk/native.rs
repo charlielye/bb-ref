@@ -56,26 +56,16 @@ fn check_bb_proof(dir: &Path) {
 #[test]
 fn verify_bb_mock_ivc() {
     let dir = common::fixture_dir("instance/chonk/bb_2apps");
-    if !dir.join("vk").exists() {
-        eprintln!("skipping bb mock ivc: no dump");
-        return;
-    }
+    common::require(dir.join("vk"), "regen_merge.sh");
     check_bb_proof(&dir);
 }
 
 #[test]
 fn verify_pinned_flows() {
     let root = common::fixture_dir("chonk_flows");
-    let Ok(entries) = std::fs::read_dir(&root) else {
-        eprintln!("skipping pinned flows: no dump");
-        return;
-    };
     let mut n = 0;
-    for e in entries {
+    for e in std::fs::read_dir(common::require(root, "regen_chonk_flows.sh")).unwrap() {
         let dir = e.unwrap().path();
-        if !dir.join("vk").exists() {
-            continue;
-        }
         let vk = read_vk(&dir.join("vk"));
         let proof = ChonkProof::from_fields(&decode_fields(&std::fs::read(dir.join("proof")).unwrap()));
         assert!(verify(&vk, &proof), "{}: bb proof rejected", dir.display());
@@ -101,18 +91,12 @@ fn pinned_flows_byte_exact_with_seed() {
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("pin/aztec-packages/barretenberg/cpp/chonk-pinned-flows")
         });
-    let (Ok(entries), true) = (std::fs::read_dir(&root), flows.exists()) else {
-        eprintln!("skipping pinned flows: no dump or no flows");
-        return;
-    };
     let mut n = 0;
-    for e in entries {
+    for e in std::fs::read_dir(common::require(root, "regen_chonk_flows.sh")).unwrap() {
         let dir = e.unwrap().path();
         let name = dir.file_name().unwrap().to_str().unwrap().to_string();
         let inputs = flows.join(&name).join("ivc-inputs.msgpack");
-        if !dir.join("proof").exists() || !inputs.exists() {
-            continue;
-        }
+        assert!(inputs.exists(), "{} missing: barretenberg/cpp/scripts/chonk_inputs.sh download", inputs.display());
         if !common::in_tier(&name, name != "ecdsar1+transfer_0_recursions+sponsored_fpc") {
             continue;
         }

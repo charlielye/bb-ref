@@ -91,7 +91,7 @@ fn run_both(name: &str, cmds: &[Command], threads: Option<u32>) -> (Vec<Vec<u8>>
     std::fs::write(&input, &all).unwrap();
 
     let bb = repo_root().join("bin/bb");
-    assert!(bb.exists(), "bin/bb missing — run ./bootstrap.sh");
+    assert!(bb.exists(), "bin/bb missing: ./pin/build.sh --avm");
     let mut proc = Proc::new(&bb);
     proc.args(["msgpack", "run", "--input"])
         .arg(&input)
@@ -224,10 +224,7 @@ fn chonk_case() {
         .map(PathBuf::from)
         .unwrap_or_else(|_| repo_root().join("pin/aztec-packages/barretenberg/cpp/chonk-pinned-flows"))
         .join("ecdsar1+transfer_0_recursions+sponsored_fpc/ivc-inputs.msgpack");
-    if !flow.exists() {
-        eprintln!("skipping chonk case: {} missing", flow.display());
-        return;
-    }
+    assert!(flow.exists(), "{} missing: barretenberg/cpp/scripts/chonk_inputs.sh download", flow.display());
     #[derive(Deserialize)]
     struct StepRaw {
         bytecode: Bytes,

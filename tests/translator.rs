@@ -43,10 +43,7 @@ fn expected_result(q: &EccOpQueue, v: &Fq, x: &Fq) -> Fq {
 #[test]
 fn translator_matches_bb() {
     let dump = common::fixture_dir("instance/translator");
-    if !dump.join("columns.bin").exists() {
-        eprintln!("skipping translator: no dump");
-        return;
-    }
+    common::require(dump.join("columns.bin"), "regen_merge.sh");
     let q = common::translator_fixture::build_translator_queue(&dump);
 
     let v = Fq::from(11u64).invert();

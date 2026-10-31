@@ -45,6 +45,10 @@ for prog in array_dynamic a_1_mul; do
   mkdir -p $T/${prog}_tape
   HARDWARE_CONCURRENCY=1 BB_RNG_TAPE_OUT=$T/${prog}_tape/rng_tape.bin BBREF_PROGRAM=$ACIR/$prog/target/program.json BBREF_WITNESS=$ACIR/$prog/target/witness.gz BBREF_OUT=$T/${prog}_tape "$BIN" --gtest_filter='BbRefDump.UltraInstance'
 done
+# Ultra instances built from ACIR; the list mirrors tests/ultra_honk/builder.rs
+for prog in a_1_mul array_dynamic no_predicates_numeric_generic_poseidon unsafe_range_constraint ecdsa_secp256r1 ecdsa_secp256r1_3x ecdsa_secp256r1_high_s ecdsa_secp256r1_invalid_inputs ecdsa_secp256r1_invalid_pub_key_in_inactive_branch xor bit_and; do
+  BBREF_PROGRAM=$ACIR/$prog/target/program.json BBREF_WITNESS=$ACIR/$prog/target/witness.gz BBREF_OUT=$T/$prog "$BIN" --gtest_filter='BbRefDump.UltraInstance'
+done
 # Stdlib programs (gate-exact primitives); the list mirrors tests/stdlib.rs PROGRAMS
 for prog in field_ops poseidon2_hash_1 poseidon2_hash_2 poseidon2_hash_3 poseidon2_hash_4 poseidon2_hash_7 poseidon2_hash_16 poseidon2_hash_20 transcript goblin_batch_mul_1 goblin_batch_mul_2 goblin_batch_mul_7 aggregate_multiple_2 aggregate_multiple_3 aggregate_multiple_7 io_app_default io_kernel_default io_hiding_default kernel_io_set hiding_io_set bool_ops cycle_group_add cycle_group_mul_1 cycle_group_mul_3 cycle_group_mul_witness; do
   BBREF_STDLIB=$prog BBREF_OUT=$T/stdlib/$prog "$BIN" --gtest_filter='BbRefDump.Stdlib'

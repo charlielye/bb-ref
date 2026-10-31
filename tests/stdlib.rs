@@ -876,10 +876,7 @@ pub const PROGRAMS: &[&str] = &[
 
 fn check(name: &str) {
     let dump = common::fixture_dir(&format!("instance/stdlib/{name}"));
-    if !dump.join("vk").exists() {
-        eprintln!("skipping stdlib/{name}: no dump");
-        return;
-    }
+    common::require(dump.join("vk"), "regen_merge.sh");
     let ctx = Rc::new(RefCell::new(if std::ptr::eq(flavor_of(name), &ULTRA) {
         Builder::new()
     } else {

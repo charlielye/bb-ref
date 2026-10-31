@@ -62,10 +62,7 @@ fn verify(
 #[test]
 fn batched_matches_bb() {
     let dump = common::fixture_dir("instance/batched");
-    if !dump.join("joint_proof.bin").exists() {
-        eprintln!("skipping batched: no dump");
-        return;
-    }
+    common::require(dump.join("joint_proof.bin"), "regen_merge.sh");
     let ck = CommitmentKey::new(1 << JOINT_LOG_N);
 
     // MegaZK circuit from the script, VK equal to bb's
@@ -149,10 +146,7 @@ fn batched_matches_bb() {
 #[test]
 fn batched_byte_exact_with_tape() {
     let dump = common::fixture_dir("instance/batched_tape");
-    if !dump.join("rng_tape.bin").exists() {
-        eprintln!("skipping batched tape: no dump");
-        return;
-    }
+    common::require(dump.join("rng_tape.bin"), "regen_merge.sh");
     let mut tape = TapeRng::from_bytes(std::fs::read(dump.join("rng_tape.bin")).unwrap());
     let ck = CommitmentKey::new(1 << JOINT_LOG_N);
     let text =
