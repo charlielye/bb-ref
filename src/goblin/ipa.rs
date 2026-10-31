@@ -97,7 +97,7 @@ pub fn inner_product_prove(ck: &GrumpkinKey, witness: &P, mut b: Vec<Fq>, t: &mu
     let mut a = witness.coeffs.clone();
     let mut g = ck.points[..n].to_vec();
     let mut challenge_product = Fq::one();
-    let stage_timing = std::env::var_os("BBREF_IPA_TIMING").is_some();
+    let stage_timing = crate::base::timing::on("BBREF_IPA_TIMING");
     let (mut t_inner, mut t_msm, mut t_fold_g) = (
         std::time::Duration::ZERO,
         std::time::Duration::ZERO,
@@ -113,15 +113,15 @@ pub fn inner_product_prove(ck: &GrumpkinKey, witness: &P, mut b: Vec<Fq>, t: &mu
     while round < log_n {
         let half = n >> (round + 1);
         let index = log_n - round - 1;
-        let t0 = std::time::Instant::now();
+        let t0 = crate::base::timing::Instant::now();
         let (inner_l, inner_r) = inner(&a, &b, half);
-        let t1 = std::time::Instant::now();
+        let t1 = crate::base::timing::Instant::now();
         // The two side MSMs are independent; at these sizes each scales poorly alone, so run
         // them concurrently.
         let (l_msm, r_msm) = rayon::join(|| msm(&g[half..2 * half], &a[..half]), || msm(&g[..half], &a[half..2 * half]));
         let l = l_msm + aux_generator * inner_l;
         let r = r_msm + aux_generator * inner_r;
-        let t2 = std::time::Instant::now();
+        let t2 = crate::base::timing::Instant::now();
         if stage_timing {
             t_inner += t1 - t0;
             t_msm += t2 - t1;
@@ -136,10 +136,10 @@ pub fn inner_product_prove(ck: &GrumpkinKey, witness: &P, mut b: Vec<Fq>, t: &mu
         // Second round of the pair against the pre-fold SRS: with H = u1·G_lo + G_hi deferred,
         // H_lo[i] = u1·G[i] + G[i+2q] and H_hi[i] = u1·G[i+q] + G[i+3q], q = quarter.
         let q = half / 2;
-        let t0 = std::time::Instant::now();
+        let t0 = crate::base::timing::Instant::now();
         let a_scaled: Vec<Fq> = a[..half].par_iter().map(|x| u1 * *x).collect();
         let (inner_l, inner_r) = inner(&a, &b, q);
-        let t1 = std::time::Instant::now();
+        let t1 = crate::base::timing::Instant::now();
         // One MSM per side: the two quarter-slices concatenate so the size stays at `half`.
         let cat_pts = |x: &[GrumpkinAffine], y: &[GrumpkinAffine]| [x, y].concat();
         let cat_sc = |x: &[Fq], y: &[Fq]| [x, y].concat();
@@ -149,13 +149,13 @@ pub fn inner_product_prove(ck: &GrumpkinKey, witness: &P, mut b: Vec<Fq>, t: &mu
         );
         let l = l_msm + aux_generator * inner_l;
         let r = r_msm + aux_generator * inner_r;
-        let t2 = std::time::Instant::now();
+        let t2 = crate::base::timing::Instant::now();
         if stage_timing {
             t_inner += t1 - t0;
             t_msm += t2 - t1;
         }
         let u2 = ipa_round(&mut a, &mut b, q, l, r, index - 1, &mut challenge_product, t);
-        let t4 = std::time::Instant::now();
+        let t4 = crate::base::timing::Instant::now();
         g = crate::base::fold::fold_points_two_rounds(&g[..4 * q], &u1, &u2, crate::base::grumpkin_endo());
         if stage_timing {
             t_fold_g += t4.elapsed();

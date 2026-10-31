@@ -605,7 +605,7 @@ impl<N: PrimeField> BigField<N> {
         let limb_overflow = (0..NUM_LIMBS).any(|i| self.limb_max(i) > *max_limb);
         let value_overflow = self.get_maximum_value() > *Self::get_maximum_unreduced_value();
         if value_overflow || limb_overflow {
-            if std::env::var("BBREF_REDUCE_BT").is_ok() {
+            if crate::base::timing::on("BBREF_REDUCE_BT") {
                 eprintln!("self_reduce fired:\n{}", std::backtrace::Backtrace::force_capture());
             }
             self.self_reduce();

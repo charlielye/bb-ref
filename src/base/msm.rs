@@ -116,7 +116,7 @@ where
         }
     }
     if n < min_pts_per_thread() * rayon::current_num_threads() {
-        if std::env::var_os("BBREF_MSM_STATS").is_some() {
+        if crate::base::timing::on("BBREF_MSM_STATS") {
             eprintln!("[msm-stats] small n={n}");
         }
         return small_msm(&points[..n], &scalars[..n]);
@@ -203,12 +203,12 @@ where
     // Scope names mirror bb's `MSM::*` BB_BENCH scopes so the two phase tables line up.
     let sched_scope = crate::base::bench::Scope::new("MSM::build_point_schedule");
 
-    let timing = std::env::var("BBREF_MSM_TIMING").is_ok();
-    let mut t0 = std::time::Instant::now();
+    let timing = crate::base::timing::on("BBREF_MSM_TIMING");
+    let mut t0 = crate::base::timing::Instant::now();
     let mut mark = |name: &str| {
         if timing {
             eprintln!("[msm {name}] {:.2} ms", t0.elapsed().as_secs_f64() * 1e3);
-            t0 = std::time::Instant::now();
+            t0 = crate::base::timing::Instant::now();
         }
     };
 
@@ -310,7 +310,7 @@ where
     // Digits, histograms and cursors are dead once scattered; only the schedules feed the tree.
     drop((full, subs, counts));
     let bucket_scope = crate::base::bench::Scope::new("MSM::batch_accumulate_into_buckets");
-    if std::env::var_os("BBREF_MSM_STATS").is_some() {
+    if crate::base::timing::on("BBREF_MSM_STATS") {
         let entries: usize = schedules.iter().map(|s| s.len()).sum();
         eprintln!(
             "[msm-stats] n={n} active={n_active} bits={effective_bits} c={c} windows={num_windows} entries={entries}"
@@ -360,7 +360,9 @@ where
         present: Vec<u8>,
     }
     let beta = <P::BaseField as crate::base::endo::EndoField>::cube_root();
-    s6a_timing::reset();
+    if timing {
+        s6a_timing::reset();
+    }
     let partials: Vec<Vec<Partial<P>>> = (0..threads)
         .into_par_iter()
         .map(|t| {
@@ -390,7 +392,7 @@ where
                     let mut b = bs.partition_point(|&st| st as usize <= cs_lo) - 1;
                     let mut pos = cs_lo;
                     let (mut tg, mut tt, mut td) = (0u64, 0u64, 0u64);
-                    let now = || std::time::Instant::now();
+                    let now = || crate::base::timing::Instant::now();
                     while pos < cs_hi {
                         let end = (pos + SUBCHUNK).min(cs_hi);
                         let t_g = timing.then(now);
@@ -506,7 +508,9 @@ where
                             }
                         }
                     }
-                    crate::base::msm::s6a_timing::add(tg, tt, td);
+                    if timing {
+                        s6a_timing::add(tg, tt, td);
+                    }
                     Partial {
                         lo: my_lo,
                         dense,
@@ -1168,13 +1172,7 @@ fn tree_reduce_scalar<P: SWCurveConfig>(
     }
 }
 
-/// The wasm+simd128 tree level: pair classification and run bookkeeping stay scalar (bb keeps
-/// its schedule AoS for the same reason — packed layouts can't index conditional pairing
-/// cheaply), while the chord additions drain through the packed 29-bit SIMD kernels, four
-/// pairs per lane group with one batched inversion per level per lane. Doublings (duplicate
-/// points inside one bucket) and the <4-pair tail take the scalar path; inverse pairs
-/// annihilate. This is bb's Stage-6a `tree_reduce_in_place` + `drain_batch` shape.
-/// Stage 6a sub-timing (BBREF_MSM_TIMING): gather / tree_reduce / densify nanoseconds summed
+/// Stage 6a sub-timing (BBREF_MSM_TIMING, a `timing` build): gather / tree_reduce / densify nanoseconds summed
 /// across workers, printed from the driver at the "4 tree" mark.
 pub mod s6a_timing {
     use std::sync::atomic::{AtomicU64, Ordering::Relaxed};

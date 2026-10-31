@@ -69,7 +69,7 @@ with a gate-level window (`BBREF_DIFF_ROWS`, `BBREF_DIFF_BEFORE`, `BBREF_DIFF_AL
 `BBREF_DIFF_AT`). From there, the escalation ladder that has resolved every divergence so
 far:
 
-1. **Bracket by phase**: `BBREF_TRACE_GATES=1` prints gate counts at `trace_phase` marks;
+1. **Bracket by phase**: `BBREF_TRACE_GATES=1` (a `--features timing` build) prints gate counts at `trace_phase` marks;
    temporary finer marks narrow the divergent row to one statement.
 2. **Op-level trace**: add matching env-gated prints at bigfield/field_t operation entries
    on both sides (op name + arith/nnf gate counts), capture both streams, and window-diff

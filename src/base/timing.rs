@@ -1,16 +1,49 @@
-//! Opt-in phase timer: with `BBREF_TIMING=1`, `phase(label)` prints the time since the previous
-//! phase mark; with `BBREF_TIMING_RSS=1` also the process RSS at the mark, for attributing peak
-//! memory to a phase.
+//! Debug instrumentation, compiled in by the `timing` feature only: [`on`] is constant false
+//! without it, so every probe it guards folds away. In a timing build the env vars select output:
+//! with `BBREF_TIMING=1`, `phase(label)` prints the time since the previous phase mark; with
+//! `BBREF_TIMING_RSS=1` also the process RSS at the mark, for attributing peak memory to a phase.
 
 use std::cell::Cell;
-use std::time::Instant;
+
+/// The probes' clock: `std::time::Instant` in a `timing` build, else a zero-size stand-in that
+/// reads zero, so a timed loop needs no second, untimed copy and its clock reads compile away.
+#[cfg(feature = "timing")]
+pub use std::time::Instant;
+#[cfg(not(feature = "timing"))]
+#[derive(Clone, Copy)]
+pub struct Instant;
+#[cfg(not(feature = "timing"))]
+impl Instant {
+    #[inline(always)]
+    pub fn now() -> Self {
+        Instant
+    }
+    #[inline(always)]
+    pub fn elapsed(&self) -> std::time::Duration {
+        std::time::Duration::ZERO
+    }
+}
+#[cfg(not(feature = "timing"))]
+impl std::ops::Sub for Instant {
+    type Output = std::time::Duration;
+    #[inline(always)]
+    fn sub(self, _: Self) -> std::time::Duration {
+        std::time::Duration::ZERO
+    }
+}
 
 thread_local! {
     static LAST: Cell<Option<Instant>> = const { Cell::new(None) };
 }
 
+/// Whether the probe selected by env var `var` is on: a `timing` build with `var` set.
+#[inline(always)]
+pub fn on(var: &str) -> bool {
+    cfg!(feature = "timing") && std::env::var_os(var).is_some()
+}
+
 fn rss_gb() -> Option<(f64, f64)> {
-    if std::env::var_os("BBREF_TIMING_RSS").is_none() {
+    if !on("BBREF_TIMING_RSS") {
         return None;
     }
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
@@ -27,8 +60,9 @@ fn rss_gb() -> Option<(f64, f64)> {
     Some((field("VmRSS")?, field("VmHWM")?))
 }
 
+#[inline(always)]
 pub fn phase(label: &str) {
-    if std::env::var_os("BBREF_TIMING").is_none() {
+    if !on("BBREF_TIMING") {
         return;
     }
     let now = Instant::now();

@@ -30,7 +30,7 @@ The central design move: [`field.rs`](field.rs)'s `FieldLike` and [`group.rs`](g
 | `rng.rs` | prover randomness: OS by default, `BB_RNG_SEED` (bb's seeded engine) or `BB_RNG_TAPE_IN` (a recorded bb tape) for reproducible runs, mirroring bb's single global engine |
 | `generators.rs`, `io.rs` | derived Grumpkin generators, the on-disk proof format |
 | `pool.rs` | the native global allocator on glibc Linux: glibc below 64 KiB, a reusing big-block arena (adaptive huge pages) above; the system allocator elsewhere |
-| `timing.rs`, `bench.rs` | the opt-in `BBREF_TIMING` phase timer and `BBREF_BENCH` scope table (diffable against bb's `--print_bench`) |
+| `timing.rs`, `bench.rs` | the debug probes of a `--features timing` build (`BBREF_TIMING` phase marks and the other env-selected timers and traces; compiled away otherwise) and the `BBREF_BENCH` scope table (diffable against bb's `--print_bench`) |
 
 **Field backends.** `Fr`/`Fq` are always arkworks' `Fp` container, but the `MontConfig` underneath
 is chosen per target in [`wasm/mod.rs`](wasm/mod.rs): on x86-64 with ADX/BMI2 (the default via
@@ -52,5 +52,5 @@ other targets use arkworks' own configs. Curves are arkworks' short-Weierstrass 
 - **Randomness is a shared session-global**, like bb's engine: witness gap-fills, masking and the
   provers all draw from one stream that is never reset. Consuming a different *number* of draws
   than bb — even for values that never affect a proof — desynchronizes every later proof in a
-  session. `BB_RNG_COUNT`/`BBREF_RNG_COUNT` count draws per command; see
+  session. `BB_RNG_COUNT`/`BBREF_RNG_COUNT` (a `timing` build) count draws per command; see
   [docs/testing.md](../../docs/testing.md) for the diagnosis ladder this enabled.

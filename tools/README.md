@@ -57,5 +57,5 @@ our own, no rehydration step, and what we test is what the node actually sent.
 predecessors if a Chonk frame precedes it) — usually a few hundred KB against a 1.6 GB corpus — so
 the repro loop is seconds, not minutes. A frame that passes alone
 but fails in sequence means the two sides are consuming the seeded RNG at different rates:
-`BB_RNG_COUNT=1` (bb) and `BBREF_RNG_COUNT=1` (bb-ref) print draws per command, and comparing those
+`BB_RNG_COUNT=1` (bb) and `BBREF_RNG_COUNT=1` (bb-ref, a `--features timing` build) print draws per command, and comparing those
 two sequences finds the first real mismatch directly.

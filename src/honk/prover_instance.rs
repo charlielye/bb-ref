@@ -502,7 +502,7 @@ impl ProverInstance {
             }
         }
 
-        if std::env::var_os("BBREF_COL_STATS").is_some() {
+        if crate::base::timing::on("BBREF_COL_STATS") {
             let mut used = 0usize;
             let mut alloc = 0usize;
             eprintln!(

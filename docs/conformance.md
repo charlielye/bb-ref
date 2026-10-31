@@ -119,8 +119,8 @@ keeps both response streams; `tools/lib/replay.py --extract <corpus> <n> -o <out
 into a standalone corpus (KBs, not GBs) for a seconds-long repro loop, and beneath that the dev
 microscope takes over (instance dump -> per-polynomial diff -> first divergent row -> op tracers).
 Chonk frames are stateful: extraction keeps every preceding frame. A frame that passes alone but
-fails in sequence is an RNG-rate mismatch: `BB_RNG_COUNT=1` / `BBREF_RNG_COUNT=1` print draws per
-command on each side.
+fails in sequence is an RNG-rate mismatch: `BB_RNG_COUNT=1` / `BBREF_RNG_COUNT=1` (a `--features timing`
+build) print draws per command on each side.
 
 ## Three tiers of setup
 

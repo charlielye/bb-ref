@@ -94,11 +94,12 @@ there: a Zen 3 workstation once called a 7.7% win ~1%.
 | `js/chonk-bench` | the browser page (`serve.mjs`; `build-site.mjs --publish` for GitHub Pages; `run-node.mjs` for the same packages under node), bb-ref.js against bb.js-api on the pinned flows |
 
 **Instrumentation.** bb's `--print_bench`/`--bench_out` (`BB_BENCH`) against bb-ref's
-`BBREF_BENCH=1` (`src/base/bench.rs`), with bb's scope names. Finer probes: `BBREF_ROUND_DETAIL=1`
-(per-round breakdown of the sumcheck univariate), `BBREF_TIMING_RELATIONS=1` (time and active edges
-per relation),
-`BBREF_MSM_TIMING`, `BBREF_COMMIT_TIMING`; `BBREF_TIMING=1` prints live phase marks (the AVM
-prover's among them) and `BBREF_TIMING_RSS=1` adds the process RSS at each. A/B switches on one binary: `BBREF_NO_IFMA=1`,
+`BBREF_BENCH=1` (`src/base/bench.rs`), with bb's scope names. Finer probes need a
+`--features timing` build (without it they compile away): `BBREF_ROUND_DETAIL=1` (per-round
+breakdown of the sumcheck univariate), `BBREF_TIMING_RELATIONS=1` (time and active edges per
+relation), `BBREF_MSM_TIMING`, `BBREF_MSM_STATS`, `BBREF_COMMIT_TIMING`, `BBREF_IPA_TIMING`;
+`BBREF_TIMING=1` prints live phase marks (the AVM prover's among them) and `BBREF_TIMING_RSS=1`
+adds the process RSS at each. A/B switches on one binary: `BBREF_NO_IFMA=1`,
 `BBREF_DEDUP=0`, `BBREF_GLV_LOG2`, `BBREF_TINY_MSM_MAX`. Heap profile: `--features heap-profile`
 (dhat), aggregated by `tools/heap_agg.py`.
 

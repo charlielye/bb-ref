@@ -213,11 +213,11 @@ fn native_verify(
 }
 
 /// bb `_prove<Flavor, IO>` (`bbapi_ultra_honk.cpp`): build, prove, split, self-verify.
-/// Reports global RNG draws per command under BBREF_RNG_COUNT.
+/// Reports global RNG draws per command under BBREF_RNG_COUNT (a `timing` build).
 struct DrawReport(u64, String);
 impl Drop for DrawReport {
     fn drop(&mut self) {
-        if std::env::var_os("BBREF_RNG_COUNT").is_some() {
+        if crate::base::timing::on("BBREF_RNG_COUNT") {
             let now = crate::base::rng::GLOBAL_DRAWS.load(std::sync::atomic::Ordering::Relaxed);
             eprintln!("[rng] {} drew {} (total {now})", self.1, now - self.0);
         }

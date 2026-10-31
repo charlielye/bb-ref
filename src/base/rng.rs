@@ -169,7 +169,7 @@ impl Rng for GlobalProxy {
     }
 }
 
-/// Draws taken from the global source, for diagnosing reproducibility. bb's engine is a single
+/// Draws taken from the global source (counted in a `timing` build), for diagnosing reproducibility. bb's engine is a single
 /// process-global that is never reset, so a command that draws when bb's would not advances the
 /// stream and changes every later proof in the same session.
 pub static GLOBAL_DRAWS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -198,7 +198,9 @@ pub fn global_next_u256() -> U256 {
     if DETACHED.with(|d| d.get() != NOT_DETACHED && { d.set(DETACHED_DREW); true }) {
         return OsRng.next_u256();
     }
-    GLOBAL_DRAWS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if cfg!(feature = "timing") {
+        GLOBAL_DRAWS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
     let mut g = GLOBAL.lock().unwrap();
     match g.as_mut() {
         Some(rng) => rng.next_u256(),

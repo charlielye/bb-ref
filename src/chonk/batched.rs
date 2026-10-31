@@ -98,11 +98,11 @@ pub fn joint_prove(
     let mut challenge = Vec::with_capacity(JOINT_LOG_N);
     let mut univariate = Vec::new();
     for round in 0..JOINT_LOG_N {
-        let t0 = std::time::Instant::now();
+        let t0 = crate::base::timing::Instant::now();
         univariate = mega_state.univariate(&mega_rels, mega_params, &betas, &partial_eval, &mega_alphas, d);
-        let t1 = std::time::Instant::now();
+        let t1 = crate::base::timing::Instant::now();
         let u_t = trans_state.univariate(&trans_rels, &trans_params, &betas, &partial_eval, &trans_alphas, d);
-        if std::env::var_os("BBREF_TIMING").is_some() {
+        if crate::base::timing::on("BBREF_TIMING") {
             eprintln!(
                 "[joint round {round}] mega {:.1} ms, translator {:.1} ms",
                 (t1 - t0).as_secs_f64() * 1e3,
@@ -115,10 +115,10 @@ pub fn joint_prove(
         }
         committed.process(round, &univariate, ck, t);
         let u: Fr = t.challenge(&format!("Sumcheck:u_{round}"));
-        let t2 = std::time::Instant::now();
+        let t2 = crate::base::timing::Instant::now();
         // One parallel region: each fold's columns fill the pool where the other leaves gaps.
         rayon::join(|| mega_state.partially_evaluate(&u), || trans_state.partially_evaluate(&u));
-        if std::env::var_os("BBREF_TIMING").is_some() {
+        if crate::base::timing::on("BBREF_TIMING") {
             eprintln!("[joint round {round}] fold {:.1} ms", t2.elapsed().as_secs_f64() * 1e3);
         }
         if round == LOG_MINI_CIRCUIT_SIZE - 1 {

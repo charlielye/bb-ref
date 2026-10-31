@@ -114,14 +114,14 @@ thread_local! {
     static CURRENT_BLOCK_LENS: std::cell::RefCell<[usize; 12]> = const { std::cell::RefCell::new([0; 12]) };
 }
 
-/// Gates created on this thread so far (all builders); with `BBREF_TRACE_GATES` set, `trace_phase`
-/// prints it with a label so a trace-dump difference can be mapped to a verifier phase.
+/// Gates created on this thread so far (all builders; counted in `timing` builds), which
+/// `trace_phase` prints with a label so a trace-dump difference can be mapped to a verifier phase.
 pub fn global_gate_count() -> usize {
     GLOBAL_GATE_COUNT.with(|c| c.get())
 }
-/// With `BBREF_TRACE_GATES` set, prints the gate count and per-block lengths under `label`.
+/// In a `timing` build with `BBREF_TRACE_GATES` set, prints the gate count and per-block lengths under `label`.
 pub fn trace_phase(label: &str) {
-    if std::env::var_os("BBREF_TRACE_GATES").is_some() {
+    if crate::base::timing::on("BBREF_TRACE_GATES") {
         let lens = CURRENT_BLOCK_LENS.with(|b| *b.borrow());
         eprintln!(
             "[gates {:>7} | ecc_op {:>5} arith {:>6} nnf {:>5} busread {:>4} poseidon2 {:>5}] {label}",
@@ -330,7 +330,9 @@ impl Builder {
             "cannot add gates after the circuit is finalized"
         );
         self.num_gates += 1;
-        GLOBAL_GATE_COUNT.with(|c| c.set(c.get() + 1));
+        if cfg!(feature = "timing") {
+            GLOBAL_GATE_COUNT.with(|c| c.set(c.get() + 1));
+        }
     }
     pub fn failure(&mut self, msg: &str) {
         if self.failed.is_none() {
@@ -421,8 +423,10 @@ impl Builder {
     pub(super) fn append_row(&mut self, block: BlockId, row: GateRow) {
         self.blocks.get_mut(block).rows.push(row);
         self.increment_num_gates();
-        let len = self.blocks.get(block).rows.len();
-        CURRENT_BLOCK_LENS.with(|b| b.borrow_mut()[block as usize] = len);
+        if cfg!(feature = "timing") {
+            let len = self.blocks.get(block).rows.len();
+            CURRENT_BLOCK_LENS.with(|b| b.borrow_mut()[block as usize] = len);
+        }
     }
     fn append(&mut self, block: BlockId, row: GateRow) {
         self.append_row(block, row);

@@ -794,7 +794,7 @@ where
             self.points.len()
         );
         let (s, coeffs) = (p.start.min(k), &p.coeffs[..k.saturating_sub(p.start)]);
-        let t0 = std::env::var_os("BBREF_COMMIT_TIMING").map(|_| std::time::Instant::now());
+        let t0 = crate::base::timing::on("BBREF_COMMIT_TIMING").then(crate::base::timing::Instant::now);
         let c = if s == 0 && dedup_enabled() && k >= dedup_min_len() && duplicate_heavy(coeffs) {
             self.commit_dedup(coeffs).into_affine()
         } else {
@@ -883,7 +883,7 @@ where
             })
             .collect();
         let scalars: Vec<G::ScalarField> = reps.iter().map(|&i| coeffs[i as usize]).collect();
-        if std::env::var_os("BBREF_COMMIT_TIMING").is_some() {
+        if crate::base::timing::on("BBREF_COMMIT_TIMING") {
             eprintln!("[dedup] nnz={} distinct={} merged_clusters={}", cluster_of.len(), reps.len(), sums.len());
         }
         let phi = (crate::base::wasm::GLV_PHI_TABLE && points.len() <= crate::base::msm::glv_threshold())

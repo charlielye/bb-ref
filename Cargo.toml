@@ -53,6 +53,9 @@ opt-level = 1
 [features]
 # Heap profiling: dhat replaces the global allocator (the arena, or mimalloc) and writes dhat-heap.json.
 heap-profile = ["dep:dhat"]
+# Debug instrumentation (src/base/timing.rs): phase marks, MSM/commit/IPA/sumcheck timers, gate
+# traces, each selected by its env var. Without it every probe compiles away.
+timing = []
 # A/B reference: mimalloc instead of the system allocator.
 mimalloc = ["dep:mimalloc"]
 # The FFI exports (src/msgpack/ffi.rs) for a cdylib build: tools/build_bb_ref_js.sh.

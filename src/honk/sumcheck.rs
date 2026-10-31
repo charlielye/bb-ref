@@ -836,8 +836,8 @@ pub fn relation_stats_enabled() -> bool {
     // Read once. This is called per edge, and `std::env::var_os` takes a process-wide lock, so a
     // per-call lookup serializes every worker against every other one.
     static V: std::sync::LazyLock<bool> =
-        std::sync::LazyLock::new(|| std::env::var_os("BBREF_TIMING_RELATIONS").is_some());
-    *V
+        std::sync::LazyLock::new(|| crate::base::timing::on("BBREF_TIMING_RELATIONS"));
+    cfg!(feature = "timing") && *V
 }
 fn print_relation_stats<F: FieldLike>(rels: &impl RelationSet<F>, num_edges: usize) {
     let mut stats = RELATION_STATS.lock().unwrap();
@@ -1169,8 +1169,8 @@ fn points_to_coefficients<F: NativeField>(v: &[F; PERM_POINTS]) -> [F; PERM_POIN
 /// and the per-worker busy-time spread inside the edge loop, to locate barrier idle.
 fn round_detail() -> bool {
     static V: std::sync::LazyLock<bool> =
-        std::sync::LazyLock::new(|| std::env::var_os("BBREF_ROUND_DETAIL").is_some());
-    *V
+        std::sync::LazyLock::new(|| crate::base::timing::on("BBREF_ROUND_DETAIL"));
+    cfg!(feature = "timing") && *V
 }
 static SLOT_BUSY_NS: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
 
@@ -1248,7 +1248,7 @@ where
     let busy: Vec<std::sync::atomic::AtomicU64> =
         (0..nthreads).map(|_| std::sync::atomic::AtomicU64::new(0)).collect();
     let work = |w: usize| {
-        let t0 = detail.then(std::time::Instant::now);
+        let t0 = detail.then(crate::base::timing::Instant::now);
         let mut guard = slots[w].lock().unwrap();
         let (acc, scratch) = guard
             .get_or_insert_with(|| (Accumulators::new(rels, d), Scratch::new(rels, table, rel_end, d)));
@@ -1447,7 +1447,7 @@ fn accumulate_edge<F: NativeField>(
     let mut rel_ns = vec![0u128; if stats { rels.num_relations() } else { 0 }];
     for ri in 0..rels.num_relations() {
         if s.active[ri] && s.points[ri] {
-            let t0 = stats.then(std::time::Instant::now);
+            let t0 = stats.then(crate::base::timing::Instant::now);
             rels.accumulate_points(ri, acc.relation(ri), &s.row0, &s.delta, params, scaling, &mut s.regs);
             if let Some(t0) = t0 {
                 rel_ns[ri] += t0.elapsed().as_nanos();
@@ -1455,7 +1455,7 @@ fn accumulate_edge<F: NativeField>(
         }
     }
     for k in 0..num_points {
-        let t0 = stats.then(std::time::Instant::now);
+        let t0 = stats.then(crate::base::timing::Instant::now);
         for &j in &s.cols {
             if k == 0 {
                 s.row[j] = s.row0[j];
@@ -1470,7 +1470,7 @@ fn accumulate_edge<F: NativeField>(
             if !s.active[ri] || k >= s.len[ri] || (s.graded && s.graded_rel[ri]) || (s.wide && s.wide_rel[ri]) || s.points[ri] {
                 continue;
             }
-            let t0 = stats.then(std::time::Instant::now);
+            let t0 = stats.then(crate::base::timing::Instant::now);
             rels.accumulate(ri, acc.point(ri, k), &s.row, params, scaling);
             if let Some(t0) = t0 {
                 rel_ns[ri] += t0.elapsed().as_nanos();
@@ -1832,14 +1832,14 @@ where
                 *EXTENSION_NS.lock().unwrap() = 0;
             }
             let detail = round_detail();
-            let t_pows = std::time::Instant::now();
+            let t_pows = crate::base::timing::Instant::now();
             if self.pows0.is_empty() {
                 self.pows0 = gate_separator_products(betas, 0, 1 << (self.log_n - 1));
             }
             // Round r's separators are the stride-2^r subsequence of round 0's.
             let pows = Pows { base: &self.pows0[..], step: 1usize << round };
             let pows_us = t_pows.elapsed().as_micros();
-            let t_edges = std::time::Instant::now();
+            let t_edges = crate::base::timing::Instant::now();
             let _ge = crate::base::bench::Scope::new("sumcheck/accumulate_edge_chunks");
             let head_range = self.row_disabling.then(|| 0..self.excluded_head / 2);
             // Past every relation's end the edges contribute nothing.
@@ -1879,7 +1879,7 @@ where
             drop(_ge);
             let edges_us = t_edges.elapsed().as_micros();
             let slot_busy: Vec<u64> = if detail { SLOT_BUSY_NS.lock().unwrap().clone() } else { vec![] };
-            let t_rest = std::time::Instant::now();
+            let t_rest = crate::base::timing::Instant::now();
             let _gb = crate::base::bench::Scope::new("sumcheck/extend_and_batch_univariates");
             let mut univariate =
                 batch_over_relations(rels, &self.ext, &acc, alphas, &betas[round], partial_eval, None, d);
@@ -2178,11 +2178,10 @@ where
     type F<C> = <C as Curve>::Fr;
     let d = spec.batched_len;
     let alphas = alpha_powers(alpha, RelationSet::<C::Fr>::total_subrelations(rels) - 1);
-    let t_setup = std::time::Instant::now();
+    let t_setup = crate::base::timing::Instant::now();
     // The committed sumcheck is the ECCVM's alone, so these scopes isolate its per-round work.
-    let tag = true;
     let c = spec.committed;
-    let _gn = tag.then(|| crate::base::bench::Scope::new(if c { "eccvm-sc/new" } else { "sc/new" })).flatten();
+    let _gn = crate::base::bench::Scope::new(if c { "eccvm-sc/new" } else { "sc/new" });
     let mut state = RoundProver::new(
         n,
         polys,
@@ -2197,21 +2196,21 @@ where
     let mut challenge = Vec::with_capacity(spec.virtual_log_n);
     let mut partial_eval = F::<C>::one();
     let mut last_univariate = Vec::new();
-    let split_timing = std::env::var_os("BBREF_TIMING").is_some();
+    let split_timing = crate::base::timing::on("BBREF_TIMING");
     let (mut t_uni, mut t_fold) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
     for round in 0..spec.virtual_log_n {
-        let round_start = relation_stats_enabled().then(std::time::Instant::now);
-        let t0 = std::time::Instant::now();
+        let round_start = relation_stats_enabled().then(crate::base::timing::Instant::now);
+        let t0 = crate::base::timing::Instant::now();
         // Split round 0 from the rest: they behave differently (round 0 reads borrowed and
         // shifted columns; later rounds an owned contiguous table) and bb reports the same split.
         let _gu = crate::base::bench::Scope::new(if round == 0 { "sumcheck loop 0" } else { "sumcheck loop" });
-        let _gt = tag.then(|| crate::base::bench::Scope::new(if c { "eccvm-sc/univariate" } else { "sc/univariate" })).flatten();
+        let _gt = crate::base::bench::Scope::new(if c { "eccvm-sc/univariate" } else { "sc/univariate" });
         let mut univariate = state.univariate(rels, params, betas, &partial_eval, &alphas, d);
         drop(_gt);
         drop(_gu);
         t_uni += t0.elapsed();
         if let Some(zk) = zk.as_deref_mut() {
-            let _g = tag.then(|| crate::base::bench::Scope::new(if c { "eccvm-sc/zk_univariate" } else { "sc/zk_univariate" })).flatten();
+            let _g = crate::base::bench::Scope::new(if c { "eccvm-sc/zk_univariate" } else { "sc/zk_univariate" });
             for (k, v) in zk.round_univariate(round, d).into_iter().enumerate() {
                 univariate[k] += v;
             }
@@ -2228,12 +2227,12 @@ where
             let _g = crate::base::bench::Scope::new("sc/send");
             t.send_vec(&format!("Sumcheck:univariate_{round}"), &univariate);
         }
-        let _gc = tag.then(|| crate::base::bench::Scope::new(if c { "eccvm-sc/challenge" } else { "sc/challenge" })).flatten();
+        let _gc = crate::base::bench::Scope::new(if c { "eccvm-sc/challenge" } else { "sc/challenge" });
         let u: F<C> = t.challenge(&format!("Sumcheck:u_{round}"));
         drop(_gc);
-        let t0 = std::time::Instant::now();
+        let t0 = crate::base::timing::Instant::now();
         let _gf = crate::base::bench::Scope::new("Sumcheck::partially_evaluate");
-        let _gf2 = tag.then(|| crate::base::bench::Scope::new(if c { "eccvm-sc/fold" } else { "sc/fold" })).flatten();
+        let _gf2 = crate::base::bench::Scope::new(if c { "eccvm-sc/fold" } else { "sc/fold" });
         state.partially_evaluate(&u);
         drop(_gf2);
         drop(_gf);
@@ -2242,7 +2241,7 @@ where
             eprintln!("[round {round}] {:.1} ms", t0.elapsed().as_secs_f64() * 1e3);
         }
         if let Some(zk) = zk.as_deref_mut() {
-            let _g = tag.then(|| crate::base::bench::Scope::new(if c { "eccvm-sc/zk_update" } else { "sc/zk_update" })).flatten();
+            let _g = crate::base::bench::Scope::new(if c { "eccvm-sc/zk_update" } else { "sc/zk_update" });
             zk.update(&u, round);
         }
         partial_eval *= gate_separator_factor(&u, &betas[round]);
@@ -2261,7 +2260,7 @@ where
             t_setup.elapsed().as_secs_f64() - t_uni.as_secs_f64() - t_fold.as_secs_f64()
         );
     }
-    let _ge = tag.then(|| crate::base::bench::Scope::new(if c { "eccvm-sc/evals" } else { "sc/evals" })).flatten();
+    let _ge = crate::base::bench::Scope::new(if c { "eccvm-sc/evals" } else { "sc/evals" });
     let evals = state.evals();
     t.send_vec("Sumcheck:evaluations", &evals);
     drop(_ge);
