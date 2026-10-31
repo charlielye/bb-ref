@@ -745,46 +745,37 @@ where
     /// Commit to many polynomials with bounded MSM concurrency (bb `batch_commit`): each MSM is
     /// internally parallel, so a few at a time saturate the cores while capping the live
     /// per-MSM scratch that an unbounded fan-out multiplies. The bound keeps that scratch (~64 B
-    /// per point: scalars, histograms, schedules) within bb's 32 MiB batch budget: at most 8 MSMs
-    /// at once, admitted while their points total at most 2^19 (any one MSM runs, alone if need
-    /// be). Admission is per polynomial, so a long column does not serialize thousands of short
-    /// ones (the AVM's wires).
+    /// per point: scalars, histograms, schedules) within bb's 32 MiB batch budget: largest first,
+    /// groups of at most 8 MSMs whose points total at most 2^19 (a longer one alone), so a long
+    /// column does not serialize thousands of short ones (the AVM's wires). Nothing waits but
+    /// rayon's own joins: a worker blocked in one runs any queued task, so a wait for budget there
+    /// can sit on top of the very MSM holding it.
     pub fn batch_commit(&self, polys: &[&Polynomial<G::ScalarField>]) -> Vec<G>
     where
         G: Send + Sync,
         G::ScalarField: Send + Sync,
     {
-        use std::sync::atomic::{AtomicUsize, Ordering};
+        use rayon::prelude::*;
         const CONCURRENT_MSMS: usize = 8;
         const BUDGET: usize = (32 << 20) / 64;
-        let size = |p: &Polynomial<G::ScalarField>| p.end_index().saturating_sub(p.start);
+        let size = |i: usize| polys[i].end_index().saturating_sub(polys[i].start);
+        let mut order: Vec<usize> = (0..polys.len()).collect();
+        order.sort_by_key(|&i| std::cmp::Reverse(size(i)));
         let mut out: Vec<Option<G>> = vec![None; polys.len()];
-        let slots = super::msm::SendPtr(out.as_mut_ptr());
-        let slots = &slots; // capture the Sync wrapper, not the raw pointer field
-        let (next, in_flight) = (AtomicUsize::new(0), AtomicUsize::new(0));
-        rayon::scope(|s| {
-            for _ in 0..CONCURRENT_MSMS.min(polys.len()) {
-                s.spawn(|_| loop {
-                    let i = next.fetch_add(1, Ordering::Relaxed);
-                    if i >= polys.len() {
-                        break;
-                    }
-                    let n = size(polys[i]);
-                    // Wait for budget, running other pool work (the in-flight MSMs' tasks) meanwhile.
-                    while in_flight
-                        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |f| (f == 0 || f + n <= BUDGET).then_some(f + n))
-                        .is_err()
-                    {
-                        if rayon::yield_now() != Some(rayon::Yield::Executed) {
-                            std::thread::yield_now();
-                        }
-                    }
-                    let c = self.commit(polys[i]);
-                    in_flight.fetch_sub(n, Ordering::AcqRel);
-                    unsafe { *slots.0.add(i) = Some(c) };
-                });
+        let mut rest = &order[..];
+        while !rest.is_empty() {
+            let mut points = 0;
+            let k = rest.iter().take(CONCURRENT_MSMS).take_while(|&&i| {
+                points += size(i);
+                points <= BUDGET
+            });
+            let (group, tail) = rest.split_at(k.count().max(1));
+            let commits: Vec<G> = group.par_iter().map(|&i| self.commit(polys[i])).collect();
+            for (&i, c) in group.iter().zip(commits) {
+                out[i] = Some(c);
             }
-        });
+            rest = tail;
+        }
         out.into_iter().map(Option::unwrap).collect()
     }
 
