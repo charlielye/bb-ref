@@ -138,7 +138,8 @@ pub fn get_msms(ops: &[EccvmOp]) -> Vec<Vec<ScalarMul>> {
                     active.push(make(op.z1, op.base_point));
                 }
                 if !op.z2.is_zero() {
-                    let endo = G1Affine::new_unchecked(op.base_point.x * <Fq as EndoField>::cube_root(), -op.base_point.y);
+                    let endo =
+                        G1Affine::new_unchecked(op.base_point.x * <Fq as EndoField>::cube_root(), -op.base_point.y);
                     active.push(make(op.z2, endo));
                 }
             }

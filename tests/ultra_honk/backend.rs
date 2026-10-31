@@ -26,7 +26,10 @@ fn build(name: &str, flavor: &'static FlavorDesc) -> ProverInstance {
 }
 
 fn check_nozk(name: &str) {
-    let dump = common::require(common::fixture_dir(&format!("instance/backend/{name}/nozk")), "regen_backend.sh");
+    let dump = common::require(
+        common::fixture_dir(&format!("instance/backend/{name}/nozk")),
+        "regen_backend.sh",
+    );
     let mut inst = build(name, &ULTRA);
     let expected = ProverInstance::load_dump(&ULTRA, &dump);
     assert_eq!(inst.dyadic_size, expected.dyadic_size, "{name}: dyadic size");
@@ -45,7 +48,10 @@ fn check_nozk(name: &str) {
 }
 
 fn check_zk(name: &str) {
-    let dump = common::require(common::fixture_dir(&format!("instance/backend/{name}/zk")), "regen_backend.sh");
+    let dump = common::require(
+        common::fixture_dir(&format!("instance/backend/{name}/zk")),
+        "regen_backend.sh",
+    );
     let mut inst = build(name, &ULTRA_ZK);
     let ck = CommitmentKey::new(inst.max_end_index);
     let vk = inst.compute_vk(&ck);

@@ -1,13 +1,13 @@
 //! Mega-only builder operations (bb `MegaCircuitBuilder_`): Goblin ECC op "gates", the databus,
 //! the bilinear/batched-equality gate and the compressed Poseidon2 gates.
 
-use crate::circuit::op_queue::SharedOpQueue;
 use super::builder::Builder;
 use super::op_queue::{EccOpCode, UltraOp};
 use super::trace::{BlockId, GateRow, Kind};
 use crate::base::field::FieldLike;
 use crate::base::poseidon2::round_constants;
 use crate::base::{Fq, Fr, G1Affine, Rng};
+use crate::circuit::op_queue::SharedOpQueue;
 
 pub const NUM_BUS_COLUMNS: usize = 7;
 pub const RETURNDATA: usize = 6;

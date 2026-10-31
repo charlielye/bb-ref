@@ -18,9 +18,8 @@ fn check(kind: &str) {
     let dump = common::fixture_dir(&format!("instance/eccvm/{kind}"));
     let bytes = std::fs::read(common::require(dump.join("eccvm_columns.bin"), "regen_merge.sh")).unwrap();
     let num_rows = u32::from_be_bytes(bytes[..4].try_into().unwrap()) as usize;
-    let at = |e: usize, r: usize| {
-        from_bytes_be::<Fq>(&bytes[4 + 32 * (e * num_rows + r)..4 + 32 * (e * num_rows + r) + 32])
-    };
+    let at =
+        |e: usize, r: usize| from_bytes_be::<Fq>(&bytes[4 + 32 * (e * num_rows + r)..4 + 32 * (e * num_rows + r) + 32]);
     for e in 0..NUM_ALL_ENTITIES {
         let first_row = if e >= FIRST_SHIFTED {
             TRACE_OFFSET - 1

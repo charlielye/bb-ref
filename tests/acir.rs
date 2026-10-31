@@ -48,7 +48,11 @@ fn mock_protocol_vks_match_bb() {
         let in_artifact = hex::decode(json["verificationKey"]["bytes"].as_str().unwrap()).unwrap();
         assert_eq!(vk, in_artifact, "{name}: VK differs from the artifact's");
         let fixture = common::require(common::fixture_dir(&format!("acir/vks/{name}.vk")), "regen_acir.sh");
-        assert_eq!(vk, std::fs::read(fixture).unwrap(), "{name}: VK differs from bb write_vk's");
+        assert_eq!(
+            vk,
+            std::fs::read(fixture).unwrap(),
+            "{name}: VK differs from bb write_vk's"
+        );
     }
 }
 
@@ -60,7 +64,10 @@ fn mock_flows_bb_proofs_verify() {
         let vk = read_hiding_vk(&dir.join("vk"));
         let proof = ChonkProof::from_fields(&decode_fields(&std::fs::read(dir.join("proof")).unwrap()));
         assert!(verify(&vk, &proof), "{flow}: bb proof rejected");
-        let steps = decode_steps(&common::read(&format!("acir/{}/ivc-inputs.msgpack", flow.trim_end_matches("_tape"))));
+        let steps = decode_steps(&common::read(&format!(
+            "acir/{}/ivc-inputs.msgpack",
+            flow.trim_end_matches("_tape")
+        )));
         assert_eq!(
             steps.last().unwrap().vk.to_bytes(),
             vk.to_bytes(),

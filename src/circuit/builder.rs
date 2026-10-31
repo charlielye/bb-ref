@@ -3,12 +3,12 @@
 //! trace blocks. A line-by-line port of bb's `CircuitBuilderBase` + `UltraCircuitBuilder_` restricted
 //! to what the client-side circuits use (no non-native-field gates).
 
-use crate::circuit::op_queue::SharedOpQueue;
 use super::mega::MegaState;
 use super::trace::{BlockId, Blocks, GateRow, Kind, MEGA_BLOCKS, ULTRA_BLOCKS};
 use crate::base::field::{u256, u256_num_bits, u256_shr, FieldLike, NativeField};
 use crate::base::poseidon2::round_constants;
 use crate::base::Fr;
+use crate::circuit::op_queue::SharedOpQueue;
 use std::collections::{BTreeMap, HashMap};
 
 pub const IS_CONSTANT: u32 = u32::MAX;
@@ -904,7 +904,13 @@ impl Builder {
         for i in 0..num_limb_triples as usize {
             let last = i as u64 == num_limb_triples - 1;
             let real = |k: u64| !(last && leftovers < k + 1);
-            let limb_val = |k: usize| if real(k as u64) { sublimbs[3 * i + k] } else { Fr::zero() };
+            let limb_val = |k: usize| {
+                if real(k as u64) {
+                    sublimbs[3 * i + k]
+                } else {
+                    Fr::zero()
+                }
+            };
             let limb_idx = |k: usize| {
                 if real(k as u64) {
                     sublimb_indices[3 * i + k]

@@ -102,7 +102,10 @@ impl FieldT {
 
     pub fn add(&self, other: &Self) -> Self {
         let ctx = same_ctx(&self.ctx, &other.ctx);
-        let mut r = Self { ctx: ctx.clone(), ..Self::constant(Fr::zero()) };
+        let mut r = Self {
+            ctx: ctx.clone(),
+            ..Self::constant(Fr::zero())
+        };
         if self.witness_index == other.witness_index && !self.is_constant() {
             r.additive_constant = self.additive_constant + other.additive_constant;
             r.multiplicative_constant = self.multiplicative_constant + other.multiplicative_constant;
@@ -155,7 +158,10 @@ impl FieldT {
 
     pub fn mul(&self, other: &Self) -> Self {
         let ctx = same_ctx(&self.ctx, &other.ctx);
-        let mut r = Self { ctx: ctx.clone(), ..Self::constant(Fr::zero()) };
+        let mut r = Self {
+            ctx: ctx.clone(),
+            ..Self::constant(Fr::zero())
+        };
         if self.is_constant() && other.is_constant() {
             r.additive_constant = self.additive_constant * other.additive_constant;
         } else if !self.is_constant() && other.is_constant() {
@@ -315,7 +321,10 @@ impl FieldT {
     /// `divide_no_zero_check` given the divisor value's native inverse, if already computed.
     fn divide_with_inverse(&self, other: &Self, inverse: Option<Fr>) -> Self {
         let ctx = same_ctx(&self.ctx, &other.ctx);
-        let mut r = Self { ctx: ctx.clone(), ..Self::constant(Fr::zero()) };
+        let mut r = Self {
+            ctx: ctx.clone(),
+            ..Self::constant(Fr::zero())
+        };
         let additive_multiplier = if other.additive_constant.is_zero() {
             Fr::one()
         } else {

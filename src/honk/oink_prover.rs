@@ -220,8 +220,8 @@ fn compute_logderivative_inverses(inst: &mut ProverInstance, p: &RelationParams<
         .map_init(
             || vec![Fr::zero(); layout.unshifted.len() + layout.shifted.len()],
             |vals, i| {
-                let active = inst.poly(q_lookup).at(i) == Fr::from(1u64)
-                    || inst.poly(lookup_read_tags).at(i) == Fr::from(1u64);
+                let active =
+                    inst.poly(q_lookup).at(i) == Fr::from(1u64) || inst.poly(lookup_read_tags).at(i) == Fr::from(1u64);
                 if !active {
                     return Fr::zero();
                 }

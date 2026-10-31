@@ -181,6 +181,9 @@ mod tests {
         assert_eq!(lg, crate::base::G1Affine::new_unchecked(g.x * Fq::cube_root(), g.y));
         let g = crate::base::GrumpkinAffine::generator();
         let lg = (g * Fq::cube_root()).into_affine();
-        assert_eq!(lg, crate::base::GrumpkinAffine::new_unchecked(g.x * Fr::cube_root(), g.y));
+        assert_eq!(
+            lg,
+            crate::base::GrumpkinAffine::new_unchecked(g.x * Fr::cube_root(), g.y)
+        );
     }
 }

@@ -227,7 +227,9 @@ pub fn pairing_check(p0: G1Affine, p1: G1Affine, g2: &G2Points) -> bool {
             ),
         }
     };
-    ark_bn254::Bn254::multi_pairing([cross(p0), cross(p1)], [g2[0], g2[1]]).0.is_one()
+    ark_bn254::Bn254::multi_pairing([cross(p0), cross(p1)], [g2[0], g2[1]])
+        .0
+        .is_one()
 }
 
 #[cfg(test)]

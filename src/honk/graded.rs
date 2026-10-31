@@ -148,7 +148,11 @@ impl<F: NativeField, const N: usize> Mul<&Graded<F, N>> for Graded<F, N> {
         // A linear factor times a longer one: Karatsuba over pairs of the longer one's
         // coefficients, 3 multiplications per pair instead of 4 (2×5: 8 instead of 10).
         if (l1 == 2) != (l2 == 2) && l1.min(l2) == 2 {
-            let (a, b, lb) = if l1 == 2 { (&self.c, &rhs.c, l2) } else { (&rhs.c, &self.c, l1) };
+            let (a, b, lb) = if l1 == 2 {
+                (&self.c, &rhs.c, l2)
+            } else {
+                (&rhs.c, &self.c, l1)
+            };
             let (a0, a1) = (a[0], a[1]);
             let s = a0 + a1;
             let mut j = 0;

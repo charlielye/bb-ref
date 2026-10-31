@@ -78,7 +78,9 @@ impl<F: FieldLike<Native = Fr>> RelationSet<F> for AvmRelations {
         relations()[r].partial_length
     }
     fn subrelation_length(&self, r: usize, j: usize) -> usize {
-        programs()[r].as_ref().map_or(relations()[r].partial_length, |p| p.points(j))
+        programs()[r]
+            .as_ref()
+            .map_or(relations()[r].partial_length, |p| p.points(j))
     }
     fn has_points(&self, r: usize) -> bool {
         programs()[r].is_some()
@@ -93,7 +95,10 @@ impl<F: FieldLike<Native = Fr>> RelationSet<F> for AvmRelations {
         scaling: &F,
         regs: &mut Vec<F>,
     ) {
-        programs()[r].as_ref().unwrap().accumulate(acc, row0, delta, p, scaling, regs);
+        programs()[r]
+            .as_ref()
+            .unwrap()
+            .accumulate(acc, row0, delta, p, scaling, regs);
     }
     fn offset_only(&self, _r: usize) -> bool {
         false
@@ -125,9 +130,20 @@ impl<F: FieldLike<Native = Fr>> RelationSet<F> for AvmRelations {
         match &relations()[r].body {
             Body::Generated { lets, subs } => lets.iter().chain(subs).for_each(|e| walk(e, &mut cols)),
             Body::Handwritten => return None,
-            Body::Interaction { src_sel, dst_sel, inverses, counts, src, dst } => {
-                cols.extend([*src_sel, *dst_sel, *inverses].into_iter().chain(*counts).chain(src.iter().copied()).chain(dst.iter().copied()))
-            }
+            Body::Interaction {
+                src_sel,
+                dst_sel,
+                inverses,
+                counts,
+                src,
+                dst,
+            } => cols.extend(
+                [*src_sel, *dst_sel, *inverses]
+                    .into_iter()
+                    .chain(*counts)
+                    .chain(src.iter().copied())
+                    .chain(dst.iter().copied()),
+            ),
         }
         cols.sort_unstable();
         cols.dedup();

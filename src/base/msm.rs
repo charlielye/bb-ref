@@ -1199,7 +1199,6 @@ pub mod s6a_timing {
     }
 }
 
-
 /// `sum_b (b+1) * B_b` over singleton buckets: segmented double running sums, the affine chain
 /// steps batched across segments, segment totals recombined in projective.
 
@@ -1233,7 +1232,10 @@ fn small_msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField])
 
 fn tiny_msm_max() -> usize {
     static V: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
-        std::env::var("BBREF_TINY_MSM_MAX").ok().and_then(|s| s.parse().ok()).unwrap_or(128)
+        std::env::var("BBREF_TINY_MSM_MAX")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(128)
     });
     *V
 }
@@ -1398,7 +1400,13 @@ mod tests {
             for j in 0..l as usize {
                 // Run 8: P, -P (cancels); run 9: P, P (doubling); others: mixed repeats.
                 ps.push(match r {
-                    8 => if j == 0 { base[0] } else { -base[0] },
+                    8 => {
+                        if j == 0 {
+                            base[0]
+                        } else {
+                            -base[0]
+                        }
+                    }
                     9 => base[1],
                     _ => base[(j * 7 + r) % base.len()],
                 });

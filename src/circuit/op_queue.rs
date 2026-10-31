@@ -383,7 +383,10 @@ impl EccOpQueue {
     /// fixed-location append — no-op padding up to the fixed slot (plus the preamble) before the
     /// last subtable.
     pub fn get_zk_reconstructed_ultra_ops(&self) -> Vec<UltraOp> {
-        assert!(!self.zk_ops.is_empty(), "ZK ops must be constructed before reconstructing the Ultra table");
+        assert!(
+            !self.zk_ops.is_empty(),
+            "ZK ops must be constructed before reconstructing the Ultra table"
+        );
         self.reconstructed(true)
     }
 
@@ -393,8 +396,15 @@ impl EccOpQueue {
     }
 
     fn reconstructed(&self, include_zk_ops: bool) -> Vec<UltraOp> {
-        assert!(self.ultra_ops.current.is_empty(), "current subtable should be merged first");
-        let mut ops = if include_zk_ops { self.zk_ops.clone() } else { Vec::new() };
+        assert!(
+            self.ultra_ops.current.is_empty(),
+            "current subtable should be merged first"
+        );
+        let mut ops = if include_zk_ops {
+            self.zk_ops.clone()
+        } else {
+            Vec::new()
+        };
         let n = self.num_subtables();
         let sequential = n - self.fixed_append_offset.is_some() as usize;
         for (i, t) in self.ultra_ops.tables[..sequential].iter().enumerate() {
@@ -440,7 +450,16 @@ impl EccOpQueue {
     /// Columns of every merged subtable, in append order.
     pub fn construct_subtable_columns(&self) -> Vec<Columns> {
         (0..self.num_subtables())
-            .map(|i| self.columns_in_range(self.ultra_ops.tables[i].len() * NUM_ROWS_PER_OP, i, i + 1, false, None, false))
+            .map(|i| {
+                self.columns_in_range(
+                    self.ultra_ops.tables[i].len() * NUM_ROWS_PER_OP,
+                    i,
+                    i + 1,
+                    false,
+                    None,
+                    false,
+                )
+            })
             .collect()
     }
     /// Columns of the full merged table (ZK prefix, subtables, and the fixed-location final subtable if set).

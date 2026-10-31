@@ -7,7 +7,9 @@
 //! values at 0 and 1 instead of the univariate itself.
 
 use super::flavor::{FlavorDesc, Layout};
-use super::graded::{lift_params, lift_params_wide, Graded, GradedWide, MAX_LEN as GRADED_MAX_LEN, WIDE_LEN as GRADED_WIDE_LEN};
+use super::graded::{
+    lift_params, lift_params_wide, Graded, GradedWide, MAX_LEN as GRADED_MAX_LEN, WIDE_LEN as GRADED_WIDE_LEN,
+};
 use super::relations::{quad_batching_constants, RelationParams, Row};
 use crate::base::field::NativeField;
 use crate::base::field::{FieldLike, U256};
@@ -227,7 +229,11 @@ impl<F: FieldLike> RelationSet<F> for HonkRelations<'_> {
         )
     }
     fn fold_separators(&self, params: &RelationParams<F>, alphas: &[F]) -> Option<RelationParams<F>> {
-        let quad = [Rel::Poseidon2QuadInternal, Rel::Poseidon2QuadInternalTerminal, Rel::Poseidon2TransitionEntry];
+        let quad = [
+            Rel::Poseidon2QuadInternal,
+            Rel::Poseidon2QuadInternalTerminal,
+            Rel::Poseidon2TransitionEntry,
+        ];
         let alpha = |g: usize| if g == 0 { F::one() } else { alphas[g - 1].clone() };
         let mut out = params.clone();
         out.quad_batching = vec![Vec::new(); quad.len()];
@@ -235,7 +241,11 @@ impl<F: FieldLike> RelationSet<F> for HonkRelations<'_> {
         for rel in self.flavor.relations {
             if let Some(i) = quad.iter().position(|q| q == rel) {
                 // α_0 = 0 only for α = 0, where every α_j vanishes too: zero weights stay exact.
-                let inv = if alpha(g).is_zero() { F::zero() } else { alpha(g).invert() };
+                let inv = if alpha(g).is_zero() {
+                    F::zero()
+                } else {
+                    alpha(g).invert()
+                };
                 let w: Vec<F> = (0..rel.num_subrelations()).map(|j| alpha(g + j) * &inv).collect();
                 out.quad_batching[i] = quad_batching_constants(*rel, &w);
             }
@@ -520,7 +530,10 @@ pub fn verify_sumcheck<C: Curve>(
     }
 
     let evals: Vec<F<C>> = if spec.translator {
-        let full = t.receive_vec("Sumcheck:evaluations", crate::goblin::translator::FULL_CIRCUIT_ENTITIES.len());
+        let full = t.receive_vec(
+            "Sumcheck:evaluations",
+            crate::goblin::translator::FULL_CIRCUIT_ENTITIES.len(),
+        );
         crate::goblin::translator::complete_evaluations(&full, &minicircuit, &challenge)
     } else {
         t.receive_vec("Sumcheck:evaluations", spec.num_entities)
@@ -967,7 +980,13 @@ impl<F: NativeField> Scratch<F> {
         if self.wide {
             self.row_wide = vec![zero_wide; num_columns];
             self.acc_wide = (0..rels.num_relations())
-                .map(|r| if self.wide_rel[r] { vec![zero_wide; rels.num_subrelations(r)] } else { Vec::new() })
+                .map(|r| {
+                    if self.wide_rel[r] {
+                        vec![zero_wide; rels.num_subrelations(r)]
+                    } else {
+                        Vec::new()
+                    }
+                })
                 .collect();
             self.cols_wide = Vec::with_capacity(num_columns);
         }
@@ -1168,8 +1187,7 @@ fn points_to_coefficients<F: NativeField>(v: &[F; PERM_POINTS]) -> [F; PERM_POIN
 /// BBREF_ROUND_DETAIL=1: per-round breakdown of the univariate (pows / edges / head / assembly)
 /// and the per-worker busy-time spread inside the edge loop, to locate barrier idle.
 fn round_detail() -> bool {
-    static V: std::sync::LazyLock<bool> =
-        std::sync::LazyLock::new(|| crate::base::timing::on("BBREF_ROUND_DETAIL"));
+    static V: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| crate::base::timing::on("BBREF_ROUND_DETAIL"));
     cfg!(feature = "timing") && *V
 }
 static SLOT_BUSY_NS: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
@@ -1193,7 +1211,17 @@ where
     let mut acc = Accumulators::new(rels, d);
     let mut scratch = Scratch::new(rels, table, rel_end, d);
     for e in edges {
-        accumulate_edge(rels, used, table, e, params, &params_uni, &pows.at(e), &mut acc, &mut scratch);
+        accumulate_edge(
+            rels,
+            used,
+            table,
+            e,
+            params,
+            &params_uni,
+            &pows.at(e),
+            &mut acc,
+            &mut scratch,
+        );
     }
     if scratch.graded {
         flush_graded(&mut scratch, &mut acc);
@@ -1245,13 +1273,12 @@ where
         (0..nthreads).map(|_| std::sync::Mutex::new(None)).collect();
     let head_slot: std::sync::Mutex<Option<(Accumulators<F>, Scratch<F>)>> = std::sync::Mutex::new(None);
     let detail = round_detail();
-    let busy: Vec<std::sync::atomic::AtomicU64> =
-        (0..nthreads).map(|_| std::sync::atomic::AtomicU64::new(0)).collect();
+    let busy: Vec<std::sync::atomic::AtomicU64> = (0..nthreads).map(|_| std::sync::atomic::AtomicU64::new(0)).collect();
     let work = |w: usize| {
         let t0 = detail.then(crate::base::timing::Instant::now);
         let mut guard = slots[w].lock().unwrap();
-        let (acc, scratch) = guard
-            .get_or_insert_with(|| (Accumulators::new(rels, d), Scratch::new(rels, table, rel_end, d)));
+        let (acc, scratch) =
+            guard.get_or_insert_with(|| (Accumulators::new(rels, d), Scratch::new(rels, table, rel_end, d)));
         let mut did_head = false;
         loop {
             let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1380,7 +1407,10 @@ fn accumulate_edge<F: NativeField>(
     if let Some(pc) = s.perm_cols {
         let lagrange = [pc.lagrange_first, pc.lagrange_last];
         if s.active[pc.ri] && lagrange.iter().all(|&j| s.row0[j].is_zero() && s.row1[j].is_zero()) {
-            if let Some(lanes) = s.perm.get_or_insert_with(|| PermLanes::new(&params.beta, &params.gamma)) {
+            if let Some(lanes) = s
+                .perm
+                .get_or_insert_with(|| PermLanes::new(&params.beta, &params.gamma))
+            {
                 let (r0, dl) = (&s.row0, &s.delta);
                 let mut v = [F::zero(); PERM_INPUTS];
                 for i in 0..4 {
@@ -1428,7 +1458,18 @@ fn accumulate_edge<F: NativeField>(
             if s.params_wide.is_none() {
                 s.params_wide = Some(lift_params_wide(params));
             }
-            let Scratch { cols_wide, mark, row_wide, row0, delta, acc_wide, active, wide_rel, params_wide, .. } = s;
+            let Scratch {
+                cols_wide,
+                mark,
+                row_wide,
+                row0,
+                delta,
+                acc_wide,
+                active,
+                wide_rel,
+                params_wide,
+                ..
+            } = s;
             for &j in cols_wide.iter() {
                 mark[j] = false;
                 row_wide[j].set_linear(row0[j], delta[j]);
@@ -1467,7 +1508,12 @@ fn accumulate_edge<F: NativeField>(
             ext_ns += t0.elapsed().as_nanos();
         }
         for ri in 0..rels.num_relations() {
-            if !s.active[ri] || k >= s.len[ri] || (s.graded && s.graded_rel[ri]) || (s.wide && s.wide_rel[ri]) || s.points[ri] {
+            if !s.active[ri]
+                || k >= s.len[ri]
+                || (s.graded && s.graded_rel[ri])
+                || (s.wide && s.wide_rel[ri])
+                || s.points[ri]
+            {
                 continue;
             }
             let t0 = stats.then(crate::base::timing::Instant::now);
@@ -1648,7 +1694,11 @@ fn column_value<F: FieldLike + Copy>(table: &[Column<F>], j: usize, i: usize) ->
 fn folded_value<F: FieldLike + Copy>(st: usize, s: &[F], u: &F, i: usize) -> F {
     let at = |k: usize| s.get(k.wrapping_sub(st)).copied().unwrap_or_else(F::zero);
     let (a, b) = (at(2 * i), at(2 * i + 1));
-    if a == b { a } else { a + *u * (b - a) }
+    if a == b {
+        a
+    } else {
+        a + *u * (b - a)
+    }
 }
 
 /// One fold of `src` (zero-padded to even length): `a[2k] + u * (a[2k+1] - a[2k])`.
@@ -1659,7 +1709,11 @@ fn fold_vec<F: FieldLike + Copy + 'static>(src: &[F], u: &F) -> Vec<F> {
     src.chunks(2)
         .map(|p| {
             let (a, b) = (p[0], p.get(1).copied().unwrap_or_else(F::zero));
-            if a == b { a } else { a + *u * (b - a) }
+            if a == b {
+                a
+            } else {
+                a + *u * (b - a)
+            }
         })
         .collect()
 }
@@ -1776,7 +1830,11 @@ where
         let end = |cols: &[usize]| cols.iter().map(|&j| column_end(&self.table, j)).max().unwrap_or(0);
         (0..rels.num_relations())
             .map(|r| {
-                let read = if self.vanishes[r] { end(&self.used[r]) } else { usize::MAX };
+                let read = if self.vanishes[r] {
+                    end(&self.used[r])
+                } else {
+                    usize::MAX
+                };
                 read.min(rels.vanishing_columns(r).map_or(usize::MAX, |c| end(&c)))
             })
             .collect()
@@ -1837,7 +1895,10 @@ where
                 self.pows0 = gate_separator_products(betas, 0, 1 << (self.log_n - 1));
             }
             // Round r's separators are the stride-2^r subsequence of round 0's.
-            let pows = Pows { base: &self.pows0[..], step: 1usize << round };
+            let pows = Pows {
+                base: &self.pows0[..],
+                step: 1usize << round,
+            };
             let pows_us = t_pows.elapsed().as_micros();
             let t_edges = crate::base::timing::Instant::now();
             let _ge = crate::base::bench::Scope::new("sumcheck/accumulate_edge_chunks");
@@ -1853,7 +1914,8 @@ where
                 .map(|(ri, edges)| {
                     let head = if ri == 0 { head_range.clone() } else { None };
                     let edges = edges.start.min(live_edges)..edges.end.min(live_edges);
-                    let (a, h) = accumulate_edges(rels, &self.used, &rel_end, &self.table, edges, head, params, pows, d);
+                    let (a, h) =
+                        accumulate_edges(rels, &self.used, &rel_end, &self.table, edges, head, params, pows, d);
                     if h.is_some() {
                         head_acc = h;
                     }
@@ -1878,7 +1940,11 @@ where
             }
             drop(_ge);
             let edges_us = t_edges.elapsed().as_micros();
-            let slot_busy: Vec<u64> = if detail { SLOT_BUSY_NS.lock().unwrap().clone() } else { vec![] };
+            let slot_busy: Vec<u64> = if detail {
+                SLOT_BUSY_NS.lock().unwrap().clone()
+            } else {
+                vec![]
+            };
             let t_rest = crate::base::timing::Instant::now();
             let _gb = crate::base::bench::Scope::new("sumcheck/extend_and_batch_univariates");
             let mut univariate =
@@ -1901,9 +1967,9 @@ where
             drop(_gb);
             if detail {
                 let rest_us = t_rest.elapsed().as_micros();
-                let (mn, mx, sum) = slot_busy.iter().fold((u64::MAX, 0u64, 0u64), |(a, b, c), &v| {
-                    (a.min(v), b.max(v), c + v)
-                });
+                let (mn, mx, sum) = slot_busy
+                    .iter()
+                    .fold((u64::MAX, 0u64, 0u64), |(a, b, c), &v| (a.min(v), b.max(v), c + v));
                 let n = slot_busy.len().max(1) as f64;
                 eprintln!(
                     "[detail r{round:2}] edges={:<6} pows {pows_us:6}us  edges {edges_us:7}us  rest(head+assembly) {rest_us:6}us   worker busy min {:7.0}us mean {:7.0}us max {:7.0}us",
@@ -2210,7 +2276,11 @@ where
         drop(_gu);
         t_uni += t0.elapsed();
         if let Some(zk) = zk.as_deref_mut() {
-            let _g = crate::base::bench::Scope::new(if c { "eccvm-sc/zk_univariate" } else { "sc/zk_univariate" });
+            let _g = crate::base::bench::Scope::new(if c {
+                "eccvm-sc/zk_univariate"
+            } else {
+                "sc/zk_univariate"
+            });
             for (k, v) in zk.round_univariate(round, d).into_iter().enumerate() {
                 univariate[k] += v;
             }
@@ -2296,10 +2366,15 @@ mod tests {
         use ark_ff::UniformRand;
         let mut rng = ark_std::test_rng();
         let mut params = RelationParams::<Fr>::default();
-        for v in [&mut params.eta, &mut params.eta_two, &mut params.eta_three, &mut params.rom_logup_gamma]
-            .into_iter()
-            .chain([&mut params.beta, &mut params.gamma, &mut params.public_input_delta])
-            .chain([&mut params.beta_sqr, &mut params.beta_cube])
+        for v in [
+            &mut params.eta,
+            &mut params.eta_two,
+            &mut params.eta_three,
+            &mut params.rom_logup_gamma,
+        ]
+        .into_iter()
+        .chain([&mut params.beta, &mut params.gamma, &mut params.public_input_delta])
+        .chain([&mut params.beta_sqr, &mut params.beta_cube])
         {
             *v = Fr::rand(&mut rng);
         }
@@ -2319,7 +2394,10 @@ mod tests {
         let scaling = Fr::rand(&mut rng);
         for flavor in [&MEGA_KERNEL, &MEGA_APP] {
             let layout = flavor.layout();
-            let rels = HonkRelations { flavor, layout: &layout };
+            let rels = HonkRelations {
+                flavor,
+                layout: &layout,
+            };
             let alphas = alpha_powers(&Fr::rand(&mut rng), RelationSet::<Fr>::total_subrelations(&rels) - 1);
             let alpha = |g: usize| if g == 0 { Fr::one() } else { alphas[g - 1] };
             let params_uni = lift_params(&RelationSet::<Fr>::fold_separators(&rels, &params, &alphas).unwrap());

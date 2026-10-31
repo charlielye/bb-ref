@@ -20,11 +20,17 @@ pub fn ecdsa_verify_signature(
     r: &ByteArray,
     s: &ByteArray,
 ) -> BoolT {
-    verify(hashed_message, public_key, r, s, |key, on_curve, double_generator, u1, u2| {
-        let fake_glv_pubkey = Element::conditional_assign(&on_curve.not(), double_generator, key);
-        let (result, is_u2_acceptable) = Element::secp256r1_ecdsa_mul(&fake_glv_pubkey, u1, u2);
-        (result, Some(is_u2_acceptable))
-    })
+    verify(
+        hashed_message,
+        public_key,
+        r,
+        s,
+        |key, on_curve, double_generator, u1, u2| {
+            let fake_glv_pubkey = Element::conditional_assign(&on_curve.not(), double_generator, key);
+            let (result, is_u2_acceptable) = Element::secp256r1_ecdsa_mul(&fake_glv_pubkey, u1, u2);
+            (result, Some(is_u2_acceptable))
+        },
+    )
 }
 
 /// bb `ecdsa_verify_signature<secp256k1>`: the k1 endomorphism multiplication (no fake-GLV
@@ -35,7 +41,9 @@ pub fn ecdsa_verify_signature_secp256k1(
     r: &ByteArray,
     s: &ByteArray,
 ) -> BoolT {
-    verify(hashed_message, public_key, r, s, |key, _, _, u1, u2| (secp256k1_ecdsa_mul(key, u1, u2), None))
+    verify(hashed_message, public_key, r, s, |key, _, _, u1, u2| {
+        (secp256k1_ecdsa_mul(key, u1, u2), None)
+    })
 }
 
 /// The shared body; `mul(corrected key, is on curve, 2·G, u1, u2)` computes `u1·G + u2·key` and

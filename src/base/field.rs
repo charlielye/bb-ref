@@ -242,10 +242,7 @@ pub fn batch_invert_par<F: PrimeField + Send + Sync>(v: &mut [F]) {
 /// `terms(lo, num, den)` fills rows `lo..lo + num.len()`. Each thread fills its chunk with `num`
 /// in place, batch-inverts its `den`, and forms the running product of the ratios; a scan over
 /// the chunk totals then scales every later chunk. A zero `den` zeroes every later entry.
-pub fn grand_product_par<F: PrimeField + Send + Sync>(
-    out: &mut [F],
-    terms: impl Fn(usize, &mut [F], &mut [F]) + Sync,
-) {
+pub fn grand_product_par<F: PrimeField + Send + Sync>(out: &mut [F], terms: impl Fn(usize, &mut [F], &mut [F]) + Sync) {
     use rayon::prelude::*;
     let chunk = out.len().div_ceil(rayon::current_num_threads()).max(1024);
     let totals: Vec<F> = out
@@ -267,7 +264,10 @@ pub fn grand_product_par<F: PrimeField + Send + Sync>(
     for b in 1..totals.len() {
         scale[b] = scale[b - 1] * totals[b - 1];
     }
-    out.par_chunks_mut(chunk).zip(scale).skip(1).for_each(|(o, s)| o.iter_mut().for_each(|x| *x *= s));
+    out.par_chunks_mut(chunk)
+        .zip(scale)
+        .skip(1)
+        .for_each(|(o, s)| o.iter_mut().for_each(|x| *x *= s));
 }
 
 /// `v mod p` for a little-endian integer of at most four limbs, reduced by subtracting the
@@ -288,7 +288,11 @@ pub fn from_limbs_mod_order<F: PrimeField>(v: impl IntoIterator<Item = u64>) -> 
 /// is the previous plus a table constant when the step is small, instead of a Montgomery conversion.
 pub fn ascending_to_fr(values: impl IntoIterator<Item = u64>) -> impl Iterator<Item = Fr> {
     values.into_iter().scan((0u64, Fr::zero()), |(prev, value), v| {
-        *value = if v >= *prev && v - *prev < 64 { *value + Fr::small(v - *prev) } else { Fr::small(v) };
+        *value = if v >= *prev && v - *prev < 64 {
+            *value + Fr::small(v - *prev)
+        } else {
+            Fr::small(v)
+        };
         *prev = v;
         Some(*value)
     })

@@ -20,7 +20,11 @@ pub fn avm_trace(inputs: &[u8]) -> Result<Vec<u8>, String> {
         let status = bb_avm_trace(inputs.as_ptr(), inputs.len(), &mut out, &mut out_len);
         let bytes = std::slice::from_raw_parts(out, out_len).to_vec();
         libc::free(out.cast());
-        if status == 0 { Ok(bytes) } else { Err(String::from_utf8_lossy(&bytes).into_owned()) }
+        if status == 0 {
+            Ok(bytes)
+        } else {
+            Err(String::from_utf8_lossy(&bytes).into_owned())
+        }
     }
 }
 

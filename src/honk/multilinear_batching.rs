@@ -5,8 +5,8 @@
 
 use super::hypernova::{ProverClaim, VerifierClaim};
 use crate::base::codec::FromChallenge;
-use crate::base::field::NativeField;
 use crate::base::field::FieldLike;
+use crate::base::field::NativeField;
 use crate::base::group::{Curve, GroupLike};
 use crate::base::poly::eq_table;
 use crate::base::poly::evaluate_univariate;
@@ -66,7 +66,10 @@ pub fn mlb_prove(claims: Vec<ProverClaim>, t: &mut NativeTranscript) -> ProverCl
             _ => Cow::Owned(vec![Fr::zero()]),
         }
     }
-    let mut non_shifted: Vec<Cow<[Fr]>> = claims.iter().map(|c| lean(&c.non_shifted_polynomial.coeffs, 0)).collect();
+    let mut non_shifted: Vec<Cow<[Fr]>> = claims
+        .iter()
+        .map(|c| lean(&c.non_shifted_polynomial.coeffs, 0))
+        .collect();
     let mut shifted: Vec<Cow<[Fr]>> = claims
         .iter()
         .map(|c| {
@@ -174,7 +177,12 @@ pub fn mlb_prove(claims: Vec<ProverClaim>, t: &mut NativeTranscript) -> ProverCl
     }
     drop(_g_sc);
     let _g_post = crate::base::bench::Scope::new("mlb/post");
-    let evals: Vec<Fr> = non_shifted.iter().chain(&shifted).map(|c| c[0]).chain(eq.iter().map(|v| v[0])).collect();
+    let evals: Vec<Fr> = non_shifted
+        .iter()
+        .chain(&shifted)
+        .map(|c| c[0])
+        .chain(eq.iter().map(|v| v[0]))
+        .collect();
     t.send_vec("Sumcheck:evaluations", &evals);
 
     // Merge with powers of ρ, drawn after the evaluations are bound.

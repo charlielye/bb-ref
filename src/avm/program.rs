@@ -183,7 +183,11 @@ impl Builder {
     fn finish(self, outs: Vec<(Val, bool)>, max_points: usize) -> Program {
         let outs: Vec<Out> = outs
             .into_iter()
-            .map(|(val, scaled)| Out { val, points: (self.degree(val) + 1).min(max_points), scaled })
+            .map(|(val, scaled)| Out {
+                val,
+                points: (self.degree(val) + 1).min(max_points),
+                scaled,
+            })
             .collect();
         let mut need = vec![0u8; self.ops.len()];
         for o in &outs {
@@ -206,7 +210,13 @@ impl Builder {
             }
         }
         let width = need.iter().copied().max().unwrap_or(0) as usize;
-        Program { ops: self.ops, need, computed, width, outs }
+        Program {
+            ops: self.ops,
+            need,
+            computed,
+            width,
+            outs,
+        }
     }
 }
 
@@ -228,7 +238,14 @@ fn compile(r: &super::tables::Relation) -> Option<Program> {
             }
             subs.iter().map(|e| (b.expr(e, &vals), true)).collect()
         }
-        Body::Interaction { src_sel, dst_sel, inverses, counts, src, dst } => {
+        Body::Interaction {
+            src_sel,
+            dst_sel,
+            inverses,
+            counts,
+            src,
+            dst,
+        } => {
             let (a, s) = (b.col(*src_sel), b.col(*dst_sel));
             let inv = b.col(*inverses);
             let (t0, t1) = (b.tuple(src), b.tuple(dst));

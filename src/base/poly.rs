@@ -40,7 +40,10 @@ impl<F: FieldLike> Polynomial<F> {
     /// Zero on rows `start..end`, with `start` rounded down to `WINDOW_ALIGN`.
     pub fn zero_window(start: usize, end: usize) -> Self {
         let start = start.min(end) & !(WINDOW_ALIGN - 1);
-        Self { coeffs: F::zeroed(end - start), start }
+        Self {
+            coeffs: F::zeroed(end - start),
+            start,
+        }
     }
     pub fn from_coeffs(coeffs: Vec<F>) -> Self {
         Self { coeffs, start: 0 }
@@ -54,11 +57,17 @@ impl<F: FieldLike> Polynomial<F> {
     }
     /// The coefficient at `i`, zero past the allocated end (columns are sized to their content).
     pub fn at(&self, i: usize) -> F {
-        self.coeffs.get(i.wrapping_sub(self.start)).cloned().unwrap_or_else(F::zero)
+        self.coeffs
+            .get(i.wrapping_sub(self.start))
+            .cloned()
+            .unwrap_or_else(F::zero)
     }
     /// Index of the last non-zero coefficient plus one.
     pub fn end_index(&self) -> usize {
-        self.coeffs.iter().rposition(|c| !c.is_zero()).map_or(0, |i| self.start + i + 1)
+        self.coeffs
+            .iter()
+            .rposition(|c| !c.is_zero())
+            .map_or(0, |i| self.start + i + 1)
     }
     /// The left shift `p(X) / X`, valid only when `coeffs[0] == 0` (bb "shiftable" polynomials).
     pub fn shifted(&self) -> Self {
@@ -132,7 +141,10 @@ impl<F: FieldLike> Polynomial<F> {
         }
         // Each term's backing rows up to its last non-zero: a zero tail adds nothing (fixed-size
         // columns, e.g. the ECCVM's at 2^15, are mostly tail on small flows).
-        let ends: Vec<usize> = terms.par_iter().map(|(p, _)| p.end_index().saturating_sub(p.start)).collect();
+        let ends: Vec<usize> = terms
+            .par_iter()
+            .map(|(p, _)| p.end_index().saturating_sub(p.start))
+            .collect();
         const CHUNK: usize = WINDOW_ALIGN;
         self.coeffs.par_chunks_mut(CHUNK).enumerate().for_each(|(c, chunk)| {
             if fresh {
@@ -276,13 +288,15 @@ pub fn fold_par<F: FieldLike + Copy + Send + Sync + 'static>(src: &[F], u: &F) -
     let half = src.len() / 2;
     let mut out = Vec::with_capacity(half);
     let dst = &mut out.spare_capacity_mut()[..half];
-    dst.par_chunks_mut(CHUNK).zip(src.par_chunks(2 * CHUNK)).for_each(|(d, s)| {
-        if !crate::base::wasm::try_fold_into(s, d, u) {
-            for (o, p) in d.iter_mut().zip(s.chunks(2)) {
-                o.write(p[0] + *u * (p[1] - p[0]));
+    dst.par_chunks_mut(CHUNK)
+        .zip(src.par_chunks(2 * CHUNK))
+        .for_each(|(d, s)| {
+            if !crate::base::wasm::try_fold_into(s, d, u) {
+                for (o, p) in d.iter_mut().zip(s.chunks(2)) {
+                    o.write(p[0] + *u * (p[1] - p[0]));
+                }
             }
-        }
-    });
+        });
     unsafe { out.set_len(half) };
     out
 }

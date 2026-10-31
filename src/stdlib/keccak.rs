@@ -100,13 +100,17 @@ fn base11_digits(v: &Fr) -> Vec<u8> {
 
 /// `Σ d[i]·11^i` over a digit run, optionally keeping only each digit's parity.
 fn pack11(d: &[u8], parity: bool) -> u64 {
-    d.iter().rev().fold(0u64, |acc, &x| acc * BASE + u64::from(if parity { x & 1 } else { x }))
+    d.iter()
+        .rev()
+        .fold(0u64, |acc, &x| acc * BASE + u64::from(if parity { x & 1 } else { x }))
 }
 
 /// `Fr` image of `Σ d[i]·11^i` (any length).
 fn fr11(d: &[u8], parity: bool) -> Fr {
     let pow8 = Fr::from(pow11(8));
-    d.chunks(8).rev().fold(Fr::from(0u64), |acc, c| acc * pow8 + Fr::from(pack11(c, parity)))
+    d.chunks(8)
+        .rev()
+        .fold(Fr::from(0u64), |acc, c| acc * pow8 + Fr::from(pack11(c, parity)))
 }
 
 /// bb `normalize_and_rotate<lane>`: renormalizes the lane's digits to bits and rotates left by

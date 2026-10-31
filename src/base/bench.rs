@@ -191,7 +191,10 @@ pub fn print() {
 
     let mut children: HashMap<&'static str, Vec<(&'static str, u64, u64, u64, usize)>> = HashMap::new();
     for (&(name, parent), &(mx, sum, count, threads)) in edge.iter() {
-        children.entry(parent).or_default().push((name, mx, sum, count, threads));
+        children
+            .entry(parent)
+            .or_default()
+            .push((name, mx, sum, count, threads));
     }
     for v in children.values_mut() {
         v.sort_by_key(|e| std::cmp::Reverse(e.1));

@@ -52,16 +52,30 @@ fn main() {
     // Production shape: one coefficient-basis evaluation per edge on degree-1 rows.
     use bb_ref::honk::graded::{lift_params, Graded};
     let row1: Vec<Fr> = (0..layout.num_all()).map(|_| Fr::rand(&mut rng)).collect();
-    let row_uni: Vec<Graded<Fr>> = row.iter().zip(&row1).map(|(a, b)| Graded::linear(*a, *b - *a)).collect();
+    let row_uni: Vec<Graded<Fr>> = row
+        .iter()
+        .zip(&row1)
+        .map(|(a, b)| Graded::linear(*a, *b - *a))
+        .collect();
     let p_uni = lift_params(&p);
     let s_uni = Graded::constant(s);
     // bb `relations_bench`, execute_relation_for_univariates, same box, 1t, ns per edge.
     let bb: &[(&str, f64)] = &[
-        ("Arithmetic", 8718.0), ("DeltaRange", 6406.0), ("Elliptic", 9234.0), ("Memory", 14072.0),
-        ("Permutation", 4233.0), ("EccOpQueue", 3216.0), ("Bus", 4938.0), ("Poseidon2External", 10869.0),
-        ("Poseidon2QuadInternal", 21234.0), ("Poseidon2QuadInternalTerminal", 13258.0),
+        ("Arithmetic", 8718.0),
+        ("DeltaRange", 6406.0),
+        ("Elliptic", 9234.0),
+        ("Memory", 14072.0),
+        ("Permutation", 4233.0),
+        ("EccOpQueue", 3216.0),
+        ("Bus", 4938.0),
+        ("Poseidon2External", 10869.0),
+        ("Poseidon2QuadInternal", 21234.0),
+        ("Poseidon2QuadInternalTerminal", 13258.0),
     ];
-    println!("{:<34} {:>10} {:>10} {:>10} {:>8}", "kernel relation", "pointwise", "graded", "bb uni", "grd/bb");
+    println!(
+        "{:<34} {:>10} {:>10} {:>10} {:>8}",
+        "kernel relation", "pointwise", "graded", "bb uni", "grd/bb"
+    );
     for r in 0..MEGA_KERNEL.relations.len() {
         let mut acc = vec![Fr::from(0u64); RelationSet::<Fr>::num_subrelations(&rels, r)];
         let len = RelationSet::<Fr>::partial_length(&rels, r);
@@ -82,7 +96,9 @@ fn main() {
         let b = bb.iter().find(|(k, _)| *k == key).map(|(_, v)| *v);
         println!(
             "{:<34} {:>8.0}ns {:>8.0}ns {:>8} {:>8}",
-            name, pw, gr,
+            name,
+            pw,
+            gr,
             b.map(|v| format!("{v:.0}ns")).unwrap_or("-".into()),
             b.map(|v| format!("{:.2}x", gr / v)).unwrap_or("-".into())
         );

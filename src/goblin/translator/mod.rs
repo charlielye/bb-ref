@@ -328,7 +328,11 @@ impl TranslatorPolys {
     /// `row` into a reused buffer (the grand product visits every row).
     pub fn row_into(&self, i: usize, out: &mut Vec<Fr>) {
         out.clear();
-        out.extend(self.cols.iter().map(|c| c.coeffs.get(i).copied().unwrap_or_else(Fr::zero)));
+        out.extend(
+            self.cols
+                .iter()
+                .map(|c| c.coeffs.get(i).copied().unwrap_or_else(Fr::zero)),
+        );
     }
     /// Materialize every shifted column from its source (bb `set_shifted`).
     pub fn set_shifted(&mut self) {

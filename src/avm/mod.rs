@@ -4,7 +4,7 @@ pub mod program;
 pub mod prover;
 pub mod public_inputs;
 pub mod recursive;
-pub mod two_layer;
 pub mod relations;
 pub mod tables;
+pub mod two_layer;
 pub mod verifier;

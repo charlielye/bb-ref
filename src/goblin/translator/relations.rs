@@ -184,7 +184,9 @@ impl<T: FieldLike<Native = Fr>> RelationSet<T> for TranslatorRelations {
             // (and stays zero under folding).
             TranslatorRel::ZeroConstraints => {
                 let s = |r: &[T]| {
-                    at(r, lagrange_odd_in_minicircuit) + &at(r, lagrange_even_in_minicircuit) + &at(r, lagrange_mini_masking)
+                    at(r, lagrange_odd_in_minicircuit)
+                        + &at(r, lagrange_even_in_minicircuit)
+                        + &at(r, lagrange_mini_masking)
                 };
                 both(&|r: &[T]| (s(r) - &T::one()).is_zero()) || both(&|r: &[T]| s(r).is_zero())
             }

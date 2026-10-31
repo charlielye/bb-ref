@@ -27,7 +27,11 @@ pub fn in_tier(case: &str, full_only: bool) -> bool {
 
 /// A fixture every run needs: panics naming the regen script (under tools/regen/) that writes it.
 pub fn require(path: PathBuf, regen: &str) -> PathBuf {
-    assert!(path.exists(), "missing fixture {}: run tools/regen/{regen}", path.display());
+    assert!(
+        path.exists(),
+        "missing fixture {}: run tools/regen/{regen}",
+        path.display()
+    );
     path
 }
 
@@ -98,7 +102,10 @@ pub fn assert_polys_equal(
         let at: usize = at.parse().unwrap();
         for row in at.saturating_sub(2)..=at + 2 {
             for &j in compare {
-                let (a, b) = (inst.polys[j].coeffs.get(row).copied().unwrap_or_default(), expected.polys[j].coeffs.get(row).copied().unwrap_or_default());
+                let (a, b) = (
+                    inst.polys[j].coeffs.get(row).copied().unwrap_or_default(),
+                    expected.polys[j].coeffs.get(row).copied().unwrap_or_default(),
+                );
                 if a != Fr::from(0u64) || b != Fr::from(0u64) {
                     eprintln!(
                         "AT row {row} {:>24}: rust {:?}{}",
@@ -158,7 +165,10 @@ pub fn assert_polys_equal(
     }
     for row in r.saturating_sub(2)..=r + after {
         for &j in compare {
-            let (a, b) = (inst.polys[j].coeffs.get(row).copied().unwrap_or_default(), expected.polys[j].coeffs.get(row).copied().unwrap_or_default());
+            let (a, b) = (
+                inst.polys[j].coeffs.get(row).copied().unwrap_or_default(),
+                expected.polys[j].coeffs.get(row).copied().unwrap_or_default(),
+            );
             if a != Fr::from(0u64) || b != Fr::from(0u64) {
                 report += &format!(
                     "  row {row} {:>24}: rust {:?}{}\n",

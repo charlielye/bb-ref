@@ -17,10 +17,10 @@ use crate::base::Fq;
 mod adx;
 #[cfg(all(target_arch = "wasm32", not(feature = "heap-profile")))]
 mod alloc;
-#[cfg(all(target_arch = "wasm32", not(feature = "heap-profile")))]
-pub use alloc::alloc_zeroed_par as alloc_zeroed;
 #[cfg(not(all(target_arch = "wasm32", not(feature = "heap-profile"))))]
 pub use crate::base::pool::alloc_zeroed;
+#[cfg(all(target_arch = "wasm32", not(feature = "heap-profile")))]
+pub use alloc::alloc_zeroed_par as alloc_zeroed;
 #[cfg(target_family = "wasm")]
 mod by29;
 #[cfg(any(
@@ -115,10 +115,10 @@ pub use {
 
 #[cfg(not(all(target_family = "wasm", target_feature = "simd128", not(wasm_wide))))]
 mod fallback;
-#[cfg(not(all(target_family = "wasm", target_feature = "simd128", not(wasm_wide))))]
-pub use fallback::{try_fold_two_rounds, PermLanes, QuadConsts, PERM_INPUTS, PERM_POINTS};
 #[cfg(not(any(all(target_family = "wasm", target_feature = "simd128"), wasm_wide)))]
 pub use fallback::{try_axpy, try_fold_from, try_fold_halve, try_fold_into, PackedTree};
+#[cfg(not(all(target_family = "wasm", target_feature = "simd128", not(wasm_wide))))]
+pub use fallback::{try_fold_two_rounds, PermLanes, QuadConsts, PERM_INPUTS, PERM_POINTS};
 
 // The wide-arithmetic build: raw-limb kernels in place of the 2^261 four-lane ones.
 #[cfg(wasm_wide)]

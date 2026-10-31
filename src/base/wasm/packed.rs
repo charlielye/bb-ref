@@ -222,11 +222,19 @@ pub fn try_fold_into<F: 'static>(src: &[F], dst: &mut [MaybeUninit<F>], u: &F) -
     assert_eq!(src.len(), 2 * dst.len());
     let dst = dst as *mut [MaybeUninit<F>];
     if TypeId::of::<F>() == TypeId::of::<Fr>() {
-        go::<Fr>(reslice_ref(src), unsafe { &mut *(dst as *mut [MaybeUninit<Fr>]) }, &stored_as(u));
+        go::<Fr>(
+            reslice_ref(src),
+            unsafe { &mut *(dst as *mut [MaybeUninit<Fr>]) },
+            &stored_as(u),
+        );
         return true;
     }
     if TypeId::of::<F>() == TypeId::of::<Fq>() {
-        go::<Fq>(reslice_ref(src), unsafe { &mut *(dst as *mut [MaybeUninit<Fq>]) }, &stored_as(u));
+        go::<Fq>(
+            reslice_ref(src),
+            unsafe { &mut *(dst as *mut [MaybeUninit<Fq>]) },
+            &stored_as(u),
+        );
         return true;
     }
     false
@@ -273,7 +281,9 @@ mod tests {
         for n in [1usize, 3, 8, 33, 257] {
             // Zero groups and identical pairs in the first rows take the skips.
             let mut a: Vec<Fr> = (0..n).map(|_| Fr::rand(&mut rng)).collect();
-            let b: Vec<Fr> = (0..n).map(|i| if i < 8 { Fr::ZERO } else { Fr::rand(&mut rng) }).collect();
+            let b: Vec<Fr> = (0..n)
+                .map(|i| if i < 8 { Fr::ZERO } else { Fr::rand(&mut rng) })
+                .collect();
             let s = Fr::rand(&mut rng);
             let mut expect = a.clone();
             for i in 0..n {
@@ -288,7 +298,9 @@ mod tests {
             }
             let u = Fr::rand(&mut rng);
             let at = |i: usize| if i < n { v[i] } else { Fr::ZERO };
-            let expect: Vec<Fr> = (0..n.div_ceil(2)).map(|k| at(2 * k) + (at(2 * k + 1) - at(2 * k)) * u).collect();
+            let expect: Vec<Fr> = (0..n.div_ceil(2))
+                .map(|k| at(2 * k) + (at(2 * k + 1) - at(2 * k)) * u)
+                .collect();
             assert_eq!(try_fold_from(&v, n, &u).unwrap(), expect, "fold_from n={n}");
             if n % 2 == 0 {
                 let mut out = Vec::with_capacity(n / 2);

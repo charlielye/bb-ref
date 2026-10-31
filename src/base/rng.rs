@@ -195,7 +195,12 @@ pub fn detached<T>(f: impl FnOnce() -> T) -> (T, bool) {
 }
 
 pub fn global_next_u256() -> U256 {
-    if DETACHED.with(|d| d.get() != NOT_DETACHED && { d.set(DETACHED_DREW); true }) {
+    if DETACHED.with(|d| {
+        d.get() != NOT_DETACHED && {
+            d.set(DETACHED_DREW);
+            true
+        }
+    }) {
         return OsRng.next_u256();
     }
     if cfg!(feature = "timing") {
@@ -220,7 +225,11 @@ where
     P::BaseField: PrimeField,
 {
     use ark_ff::{Field, Zero};
-    assert_eq!(P::BaseField::MODULUS.as_ref()[0] % 4, 3, "sqrt convention needs q ≡ 3 mod 4");
+    assert_eq!(
+        P::BaseField::MODULUS.as_ref()[0] % 4,
+        3,
+        "sqrt convention needs q ≡ 3 mod 4"
+    );
     loop {
         let x: P::BaseField = global_field();
         let mut yy = x.square() * x + P::COEFF_B;

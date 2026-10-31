@@ -45,7 +45,6 @@ impl<C: Curve> HidingKernelIo<C> {
     }
 }
 
-
 /// bb `ChonkVerifier<false>::verify`: the hiding kernel Oink, its IO consistency, the merge, the
 /// ECCVM, the joint MegaZK + Translator proof, and finally the TripleIPA accumulator.
 pub fn chonk_verify(hiding_vk: &Vk<Bn254>, proof: &ChonkProof, g2: &G2Points, grumpkin: &GrumpkinKey) -> bool {

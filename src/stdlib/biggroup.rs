@@ -411,9 +411,15 @@ impl<P: BigGroupCurve> Element<P> {
         let x_coordinates_match = other.x.eq(&self.x);
         let y_coordinates_match = self.y.eq(&other.y);
         let (infinity_predicate, double_predicate) = if subtract {
-            (x_coordinates_match.and(&y_coordinates_match), x_coordinates_match.and(&y_coordinates_match.not()))
+            (
+                x_coordinates_match.and(&y_coordinates_match),
+                x_coordinates_match.and(&y_coordinates_match.not()),
+            )
         } else {
-            (x_coordinates_match.and(&y_coordinates_match.not()), x_coordinates_match.and(&y_coordinates_match))
+            (
+                x_coordinates_match.and(&y_coordinates_match.not()),
+                x_coordinates_match.and(&y_coordinates_match),
+            )
         };
         let lhs_infinity = self.is_point_at_infinity();
         let rhs_infinity = other.is_point_at_infinity();

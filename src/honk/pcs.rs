@@ -1018,9 +1018,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_ec::AffineRepr;
     use crate::base::transcript::NativeTranscript;
     use crate::base::G1Affine;
+    use ark_ec::AffineRepr;
     use ark_ff::UniformRand;
 
     fn poly(rng: &mut impl rand::RngCore, n: usize) -> Polynomial<Fr> {

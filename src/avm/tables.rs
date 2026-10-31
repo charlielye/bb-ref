@@ -49,7 +49,10 @@ impl Layout {
         self.num_precomputed + self.num_wires
     }
     pub fn col(&self, name: &str) -> usize {
-        *self.index.get(name).unwrap_or_else(|| panic!("unknown AVM column {name}"))
+        *self
+            .index
+            .get(name)
+            .unwrap_or_else(|| panic!("unknown AVM column {name}"))
     }
 }
 
@@ -131,7 +134,10 @@ fn parse_layout() -> Layout {
     let columns: Vec<&'static str> = lines.collect();
     let one = |k: &str| -> usize { fields[k][0].parse().unwrap() };
     let counts: Vec<usize> = fields["counts"].iter().map(|v| v.parse().unwrap()).collect();
-    let lengths: Vec<usize> = fields["public_input_column_lengths"].iter().map(|v| v.parse().unwrap()).collect();
+    let lengths: Vec<usize> = fields["public_input_column_lengths"]
+        .iter()
+        .map(|v| v.parse().unwrap())
+        .collect();
     let index = columns.iter().enumerate().map(|(i, c)| (*c, i)).collect();
     let l = Layout {
         max_trace_log_size: one("max_trace_log_size"),
@@ -232,7 +238,10 @@ fn parse_relations(l: &Layout) -> Vec<Relation> {
             assert_eq!(subs.len(), r.num_subrelations, "{}", r.name);
         }
     }
-    assert_eq!(out.iter().map(|r| r.num_subrelations).sum::<usize>(), l.num_subrelations);
+    assert_eq!(
+        out.iter().map(|r| r.num_subrelations).sum::<usize>(),
+        l.num_subrelations
+    );
     assert!(out.iter().all(|r| r.partial_length <= l.max_partial_length));
     out
 }
@@ -292,6 +301,9 @@ mod tests {
         let batched = l.max_partial_length + 1;
         let len = l.num_witness() * 4 + l.num_all() + log_n * batched + (log_n - 1) * 4 + log_n + 2 * 4;
         assert_eq!(len, l.proof_length);
-        assert!(l.vk[..l.num_precomputed].iter().filter(|p| !p.is_zero()).all(|p| p.is_on_curve()));
+        assert!(l.vk[..l.num_precomputed]
+            .iter()
+            .filter(|p| !p.is_zero())
+            .all(|p| p.is_on_curve()));
     }
 }

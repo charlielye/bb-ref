@@ -60,8 +60,9 @@ impl<T: FieldLike<Native = Fq>> RelationSet<T> for EccvmRelations {
     }
     fn skip_columns(&self) -> Option<Vec<usize>> {
         // Must cover everything `skip` reads.
-        let mut cols: Vec<usize> =
-            [z_perm, z_perm_shift, transcript_mul, lagrange_last, lagrange_first].map(|e| e as usize).to_vec();
+        let mut cols: Vec<usize> = [z_perm, z_perm_shift, transcript_mul, lagrange_last, lagrange_first]
+            .map(|e| e as usize)
+            .to_vec();
         cols.sort_unstable();
         Some(cols)
     }
@@ -506,8 +507,11 @@ fn msm<T: FieldLike<Native = Fq>>(acc: &mut [T], r: &[T], scaling: &T) {
     acc[35] += transition.clone() * &round * scaling;
     acc[36] += is_not_first_row.clone() * &transition_shift * (msm_size.clone() + &pc_shift - &pc) * scaling;
     let active_phase = q_add.clone() + &q_double;
-    acc[49] +=
-        is_not_first_row.clone() * &active_phase * (-transition_shift.clone() + &one) * (pc_shift.clone() - &pc) * scaling;
+    acc[49] += is_not_first_row.clone()
+        * &active_phase
+        * (-transition_shift.clone() + &one)
+        * (pc_shift.clone() - &pc)
+        * scaling;
     acc[50] += q_skew.clone() * &q_skew_shift * (pc_shift - &pc) * scaling;
     acc[51] += is_not_first_row * &transition_shift * (-q_skew.clone() + &one) * scaling;
     acc[37] += adds[1].clone() * (-adds[0].clone() + &one) * scaling;

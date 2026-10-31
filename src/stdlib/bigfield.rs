@@ -250,7 +250,9 @@ impl<N: PrimeField> BigField<N> {
     }
     /// The integer the limbs encode (not reduced).
     pub fn get_value(&self) -> BigUint {
-        combine_limbs(std::array::from_fn(|i| self.limb_element(i).get_value().into_bigint().0))
+        combine_limbs(std::array::from_fn(|i| {
+            self.limb_element(i).get_value().into_bigint().0
+        }))
     }
     pub fn get_maximum_value(&self) -> BigUint {
         let s = self.state.borrow();
@@ -1667,7 +1669,11 @@ impl<N: PrimeField> BigField<N> {
         Self::accumulate_terms(
             &remainders[1..],
             to_add,
-            [&mut limb_0_accumulator, &mut limb_2_accumulator, &mut prime_limb_accumulator],
+            [
+                &mut limb_0_accumulator,
+                &mut limb_2_accumulator,
+                &mut prime_limb_accumulator,
+            ],
         );
         let t0 = remainders[0].limb_element(1);
         let t1 = remainders[0].limb_element(3);
@@ -1738,7 +1744,8 @@ impl<N: PrimeField> BigField<N> {
     fn range_constrain_carries(ctx: &Ctx, lo: &FieldT, hi: &FieldT, lo_bits: u64, hi_bits: u64) {
         if lo_bits <= 70 && hi_bits <= 70 {
             let (hi, lo) = (hi.get_witness_index(), lo.get_witness_index());
-            ctx.borrow_mut().range_constrain_two_limbs(hi, lo, hi_bits as usize, lo_bits as usize);
+            ctx.borrow_mut()
+                .range_constrain_two_limbs(hi, lo, hi_bits as usize, lo_bits as usize);
         } else {
             hi.create_range_constraint(hi_bits);
             lo.create_range_constraint(lo_bits);
@@ -1831,7 +1838,11 @@ impl<N: PrimeField> BigField<N> {
         Self::accumulate_terms(
             remainders.get(1..).unwrap_or_default(),
             to_add,
-            [&mut limb_0_accumulator, &mut limb_2_accumulator, &mut prime_limb_accumulator],
+            [
+                &mut limb_0_accumulator,
+                &mut limb_2_accumulator,
+                &mut prime_limb_accumulator,
+            ],
         );
         let fix_field = |f: FieldT| {
             if f.is_constant() {

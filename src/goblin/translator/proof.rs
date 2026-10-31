@@ -24,7 +24,9 @@ use crate::honk::pcs::{
     ClaimBatcher,
 };
 use crate::honk::relations::RelationParams;
-use crate::honk::sumcheck::{alpha_powers, gate_separator_factor, verify_sumcheck, RelationSet, RoundProver, SumcheckSpec, ZkData};
+use crate::honk::sumcheck::{
+    alpha_powers, gate_separator_factor, verify_sumcheck, RelationSet, RoundProver, SumcheckSpec, ZkData,
+};
 
 pub const CONCATENATED_LABELS: [&str; 5] = [
     "CONCATENATED_RANGE_CONSTRAINTS_0",
@@ -56,7 +58,10 @@ pub fn translator_oink_prove(
         std::array::from_fn(|i| polys.cols[FIRST_WIRE + ACCUMULATORS_BINARY_LIMBS_0 + i].coeffs[RESULT_ROW]);
     polys.cols[TEnt::gemini_masking_poly as usize] =
         build_gemini_masking_poly(CONST_TRANSLATOR_LOG_N, CIRCUIT_SIZE, CIRCUIT_SIZE, rng);
-    t.send("Gemini:masking_poly_comm", &ck.commit(polys.col(TEnt::gemini_masking_poly)));
+    t.send(
+        "Gemini:masking_poly_comm",
+        &ck.commit(polys.col(TEnt::gemini_masking_poly)),
+    );
     let cols: Vec<usize> = (0..CONCATENATED_LABELS.len())
         .map(|g| TEnt::concatenated_range_constraints_0 as usize + g)
         .chain((0..ORDERED_LABELS.len()).map(|k| TEnt::ordered_range_constraints_0 as usize + k))
@@ -75,7 +80,14 @@ pub fn translator_oink_prove(
 }
 
 /// bb `TranslatorProver::construct_proof` on the shared transcript (Goblin's, after the ECCVM).
-pub fn translator_prove(polys: &mut TranslatorPolys, v: &Fq, x: &Fq, ck: &CommitmentKey, t: &mut NativeTranscript, rng: &mut dyn Rng) {
+pub fn translator_prove(
+    polys: &mut TranslatorPolys,
+    v: &Fq,
+    x: &Fq,
+    ck: &CommitmentKey,
+    t: &mut NativeTranscript,
+    rng: &mut dyn Rng,
+) {
     let params = translator_oink_prove(polys, v, x, ck, t, rng);
     let rels = TranslatorRelations;
     let alpha: Fr = t.challenge("Sumcheck:alpha");
@@ -84,7 +96,15 @@ pub fn translator_prove(polys: &mut TranslatorPolys, v: &Fq, x: &Fq, ck: &Commit
     let mut zk = ZkData::<Bn254>::new(CONST_TRANSLATOR_LOG_N, t, ck, rng);
     let d = Bn254::LIBRA_UNIVARIATES_LENGTH;
     let shift_sources: Vec<usize> = (13..=98).collect();
-    let mut state = RoundProver::new(CIRCUIT_SIZE, &polys.cols[..FIRST_SHIFTED], &shift_sources, false, 0, usize::MAX, None);
+    let mut state = RoundProver::new(
+        CIRCUIT_SIZE,
+        &polys.cols[..FIRST_SHIFTED],
+        &shift_sources,
+        false,
+        0,
+        usize::MAX,
+        None,
+    );
     let mut partial_eval = Fr::one();
     let mut challenge = Vec::with_capacity(CONST_TRANSLATOR_LOG_N);
     for round in 0..CONST_TRANSLATOR_LOG_N {
@@ -113,7 +133,16 @@ pub fn translator_prove(polys: &mut TranslatorPolys, v: &Fq, x: &Fq, ck: &Commit
     let libra = small_subgroup_ipa_prove::<Bn254>(&zk, &challenge, &libra_evaluation, ck, t, rng);
     let unshifted: Vec<&Poly> = PCS_UNSHIFTED.iter().map(|e| &polys.cols[*e]).collect();
     let to_be_shifted: Vec<&Poly> = PCS_TO_BE_SHIFTED.iter().map(|e| &polys.cols[*e]).collect();
-    let claim = shplemini_prove::<Bn254>(CIRCUIT_SIZE, &unshifted, &to_be_shifted, &challenge, ck, t, Some(&libra), &[]);
+    let claim = shplemini_prove::<Bn254>(
+        CIRCUIT_SIZE,
+        &unshifted,
+        &to_be_shifted,
+        &challenge,
+        ck,
+        t,
+        Some(&libra),
+        &[],
+    );
     kzg_open::<Bn254>(claim, ck, t);
 }
 
@@ -141,7 +170,13 @@ impl TranslatorBf<Fr> for Fq {
 
 impl TranslatorBf<crate::stdlib::FieldT> for crate::stdlib::bigfield::BigField<Fq> {
     fn five_limbs(&self) -> [crate::stdlib::FieldT; 5] {
-        std::array::from_fn(|i| if i < 4 { self.limb_element(i) } else { self.get_prime_basis_limb() })
+        std::array::from_fn(|i| {
+            if i < 4 {
+                self.limb_element(i)
+            } else {
+                self.get_prime_basis_limb()
+            }
+        })
     }
     fn four_limbs(&self) -> [crate::stdlib::FieldT; 4] {
         std::array::from_fn(|i| self.limb_element(i))
@@ -153,7 +188,11 @@ impl TranslatorBf<crate::stdlib::FieldT> for crate::stdlib::bigfield::BigField<F
 
 /// bb `put_translation_data_in_relation_parameters`: the v powers are computed with four
 /// multiplications (the last unused), matching bb's loop.
-fn translator_params_bf<TF: FieldLike, B: TranslatorBf<TF>>(v: &B, x: &B, accumulated_result: &B) -> RelationParams<TF> {
+fn translator_params_bf<TF: FieldLike, B: TranslatorBf<TF>>(
+    v: &B,
+    x: &B,
+    accumulated_result: &B,
+) -> RelationParams<TF> {
     let mut params = RelationParams {
         evaluation_input_x: x.five_limbs(),
         ..Default::default()
@@ -205,12 +244,19 @@ where
     params.gamma = t.challenge("gamma");
     let z_perm: C::G = t.receive("Z_PERM");
     let opq = op_queue_wire_commitments;
-    let unshifted = [masking, vk_comm, opq[0].clone(), opq[1].clone(), opq[2].clone(), opq[3].clone()]
-        .into_iter()
-        .chain(ordered.iter().cloned())
-        .chain([z_perm.clone()])
-        .chain(concatenated.iter().cloned())
-        .collect();
+    let unshifted = [
+        masking,
+        vk_comm,
+        opq[0].clone(),
+        opq[1].clone(),
+        opq[2].clone(),
+        opq[3].clone(),
+    ]
+    .into_iter()
+    .chain(ordered.iter().cloned())
+    .chain([z_perm.clone()])
+    .chain(concatenated.iter().cloned())
+    .collect();
     let to_be_shifted = [opq[1].clone(), opq[2].clone(), opq[3].clone()]
         .into_iter()
         .chain(ordered.iter().cloned())
@@ -281,12 +327,18 @@ where
         unshifted_comms: pre.unshifted,
         unshifted_evals: PCS_UNSHIFTED.iter().map(|e| sc.evals[*e].clone()).collect(),
         shifted_comms: pre.to_be_shifted,
-        shifted_evals: PCS_SHIFTED.iter().map(|e| sc.evals[*e].clone()).chain(concat_shift_evals).collect(),
+        shifted_evals: PCS_SHIFTED
+            .iter()
+            .map(|e| sc.evals[*e].clone())
+            .chain(concat_shift_evals)
+            .collect(),
     };
     // bb `TranslatorFlavor::REPEATED_COMMITMENTS`: every to-be-shifted commitment is also unshifted,
     // the op-queue wires from position 3 of the unshifted list.
     let n_unshifted = batcher.unshifted_comms.len();
-    let repeated: Vec<(usize, usize)> = (0..PCS_TO_BE_SHIFTED.len()).map(|j| (2 + 1 + j, n_unshifted + j)).collect();
+    let repeated: Vec<(usize, usize)> = (0..PCS_TO_BE_SHIFTED.len())
+        .map(|j| (2 + 1 + j, n_unshifted + j))
+        .collect();
     let shplemini = shplemini_verify::<C>(
         true,
         true,

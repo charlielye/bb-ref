@@ -19,8 +19,10 @@ fn main() {
         println!("cargo:rerun-if-env-changed=BB_AVM_CXX_LIB_DIR");
         println!("cargo:rerun-if-env-changed=AZTEC_REPO");
         let dir = std::env::var("BB_AVM_LIB_DIR").unwrap_or_else(|_| {
-            let repo = std::env::var("AZTEC_REPO")
-                .unwrap_or(format!("{}/pin/aztec-packages", std::env::var("CARGO_MANIFEST_DIR").unwrap()));
+            let repo = std::env::var("AZTEC_REPO").unwrap_or(format!(
+                "{}/pin/aztec-packages",
+                std::env::var("CARGO_MANIFEST_DIR").unwrap()
+            ));
             format!("{repo}/barretenberg/cpp/build-avm-sim/lib")
         });
         println!("cargo:rerun-if-changed={dir}/libbb-avm-sim.a");
@@ -38,7 +40,10 @@ fn main() {
         return;
     }
     let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".into());
-    let out = std::process::Command::new(rustc).args(["--print", "sysroot"]).output().expect("rustc --print sysroot");
+    let out = std::process::Command::new(rustc)
+        .args(["--print", "sysroot"])
+        .output()
+        .expect("rustc --print sysroot");
     let sysroot = String::from_utf8(out.stdout).unwrap();
     let crt = std::path::Path::new(sysroot.trim())
         .join("lib/rustlib")

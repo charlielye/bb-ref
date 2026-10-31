@@ -245,7 +245,11 @@ pub fn process_honk_recursion_constraints(
             }
         }
         let proof: Vec<FieldT> = c.proof.iter().map(|&i| FieldT::from_witness_index(ctx, i)).collect();
-        let flat: Vec<FieldT> = c.public_inputs.iter().map(|&i| FieldT::from_witness_index(ctx, i)).collect();
+        let flat: Vec<FieldT> = c
+            .public_inputs
+            .iter()
+            .map(|&i| FieldT::from_witness_index(ctx, i))
+            .collect();
         let lengths = crate::avm::tables::layout().public_input_column_lengths;
         assert_eq!(
             flat.len(),
@@ -258,13 +262,8 @@ pub fn process_honk_recursion_constraints(
             columns.push(flat[at..at + len].to_vec());
             at += len;
         }
-        let out = crate::avm::two_layer::verify_two_layer(
-            ctx,
-            &proof,
-            &columns,
-            srs,
-            &mut crate::base::rng::GlobalProxy,
-        );
+        let out =
+            crate::avm::two_layer::verify_two_layer(ctx, &proof, &columns, srs, &mut crate::base::rng::GlobalProxy);
         if !out.all_checks_passed && !is_write_vk {
             ctx.borrow_mut().failure("AVM recursion verification failed");
         }
@@ -371,7 +370,11 @@ fn mock_avm_proof_fields() -> Vec<Fr> {
     commitments(&mut fields, log_n - 1);
     seq(&mut fields, log_n);
     commitments(&mut fields, 2);
-    assert_eq!(fields.len(), l.proof_length, "AVM mock proof length must match COMPUTED_AVM_PROOF_LENGTH_IN_FIELDS");
+    assert_eq!(
+        fields.len(),
+        l.proof_length,
+        "AVM mock proof length must match COMPUTED_AVM_PROOF_LENGTH_IN_FIELDS"
+    );
     fields
 }
 

@@ -205,7 +205,11 @@ where
     // With simd128 each block is replayed packed (`wasm::try_fold_two_rounds`), in blocks small
     // enough to keep every thread busy at q = 128; the scalar passes stay its exact fallback.
     let per_thread = q.div_ceil(rayon::current_num_threads().max(1));
-    let chunk = if crate::base::wasm::PACKED { (per_thread.div_ceil(4) * 4).clamp(16, 512) } else { per_thread.max(128) };
+    let chunk = if crate::base::wasm::PACKED {
+        (per_thread.div_ceil(4) * 4).clamp(16, 512)
+    } else {
+        per_thread.max(128)
+    };
     (0..q)
         .step_by(chunk)
         .collect::<Vec<_>>()
@@ -286,9 +290,9 @@ where
 mod tests {
     use super::*;
     use crate::base::grumpkin_endo;
+    use crate::base::GrumpkinConfig;
     use ark_ec::VariableBaseMSM;
     use ark_ff::UniformRand;
-    use crate::base::GrumpkinConfig;
 
     #[test]
     fn two_round_fold_matches_projective() {

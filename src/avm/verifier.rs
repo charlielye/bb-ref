@@ -137,7 +137,10 @@ where
     let (tbs_start, tbs_end) = (l.to_be_shifted_start(), l.to_be_shifted_end());
     let batched_shifted = C::G::batch_mul(&commitments[tbs_start..tbs_end], &challenges[tbs_start..tbs_end]);
     let batched_unshifted = C::G::batch_mul(&commitments[..tbs_start], &challenges[..tbs_start])
-        .add(&C::G::batch_mul(&commitments[tbs_end..n_unshifted], &challenges[tbs_end..n_unshifted]))
+        .add(&C::G::batch_mul(
+            &commitments[tbs_end..n_unshifted],
+            &challenges[tbs_end..n_unshifted],
+        ))
         .add(&batched_shifted);
     let inner_product = |cs: &[C::Fr], es: &[C::Fr]| {
         let mut acc = C::Fr::zero();
@@ -156,7 +159,19 @@ where
         shifted_evals: vec![batched_shifted_eval],
     };
     let one = C::G::one(ctx);
-    let shplemini = shplemini_verify::<C>(false, false, &batcher, &sc.challenge, &one, &mut t, &[], &[], &C::Fr::zero(), &[], &[]);
+    let shplemini = shplemini_verify::<C>(
+        false,
+        false,
+        &batcher,
+        &sc.challenge,
+        &one,
+        &mut t,
+        &[],
+        &[],
+        &C::Fr::zero(),
+        &[],
+        &[],
+    );
     // Q, the two batched claims, the fold commitments, the G1 identity, then W.
     let pairing_points = kzg_reduce_verify_batch_opening_claim::<C>(shplemini.claim, &mut t, log_n + 4);
     Ok(Reduction {
@@ -170,7 +185,11 @@ where
 /// operations replayed without any verification arithmetic (one gate challenge rather than its
 /// powers, no relation or PCS work), then the final state as a challenge. The outer circuit of the
 /// two-layer verifier uses it to bind the inner circuit to this proof and these public inputs.
-pub fn hash_avm_transcript<C: Curve>(ctx: &<C::Fr as FieldLike>::Ctx, proof: &[C::TF], public_inputs: &[Vec<C::Fr>]) -> C::Fr
+pub fn hash_avm_transcript<C: Curve>(
+    ctx: &<C::Fr as FieldLike>::Ctx,
+    proof: &[C::TF],
+    public_inputs: &[Vec<C::Fr>],
+) -> C::Fr
 where
     C::Fr: FieldLike<Native = Fr> + crate::base::codec::Transcriptable<C::TF>,
     C::TF: crate::base::codec::ChallengeField + FieldLike<Native = Fr, Ctx = <C::Fr as FieldLike>::Ctx>,

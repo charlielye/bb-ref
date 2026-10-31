@@ -10,10 +10,10 @@
 
 mod common;
 
-use bb_ref::base::srs::Srs;
 use bb_ref::acir::lower::add_default_pairing_points;
 use bb_ref::base::field::FieldLike;
 use bb_ref::base::rng::{DebugRng, Rng};
+use bb_ref::base::srs::Srs;
 use bb_ref::base::srs::{bn254_g2, CommitmentKey};
 use bb_ref::base::{Bn254, Fr, KeccakBn254, Vk, U256};
 use bb_ref::circuit::builder::AddQuad;

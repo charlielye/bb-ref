@@ -29,7 +29,8 @@ fn protocol_circuits_dir() -> PathBuf {
 
 fn artifact(name: &str) -> Vec<u8> {
     let path = protocol_circuits_dir().join(format!("{name}.json"));
-    std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e} (the pin's compiled noir-protocol-circuits)", path.display()))
+    std::fs::read(&path)
+        .unwrap_or_else(|e| panic!("{}: {e} (the pin's compiled noir-protocol-circuits)", path.display()))
 }
 
 /// Filter with `BBREF_KERNEL=<name>` to run one kernel.
@@ -50,11 +51,24 @@ fn protocol_kernel_vks_match_bb() {
         let mut builder = build_circuit_mega(&circuit, None, None, &mut OsRng);
         let inst = ProverInstance::from_builder(kind.flavor(), &mut builder, &mut OsRng);
         let vk = inst.compute_vk(&CommitmentKey::new(inst.max_end_index)).to_bytes();
-        let fixture = common::require(common::fixture_dir(&format!("protocol/vks/{name}.vk")), "regen_protocol.sh");
-        assert_eq!(vk, std::fs::read(fixture).unwrap(), "{name}: VK differs from bb write_vk's");
+        let fixture = common::require(
+            common::fixture_dir(&format!("protocol/vks/{name}.vk")),
+            "regen_protocol.sh",
+        );
+        assert_eq!(
+            vk,
+            std::fs::read(fixture).unwrap(),
+            "{name}: VK differs from bb write_vk's"
+        );
         let json: serde_json::Value = serde_json::from_slice(&artifact).unwrap();
-        let bytes = json["verificationKey"]["bytes"].as_str().expect("artifact verificationKey");
-        assert_eq!(vk, hex::decode(bytes).unwrap(), "{name}: VK differs from the artifact's");
+        let bytes = json["verificationKey"]["bytes"]
+            .as_str()
+            .expect("artifact verificationKey");
+        assert_eq!(
+            vk,
+            hex::decode(bytes).unwrap(),
+            "{name}: VK differs from the artifact's"
+        );
         eprintln!("{name}: VK matches");
     }
 }

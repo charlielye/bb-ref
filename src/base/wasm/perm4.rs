@@ -109,8 +109,14 @@ impl PermLanes {
         for i in 0..4 {
             let (w0, dw) = (at(6 * i), at(6 * i + 1));
             let wg = add(&w0, gamma, c);
-            num[i] = [add(&wg, &mont_mul(&at(6 * i + 2), beta, c), c), add(&dw, &mont_mul(&at(6 * i + 3), beta, c), c)];
-            den[i] = [add(&wg, &mont_mul(&at(6 * i + 4), beta, c), c), add(&dw, &mont_mul(&at(6 * i + 5), beta, c), c)];
+            num[i] = [
+                add(&wg, &mont_mul(&at(6 * i + 2), beta, c), c),
+                add(&dw, &mont_mul(&at(6 * i + 3), beta, c), c),
+            ];
+            den[i] = [
+                add(&wg, &mont_mul(&at(6 * i + 4), beta, c), c),
+                add(&dw, &mont_mul(&at(6 * i + 5), beta, c), c),
+            ];
         }
         for f in [&mut num[0], &mut den[0]] {
             *f = [mont_mul(&f[0], &scaling, c), mont_mul(&f[1], &scaling, c)];

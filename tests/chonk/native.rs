@@ -96,7 +96,11 @@ fn pinned_flows_byte_exact_with_seed() {
         let dir = e.unwrap().path();
         let name = dir.file_name().unwrap().to_str().unwrap().to_string();
         let inputs = flows.join(&name).join("ivc-inputs.msgpack");
-        assert!(inputs.exists(), "{} missing: barretenberg/cpp/scripts/chonk_inputs.sh download", inputs.display());
+        assert!(
+            inputs.exists(),
+            "{} missing: barretenberg/cpp/scripts/chonk_inputs.sh download",
+            inputs.display()
+        );
         if !common::in_tier(&name, name != "ecdsar1+transfer_0_recursions+sponsored_fpc") {
             continue;
         }

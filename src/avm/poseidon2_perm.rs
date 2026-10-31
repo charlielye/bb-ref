@@ -27,7 +27,9 @@ fn cols() -> &'static Cols {
     static C: std::sync::OnceLock<Cols> = std::sync::OnceLock::new();
     C.get_or_init(|| {
         let l = layout();
-        let row = |prefix: String| -> [usize; 8] { std::array::from_fn(|k| if k < 4 { 0 } else { l.col(&format!("{prefix}{k}")) }) };
+        let row = |prefix: String| -> [usize; 8] {
+            std::array::from_fn(|k| if k < 4 { 0 } else { l.col(&format!("{prefix}{k}")) })
+        };
         Cols {
             sel: l.col("poseidon2_perm_sel"),
             a: std::array::from_fn(|k| l.col(&format!("poseidon2_perm_a_{k}"))),
@@ -111,7 +113,11 @@ pub fn accumulate<F: FieldLike<Native = Fr>>(acc: &mut [F], row: &[F], scaling: 
 
     // 5..20: four initial full rounds, each reading the previous output permuted {6, 5, 7, 4}
     for i in 0..4 {
-        let input = if i == 0 { pick(&c.ext, [6, 5, 7, 4]) } else { pick(&c.t[i - 1], [6, 5, 7, 4]) };
+        let input = if i == 0 {
+            pick(&c.ext, [6, 5, 7, 4])
+        } else {
+            pick(&c.t[i - 1], [6, 5, 7, 4])
+        };
         cx.full_round(5 + 4 * i, input, i, pick(&c.t[i], [4, 5, 6, 7]));
     }
 
@@ -137,7 +143,11 @@ pub fn accumulate<F: FieldLike<Native = Fr>>(acc: &mut [F], row: &[F], scaling: 
         }
     }
     for i in 0..56 {
-        let carried = if i == 0 { [&b3[1], &b3[2], &b3[3]] } else { [&xs[i - 1], &ys[i - 1], &zs[i - 1]] };
+        let carried = if i == 0 {
+            [&b3[1], &b3[2], &b3[3]]
+        } else {
+            [&xs[i - 1], &ys[i - 1], &zs[i - 1]]
+        };
         let value = d1.clone() * &alphas[i] + carried[0] + carried[1] + carried[2];
         cx.pin(21 + i, c.b_partial[i], &value);
     }

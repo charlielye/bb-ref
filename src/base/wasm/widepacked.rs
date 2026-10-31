@@ -23,19 +23,29 @@ fn view<F: 'static>(v: &[F]) -> Option<(&[[u64; 4]], [u64; 6])> {
     } else {
         return None;
     };
-    Some((unsafe { core::slice::from_raw_parts(v.as_ptr().cast(), v.len()) }, raw::consts(m)))
+    Some((
+        unsafe { core::slice::from_raw_parts(v.as_ptr().cast(), v.len()) },
+        raw::consts(m),
+    ))
 }
 
 #[inline(always)]
 fn view_mut<F: 'static>(v: &mut [F]) -> Option<(&mut [[u64; 4]], [u64; 6])> {
     let p = view(&*v)?.1;
-    Some((unsafe { core::slice::from_raw_parts_mut(v.as_mut_ptr().cast(), v.len()) }, p))
+    Some((
+        unsafe { core::slice::from_raw_parts_mut(v.as_mut_ptr().cast(), v.len()) },
+        p,
+    ))
 }
 
 /// `a + u·(b − a)`, or `a` when the pair is bit-identical (constant runs, zero padding).
 #[inline(always)]
 fn fold(a: &[u64; 4], b: &[u64; 4], u: &[u64; 4], p: &[u64; 6]) -> [u64; 4] {
-    if a == b { *a } else { raw::add(a, &raw::mul(&raw::sub(b, a, p), u, p), p) }
+    if a == b {
+        *a
+    } else {
+        raw::add(a, &raw::mul(&raw::sub(b, a, p), u, p), p)
+    }
 }
 
 /// `dst[i] += s * src[i]` over the overlap; false if `F` has no raw form.
@@ -70,7 +80,9 @@ pub fn try_fold_from<F: 'static>(src: &[F], len: usize, u: &F) -> Option<Vec<F>>
     let (s, p) = view(src)?;
     let u = limbs(u);
     let at = |i: usize| s.get(i).copied().unwrap_or([0; 4]);
-    let out: Vec<[u64; 4]> = (0..len.div_ceil(2)).map(|k| fold(&at(2 * k), &at(2 * k + 1), &u, &p)).collect();
+    let out: Vec<[u64; 4]> = (0..len.div_ceil(2))
+        .map(|k| fold(&at(2 * k), &at(2 * k + 1), &u, &p))
+        .collect();
     Some(unsafe { core::mem::transmute::<Vec<[u64; 4]>, Vec<F>>(out) })
 }
 

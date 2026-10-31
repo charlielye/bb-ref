@@ -137,7 +137,10 @@ impl TranslatorPolys {
             }
             ordered.sort_unstable();
             let col = &mut self.cols[FIRST_ORDERED + g].coeffs[1..n - MAX_RANDOM_VALUES_PER_ORDERED];
-            for (c, v) in col.iter_mut().zip(ascending_to_fr(ordered[1..].iter().map(|v| *v as u64))) {
+            for (c, v) in col
+                .iter_mut()
+                .zip(ascending_to_fr(ordered[1..].iter().map(|v| *v as u64)))
+            {
                 *c = v;
             }
         }
@@ -146,7 +149,10 @@ impl TranslatorPolys {
         }
         extra_denominator.sort_unstable();
         let col = &mut self.cols[FIRST_ORDERED + 4].coeffs[1..n - MAX_RANDOM_VALUES_PER_ORDERED];
-        for (c, v) in col.iter_mut().zip(ascending_to_fr(extra_denominator[1..].iter().map(|v| *v as u64))) {
+        for (c, v) in col
+            .iter_mut()
+            .zip(ascending_to_fr(extra_denominator[1..].iter().map(|v| *v as u64)))
+        {
             *c = v;
         }
         // The masking values of the four range-constraint concatenations move to the tails of the

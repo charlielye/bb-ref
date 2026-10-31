@@ -3,10 +3,10 @@
 //! verify (fixtures under `keccak/`, produced by `tools/regen/regen_backend.sh`).
 
 mod common;
-use bb_ref::base::srs::Srs;
 use bb_ref::acir::format::{decode_program, decode_witness};
 use bb_ref::acir::lower::build_circuit;
 use bb_ref::base::srs::bn254_g2;
+use bb_ref::base::srs::Srs;
 use bb_ref::base::vk::Vk;
 use bb_ref::base::{CommitmentKey, Fr, KeccakBn254, OsRng, U256};
 use bb_ref::honk::prover_instance::ProverInstance;
@@ -104,7 +104,10 @@ fn rollup_root_witness_byte_exact() {
         return;
     }
     let dir = common::fixture_dir("backend/rollup_root");
-    let golden = common::require(common::fixture_dir("instance/backend/rollup_root/seeded"), "regen_backend.sh");
+    let golden = common::require(
+        common::fixture_dir("instance/backend/rollup_root/seeded"),
+        "regen_backend.sh",
+    );
     bb_ref::base::rng::set_global(Box::new(bb_ref::base::rng::DebugRng::new(12345)));
     let mut rng = bb_ref::base::rng::GlobalProxy;
     let circuit = decode_program(&std::fs::read(dir.join("program.json")).expect("program.json"));

@@ -467,7 +467,10 @@ impl TranslatorCircuit {
         for op in &ops[NUM_NO_OPS_START..NUM_NO_OPS_START + NUM_RANDOM_OPS_START] {
             self.process_random_op(op);
         }
-        assert!(ops.len() >= NUM_NO_OPS_START + NUM_RANDOM_OPS_START + random_ops_end, "op queue too small for the Translator");
+        assert!(
+            ops.len() >= NUM_NO_OPS_START + NUM_RANDOM_OPS_START + random_ops_end,
+            "op queue too small for the Translator"
+        );
         let ops_end = ops.len() - random_ops_end;
         let span = &ops[NUM_NO_OPS_START + NUM_RANDOM_OPS_START..ops_end];
         // Horner from the last op gives the accumulator *before* each op.

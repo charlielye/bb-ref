@@ -86,7 +86,10 @@ impl<F: NativeField> Chords<F> {
 /// it; the hooks below then reinterpret `F` as that type.
 fn bn254<F: 'static>() -> Option<bool> {
     use core::any::TypeId;
-    let (fr, fq) = (TypeId::of::<F>() == TypeId::of::<Fr>(), TypeId::of::<F>() == TypeId::of::<Fq>());
+    let (fr, fq) = (
+        TypeId::of::<F>() == TypeId::of::<Fr>(),
+        TypeId::of::<F>() == TypeId::of::<Fq>(),
+    );
     (fr && available::<Fr>() || fq && available::<Fq>()).then_some(fr)
 }
 
@@ -109,9 +112,10 @@ macro_rules! on_bn254 {
 /// In-place sumcheck fold `v[k] = v[2k] + u·(v[2k + 1] − v[2k])`, halving `v`; false if `F` has no
 /// kernel here.
 pub fn try_fold_halve<F: 'static>(v: &mut Vec<F>, u: &F) -> bool {
-    on_bn254!(F, |G| fold_halve::<G>(unsafe { &mut *(v as *mut Vec<F> as *mut Vec<G>) }, unsafe {
-        &*(u as *const F as *const G)
-    }));
+    on_bn254!(F, |G| fold_halve::<G>(
+        unsafe { &mut *(v as *mut Vec<F> as *mut Vec<G>) },
+        unsafe { &*(u as *const F as *const G) }
+    ));
     true
 }
 
@@ -146,9 +150,10 @@ pub fn try_fold_into<F: 'static>(src: &[F], dst: &mut [core::mem::MaybeUninit<F>
 /// `dst[i] += Σ s·src[i]` over `terms` (sources shorter than `dst` are zero-extended); false if
 /// `F` has no kernel here.
 pub fn try_axpy_batch<F: 'static>(dst: &mut [F], terms: &[(&[F], F)]) -> bool {
-    on_bn254!(F, |G| axpy_batch::<G>(unsafe { &mut *(dst as *mut [F] as *mut [G]) }, unsafe {
-        &*(terms as *const [(&[F], F)] as *const [(&[G], G)])
-    }));
+    on_bn254!(F, |G| axpy_batch::<G>(
+        unsafe { &mut *(dst as *mut [F] as *mut [G]) },
+        unsafe { &*(terms as *const [(&[F], F)] as *const [(&[G], G)]) }
+    ));
     true
 }
 
@@ -180,7 +185,11 @@ fn fold_from<G: NativeField>(src: &[G], len: usize, u: &G) -> Vec<G> {
     let at = |i: usize| if i < n { src[i] } else { G::ZERO };
     out.extend((8 * blocks..len.div_ceil(2)).map(|k| {
         let (a, b) = (at(2 * k), at(2 * k + 1));
-        if a == b { a } else { a + *u * (b - a) }
+        if a == b {
+            a
+        } else {
+            a + *u * (b - a)
+        }
     }));
     out
 }
@@ -245,7 +254,13 @@ mod x86 {
                 i += 1;
             }
             let p = times(&m, 1);
-            Consts { p, p2: times(&m, 2), p4: times(&m, 4), pinv: inv.wrapping_neg() & M52, qk: (1 << 52) / (p[4] + 1) }
+            Consts {
+                p,
+                p2: times(&m, 2),
+                p4: times(&m, 4),
+                pinv: inv.wrapping_neg() & M52,
+                qk: (1 << 52) / (p[4] + 1),
+            }
         }
     }
 
@@ -373,9 +388,18 @@ mod x86 {
         let m = splat(M52);
         [
             _mm512_and_si512(a0, m),
-            _mm512_and_si512(_mm512_or_si512(_mm512_srli_epi64::<52>(a0), _mm512_slli_epi64::<12>(a1)), m),
-            _mm512_and_si512(_mm512_or_si512(_mm512_srli_epi64::<40>(a1), _mm512_slli_epi64::<24>(a2)), m),
-            _mm512_and_si512(_mm512_or_si512(_mm512_srli_epi64::<28>(a2), _mm512_slli_epi64::<36>(a3)), m),
+            _mm512_and_si512(
+                _mm512_or_si512(_mm512_srli_epi64::<52>(a0), _mm512_slli_epi64::<12>(a1)),
+                m,
+            ),
+            _mm512_and_si512(
+                _mm512_or_si512(_mm512_srli_epi64::<40>(a1), _mm512_slli_epi64::<24>(a2)),
+                m,
+            ),
+            _mm512_and_si512(
+                _mm512_or_si512(_mm512_srli_epi64::<28>(a2), _mm512_slli_epi64::<36>(a3)),
+                m,
+            ),
             _mm512_srli_epi64::<16>(a3),
         ]
     }
@@ -386,7 +410,12 @@ mod x86 {
     pub(crate) unsafe fn load8<F>(p: *const F) -> V5 {
         debug_assert!(size_of::<F>() == 32);
         let p = p as *const __m512i;
-        from_rows(_mm512_loadu_si512(p), _mm512_loadu_si512(p.add(1)), _mm512_loadu_si512(p.add(2)), _mm512_loadu_si512(p.add(3)))
+        from_rows(
+            _mm512_loadu_si512(p),
+            _mm512_loadu_si512(p.add(1)),
+            _mm512_loadu_si512(p.add(2)),
+            _mm512_loadu_si512(p.add(3)),
+        )
     }
 
     /// The even- and odd-indexed elements of the sixteen at `p`, as lanes.
@@ -580,12 +609,7 @@ mod x86 {
     /// reduced; the four-factor products are below 1.19p, z at X ≤ 5 below 6p, so z·num − z'·den
     /// stays below 6.36p with 4p added, and the accumulator is reduced after every add.
     #[target_feature(enable = "avx512f,avx512ifma")]
-    pub(super) unsafe fn perm8(
-        stage: &[[Fr; 8]; PERM_INPUTS],
-        acc: &mut [V5; PERM_POINTS],
-        beta: &V5,
-        gamma: &V5,
-    ) {
+    pub(super) unsafe fn perm8(stage: &[[Fr; 8]; PERM_INPUTS], acc: &mut [V5; PERM_POINTS], beta: &V5, gamma: &V5) {
         let c = &const { Consts::new(<Fr as ark_ff::PrimeField>::MODULUS.0) };
         let at = |k: usize| load8(stage[k].as_ptr());
         let sc = at(PERM_INPUTS - 1);
@@ -607,7 +631,12 @@ mod x86 {
         for i in 0..4 {
             let (w0, dw) = (at(6 * i), at(6 * i + 1));
             let wg = add(&w0, gamma);
-            let factor = |k: usize| (add(&wg, &mont_mul(c, &at(k), beta)), add(&dw, &mont_mul(c, &at(k + 1), beta)));
+            let factor = |k: usize| {
+                (
+                    add(&wg, &mont_mul(c, &at(k), beta)),
+                    add(&dw, &mont_mul(c, &at(k + 1), beta)),
+                )
+            };
             let ((na, nd), (da, dd)) = (factor(6 * i + 2), factor(6 * i + 4));
             num[i] = points(na, nd, i == 0);
             den[i] = points(da, dd, i == 0);
@@ -801,7 +830,9 @@ mod tests {
         let u = F::rand(&mut rng);
         let fold = |v: &[F], len: usize| -> Vec<F> {
             let at = |i: usize| if i < v.len().min(len) { v[i] } else { F::ZERO };
-            (0..len.div_ceil(2)).map(|k| at(2 * k) + u * (at(2 * k + 1) - at(2 * k))).collect()
+            (0..len.div_ceil(2))
+                .map(|k| at(2 * k) + u * (at(2 * k + 1) - at(2 * k)))
+                .collect()
         };
         for n in [0usize, 1, 15, 16, 17, 33, 255, 256, 1000, 4099] {
             let v = sample::<F>(n, &mut rng);
@@ -809,15 +840,26 @@ mod tests {
             assert!(try_fold_halve(&mut w, &u));
             assert_eq!(w, fold(&v, n), "halve n={n}");
             assert_eq!(try_fold_from(&v, n, &u).unwrap(), fold(&v, n), "from n={n}");
-            assert_eq!(try_fold_from(&v, n + 37, &u).unwrap(), fold(&v, n + 37), "from n={n}+37");
+            assert_eq!(
+                try_fold_from(&v, n + 37, &u).unwrap(),
+                fold(&v, n + 37),
+                "from n={n}+37"
+            );
             let mut into = Vec::with_capacity(n / 2);
-            assert!(try_fold_into(&v[..n / 2 * 2], &mut into.spare_capacity_mut()[..n / 2], &u));
+            assert!(try_fold_into(
+                &v[..n / 2 * 2],
+                &mut into.spare_capacity_mut()[..n / 2],
+                &u
+            ));
             unsafe { into.set_len(n / 2) };
             assert_eq!(into, fold(&v, n / 2 * 2), "into n={n}");
             // Thirteen terms: unit and random scalars, zero stretches, sources shorter and longer.
             let srcs: Vec<Vec<F>> = (0..13).map(|t| sample::<F>((n * (t + 3)) / 8 + t, &mut rng)).collect();
-            let terms: Vec<(&[F], F)> =
-                srcs.iter().enumerate().map(|(t, s)| (&s[..], if t % 4 == 0 { F::ONE } else { F::rand(&mut rng) })).collect();
+            let terms: Vec<(&[F], F)> = srcs
+                .iter()
+                .enumerate()
+                .map(|(t, s)| (&s[..], if t % 4 == 0 { F::ONE } else { F::rand(&mut rng) }))
+                .collect();
             let mut dst = sample::<F>(n, &mut rng);
             let mut expect = dst.clone();
             for (s, x) in &terms {

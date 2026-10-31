@@ -35,8 +35,10 @@ pub fn inner_circuit(proof: &[Fr], public_inputs: &[Vec<Fr>]) -> Builder {
     }
     {
         let stdlib_proof = proof_to_witnesses(&ctx, proof);
-        let stdlib_public_inputs: Vec<Vec<FieldT>> =
-            public_inputs.iter().map(|column| proof_to_witnesses(&ctx, column)).collect();
+        let stdlib_public_inputs: Vec<Vec<FieldT>> = public_inputs
+            .iter()
+            .map(|column| proof_to_witnesses(&ctx, column))
+            .collect();
 
         // bb `FixedStdlibVKAndHash_`: the hash, then every commitment, as witnesses; then all fixed.
         let l = layout();

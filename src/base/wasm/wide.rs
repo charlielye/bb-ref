@@ -35,7 +35,11 @@ pub fn mul(x: &[u64; 4], y: &[u64; 4], p: &[u64; 6]) -> [u64; 4] {
     for i in 0..4 {
         (o[i], borrow) = t[i].borrowing_sub(p[i], borrow);
     }
-    if borrow { t } else { o }
+    if borrow {
+        t
+    } else {
+        o
+    }
 }
 
 macro_rules! wide_config {
@@ -50,7 +54,9 @@ macro_rules! wide_config {
             };
             /// R³ mod p: the safegcd inverse of the stored a·R is a⁻¹·R⁻¹, and one multiply by R³
             /// takes it to the stored a⁻¹·R.
-            const R3: [u64; 4] = Fp::<MontBackend<Self, 4>, 4>::new(<Self as MontConfig<4>>::R2).0 .0;
+            const R3: [u64; 4] = Fp::<MontBackend<Self, 4>, 4>::new(<Self as MontConfig<4>>::R2)
+                .0
+                 .0;
             const PINV58: u64 = super::by29::pinv58(<$ark as MontConfig<4>>::MODULUS.0[0]);
         }
 

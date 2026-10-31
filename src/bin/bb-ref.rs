@@ -124,7 +124,6 @@ fn write_words(path: &Path, words: &[U256]) {
     std::fs::write(path, bytes).unwrap();
 }
 
-
 fn write_vk_files(out: &Path, vk: &Vk<Bn254>) {
     std::fs::write(out.join("vk"), vk.to_bytes()).unwrap();
     std::fs::write(out.join("vk_hash"), to_bytes_be(&vk.hash())).unwrap();
@@ -223,7 +222,9 @@ fn main() {
     // deepest worker stack measured is ~158 KB (ECCVM relations, sumcheck round, accumulate_edge).
     let mut pool = rayon::ThreadPoolBuilder::new();
     if std::env::var_os("RAYON_NUM_THREADS").is_none() {
-        let hc = std::env::var("HARDWARE_CONCURRENCY").ok().and_then(|s| s.parse::<usize>().ok());
+        let hc = std::env::var("HARDWARE_CONCURRENCY")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok());
         let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
         pool = pool.num_threads(hc.filter(|&n| n > 0).unwrap_or(cores.min(48)));
     }

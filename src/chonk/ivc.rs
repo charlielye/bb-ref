@@ -2,7 +2,6 @@
 //! per kernel group; the hiding kernel is proven with the joint MegaZK + Translator proof) and
 //! `prove` emits the `ChonkProof`.
 
-use crate::circuit::op_queue::SharedOpQueue;
 use super::batched::joint_prove;
 use super::proof::ChonkProof;
 use crate::base::rng::Rng;
@@ -10,6 +9,7 @@ use crate::base::timing;
 use crate::base::vk::Vk;
 use crate::base::{Bn254, CommitmentKey, Fr, GrumpkinKey, NativeTranscript};
 use crate::circuit::op_queue::EccOpQueue;
+use crate::circuit::op_queue::SharedOpQueue;
 use crate::circuit::Builder;
 use crate::goblin::batch_merge::{batch_merge_prove, CHONK_MAX_NUM_CIRCUITS};
 use crate::goblin::eccvm::prover::eccvm_prove;
@@ -236,7 +236,10 @@ impl Chonk {
         let merge_proof = t.export_proof();
         timing::phase("merge");
         let _ge = crate::base::bench::Scope::new("ECCVMProver::construct_proof");
-        let eccvm_ck = self.eccvm_ck.take().unwrap_or_else(|| GrumpkinKey::new(ECCVM_FIXED_SIZE));
+        let eccvm_ck = self
+            .eccvm_ck
+            .take()
+            .unwrap_or_else(|| GrumpkinKey::new(ECCVM_FIXED_SIZE));
         let eccvm = eccvm_prove(&q, &eccvm_ck, &mut t, rng);
         drop(_ge);
         let eccvm_proof = t.export_proof();

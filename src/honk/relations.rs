@@ -363,7 +363,10 @@ fn memory<T: FieldLike>(acc: &mut [T], r: &Row<T>, p: &RelationParams<T>, scalin
     if timestamp {
         let timestamp_delta = w_2s.clone() - w_2;
         let ram_timestamp_check_identity = index_delta_is_zero * &timestamp_delta - w_3;
-        add_live(&mut memory_identity, ram_timestamp_check_identity * &(q_4v.clone() * q_1));
+        add_live(
+            &mut memory_identity,
+            ram_timestamp_check_identity * &(q_4v.clone() * q_1),
+        );
     }
     if record {
         add_live(&mut memory_identity, memory_record_check * &(q_mv.clone() * q_1));
@@ -727,10 +730,24 @@ const QUAD_SBOX: [(Ent, bool, Ent); 7] = [
     (w_r, true, q_c),
     (w_o, true, q_5),
 ];
-const QUAD_WIRES: [(Ent, bool); 7] =
-    [(w_r, false), (w_o, false), (w_4, false), (w_l, true), (w_r, true), (w_o, true), (w_4, true)];
+const QUAD_WIRES: [(Ent, bool); 7] = [
+    (w_r, false),
+    (w_o, false),
+    (w_4, false),
+    (w_l, true),
+    (w_r, true),
+    (w_o, true),
+    (w_4, true),
+];
 const ENTRY_SBOX: [(Ent, bool, Ent); 3] = [(w_l, false, q_l), (w_r, true, q_r), (w_o, true, q_o)];
-const ENTRY_WIRES: [(Ent, bool); 6] = [(w_r, false), (w_o, false), (w_4, false), (w_r, true), (w_o, true), (w_4, true)];
+const ENTRY_WIRES: [(Ent, bool); 6] = [
+    (w_r, false),
+    (w_o, false),
+    (w_4, false),
+    (w_r, true),
+    (w_o, true),
+    (w_4, true),
+];
 
 /// The Poseidon2 quad relations' subrelation bodies are fixed linear maps of shared S-box outputs
 /// and wires under one selector factor, so for separator weights `w_j = α_j / α_0` the weighted
@@ -738,7 +755,9 @@ const ENTRY_WIRES: [(Ent, bool); 6] = [(w_r, false), (w_o, false), (w_4, false),
 pub fn quad_batching_constants<F: FieldLike>(rel: Rel, w: &[F]) -> Vec<F> {
     let qp = quad_params();
     let dot = |rows: &[&[crate::base::Fr; 7]], i: usize| {
-        rows.iter().zip(w).fold(F::zero(), |a, (row, w)| a + w.clone() * &k::<F>(row[i]))
+        rows.iter()
+            .zip(w)
+            .fold(F::zero(), |a, (row, w)| a + w.clone() * &k::<F>(row[i]))
     };
     let (d1, three) = (k::<F>(qp.d1), c::<F>(3));
     let mut out: Vec<F>;
@@ -785,10 +804,18 @@ pub fn quad_batching_constants<F: FieldLike>(rel: Rel, w: &[F]) -> Vec<F> {
 fn quad_batched<T: FieldLike>(rel: Rel, acc: &mut [T], r: &Row<T>, consts: &[Vec<T>], scaling: &T) {
     let (q, sbox, wires, consts) = match rel {
         Rel::Poseidon2QuadInternal => (q_poseidon2_quad_internal, &QUAD_SBOX[..], &QUAD_WIRES[..], &consts[0]),
-        Rel::Poseidon2QuadInternalTerminal => {
-            (q_poseidon2_quad_internal_terminal, &QUAD_SBOX[..4], &QUAD_WIRES[..], &consts[1])
-        }
-        _ => (q_poseidon2_transition_entry, &ENTRY_SBOX[..], &ENTRY_WIRES[..], &consts[2]),
+        Rel::Poseidon2QuadInternalTerminal => (
+            q_poseidon2_quad_internal_terminal,
+            &QUAD_SBOX[..4],
+            &QUAD_WIRES[..],
+            &consts[1],
+        ),
+        _ => (
+            q_poseidon2_transition_entry,
+            &ENTRY_SBOX[..],
+            &ENTRY_WIRES[..],
+            &consts[2],
+        ),
     };
     let v = |(e, shifted): (Ent, bool)| if shifted { r.s(e) } else { r.e(e) };
     let (m, n) = consts.split_at(sbox.len());

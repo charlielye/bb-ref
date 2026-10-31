@@ -11,13 +11,13 @@ use crate::base::rng::Rng;
 use crate::base::transcript::Transcript;
 use crate::base::vk::Vk;
 use crate::base::{Bn254, CommitmentKey, Fq, Fr, G1Affine, NativeTranscript};
-use crate::goblin::translator::proof::{receive_pre_sumcheck, translator_oink_prove, PreSumcheck};
 pub use crate::goblin::translator::proof::TranslatorBf;
+use crate::goblin::translator::proof::{receive_pre_sumcheck, translator_oink_prove, PreSumcheck};
 use crate::goblin::translator::relations::TranslatorRelations;
 use crate::goblin::translator::{
-    complete_evaluations, minicircuit_entities, TranslatorPolys, CIRCUIT_SIZE,
-    CONST_TRANSLATOR_LOG_N, FULL_CIRCUIT_ENTITIES, LOG_MINI_CIRCUIT_SIZE, NUM_MINICIRCUIT_EVALUATIONS,
-    NUM_OP_QUEUE_WIRES, PCS_SHIFTED, PCS_TO_BE_SHIFTED, PCS_UNSHIFTED,
+    complete_evaluations, minicircuit_entities, TranslatorPolys, CIRCUIT_SIZE, CONST_TRANSLATOR_LOG_N,
+    FULL_CIRCUIT_ENTITIES, LOG_MINI_CIRCUIT_SIZE, NUM_MINICIRCUIT_EVALUATIONS, NUM_OP_QUEUE_WIRES, PCS_SHIFTED,
+    PCS_TO_BE_SHIFTED, PCS_UNSHIFTED,
 };
 use crate::honk::flavor::MEGA_ZK;
 use crate::honk::oink::OinkOutput;
@@ -28,8 +28,8 @@ use crate::honk::pcs::{
 use crate::honk::prover_instance::ProverInstance;
 use crate::honk::relations::RelationParams;
 use crate::honk::sumcheck::{
-    alpha_powers, full_relation_value, gate_separator_factor, CommittedRounds, HonkRelations,
-    RelationSet, RoundProver, ZkData,
+    alpha_powers, full_relation_value, gate_separator_factor, CommittedRounds, HonkRelations, RelationSet, RoundProver,
+    ZkData,
 };
 
 pub const JOINT_LOG_N: usize = CONST_TRANSLATOR_LOG_N;
@@ -117,7 +117,10 @@ pub fn joint_prove(
         let u: Fr = t.challenge(&format!("Sumcheck:u_{round}"));
         let t2 = crate::base::timing::Instant::now();
         // One parallel region: each fold's columns fill the pool where the other leaves gaps.
-        rayon::join(|| mega_state.partially_evaluate(&u), || trans_state.partially_evaluate(&u));
+        rayon::join(
+            || mega_state.partially_evaluate(&u),
+            || trans_state.partially_evaluate(&u),
+        );
         if crate::base::timing::on("BBREF_TIMING") {
             eprintln!("[joint round {round}] fold {:.1} ms", t2.elapsed().as_secs_f64() * 1e3);
         }

@@ -40,7 +40,11 @@ pub fn try_batch_add_indexed<F: PrimeField>(dx: &mut [F], dy: &mut [F], pairs: &
         acc = raw::mul(&acc, &dd, p);
         den.push(dd);
     }
-    let mut iv = limbs(&elt::<F>(acc).inverse().expect("batch_affine_add_indexed: zero denominator"));
+    let mut iv = limbs(
+        &elt::<F>(acc)
+            .inverse()
+            .expect("batch_affine_add_indexed: zero denominator"),
+    );
     for (k, &(d, s)) in pairs.iter().enumerate().rev() {
         let (d, s) = (d as usize, s as usize);
         let lambda = raw::mul(&y[d], &iv, p);
@@ -69,7 +73,11 @@ pub fn try_batch_double_indexed<F: PrimeField>(dx: &mut [F], dy: &mut [F], idx: 
         num.push(raw::mul(&raw::add(&raw::add(&xx, &xx, p), &xx, p), &acc, p));
         acc = raw::mul(&acc, &raw::add(&y[k], &y[k], p), p);
     }
-    let mut iv = limbs(&elt::<F>(acc).inverse().expect("batch_affine_double_indexed: zero denominator"));
+    let mut iv = limbs(
+        &elt::<F>(acc)
+            .inverse()
+            .expect("batch_affine_double_indexed: zero denominator"),
+    );
     for (i, &k) in idx.iter().enumerate().rev() {
         let k = k as usize;
         let lambda = raw::mul(&num[i], &iv, p);
@@ -92,7 +100,11 @@ where
     P::BaseField: PrimeField,
 {
     pub fn with_capacity(cap: usize) -> Self {
-        PackedTree { dens: Vec::with_capacity(cap / 2 + 1), prod: Vec::with_capacity(cap / 2 + 1), _p: PhantomData }
+        PackedTree {
+            dens: Vec::with_capacity(cap / 2 + 1),
+            prod: Vec::with_capacity(cap / 2 + 1),
+            _p: PhantomData,
+        }
     }
 
     /// `tree_reduce_scalar`'s levels (see there for the run bookkeeping). Always takes the level.

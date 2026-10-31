@@ -175,7 +175,13 @@ impl ProverInstance {
         let from_rows: Vec<bool> = layout
             .unshifted
             .iter()
-            .map(|e| !cfg!(target_family = "wasm") || selectors.contains(e) || blocks.iter().any(|(d, _)| d.kinds.iter().any(|k| gate_selector_entity(*k) == *e)))
+            .map(|e| {
+                !cfg!(target_family = "wasm")
+                    || selectors.contains(e)
+                    || blocks
+                        .iter()
+                        .any(|(d, _)| d.kinds.iter().any(|k| gate_selector_entity(*k) == *e))
+            })
             .collect();
         let mut polys: Vec<Poly> = (layout.unshifted.iter().zip(&from_rows))
             .map(|(e, early)| match (early, window.get(e)) {
@@ -196,8 +202,10 @@ impl ProverInstance {
         let mut cell_real: Vec<u32> = vec![0; NUM_WIRES * blocks.total_content_size()];
         {
             use crate::base::msm::SendPtr;
-            let cols: Vec<(SendPtr<Fr>, usize)> =
-                polys.iter_mut().map(|p| (SendPtr(p.coeffs.as_mut_ptr()), p.start)).collect();
+            let cols: Vec<(SendPtr<Fr>, usize)> = polys
+                .iter_mut()
+                .map(|p| (SendPtr(p.coeffs.as_mut_ptr()), p.start))
+                .collect();
             // Row `i` of column `e`.
             let at = |e: Ent, i: usize| {
                 let (p, start) = &cols[idx(e)];
@@ -258,14 +266,18 @@ impl ProverInstance {
         // Wires from the cells' real variables.
         {
             use crate::base::msm::SendPtr;
-            let cols: [SendPtr<Fr>; NUM_WIRES] = std::array::from_fn(|w| SendPtr(polys[idx(wires[w])].coeffs.as_mut_ptr()));
+            let cols: [SendPtr<Fr>; NUM_WIRES] =
+                std::array::from_fn(|w| SendPtr(polys[idx(wires[w])].coeffs.as_mut_ptr()));
             let (cols, vars) = (&cols, &builder.variables);
-            cell_real.par_chunks(NUM_WIRES << 12).enumerate().for_each(|(k, chunk)| {
-                for (c, real) in chunk.iter().enumerate() {
-                    let cell = k * (NUM_WIRES << 12) + c;
-                    unsafe { *cols[cell % NUM_WIRES].0.add(base + cell / NUM_WIRES) = vars[*real as usize] };
-                }
-            });
+            cell_real
+                .par_chunks(NUM_WIRES << 12)
+                .enumerate()
+                .for_each(|(k, chunk)| {
+                    for (c, real) in chunk.iter().enumerate() {
+                        let cell = k * (NUM_WIRES << 12) + c;
+                        unsafe { *cols[cell % NUM_WIRES].0.add(base + cell / NUM_WIRES) = vars[*real as usize] };
+                    }
+                });
         }
         let blocks = &builder.blocks;
         // Copy cycles in CSR layout (counts, prefix sum, scatter) rather than one Vec per variable:
@@ -351,7 +363,12 @@ impl ProverInstance {
             let (cycle_flat, cycle_start, row_val) = (&cycle_flat, &cycle_start, &row_val);
             let tags = &builder.real_variable_tags;
             // Per-tag link values, so the loop does no Montgomery conversions or hash lookups.
-            let num_tags = builder.tau.iter().map(|(k, v)| *k.max(v) as usize + 1).max().unwrap_or(0);
+            let num_tags = builder
+                .tau
+                .iter()
+                .map(|(k, v)| *k.max(v) as usize + 1)
+                .max()
+                .unwrap_or(0);
             let tag_val = |t: u32| tag_base + Fr::from(t as u64);
             let mut tau_val = vec![Fr::zero(); num_tags];
             for (k, v) in &builder.tau {
@@ -359,22 +376,25 @@ impl ProverInstance {
             }
             let id_val: Vec<Fr> = (0..num_tags as u32).map(tag_val).collect();
             let (tau_val, id_val) = (&tau_val, &id_val);
-            (0..builder.num_variables()).into_par_iter().with_min_len(256).for_each(|var| {
-                let cycle = &cycle_flat[cycle_start[var] as usize..cycle_start[var + 1] as usize];
-                if cycle.is_empty() {
-                    return;
-                }
-                for k in 0..cycle.len() - 1 {
-                    let (i, w) = ent_of(cycle[k]);
-                    let (ni, nw) = ent_of(cycle[k + 1]);
-                    unsafe { *sig_ptrs[w].0.add(i) = row_val[ni] + sep_w[nw] };
-                }
-                let tag = tags[var];
-                let (li, lw) = ent_of(*cycle.last().unwrap());
-                unsafe { *sig_ptrs[lw].0.add(li) = tau_val[tag as usize] };
-                let (fi, fw) = ent_of(cycle[0]);
-                unsafe { *id_ptrs[fw].0.add(fi) = id_val[tag as usize] };
-            });
+            (0..builder.num_variables())
+                .into_par_iter()
+                .with_min_len(256)
+                .for_each(|var| {
+                    let cycle = &cycle_flat[cycle_start[var] as usize..cycle_start[var + 1] as usize];
+                    if cycle.is_empty() {
+                        return;
+                    }
+                    for k in 0..cycle.len() - 1 {
+                        let (i, w) = ent_of(cycle[k]);
+                        let (ni, nw) = ent_of(cycle[k + 1]);
+                        unsafe { *sig_ptrs[w].0.add(i) = row_val[ni] + sep_w[nw] };
+                    }
+                    let tag = tags[var];
+                    let (li, lw) = ent_of(*cycle.last().unwrap());
+                    unsafe { *sig_ptrs[lw].0.add(li) = tau_val[tag as usize] };
+                    let (fi, fw) = ent_of(cycle[0]);
+                    unsafe { *id_ptrs[fw].0.add(fi) = id_val[tag as usize] };
+                });
         }
         let pub_inputs_offset = blocks.get(BlockId::PubInputs).trace_offset;
         let num_public_inputs = builder.public_inputs().len();
@@ -395,8 +415,8 @@ impl ProverInstance {
                 .lookup_tables
                 .par_iter()
                 .map(|table| {
-                    let index: std::collections::HashMap<[Fr; 3], u32, crate::base::srs::LimbHashBuilder> = (0
-                        ..table.size())
+                    let index: std::collections::HashMap<[Fr; 3], u32, crate::base::srs::LimbHashBuilder> = (0..table
+                        .size())
                         .map(|i| {
                             (
                                 [table.columns[0][i], table.columns[1][i], table.columns[2][i]],

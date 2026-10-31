@@ -2,12 +2,11 @@
 //! verifies natively, and every tampered proof field is rejected.
 mod common;
 
+use ark_ff::PrimeField;
 use bb_ref::avm::tables::layout;
 use bb_ref::avm::verifier::verify;
 use bb_ref::base::srs::bn254_g2;
 use bb_ref::base::Fr;
-use ark_ff::PrimeField;
-
 
 fn frs(rel: &str) -> Vec<Fr> {
     common::read(rel).chunks(32).map(Fr::from_be_bytes_mod_order).collect()
@@ -88,12 +87,27 @@ fn avm_inner_circuit_matches_bb() {
     let expected = ProverInstance::load_dump(&MEGA_AVM, &dump);
     assert_eq!(inst.dyadic_size, expected.dyadic_size, "dyadic size");
     assert_eq!(inst.pub_inputs_offset, expected.pub_inputs_offset, "pub inputs offset");
-    assert_eq!(inst.final_active_wire_idx, expected.final_active_wire_idx, "final active wire");
+    assert_eq!(
+        inst.final_active_wire_idx, expected.final_active_wire_idx,
+        "final active wire"
+    );
     let n = inst.layout.num_unshifted();
-    common::assert_polys_equal("avm inner", &inst, &expected, &builder, &(0..inst.layout.num_precomputed).collect::<Vec<_>>());
+    common::assert_polys_equal(
+        "avm inner",
+        &inst,
+        &expected,
+        &builder,
+        &(0..inst.layout.num_precomputed).collect::<Vec<_>>(),
+    );
     // The three random ops (bb `GoblinAvm`'s ZK prefix, after one no-op) fill op-queue rows 2..8,
     // mirrored one row later in the wires; their values depend on the RNG draw position.
-    let random_rows = |name: &str, r: usize| if name.starts_with("ecc_op_wire") { (2..8).contains(&r) } else { (3..9).contains(&r) };
+    let random_rows = |name: &str, r: usize| {
+        if name.starts_with("ecc_op_wire") {
+            (2..8).contains(&r)
+        } else {
+            (3..9).contains(&r)
+        }
+    };
     let mut witness_diffs = Vec::new();
     for i in inst.layout.num_precomputed..n {
         let name = inst.layout.unshifted[i].name();
@@ -116,9 +130,15 @@ fn avm_check_circuit_localizes_corruption() {
     use bb_ref::avm::prover::{check_circuit, polys_from_trace};
     let polys = polys_from_trace(&bb_ref::msgpack::bb_avm::avm_trace(&common::read("avm/avm_inputs.bin")).unwrap());
     let l = layout();
-    let col = (l.num_precomputed..l.num_precomputed + l.num_wires).find(|&c| polys[c].len() > 10 && polys[c].at(5) != Fr::from(0u64)).unwrap();
+    let col = (l.num_precomputed..l.num_precomputed + l.num_wires)
+        .find(|&c| polys[c].len() > 10 && polys[c].at(5) != Fr::from(0u64))
+        .unwrap();
     let mut bad = polys.clone();
-    bad[col] = bb_ref::base::poly::Poly::from_coeffs((0..bad[col].len()).map(|r| bad[col].at(r) + Fr::from((r == 5) as u64)).collect());
+    bad[col] = bb_ref::base::poly::Poly::from_coeffs(
+        (0..bad[col].len())
+            .map(|r| bad[col].at(r) + Fr::from((r == 5) as u64))
+            .collect(),
+    );
     let err = check_circuit(bad).unwrap_err();
     assert!(err.starts_with("Relation "), "{err}");
     check_circuit(polys).unwrap();

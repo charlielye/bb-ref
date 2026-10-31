@@ -661,7 +661,9 @@ impl Handler for BbRefHandler {
         run_catching(respond, || {
             const BLOCK_BYTES: usize = 3 * 32;
             if cmd.inputs.len() % BLOCK_BYTES != 0 {
-                return Err(format!("Poseidon2AbsorbChain: input size must be a multiple of {BLOCK_BYTES} bytes"));
+                return Err(format!(
+                    "Poseidon2AbsorbChain: input size must be a multiple of {BLOCK_BYTES} bytes"
+                ));
             }
             let mut state = cmd.state.each_ref().map(fr_from_wire);
             for block in cmd.inputs.chunks(BLOCK_BYTES) {
@@ -670,7 +672,9 @@ impl Handler for BbRefHandler {
                 }
                 poseidon2::permutation(&mut state);
             }
-            Ok(BbPoseidon2AbsorbChainResponse { state: state.each_ref().map(fr_to_wire) })
+            Ok(BbPoseidon2AbsorbChainResponse {
+                state: state.each_ref().map(fr_to_wire),
+            })
         });
     }
 
@@ -725,7 +729,10 @@ impl Handler for BbRefHandler {
 
     fn srs_init_grumpkin_srs(&mut self, cmd: BbSrsInitGrumpkinSrs, respond: Responder<BbSrsInitGrumpkinSrsResponse>) {
         run_catching(respond, || {
-            self.srs.set_grumpkin(crate::base::srs::grumpkin_from_ingress(cmd.num_points, &cmd.points_buf)?);
+            self.srs.set_grumpkin(crate::base::srs::grumpkin_from_ingress(
+                cmd.num_points,
+                &cmd.points_buf,
+            )?);
             Ok(BbSrsInitGrumpkinSrsResponse { dummy: 0 })
         });
     }
@@ -734,7 +741,10 @@ impl Handler for BbRefHandler {
     fn avm_prove(&mut self, cmd: BbAvmProve, respond: Responder<BbAvmProveResponse>) {
         run_catching(respond, || {
             let proof = super::bb_avm::avm_prove(&cmd.inputs, &self.srs)?;
-            Ok(BbAvmProveResponse { proof: proof.iter().map(fr_to_wire).collect(), stats: Vec::new() })
+            Ok(BbAvmProveResponse {
+                proof: proof.iter().map(fr_to_wire).collect(),
+                stats: Vec::new(),
+            })
         });
     }
 
@@ -742,7 +752,9 @@ impl Handler for BbRefHandler {
     fn avm_verify(&mut self, cmd: BbAvmVerify, respond: Responder<BbAvmVerifyResponse>) {
         run_catching(respond, || {
             let proof: Vec<FrField> = cmd.proof.iter().map(fr_from_wire).collect();
-            Ok(BbAvmVerifyResponse { verified: super::bb_avm::avm_verify(&proof, &cmd.public_inputs)? })
+            Ok(BbAvmVerifyResponse {
+                verified: super::bb_avm::avm_verify(&proof, &cmd.public_inputs)?,
+            })
         });
     }
 
@@ -750,7 +762,10 @@ impl Handler for BbRefHandler {
     fn avm_check_circuit(&mut self, cmd: BbAvmCheckCircuit, respond: Responder<BbAvmCheckCircuitResponse>) {
         run_catching(respond, || {
             super::bb_avm::avm_check_circuit(&cmd.inputs)?;
-            Ok(BbAvmCheckCircuitResponse { passed: true, stats: Vec::new() })
+            Ok(BbAvmCheckCircuitResponse {
+                passed: true,
+                stats: Vec::new(),
+            })
         });
     }
 
@@ -846,8 +861,11 @@ fn warmup() -> Result<(), String> {
     let points: Vec<G1Affine> = G1Projective::normalize_batch(&points);
     let scalars: Vec<FrField> = (0..NUM_POINTS).map(|_| crate::base::rng::global_field()).collect();
     let commitment = crate::base::msm::msm(&points, &scalars);
-    let mut elements: Vec<FrField> =
-        scalars.iter().enumerate().map(|(i, s)| s.square() + FrField::from(i as u64 + 1)).collect();
+    let mut elements: Vec<FrField> = scalars
+        .iter()
+        .enumerate()
+        .map(|(i, s)| s.square() + FrField::from(i as u64 + 1))
+        .collect();
     crate::base::field::batch_invert(&mut elements);
     let mut h = elements[0];
     for e in &elements[..NUM_HASHES] {

@@ -30,7 +30,10 @@ fn bench<F: Copy + std::ops::MulAssign + std::ops::AddAssign + ark_ff::UniformRa
 }
 
 fn main() {
-    let n: usize = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(8_000_000);
+    let n: usize = std::env::args()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(8_000_000);
     bench::<Fr>("Fr", n);
     bench::<Fq>("Fq", n);
 }

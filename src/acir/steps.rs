@@ -6,9 +6,9 @@ use super::lower::{build_circuit_mega, finish_circuit_mega, prebuild_circuit_meg
 use crate::base::rng::Rng;
 use crate::base::vk::Vk;
 use crate::base::{Bn254, CommitmentKey, Fr};
-use crate::circuit::Builder;
 use crate::chonk::ivc::{Chonk, CircuitKind};
 use crate::chonk::proof::ChonkProof;
+use crate::circuit::Builder;
 use serde::de::{Deserializer, SeqAccess, Visitor};
 use serde::Deserialize;
 
@@ -121,7 +121,10 @@ pub fn prove_steps(
         for (i, step) in steps.iter().enumerate() {
             crate::base::timing::phase(&format!("== {} ({:?})", step.name, step.kind));
             let _gc = next.is_some().then(|| crate::base::bench::Scope::new("create_circuit"));
-            let circuit = match next.take().map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e))) {
+            let circuit = match next
+                .take()
+                .map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
+            {
                 Some(Ok(prebuilt)) => {
                     crate::base::timing::phase("      build: built ahead");
                     finish_circuit_mega(prebuilt, &mut ivc, rng)
@@ -139,12 +142,20 @@ pub fn prove_steps(
             crate::base::timing::phase("circuit built");
             if prebuild && i + 1 < steps.len() {
                 let (bytecode, witness) = inputs[i + 1].take().unwrap();
-                let helper = std::thread::Builder::new().stack_size(if cfg!(target_family = "wasm") { 1 << 20 } else { 8 << 20 });
-                next = Some(helper.spawn_scoped(s, move || {
-                    let _gp = crate::base::bench::Scope::new("prebuild");
-                    let (w, gaps) = decode_witness_gaps(&witness);
-                    prebuild_circuit_mega(&decode_program_gz(&bytecode), &w, gaps).ok_or((bytecode, witness))
-                }).unwrap());
+                let helper = std::thread::Builder::new().stack_size(if cfg!(target_family = "wasm") {
+                    1 << 20
+                } else {
+                    8 << 20
+                });
+                next = Some(
+                    helper
+                        .spawn_scoped(s, move || {
+                            let _gp = crate::base::bench::Scope::new("prebuild");
+                            let (w, gaps) = decode_witness_gaps(&witness);
+                            prebuild_circuit_mega(&decode_program_gz(&bytecode), &w, gaps).ok_or((bytecode, witness))
+                        })
+                        .unwrap(),
+                );
             }
             let _ga = crate::base::bench::Scope::new("Chonk::accumulate");
             ivc.accumulate(circuit, (!check_vks).then(|| step.vk.clone()), rng);

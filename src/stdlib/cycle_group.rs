@@ -7,12 +7,12 @@ use super::bool::BoolT;
 use super::field::{same_ctx, Ctx, FieldT};
 use crate::base::field::{from_u256, u256, FieldLike, U256};
 use crate::base::generators::{default_generators, derive_generators};
+use crate::base::GrumpkinConfig;
 use crate::base::{Fq, Fr, GrumpkinAffine};
 use crate::circuit::builder::{EccAddGate, EccDblGate};
 use ark_ec::short_weierstrass::{Projective, SWCurveConfig};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{AdditiveGroup, Field, PrimeField};
-use crate::base::GrumpkinConfig;
 
 type Element = Projective<GrumpkinConfig>;
 

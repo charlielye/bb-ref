@@ -66,7 +66,10 @@ fn apply(m: [i64; 4], f: &mut S, g: &mut S, d: &mut S, e: &mut S, p: &S, pinv: u
 
     let (d0, e0, d1, e1) = (d[0], e[0], d[1], e[1]);
     let (nd0, ne0) = (ul * d0 + vl * e0, ql * d0 + rl * e0);
-    let (nd1, ne1) = (ul * d1 + vl * e1 + uh * d0 + vh * e0, ql * d1 + rl * e1 + qh * d0 + rh * e0);
+    let (nd1, ne1) = (
+        ul * d1 + vl * e1 + uh * d0 + vh * e0,
+        ql * d1 + rl * e1 + qh * d0 + rh * e0,
+    );
     let k = |t0: i64, t1: i64| {
         let low = (t0 & MASK) as u64 | ((((t1 + (t0 >> 29)) & MASK) as u64) << 29);
         let k = low.wrapping_neg().wrapping_mul(pinv) & MASK58;
@@ -84,7 +87,10 @@ fn apply(m: [i64; 4], f: &mut S, g: &mut S, d: &mut S, e: &mut S, p: &S, pinv: u
         (d[i - 2], e[i - 2]) = (nd & MASK, ne & MASK);
         (dp, ep) = (di, ei);
     }
-    let (nd, ne) = (uh * dp + vh * ep + kdh * p[N - 1] + cd, qh * dp + rh * ep + keh * p[N - 1] + ce);
+    let (nd, ne) = (
+        uh * dp + vh * ep + kdh * p[N - 1] + cd,
+        qh * dp + rh * ep + keh * p[N - 1] + ce,
+    );
     (d[N - 2], e[N - 2], d[N - 1], e[N - 1]) = (nd & MASK, ne & MASK, nd >> 29, ne >> 29);
 }
 

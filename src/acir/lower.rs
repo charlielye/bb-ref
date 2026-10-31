@@ -5,8 +5,7 @@
 //! verify nothing.
 
 use super::format::{
-    BlackBoxFuncCall, BlockType, Circuit, EmbeddedCurveAdd, FunctionInput, Logic, MultiScalarMul, Opcode,
-    Witness,
+    BlackBoxFuncCall, BlockType, Circuit, EmbeddedCurveAdd, FunctionInput, Logic, MultiScalarMul, Opcode, Witness,
 };
 use super::mock::mock_chonk_from_constraints;
 use crate::base::field::FieldLike;
@@ -1175,18 +1174,23 @@ pub fn check_representable(circuit: &Circuit, kind: CircuitKind) -> Result<(), S
         ("ec_add_constraints", !c.ec_add.is_empty(), hiding),
     ];
     if let Some((name, ..)) = lists.iter().find(|(_, present, missing)| *present && *missing) {
-        return Err(format!("ACIR contains {name}, which this arithmetization cannot represent."));
+        return Err(format!(
+            "ACIR contains {name}, which this arithmetization cannot represent."
+        ));
     }
     for b in c.blocks.values().filter(|_| hiding) {
         match b.kind {
-            BlockKind::Rom => return Err("ACIR contains a ROM block, which this arithmetization cannot represent.".into()),
-            BlockKind::Ram => return Err("ACIR contains a RAM block, which this arithmetization cannot represent.".into()),
+            BlockKind::Rom => {
+                return Err("ACIR contains a ROM block, which this arithmetization cannot represent.".into())
+            }
+            BlockKind::Ram => {
+                return Err("ACIR contains a RAM block, which this arithmetization cannot represent.".into())
+            }
             _ => {}
         }
     }
     Ok(())
 }
-
 
 /// The Mega circuit of an ACIR program (bb `create_circuit<MegaCircuitBuilder>`): AssertZero
 /// opcodes that fit the bilinear / batched-eq gate use it, the op queue is the IVC's, and a
@@ -1263,10 +1267,20 @@ pub fn prebuild_circuit_mega(circuit: &Circuit, witness: &[Fr], gaps: Vec<u32>) 
     let hn_recursion = std::mem::take(&mut c.hn_recursion);
     let (builder, drew) = crate::base::rng::detached(|| {
         let op_queue = EccOpQueue::shared();
-        into_builder(lower(Builder::from_acir_mega(op_queue, &witness_or_zeros(Some(witness), &c), public_inputs, false), c))
+        into_builder(lower(
+            Builder::from_acir_mega(op_queue, &witness_or_zeros(Some(witness), &c), public_inputs, false),
+            c,
+        ))
     });
-    assert_eq!(std::sync::Arc::strong_count(&builder.mega.as_ref().unwrap().op_queue), 1);
-    (!drew && !references_any(&builder, &gaps)).then_some(Prebuilt { builder, hn_recursion, gaps })
+    assert_eq!(
+        std::sync::Arc::strong_count(&builder.mega.as_ref().unwrap().op_queue),
+        1
+    );
+    (!drew && !references_any(&builder, &gaps)).then_some(Prebuilt {
+        builder,
+        hn_recursion,
+        gaps,
+    })
 }
 
 /// Whether any of `vars` is wired into a gate, a memory array or the databus, or copy-constrained.
@@ -1284,13 +1298,20 @@ fn references_any(b: &Builder, vars: &[u32]) -> bool {
 /// The rest of `build_circuit_mega`, in turn and in its order: the gaps' random fill (drawn where
 /// `decode_witness` draws it), the op queue handed over, then the kernel logic.
 pub fn finish_circuit_mega(prebuilt: Prebuilt, ivc: &mut Chonk, rng: &mut dyn Rng) -> Builder {
-    let Prebuilt { mut builder, hn_recursion, gaps } = prebuilt;
+    let Prebuilt {
+        mut builder,
+        hn_recursion,
+        gaps,
+    } = prebuilt;
     for k in gaps {
         builder.variables[k as usize] = rng.fr();
     }
     let mega = builder.mega.as_mut().unwrap();
     let private = std::mem::replace(&mut mega.op_queue, ivc.op_queue.clone());
-    ivc.op_queue.write().unwrap().absorb_current(std::sync::Arc::into_inner(private).unwrap().into_inner().unwrap());
+    ivc.op_queue
+        .write()
+        .unwrap()
+        .absorb_current(std::sync::Arc::into_inner(private).unwrap().into_inner().unwrap());
     let ctx = Rc::new(RefCell::new(builder));
     if hn_recursion.is_empty() {
         add_default_pairing_points(&mut ctx.borrow_mut());

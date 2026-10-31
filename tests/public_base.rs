@@ -31,7 +31,11 @@ fn public_base_matches_bb() {
     let inst = instance(false);
     let dir = common::fixture_dir("instance/public_tx_base");
     let vk = inst.compute_vk(&CommitmentKey::new(inst.max_end_index));
-    assert_eq!(vk.to_bytes(), std::fs::read(dir.join("vk")).unwrap(), "write-VK mode VK");
+    assert_eq!(
+        vk.to_bytes(),
+        std::fs::read(dir.join("vk")).unwrap(),
+        "write-VK mode VK"
+    );
     drop(inst);
 
     set_global(Box::new(DebugRng::new(7)));

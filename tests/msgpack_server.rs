@@ -224,7 +224,11 @@ fn chonk_case() {
         .map(PathBuf::from)
         .unwrap_or_else(|_| repo_root().join("pin/aztec-packages/barretenberg/cpp/chonk-pinned-flows"))
         .join("ecdsar1+transfer_0_recursions+sponsored_fpc/ivc-inputs.msgpack");
-    assert!(flow.exists(), "{} missing: barretenberg/cpp/scripts/chonk_inputs.sh download", flow.display());
+    assert!(
+        flow.exists(),
+        "{} missing: barretenberg/cpp/scripts/chonk_inputs.sh download",
+        flow.display()
+    );
     #[derive(Deserialize)]
     struct StepRaw {
         bytecode: Bytes,

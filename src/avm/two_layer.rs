@@ -113,8 +113,13 @@ pub fn verify_outer(ctx: &Ctx, proof: &[FieldT], public_inputs: &[Vec<FieldT>], 
     let io_points = reconstruct_default_io(pi);
     let mut points = aggregate_pair(io_points, mega.pcs_pairing_points);
     let layout = MEGA_AVM.layout();
-    let ecc_op_wires = [Ent::ecc_op_wire_1, Ent::ecc_op_wire_2, Ent::ecc_op_wire_3, Ent::ecc_op_wire_4]
-        .map(|e| mega.commitments[layout.idx(e)].clone());
+    let ecc_op_wires = [
+        Ent::ecc_op_wire_1,
+        Ent::ecc_op_wire_2,
+        Ent::ecc_op_wire_3,
+        Ent::ecc_op_wire_4,
+    ]
+    .map(|e| mega.commitments[layout.idx(e)].clone());
 
     // Step 2: the Goblin proof π_G (bb `GoblinAvmRecursiveVerifier`): ECCVM, then Translator.
     let eccvm_fields = proof_to_witnesses(ctx, &inner.eccvm_proof);
@@ -152,11 +157,19 @@ pub fn verify_outer(ctx: &Ctx, proof: &[FieldT], public_inputs: &[Vec<FieldT>], 
 
 /// bb `create_avm2_recursion_constraints_goblin` past the witness setup: the inner proof, then the
 /// outer verification.
-pub fn verify_two_layer(ctx: &Ctx, proof: &[FieldT], public_inputs: &[Vec<FieldT>], srs: &Srs, rng: &mut dyn Rng) -> OuterOutput {
+pub fn verify_two_layer(
+    ctx: &Ctx,
+    proof: &[FieldT],
+    public_inputs: &[Vec<FieldT>],
+    srs: &Srs,
+    rng: &mut dyn Rng,
+) -> OuterOutput {
     use crate::base::field::FieldLike;
     let native_proof: Vec<Fr> = proof.iter().map(FieldLike::value).collect();
-    let native_public_inputs: Vec<Vec<Fr>> =
-        public_inputs.iter().map(|c| c.iter().map(FieldLike::value).collect()).collect();
+    let native_public_inputs: Vec<Vec<Fr>> = public_inputs
+        .iter()
+        .map(|c| c.iter().map(FieldLike::value).collect())
+        .collect();
     let inner = prove_inner(&native_proof, &native_public_inputs, srs, rng);
     verify_outer(ctx, proof, public_inputs, &inner)
 }

@@ -7,9 +7,9 @@ use super::group::{G1Affine, G2Affine, G2Points, GrumpkinAffine};
 use super::poly::Polynomial;
 use ark_ec::AffineRepr;
 use ark_ec::CurveGroup;
-use std::io::Read;
 #[cfg(not(target_family = "wasm"))]
 use rayon::prelude::*;
+use std::io::Read;
 use std::path::PathBuf;
 
 /// `$CRS_PATH`, else `$HOME/.bb-crs` (bb `bb_crs_path`).
@@ -65,7 +65,12 @@ fn load_bn254_g1_files(n: usize) -> Vec<G1Affine> {
 pub enum Points<G> {
     Owned(Vec<G>),
     #[cfg(not(target_family = "wasm"))]
-    Mapped { map: *mut libc::c_void, map_len: usize, points: *const G, len: usize },
+    Mapped {
+        map: *mut libc::c_void,
+        map_len: usize,
+        points: *const G,
+        len: usize,
+    },
 }
 
 // A mapping is read-only memory: shared freely, unmapped once.
@@ -130,7 +135,12 @@ fn map_mont_cache(path: &std::path::Path, n: usize) -> Option<Points<G1Affine>> 
         let _ = std::fs::write(&marker, file_stamp(&meta));
     }
     let points = map_file(path, n)?;
-    assert_eq!(points[0], G1Affine::generator(), "corrupt Montgomery SRS cache {}", path.display());
+    assert_eq!(
+        points[0],
+        G1Affine::generator(),
+        "corrupt Montgomery SRS cache {}",
+        path.display()
+    );
     Some(points)
 }
 
@@ -152,11 +162,25 @@ fn map_file(path: &std::path::Path, n: usize) -> Option<Points<G1Affine>> {
     if n == 0 || f.metadata().ok()?.len() < map_len as u64 {
         return None;
     }
-    let map = unsafe { libc::mmap(std::ptr::null_mut(), map_len, libc::PROT_READ, libc::MAP_SHARED, f.as_raw_fd(), 0) };
+    let map = unsafe {
+        libc::mmap(
+            std::ptr::null_mut(),
+            map_len,
+            libc::PROT_READ,
+            libc::MAP_SHARED,
+            f.as_raw_fd(),
+            0,
+        )
+    };
     if map == libc::MAP_FAILED {
         return None;
     }
-    Some(Points::Mapped { map, map_len, points: map as *const G1Affine, len: n })
+    Some(Points::Mapped {
+        map,
+        map_len,
+        points: map as *const G1Affine,
+        len: n,
+    })
 }
 
 /// Write `points` as the Montgomery-limb cache: canonical limbs in the shared 2^256-domain format
@@ -215,7 +239,13 @@ struct CrsLock(#[allow(dead_code)] Option<std::fs::File>);
 impl CrsLock {
     fn take(cache: &std::path::Path) -> Self {
         let lock = cache.with_file_name("crs.lock");
-        let f = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(lock).ok();
+        let f = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(lock)
+            .ok();
         #[cfg(unix)]
         if let Some(f) = &f {
             use std::os::fd::AsRawFd;
@@ -263,14 +293,22 @@ fn read_mont_cache(path: &std::path::Path, n: usize) -> Option<Vec<G1Affine>> {
         .par_chunks(64)
         .map(|c| G1Affine::new_unchecked(limbs(&c[0..32]), limbs(&c[32..64])))
         .collect();
-    assert_eq!(points[0], G1Affine::generator(), "corrupt Montgomery SRS cache {}", path.display());
+    assert_eq!(
+        points[0],
+        G1Affine::generator(),
+        "corrupt Montgomery SRS cache {}",
+        path.display()
+    );
     Some(points)
 }
 
 /// The Grumpkin SRS from `grumpkin_g1_v2.flat.dat` (same raw 64-byte layout, coordinates in bn254 Fr).
 /// As bb's loader, the chunks covering the prefix are read whole and checked against their pins.
 pub fn load_grumpkin_g1(n: usize) -> Vec<GrumpkinAffine> {
-    assert!(n > 0 && n <= GRUMPKIN_NUM_POINTS, "Grumpkin CRS point count must be between 1 and {GRUMPKIN_NUM_POINTS}");
+    assert!(
+        n > 0 && n <= GRUMPKIN_NUM_POINTS,
+        "Grumpkin CRS point count must be between 1 and {GRUMPKIN_NUM_POINTS}"
+    );
     let path = crs_dir().join("grumpkin_g1_v2.flat.dat");
     let mut f = std::fs::File::open(&path).unwrap_or_else(|e| panic!("cannot open {}: {e}", path.display()));
     let mut buf = vec![0u8; n.div_ceil(GRUMPKIN_CHUNK_BYTES / 64) * GRUMPKIN_CHUNK_BYTES];
@@ -351,7 +389,11 @@ fn g1_to_raw(p: &G1Affine, out: &mut [u8]) {
 /// input (32 bytes a point) must be whole chunks matching the pins and is returned uncompressed for
 /// the caller to cache; uncompressed input is trusted apart from its first two points. The G2 point
 /// must be the canonical `[x]_2`.
-pub fn bn254_from_ingress(num_points: u32, points_buf: &[u8], g2_point: &[u8]) -> Result<(Vec<G1Affine>, Vec<u8>), String> {
+pub fn bn254_from_ingress(
+    num_points: u32,
+    points_buf: &[u8],
+    g2_point: &[u8],
+) -> Result<(Vec<G1Affine>, Vec<u8>), String> {
     use rayon::prelude::*;
     let n = num_points as usize;
     let bytes_per_point = if n > 0 { points_buf.len() / n } else { 0 };
@@ -378,7 +420,10 @@ pub fn bn254_from_ingress(num_points: u32, points_buf: &[u8], g2_point: &[u8]) -
         }
         let points: Vec<G1Affine> = points_buf[..n * 32].par_chunks(32).map(g1_from_compressed).collect();
         uncompressed = vec![0u8; n * 64];
-        uncompressed.par_chunks_mut(64).zip(points.par_iter()).for_each(|(o, p)| g1_to_raw(p, o));
+        uncompressed
+            .par_chunks_mut(64)
+            .zip(points.par_iter())
+            .for_each(|(o, p)| g1_to_raw(p, o));
         points
     };
     if n >= 1 && points[0] != G1Affine::generator() {
@@ -436,7 +481,9 @@ const BN254_G2_X_BYTES: [u8; 128] = [
 /// `[[1]_2, [x]_2]` for the KZG pairing check.
 pub fn bn254_g2() -> G2Points {
     let b = &BN254_G2_X_BYTES;
-    let fq2 = |lo: &[u8], hi: &[u8]| ark_bn254::Fq2::new(from_bytes_be::<ark_bn254::Fq>(lo), from_bytes_be::<ark_bn254::Fq>(hi));
+    let fq2 = |lo: &[u8], hi: &[u8]| {
+        ark_bn254::Fq2::new(from_bytes_be::<ark_bn254::Fq>(lo), from_bytes_be::<ark_bn254::Fq>(hi))
+    };
     let x = G2Affine::new_unchecked(fq2(&b[0..32], &b[32..64]), fq2(&b[64..96], &b[96..128]));
     assert!(
         x.is_on_curve() && x.is_in_correct_subgroup_assuming_on_curve(),
@@ -465,7 +512,10 @@ mod tests {
             return;
         };
         let mut raw = vec![0u8; n * 64];
-        std::fs::File::open(crs_dir().join("bn254_g1.dat")).unwrap().read_exact(&mut raw).unwrap();
+        std::fs::File::open(crs_dir().join("bn254_g1.dat"))
+            .unwrap()
+            .read_exact(&mut raw)
+            .unwrap();
         for (i, c) in raw.chunks(64).enumerate() {
             let p = G1Affine::new_unchecked(from_bytes_be::<Fq>(&c[0..32]), from_bytes_be::<Fq>(&c[32..64]));
             assert_eq!(points[i], p, "point {i}");
@@ -507,7 +557,9 @@ mod tests {
         assert!(out64.is_empty() && points64 == points);
         let mut bad = chunk.to_vec();
         bad[1000] ^= 1;
-        assert!(bn254_from_ingress(n as u32, &bad, &g2).unwrap_err().contains("chunk 0 SHA-256 mismatch"));
+        assert!(bn254_from_ingress(n as u32, &bad, &g2)
+            .unwrap_err()
+            .contains("chunk 0 SHA-256 mismatch"));
         let mut bad_g2 = g2.clone();
         bad_g2[5] ^= 1;
         assert!(bn254_from_ingress(n as u32, chunk, &bad_g2).is_err());
@@ -598,13 +650,21 @@ struct Pool<G> {
 
 impl<G> Pool<G> {
     fn new(n: usize, load: fn(usize) -> Points<G>) -> Self {
-        Self { cell: Default::default(), n, load }
+        Self {
+            cell: Default::default(),
+            n,
+            load,
+        }
     }
     fn filled(points: Vec<G>) -> Self {
         let n = points.len();
         let cell = std::sync::OnceLock::new();
         let _ = cell.set(std::sync::Arc::new(Points::Owned(points)));
-        Self { cell: std::sync::Arc::new(cell), n, load: |_| Points::Owned(vec![]) }
+        Self {
+            cell: std::sync::Arc::new(cell),
+            n,
+            load: |_| Points::Owned(vec![]),
+        }
     }
     /// The pool if it can serve `k` points (loading it then, once), else `None`.
     fn serving(&self, k: usize) -> Option<&std::sync::Arc<Points<G>>> {
@@ -649,7 +709,10 @@ impl Srs {
         let n = (num_points + 1) & !1usize;
         match self.bn254.serving(n) {
             Some(pool) => Ck {
-                points: PointsView { pool: pool.clone(), len: n },
+                points: PointsView {
+                    pool: pool.clone(),
+                    len: n,
+                },
                 phi: PhiTable::default(),
             },
             None => CommitmentKey::new(num_points),
@@ -659,7 +722,10 @@ impl Srs {
     pub fn grumpkin_key(&self, num_points: usize) -> GrumpkinKey {
         match self.grumpkin.serving(num_points) {
             Some(pool) => Ck {
-                points: PointsView { pool: pool.clone(), len: num_points },
+                points: PointsView {
+                    pool: pool.clone(),
+                    len: num_points,
+                },
                 phi: PhiTable::default(),
             },
             None => GrumpkinKey::new(num_points),
@@ -678,7 +744,10 @@ fn dedup_enabled() -> bool {
 /// ECCVM's ~3,000-row wire polynomials measured 0.207 -> 0.190 s with the gate at or below 1024).
 fn dedup_min_len() -> usize {
     static V: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
-        std::env::var("BBREF_DEDUP_MIN").ok().and_then(|s| s.parse().ok()).unwrap_or(512)
+        std::env::var("BBREF_DEDUP_MIN")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(512)
     });
     *V
 }
@@ -801,7 +870,9 @@ where
             let phi = if crate::base::wasm::GLV_PHI_TABLE {
                 // Only a GLV MSM (at most the threshold's points) reads the table.
                 let n = self.points.len().min(crate::base::msm::glv_threshold());
-                self.phi.get_or_build(|| G::phi_table(&self.points[..n])).and_then(|t| t.get(s..k))
+                self.phi
+                    .get_or_build(|| G::phi_table(&self.points[..n]))
+                    .and_then(|t| t.get(s..k))
             } else {
                 None
             };
@@ -866,7 +937,10 @@ where
                 lens.push(c);
             }
         }
-        let mut fill: Vec<u32> = lens.iter().scan(0, |at, &l| Some(std::mem::replace(at, *at + l))).collect();
+        let mut fill: Vec<u32> = lens
+            .iter()
+            .scan(0, |at, &l| Some(std::mem::replace(at, *at + l)))
+            .collect();
         let mut grouped = vec![G::zero(); lens.iter().sum::<u32>() as usize];
         for &(i, id) in &cluster_of {
             let sl = slot[id as usize];
@@ -879,12 +953,21 @@ where
         let points: Vec<G> = (0..reps.len())
             .map(|id| {
                 let sl = slot[id];
-                if sl == u32::MAX { self.points[reps[id] as usize] } else { sums[sl as usize] }
+                if sl == u32::MAX {
+                    self.points[reps[id] as usize]
+                } else {
+                    sums[sl as usize]
+                }
             })
             .collect();
         let scalars: Vec<G::ScalarField> = reps.iter().map(|&i| coeffs[i as usize]).collect();
         if crate::base::timing::on("BBREF_COMMIT_TIMING") {
-            eprintln!("[dedup] nnz={} distinct={} merged_clusters={}", cluster_of.len(), reps.len(), sums.len());
+            eprintln!(
+                "[dedup] nnz={} distinct={} merged_clusters={}",
+                cluster_of.len(),
+                reps.len(),
+                sums.len()
+            );
         }
         let phi = (crate::base::wasm::GLV_PHI_TABLE && points.len() <= crate::base::msm::glv_threshold())
             .then(|| G::phi_table(&points));
@@ -1008,9 +1091,15 @@ mod pool_tests {
             return;
         }
         let srs = Srs::lazy(6, 4);
-        assert!(srs.bn254.cell.get().is_none(), "nothing loaded before a key is asked for");
+        assert!(
+            srs.bn254.cell.get().is_none(),
+            "nothing loaded before a key is asked for"
+        );
         assert_eq!(srs.bn254_key(3).points.len(), 4, "rounded up to even, from the pool");
-        assert!(std::sync::Arc::ptr_eq(&srs.bn254_key(2).points.pool, &srs.clone().bn254_key(6).points.pool));
+        assert!(std::sync::Arc::ptr_eq(
+            &srs.bn254_key(2).points.pool,
+            &srs.clone().bn254_key(6).points.pool
+        ));
         assert_eq!(srs.bn254_key(8).points.len(), 8, "past the pool: exact private load");
         assert_eq!(srs.grumpkin_key(4).points.len(), 4);
         assert_eq!(srs.grumpkin_key(6).points.len(), 6);

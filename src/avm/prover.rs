@@ -8,11 +8,11 @@
 use super::relations::AvmRelations;
 use super::tables::{layout, relations, Body};
 use crate::base::field::{batch_invert, Fr};
+use crate::base::group::Curve;
 use crate::base::poly::Poly;
 use crate::base::srs::Srs;
 use crate::base::transcript::Transcript;
 use crate::base::Bn254;
-use crate::base::group::Curve;
 use crate::honk::pcs::{kzg_open, shplemini_prove};
 use crate::honk::relations::RelationParams;
 use crate::honk::sumcheck::{prove_sumcheck, SumcheckSpec};
@@ -41,7 +41,8 @@ pub fn polys_from_trace(bytes: &[u8]) -> Vec<Poly> {
             let mut coeffs = vec![Fr::zero(); (0..count).map(|k| row(k) + 1).max().unwrap_or(0)];
             for k in 0..count {
                 let e = &bytes[from + 36 * k + 4..from + 36 * (k + 1)];
-                let limbs: [u64; 4] = std::array::from_fn(|i| u64::from_le_bytes(e[8 * i..8 * i + 8].try_into().unwrap()));
+                let limbs: [u64; 4] =
+                    std::array::from_fn(|i| u64::from_le_bytes(e[8 * i..8 * i + 8].try_into().unwrap()));
                 coeffs[row(k)] = Fr::from_bigint(BigInt(limbs)).expect("non-canonical trace value");
             }
             Poly::from_coeffs(coeffs)
@@ -60,7 +61,9 @@ fn entity_at(polys: &[Poly], e: usize, row: usize) -> Fr {
 
 /// bb `GenericLookupSettings`/`GenericPermutationSettings` term at a row: `((0·β + c₀)·β + c₁)·… + γ`.
 fn tuple_term(polys: &[Poly], cols: &[usize], row: usize, p: &RelationParams<Fr>) -> Fr {
-    cols.iter().fold(Fr::zero(), |acc, &c| acc * p.beta + entity_at(polys, c, row)) + p.gamma
+    cols.iter()
+        .fold(Fr::zero(), |acc, &c| acc * p.beta + entity_at(polys, c, row))
+        + p.gamma
 }
 
 /// bb `compute_logderivative_inverse` for every interaction: on the rows where either selector is
@@ -69,7 +72,14 @@ fn compute_inverses(polys: &mut [Poly], p: &RelationParams<Fr>) {
     let interactions: Vec<_> = relations()
         .iter()
         .filter_map(|r| match &r.body {
-            Body::Interaction { src_sel, dst_sel, inverses, src, dst, .. } => Some((*src_sel, *dst_sel, *inverses, src, dst)),
+            Body::Interaction {
+                src_sel,
+                dst_sel,
+                inverses,
+                src,
+                dst,
+                ..
+            } => Some((*src_sel, *dst_sel, *inverses, src, dst)),
             _ => None,
         })
         .collect();
@@ -115,7 +125,11 @@ pub fn check_circuit(mut polys: Vec<Poly>) -> Result<(), String> {
     compute_inverses(&mut polys, &params);
     let rels: &(dyn RelationSet<Fr> + Sync) = &AvmRelations;
     let num_rows = polys.iter().map(Poly::len).max().unwrap_or(0);
-    let zero_sums = || (0..rels.num_relations()).map(|r| vec![Fr::zero(); rels.num_subrelations(r)]).collect::<Vec<_>>();
+    let zero_sums = || {
+        (0..rels.num_relations())
+            .map(|r| vec![Fr::zero(); rels.num_subrelations(r)])
+            .collect::<Vec<_>>()
+    };
     let one = Fr::one();
     // Each worker reuses one row buffer: a row is ~100 KB, above the arena's small-block size.
     let sums = (0..num_rows)
@@ -123,25 +137,34 @@ pub fn check_circuit(mut polys: Vec<Poly>) -> Result<(), String> {
         .try_fold(
             || (zero_sums(), vec![Fr::zero(); l.num_all()]),
             |(mut sums, mut row), i| {
-            row.iter_mut().enumerate().for_each(|(e, v)| *v = entity_at(&polys, e, i));
-            for (r, sum) in sums.iter_mut().enumerate() {
-                if rels.skip(r, &row, &row) {
-                    continue;
-                }
-                let mut acc = vec![Fr::zero(); sum.len()];
-                rels.accumulate(r, &mut acc, &row, &params, &one);
-                for (j, v) in acc.iter().enumerate() {
-                    if rels.linearly_independent(r, j) && !v.is_zero() {
-                        return Err(format!("Relation {}, subrelation {j} failed at row {i}", relations()[r].name));
+                row.iter_mut()
+                    .enumerate()
+                    .for_each(|(e, v)| *v = entity_at(&polys, e, i));
+                for (r, sum) in sums.iter_mut().enumerate() {
+                    if rels.skip(r, &row, &row) {
+                        continue;
                     }
-                    sum[j] += v;
+                    let mut acc = vec![Fr::zero(); sum.len()];
+                    rels.accumulate(r, &mut acc, &row, &params, &one);
+                    for (j, v) in acc.iter().enumerate() {
+                        if rels.linearly_independent(r, j) && !v.is_zero() {
+                            return Err(format!(
+                                "Relation {}, subrelation {j} failed at row {i}",
+                                relations()[r].name
+                            ));
+                        }
+                        sum[j] += v;
+                    }
                 }
-            }
-            Ok((sums, row))
-        })
+                Ok((sums, row))
+            },
+        )
         .map(|r| r.map(|(sums, _)| sums))
         .try_reduce(zero_sums, |mut a, b| {
-            a.iter_mut().flatten().zip(b.iter().flatten()).for_each(|(x, y)| *x += y);
+            a.iter_mut()
+                .flatten()
+                .zip(b.iter().flatten())
+                .for_each(|(x, y)| *x += y);
             Ok(a)
         })?;
     for (r, sum) in sums.iter().enumerate() {
@@ -159,7 +182,11 @@ fn public_input_columns(polys: &[Poly]) -> Vec<Vec<Fr>> {
         let col = &polys[l.col(&format!("public_inputs_cols_{i}_"))];
         (0..len).map(|j| col.at(j)).collect()
     };
-    l.public_input_column_lengths.iter().enumerate().map(|(i, &len)| column(i, len)).collect()
+    l.public_input_column_lengths
+        .iter()
+        .enumerate()
+        .map(|(i, &len)| column(i, len))
+        .collect()
 }
 
 /// bb `AvmProver::construct_proof` over the trace's unshifted columns (the derived ones empty).
@@ -215,7 +242,18 @@ pub fn prove(mut polys: Vec<Poly>, srs: &Srs) -> Vec<Fr> {
         num_entities: l.num_all(),
         translator: false,
     };
-    let sc = prove_sumcheck::<Bn254>(n, &AvmRelations, &spec, &polys, &mut t, &alpha, &gate_challenges, &params, None, None);
+    let sc = prove_sumcheck::<Bn254>(
+        n,
+        &AvmRelations,
+        &spec,
+        &polys,
+        &mut t,
+        &alpha,
+        &gate_challenges,
+        &params,
+        None,
+        None,
+    );
     crate::base::timing::phase("avm: sumcheck");
 
     // Batch with short challenges: the to-be-shifted wires (unshifted form) into one polynomial,
@@ -229,7 +267,16 @@ pub fn prove(mut polys: Vec<Poly>, srs: &Srs) -> Vec<Fr> {
     let batched_shifted = Poly::linear_combination(size, &shifted_terms);
     let batched_unshifted = Poly::linear_combination(size, &unshifted_terms);
     crate::base::timing::phase("avm: pcs batching");
-    let claim = shplemini_prove::<Bn254>(size, &[&batched_unshifted], &[&batched_shifted], &sc.challenge, &ck, &mut t, None, &[]);
+    let claim = shplemini_prove::<Bn254>(
+        size,
+        &[&batched_unshifted],
+        &[&batched_shifted],
+        &sc.challenge,
+        &ck,
+        &mut t,
+        None,
+        &[],
+    );
     kzg_open::<Bn254>(claim, &ck, &mut t);
     crate::base::timing::phase("avm: pcs");
     t.export_proof()

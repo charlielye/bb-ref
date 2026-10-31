@@ -49,7 +49,9 @@ impl Ctx {
             acc = self.mul(&acc, &self.den[g]);
             self.prod.push(acc);
         }
-        let mut lanes: [Fr; 4] = acc.unpack(self.modulus).map(|l| unsafe { core::mem::transmute_copy(&l) });
+        let mut lanes: [Fr; 4] = acc
+            .unpack(self.modulus)
+            .map(|l| unsafe { core::mem::transmute_copy(&l) });
         let mut pref = lanes;
         for l in 1..4 {
             pref[l] = pref[l - 1] * lanes[l];
@@ -104,7 +106,11 @@ impl Ctx {
         }
         for g in 0..ax.len() {
             let (x, y) = (ax[g], ay[g]);
-            let dy = if neg { self.sub(&self.zero, &self.add(&by[g], &y)) } else { self.sub(&by[g], &y) };
+            let dy = if neg {
+                self.sub(&self.zero, &self.add(&by[g], &y))
+            } else {
+                self.sub(&by[g], &y)
+            };
             let l = self.mul(&dy, &self.den[g]);
             let x3 = self.sub(&self.sub(&self.mul(&l, &l), &x), &bx[g]);
             ay[g] = self.sub(&self.mul(&l, &self.sub(&x, &x3)), &y);
@@ -116,7 +122,9 @@ impl Ctx {
 
 fn pack_pts(pts: &[Affine<GrumpkinConfig>]) -> (Vec<QuadFp>, Vec<QuadFp>) {
     let pack = |c: &dyn Fn(&Affine<GrumpkinConfig>) -> [u64; 4]| -> Vec<QuadFp> {
-        pts.chunks_exact(4).map(|a| QuadFp::pack(&core::array::from_fn(|l| c(&a[l])))).collect()
+        pts.chunks_exact(4)
+            .map(|a| QuadFp::pack(&core::array::from_fn(|l| c(&a[l]))))
+            .collect()
     };
     (pack(&|p| st(&p.x)), pack(&|p| st(&p.y)))
 }
@@ -157,7 +165,10 @@ fn block(
         ty.push(y);
     }
     let bsplat = QuadFp::pack(&[st(beta); 4]);
-    let phix: Vec<Vec<QuadFp>> = tx[..8].iter().map(|t| t.iter().map(|v| cx.mul(v, &bsplat)).collect()).collect();
+    let phix: Vec<Vec<QuadFp>> = tx[..8]
+        .iter()
+        .map(|t| t.iter().map(|v| cx.mul(v, &bsplat)).collect())
+        .collect();
 
     let (mut ax, mut ay) = (vec![cx.zero; groups], vec![cx.zero; groups]);
     let mut started = false;
@@ -202,7 +213,9 @@ fn block(
     for (x, y) in ax.iter().zip(&ay) {
         let (xs, ys) = (x.unpack(&kc.modulus), y.unpack(&kc.modulus));
         for l in 0..4 {
-            out.push(unsafe { Affine::new_unchecked(core::mem::transmute_copy(&xs[l]), core::mem::transmute_copy(&ys[l])) });
+            out.push(unsafe {
+                Affine::new_unchecked(core::mem::transmute_copy(&xs[l]), core::mem::transmute_copy(&ys[l]))
+            });
         }
     }
     Some(out)

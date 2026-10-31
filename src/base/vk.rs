@@ -88,7 +88,10 @@ impl Vk<Bn254> {
     /// bb's on-disk `vk` file: every field element as 32 big-endian bytes.
     pub fn from_bytes(bytes: &[u8], num_comms: usize) -> Self {
         assert_eq!(bytes.len() % 32, 0, "VK byte length not a multiple of 32");
-        let fields: Vec<Fr> = bytes.chunks(32).map(super::field::from_bytes_be_canonical::<Fr>).collect();
+        let fields: Vec<Fr> = bytes
+            .chunks(32)
+            .map(super::field::from_bytes_be_canonical::<Fr>)
+            .collect();
         // log_circuit_size, num_public_inputs and pub_inputs_offset are uint64 in bb.
         for f in fields.iter().take(3) {
             let v = super::field::u256(f);
