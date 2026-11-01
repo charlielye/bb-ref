@@ -43,6 +43,7 @@ index 928e9be4553..3e5cfa09914 100644
  # Exclude test, bench, and fuzzer files
 diff --git a/barretenberg/cpp/src/barretenberg/vm2/trace_ffi.cpp b/barretenberg/cpp/src/barretenberg/vm2/trace_ffi.cpp
 new file mode 100644
+index 00000000000..3e60f5f3995
 --- /dev/null
 +++ b/barretenberg/cpp/src/barretenberg/vm2/trace_ffi.cpp
 @@ -0,0 +1,64 @@
@@ -110,3 +111,201 @@ new file mode 100644
 +        return 1;
 +    }
 +}
+diff --git a/barretenberg/cpp/src/barretenberg/vm2/tracegen/bytecode_trace.cpp b/barretenberg/cpp/src/barretenberg/vm2/tracegen/bytecode_trace.cpp
+index 2edb1d692b8..ad359353091 100644
+--- a/barretenberg/cpp/src/barretenberg/vm2/tracegen/bytecode_trace.cpp
++++ b/barretenberg/cpp/src/barretenberg/vm2/tracegen/bytecode_trace.cpp
+@@ -39,23 +39,43 @@ using C = Column;
+  */
+ void BytecodeTraceBuilder::process_decomposition(
+     const simulation::EventEmitterInterface<simulation::BytecodeDecompositionEvent>::Container& events,
+-    TraceContainer& trace)
++    TraceContainer& trace,
++    size_t part,
++    size_t parts)
+ {
+     // Since next_packed_pc - pc is always in the range [0, 31), we can precompute the inverses:
+     std::vector<FF> next_packed_pc_min_pc_inverses = { 0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15,
+                                                        16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30 };
+     FF::batch_invert(next_packed_pc_min_pc_inverses);
++    // Every byte as a field element, converted once rather than once per window position.
++    static const std::array<FF, 256> byte_fields = [] {
++        std::array<FF, 256> fields;
++        for (size_t b = 0; b < 256; b++) {
++            fields[b] = FF(b);
++        }
++        return fields;
++    }();
+ 
+-    // We start from row 1 because we need a row of zeroes for the shifts.
++    // We start from row 1 because we need a row of zeroes for the shifts. This part's rows: [lo, hi).
++    size_t total_rows = 0;
++    for (const auto& event : events) {
++        total_rows += event.bytecode->size();
++    }
++    const auto lo = static_cast<uint32_t>(1 + total_rows * part / parts);
++    const auto hi = static_cast<uint32_t>(1 + total_rows * (part + 1) / parts);
+     uint32_t row = 1;
+ 
+     for (const auto& event : events) {
+         const auto& bytecode = *event.bytecode;
+         const auto id = event.bytecode_id;
+-        auto bytecode_at = [&bytecode](size_t i) -> uint8_t { return i < bytecode.size() ? bytecode[i] : 0; };
++        auto bytecode_at = [&bytecode](size_t i) -> const FF& {
++            return byte_fields[i < bytecode.size() ? bytecode[i] : 0];
++        };
+         const uint32_t bytecode_len = static_cast<uint32_t>(bytecode.size());
++        const uint32_t begin = std::max(row, lo) - row;
++        const uint32_t end = std::max(std::min(row + bytecode_len, hi), row) - row;
+ 
+-        for (uint32_t i = 0; i < bytecode_len; i++) {
++        for (uint32_t i = begin; i < end; i++) {
+             const uint32_t remaining = bytecode_len - i;
+             const uint32_t bytes_to_read = std::min(remaining, DECOMPOSE_WINDOW_SIZE);
+             const bool is_last = remaining == 1;
+@@ -139,25 +159,26 @@ void BytecodeTraceBuilder::process_decomposition(
+             // We shift to form a 31 byte int:
+             return as_int >> 8;
+         };
+-        for (uint32_t i = 0; i < bytecode_len; i += 31) {
+-            // Set the packed field and related columns. Note that the multipermutation columns (sel_packed_read)
+-            // are set separately by the MultiPermutationBuilder.
+-            trace.set(row + i,
+-                      { {
+-                          { C::bc_decomposition_sel_packed, 1 },
+-                          { C::bc_decomposition_packed_field, bytecode_field_at(i) },
+-                          { C::bc_decomposition_next_packed_pc, i },
+-                          { C::bc_decomposition_next_packed_pc_min_pc_inv, 0 },
+-                      } });
+-            // At each row until the next packed field, set the next pc and inverse required for the zero check
+-            // (#[PC_IS_PACKED]):
+-            for (uint32_t j = i + 1; j < std::min(bytecode_len, i + 31); j++) {
+-                trace.set(
+-                    row + j,
+-                    { {
+-                        { C::bc_decomposition_next_packed_pc, i + 31 },
+-                        { C::bc_decomposition_next_packed_pc_min_pc_inv, next_packed_pc_min_pc_inverses[i + 31 - j] },
+-                    } });
++        // Packed fields every 31 bytes, and on the rows between, the next packed pc and the inverse its zero check
++        // needs (#[PC_IS_PACKED]). The multipermutation columns (sel_packed_read) are set by the
++        // MultiPermutationBuilder.
++        for (uint32_t i = begin; i < end; i++) {
++            if (i % 31 == 0) {
++                trace.set(row + i,
++                          { {
++                              { C::bc_decomposition_sel_packed, 1 },
++                              { C::bc_decomposition_packed_field, bytecode_field_at(i) },
++                              { C::bc_decomposition_next_packed_pc, i },
++                              { C::bc_decomposition_next_packed_pc_min_pc_inv, 0 },
++                          } });
++            } else {
++                const uint32_t next_packed_pc = i - i % 31 + 31;
++                trace.set(row + i,
++                          { {
++                              { C::bc_decomposition_next_packed_pc, next_packed_pc },
++                              { C::bc_decomposition_next_packed_pc_min_pc_inv,
++                                next_packed_pc_min_pc_inverses[next_packed_pc - i] },
++                          } });
+             }
+         }
+ 
+@@ -165,10 +186,24 @@ void BytecodeTraceBuilder::process_decomposition(
+         row += bytecode_len;
+     }
+ 
+-    // Batch invert the columns.
+-    trace.invert_columns({ { C::bc_decomposition_bytes_rem_inv,
+-                             C::bc_decomposition_bytes_rem_min_one_inv,
+-                             C::bc_decomposition_windows_min_remaining_inv } });
++    // Batch invert this part's rows of the columns (every other row of them is zero).
++    for (const auto col : { C::bc_decomposition_bytes_rem_inv,
++                            C::bc_decomposition_bytes_rem_min_one_inv,
++                            C::bc_decomposition_windows_min_remaining_inv }) {
++        std::vector<uint32_t> rows;
++        std::vector<FF> values;
++        for (uint32_t r = lo; r < hi; r++) {
++            const FF& value = trace.get(col, r);
++            if (!value.is_zero()) {
++                rows.push_back(r);
++                values.push_back(value);
++            }
++        }
++        FF::batch_invert(values);
++        for (size_t k = 0; k < rows.size(); k++) {
++            trace.set(col, rows[k], values[k]);
++        }
++    }
+ }
+ 
+ /**
+diff --git a/barretenberg/cpp/src/barretenberg/vm2/tracegen/bytecode_trace.hpp b/barretenberg/cpp/src/barretenberg/vm2/tracegen/bytecode_trace.hpp
+index 1719e1435d5..e37a4fbba84 100644
+--- a/barretenberg/cpp/src/barretenberg/vm2/tracegen/bytecode_trace.hpp
++++ b/barretenberg/cpp/src/barretenberg/vm2/tracegen/bytecode_trace.hpp
+@@ -16,9 +16,12 @@ class BytecodeTraceBuilder final {
+         const simulation::EventEmitterInterface<simulation::BytecodeRetrievalEvent>::Container& events,
+         TraceContainer& trace);
+ 
++    // Rows are split into `parts` equal ranges; part `part` fills (and inverts) only its own.
+     void process_decomposition(
+         const simulation::EventEmitterInterface<simulation::BytecodeDecompositionEvent>::Container& events,
+-        TraceContainer& trace);
++        TraceContainer& trace,
++        size_t part = 0,
++        size_t parts = 1);
+ 
+     void process_instruction_fetching(
+         const simulation::EventEmitterInterface<simulation::InstructionFetchingEvent>::Container& events,
+diff --git a/barretenberg/cpp/src/barretenberg/vm2/tracegen_helper.cpp b/barretenberg/cpp/src/barretenberg/vm2/tracegen_helper.cpp
+index 431bd449a0d..7741566c06f 100644
+--- a/barretenberg/cpp/src/barretenberg/vm2/tracegen_helper.cpp
++++ b/barretenberg/cpp/src/barretenberg/vm2/tracegen_helper.cpp
+@@ -117,6 +117,18 @@ auto build_public_inputs_columns_jobs(TraceContainer& trace, const PublicInputs&
+     };
+ }
+ 
++auto build_bytecode_decomposition_jobs(TraceContainer& trace, const auto& events)
++{
++    const size_t parts = get_num_cpus();
++    std::vector<std::function<void()>> jobs;
++    for (size_t part = 0; part < parts; part++) {
++        jobs.push_back([&trace, &events, part, parts]() {
++            BytecodeTraceBuilder().process_decomposition(events, trace, part, parts);
++        });
++    }
++    return jobs;
++}
++
+ void execute_jobs(std::span<std::function<void()>> jobs)
+ {
+     parallel_for(jobs.size(), [&](size_t i) { jobs[i](); });
+@@ -197,6 +209,8 @@ void AvmTraceGenHelper::fill_trace_columns(TraceContainer& trace,
+             build_precomputed_columns_jobs(trace),
+             // Public inputs column jobs.
+             build_public_inputs_columns_jobs(trace, public_inputs),
++            // The bytecode decomposition (a row per bytecode byte), one job per core by row range.
++            build_bytecode_decomposition_jobs(trace, events.bytecode_decomposition),
+             // Subtrace jobs.
+             std::vector<std::function<void()>>{
+                 [&]() {
+@@ -220,12 +234,6 @@ void AvmTraceGenHelper::fill_trace_columns(TraceContainer& trace,
+                     AVM_TRACK_TIME("tracegen/alu", alu_builder.process(events.alu, trace));
+                     clear_events(events.alu);
+                 },
+-                [&]() {
+-                    BytecodeTraceBuilder bytecode_builder;
+-                    AVM_TRACK_TIME("tracegen/bytecode_decomposition",
+-                                   bytecode_builder.process_decomposition(events.bytecode_decomposition, trace));
+-                    clear_events(events.bytecode_decomposition);
+-                },
+                 [&]() {
+                     BytecodeTraceBuilder bytecode_builder;
+                     AVM_TRACK_TIME("tracegen/bytecode_hashing",
+@@ -419,6 +427,7 @@ void AvmTraceGenHelper::fill_trace_columns(TraceContainer& trace,
+                 } });
+ 
+         AVM_TRACK_TIME("tracegen/traces", execute_jobs(jobs));
++        clear_events(events.bytecode_decomposition);
+     }
+ }
+ 

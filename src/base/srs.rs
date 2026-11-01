@@ -752,6 +752,23 @@ fn dedup_min_len() -> usize {
     *V
 }
 
+/// Whether dedup pays: many repeats, and not a long polynomial of narrow scalars (at most 16 bits,
+/// sampled), whose equal values Pippenger's few small windows already bucket without hashing (the
+/// AVM's byte columns of bytecode-heavy transactions commit twice as fast without it).
+fn dedup_pays<F: FieldLike>(coeffs: &[F], bits: impl Fn(&F) -> u32) -> bool {
+    let narrow = || {
+        coeffs
+            .iter()
+            .step_by((coeffs.len() / 4096).max(1))
+            .all(|c| bits(c) <= 16)
+    };
+    !(coeffs.len() >= 1 << 16 && narrow()) && duplicate_heavy(coeffs)
+}
+
+fn num_bits<F: ark_ff::PrimeField>(c: &F) -> u32 {
+    ark_ff::BigInteger::num_bits(&c.into_bigint())
+}
+
 /// Sample the first nonzero coefficients: dedup pays only when a large share repeats. A prefix
 /// misses repeats past a varying head, as in the translator's `z_perm` (varying over its first
 /// ~27k rows, long constant runs after), so runs of equal neighbours are counted over the whole.
@@ -820,7 +837,7 @@ where
     /// internally parallel, so a few at a time saturate the cores while capping the live
     /// per-MSM scratch that an unbounded fan-out multiplies. The bound keeps that scratch (~64 B
     /// per point: scalars, histograms, schedules) within bb's 32 MiB batch budget: largest first,
-    /// groups of at most 8 MSMs whose points total at most 2^19 (a longer one alone), so a long
+    /// groups of at most 32 MSMs whose points total at most 2^19 (a longer one alone), so a long
     /// column does not serialize thousands of short ones (the AVM's wires). Nothing waits but
     /// rayon's own joins: a worker blocked in one runs any queued task, so a wait for budget there
     /// can sit on top of the very MSM holding it.
@@ -830,7 +847,7 @@ where
         G::ScalarField: Send + Sync,
     {
         use rayon::prelude::*;
-        const CONCURRENT_MSMS: usize = 8;
+        const CONCURRENT_MSMS: usize = 32;
         const BUDGET: usize = (32 << 20) / 64;
         let size = |i: usize| polys[i].end_index().saturating_sub(polys[i].start);
         let mut order: Vec<usize> = (0..polys.len()).collect();
@@ -864,7 +881,7 @@ where
         );
         let (s, coeffs) = (p.start.min(k), &p.coeffs[..k.saturating_sub(p.start)]);
         let t0 = crate::base::timing::on("BBREF_COMMIT_TIMING").then(crate::base::timing::Instant::now);
-        let c = if s == 0 && dedup_enabled() && k >= dedup_min_len() && duplicate_heavy(coeffs) {
+        let c = if s == 0 && dedup_enabled() && k >= dedup_min_len() && dedup_pays(coeffs, num_bits) {
             self.commit_dedup(coeffs).into_affine()
         } else {
             let phi = if crate::base::wasm::GLV_PHI_TABLE {
