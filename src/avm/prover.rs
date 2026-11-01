@@ -5,9 +5,10 @@
 //! commitments, sumcheck at the fixed trace size, then Shplemini over one unshifted and one
 //! shifted polynomial batched with short challenges, and KZG.
 
+use super::program::programs;
 use super::relations::AvmRelations;
 use super::tables::{layout, relations, Body};
-use crate::base::field::{batch_invert, Fr};
+use crate::base::field::Fr;
 use crate::base::group::Curve;
 use crate::base::poly::Poly;
 use crate::base::srs::Srs;
@@ -15,6 +16,7 @@ use crate::base::transcript::Transcript;
 use crate::base::Bn254;
 use crate::honk::pcs::{kzg_open, shplemini_prove};
 use crate::honk::relations::RelationParams;
+use crate::honk::sumcheck::RelationSet;
 use crate::honk::sumcheck::{prove_sumcheck, SumcheckSpec};
 use ark_ff::{BigInt, One, PrimeField, Zero};
 use rayon::prelude::*;
@@ -59,6 +61,15 @@ fn entity_at(polys: &[Poly], e: usize, row: usize) -> Fr {
     }
 }
 
+/// Entity `e`'s stored rows: past them it is zero.
+fn entity_len(polys: &[Poly], e: usize) -> usize {
+    let l = layout();
+    match e.checked_sub(l.num_unshifted()) {
+        None => polys[e].len(),
+        Some(k) => polys[l.to_be_shifted_start() + k].len().saturating_sub(1),
+    }
+}
+
 /// bb `GenericLookupSettings`/`GenericPermutationSettings` term at a row: `((0·β + c₀)·β + c₁)·… + γ`.
 fn tuple_term(polys: &[Poly], cols: &[usize], row: usize, p: &RelationParams<Fr>) -> Fr {
     cols.iter()
@@ -83,27 +94,31 @@ fn compute_inverses(polys: &mut [Poly], p: &RelationParams<Fr>) {
             _ => None,
         })
         .collect();
+    // Each interaction in row chunks, inverted chunk by chunk: one interaction can span the trace.
+    const CHUNK: usize = 1 << 14;
+    let polys_ref = &*polys;
+    let ends: Vec<usize> = interactions
+        .iter()
+        .map(|&(src_sel, dst_sel, ..)| entity_len(polys_ref, src_sel).max(entity_len(polys_ref, dst_sel)))
+        .collect();
+    let mut inv: Vec<Vec<Fr>> = ends.iter().map(|&end| vec![Fr::zero(); end]).collect();
+    let mut chunks: Vec<(usize, usize, &mut [Fr])> = Vec::new();
+    for (k, v) in inv.iter_mut().enumerate() {
+        chunks.extend(v.chunks_mut(CHUNK).enumerate().map(|(c, s)| (k, c * CHUNK, s)));
+    }
+    chunks.into_par_iter().for_each(|(k, from, out)| {
+        let (src_sel, dst_sel, _, src, dst) = interactions[k];
+        for (o, row) in out.iter_mut().zip(from..) {
+            if entity_at(polys_ref, src_sel, row).is_one() || entity_at(polys_ref, dst_sel, row).is_one() {
+                *o = tuple_term(polys_ref, src, row, p) * tuple_term(polys_ref, dst, row, p);
+            }
+        }
+        ark_ff::serial_batch_inversion_and_mul(out, &Fr::one());
+    });
     let inverses: Vec<(usize, Poly)> = interactions
-        .par_iter()
-        .map(|&(src_sel, dst_sel, inverses, src, dst)| {
-            let polys = &*polys;
-            let len = |e: usize| match e.checked_sub(layout().num_unshifted()) {
-                None => polys[e].len(),
-                Some(k) => polys[layout().to_be_shifted_start() + k].len().saturating_sub(1),
-            };
-            let end = len(src_sel).max(len(dst_sel));
-            let mut inv: Vec<Fr> = (0..end)
-                .map(|row| {
-                    if entity_at(polys, src_sel, row).is_one() || entity_at(polys, dst_sel, row).is_one() {
-                        tuple_term(polys, src, row, p) * tuple_term(polys, dst, row, p)
-                    } else {
-                        Fr::zero()
-                    }
-                })
-                .collect();
-            batch_invert(&mut inv);
-            (inverses, Poly::from_coeffs(inv))
-        })
+        .iter()
+        .zip(inv)
+        .map(|(&(_, _, inverses, ..), v)| (inverses, Poly::from_coeffs(v)))
         .collect();
     for (i, poly) in inverses {
         assert!(polys[i].end_index() == 0, "inverse column {i} is expected to be empty");
@@ -114,8 +129,10 @@ fn compute_inverses(polys: &mut [Poly], p: &RelationParams<Fr>) {
 /// bb `run_check_circuit`: every relation on every row of the trace, with random `beta, gamma`
 /// and the inverses they give. A linearly independent subrelation must vanish on each row (where
 /// its relation's skip condition does not hold); every subrelation must sum to zero over the trace.
+/// Relation by relation, as bb, in row chunks, reading the columns in place: a relation stops at
+/// its skip columns' end, past which they are zero and it skips.
 pub fn check_circuit(mut polys: Vec<Poly>) -> Result<(), String> {
-    use crate::honk::sumcheck::RelationSet;
+    const CHUNK: usize = 1 << 14;
     let l = layout();
     let params = RelationParams {
         beta: crate::base::rng::global_field(),
@@ -123,50 +140,77 @@ pub fn check_circuit(mut polys: Vec<Poly>) -> Result<(), String> {
         ..Default::default()
     };
     compute_inverses(&mut polys, &params);
-    let rels: &(dyn RelationSet<Fr> + Sync) = &AvmRelations;
+    crate::base::timing::phase("avm check: log-derivative inverses");
+    let polys = &polys;
     let num_rows = polys.iter().map(Poly::len).max().unwrap_or(0);
-    let zero_sums = || {
-        (0..rels.num_relations())
-            .map(|r| vec![Fr::zero(); rels.num_subrelations(r)])
-            .collect::<Vec<_>>()
-    };
-    let one = Fr::one();
-    // Each worker reuses one row buffer: a row is ~100 KB, above the arena's small-block size.
-    let sums = (0..num_rows)
+    let work: Vec<(usize, usize, usize)> = relations()
+        .iter()
+        .enumerate()
+        .flat_map(|(r, rel)| {
+            let end = match rel.skip.is_empty() {
+                true => num_rows,
+                false => rel.skip.iter().map(|&c| entity_len(polys, c)).max().unwrap(),
+            };
+            (0..end)
+                .step_by(CHUNK)
+                .map(move |from| (r, from, (from + CHUNK).min(end)))
+        })
+        .collect();
+    // Per chunk: its relation's sums, or the first row a linearly independent subrelation fails.
+    let chunks: Vec<(usize, Result<Vec<Fr>, usize>)> = work
         .into_par_iter()
-        .try_fold(
-            || (zero_sums(), vec![Fr::zero(); l.num_all()]),
-            |(mut sums, mut row), i| {
-                row.iter_mut()
-                    .enumerate()
-                    .for_each(|(e, v)| *v = entity_at(&polys, e, i));
-                for (r, sum) in sums.iter_mut().enumerate() {
-                    if rels.skip(r, &row, &row) {
-                        continue;
-                    }
-                    let mut acc = vec![Fr::zero(); sum.len()];
-                    rels.accumulate(r, &mut acc, &row, &params, &one);
-                    for (j, v) in acc.iter().enumerate() {
-                        if rels.linearly_independent(r, j) && !v.is_zero() {
-                            return Err(format!(
-                                "Relation {}, subrelation {j} failed at row {i}",
-                                relations()[r].name
-                            ));
-                        }
-                        sum[j] += v;
+        .map(|(r, from, to)| {
+            let rel = &relations()[r];
+            let mut sum = vec![Fr::zero(); rel.num_subrelations];
+            let (mut regs, mut row) = (Vec::new(), Vec::new());
+            for i in from..to {
+                if !rel.skip.is_empty() && rel.skip.iter().map(|&c| entity_at(polys, c, i)).sum::<Fr>().is_zero() {
+                    continue;
+                }
+                let mut acc = vec![Fr::zero(); rel.num_subrelations];
+                match &programs()[r] {
+                    Some(program) => program.accumulate_row(&mut acc, |e| entity_at(polys, e, i), &params, &mut regs),
+                    None => {
+                        row.resize(l.num_all(), Fr::zero());
+                        row.iter_mut()
+                            .enumerate()
+                            .for_each(|(e, v)| *v = entity_at(polys, e, i));
+                        RelationSet::accumulate(&AvmRelations, r, &mut acc, &row, &params, &Fr::one());
                     }
                 }
-                Ok((sums, row))
-            },
-        )
-        .map(|r| r.map(|(sums, _)| sums))
-        .try_reduce(zero_sums, |mut a, b| {
-            a.iter_mut()
-                .flatten()
-                .zip(b.iter().flatten())
-                .for_each(|(x, y)| *x += y);
-            Ok(a)
-        })?;
+                for (j, v) in acc.iter().enumerate() {
+                    if RelationSet::<Fr>::linearly_independent(&AvmRelations, r, j) && !v.is_zero() {
+                        return (r, Err(i));
+                    }
+                    sum[j] += v;
+                }
+            }
+            (r, Ok(sum))
+        })
+        .collect();
+    crate::base::timing::phase("avm check: relations");
+    let mut sums: Vec<Vec<Fr>> = relations()
+        .iter()
+        .map(|r| vec![Fr::zero(); r.num_subrelations])
+        .collect();
+    let mut failed: Vec<Option<usize>> = vec![None; sums.len()];
+    for (r, c) in chunks {
+        match c {
+            Ok(sum) => sums[r].iter_mut().zip(sum).for_each(|(x, y)| *x += y),
+            Err(i) => failed[r] = Some(failed[r].map_or(i, |f| f.min(i))),
+        }
+    }
+    for (r, rel) in relations().iter().enumerate() {
+        if let Some(i) = failed[r] {
+            let mut acc = vec![Fr::zero(); rel.num_subrelations];
+            let row: Vec<Fr> = (0..l.num_all()).map(|e| entity_at(polys, e, i)).collect();
+            RelationSet::accumulate(&AvmRelations, r, &mut acc, &row, &params, &Fr::one());
+            let j = (0..acc.len())
+                .position(|j| RelationSet::<Fr>::linearly_independent(&AvmRelations, r, j) && !acc[j].is_zero())
+                .unwrap();
+            return Err(format!("Relation {}, subrelation {j} failed at row {i}", rel.name));
+        }
+    }
     for (r, sum) in sums.iter().enumerate() {
         if let Some(j) = sum.iter().position(|v| !v.is_zero()) {
             return Err(format!("Relation {}, subrelation {j} failed.", relations()[r].name));

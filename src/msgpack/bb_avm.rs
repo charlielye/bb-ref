@@ -12,19 +12,31 @@ extern "C" {
     fn bb_avm_trace(input: *const u8, input_len: usize, output: *mut *mut u8, output_len: *mut usize) -> i32;
 }
 
+/// bb's malloc'd trace buffer, read in place and freed on drop.
+pub struct Trace(*mut u8, usize);
+
+impl std::ops::Deref for Trace {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.0, self.1) }
+    }
+}
+
+impl Drop for Trace {
+    fn drop(&mut self) {
+        unsafe { libc::free(self.0.cast()) }
+    }
+}
+
 /// bb's AVM trace for serialized proving inputs (simulation with the inputs' hints, then trace
 /// generation), in the sparse format [`polys_from_trace`] reads.
-pub fn avm_trace(inputs: &[u8]) -> Result<Vec<u8>, String> {
+pub fn avm_trace(inputs: &[u8]) -> Result<Trace, String> {
     let (mut out, mut out_len) = (std::ptr::null_mut(), 0usize);
-    unsafe {
-        let status = bb_avm_trace(inputs.as_ptr(), inputs.len(), &mut out, &mut out_len);
-        let bytes = std::slice::from_raw_parts(out, out_len).to_vec();
-        libc::free(out.cast());
-        if status == 0 {
-            Ok(bytes)
-        } else {
-            Err(String::from_utf8_lossy(&bytes).into_owned())
-        }
+    let status = unsafe { bb_avm_trace(inputs.as_ptr(), inputs.len(), &mut out, &mut out_len) };
+    let trace = Trace(out, out_len);
+    match status {
+        0 => Ok(trace),
+        _ => Err(String::from_utf8_lossy(&trace).into_owned()),
     }
 }
 
@@ -42,6 +54,11 @@ pub fn avm_verify(proof: &[Fr], public_inputs: &[u8]) -> Result<bool, String> {
 
 /// bb `AvmAPI::check_circuit`: a failing relation is an error, as bb throws.
 pub fn avm_check_circuit(inputs: &[u8]) -> Result<(), String> {
-    let polys = polys_from_trace(&avm_trace(inputs)?);
+    crate::base::timing::phase("avm check: start");
+    let trace = avm_trace(inputs)?;
+    crate::base::timing::phase("avm check: bb simulation and trace");
+    let polys = polys_from_trace(&trace);
+    drop(trace);
+    crate::base::timing::phase("avm check: columns");
     check_circuit(polys)
 }

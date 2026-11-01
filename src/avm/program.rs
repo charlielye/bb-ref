@@ -337,6 +337,45 @@ impl Program {
     }
 }
 
+impl Program {
+    /// Add the relation at one row into `acc` (one value per subrelation, unscaled): each live
+    /// operation once, column `j` read as `col(j)`. The circuit check's evaluation.
+    pub fn accumulate_row(
+        &self,
+        acc: &mut [Fr],
+        col: impl Fn(usize) -> Fr,
+        p: &RelationParams<Fr>,
+        regs: &mut Vec<Fr>,
+    ) {
+        regs.resize(self.ops.len(), Fr::zero());
+        for (i, op) in self.ops.iter().enumerate() {
+            if self.need[i] == 0 {
+                continue;
+            }
+            let r = |a: u32| regs[a as usize];
+            regs[i] = match *op {
+                Op::Col(j) => col(j as usize),
+                Op::Add(a, b) => r(a) + r(b),
+                Op::Sub(a, b) => r(a) - r(b),
+                Op::Mul(a, b) => r(a) * r(b),
+                Op::AddK(a, c) => r(a) + c,
+                Op::MulK(a, c) => r(a) * c,
+                Op::KSub(c, a) => c - r(a),
+                Op::AddP(a, Param::Beta) => r(a) + p.beta,
+                Op::AddP(a, Param::Gamma) => r(a) + p.gamma,
+                Op::MulP(a, Param::Beta) => r(a) * p.beta,
+                Op::MulP(a, Param::Gamma) => r(a) * p.gamma,
+            };
+        }
+        for (a, o) in acc.iter_mut().zip(&self.outs) {
+            *a += match o.val {
+                Val::R(r) => regs[r as usize],
+                Val::K(c) => c,
+            };
+        }
+    }
+}
+
 /// `v[..c]` are a degree-`c − 1` polynomial's values at `0..c`: fill the rest by stepping its
 /// forward differences.
 fn extend<F: FieldLike>(v: &mut [F], c: usize) {

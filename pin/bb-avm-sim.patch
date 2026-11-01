@@ -43,16 +43,16 @@ index 928e9be4553..3e5cfa09914 100644
  # Exclude test, bench, and fuzzer files
 diff --git a/barretenberg/cpp/src/barretenberg/vm2/trace_ffi.cpp b/barretenberg/cpp/src/barretenberg/vm2/trace_ffi.cpp
 new file mode 100644
-index 00000000000..9cda6ae8f98
 --- /dev/null
 +++ b/barretenberg/cpp/src/barretenberg/vm2/trace_ffi.cpp
-@@ -0,0 +1,56 @@
+@@ -0,0 +1,64 @@
 +#include <cstdint>
 +#include <cstdlib>
 +#include <cstring>
 +#include <exception>
 +#include <vector>
 +
++#include "barretenberg/common/thread.hpp"
 +#include "barretenberg/vm2/common/avm_io.hpp"
 +#include "barretenberg/vm2/generated/columns.hpp"
 +#include "barretenberg/vm2/simulation_helper.hpp"
@@ -63,7 +63,8 @@ index 00000000000..9cda6ae8f98
 + * included), as AvmAPI::prove does before proving.
 + * @details On success (returns 0) `*out` holds, for every column in `Column` order, a little-endian u32 entry count
 + * followed by that many (u32 row, 4 little-endian u64 canonical limbs) non-zero entries. On failure (returns 1) it holds
-+ * the error message. Either way `*out` is malloc'd and the caller frees it.
++ * the error message. Either way `*out` is malloc'd and the caller frees it. The columns are serialized in parallel and
++ * freed as they go, as bb fills its prover polynomials.
 + */
 +extern "C" __attribute__((visibility("default"))) int bb_avm_trace(const uint8_t* input,
 +                                                                   size_t input_len,
@@ -71,35 +72,41 @@ index 00000000000..9cda6ae8f98
 +                                                                   size_t* out_len)
 +{
 +    using namespace bb::avm2;
-+    std::vector<uint8_t> buf;
-+    int status = 0;
-+    auto put = [&](const void* p, size_t n) {
-+        const auto* b = static_cast<const uint8_t*>(p);
-+        buf.insert(buf.end(), b, b + n);
-+    };
 +    try {
 +        auto inputs = AvmProvingInputs::from(std::vector<uint8_t>(input, input + input_len));
 +        auto events = AvmSimulationHelper().simulate_for_witgen(inputs.hints);
 +        auto trace = AvmTraceGenHelper().generate_trace(std::move(events), inputs.public_inputs);
-+        for (size_t c = 0; c < tracegen::TraceContainer::num_columns(); c++) {
-+            const size_t count_at = buf.size();
-+            uint32_t count = 0;
-+            put(&count, 4);
++        // Counted, then each column written in place and freed, all in parallel: one buffer.
++        const size_t num_columns = tracegen::TraceContainer::num_columns();
++        std::vector<size_t> offsets(num_columns + 1, 0);
++        bb::parallel_for(num_columns, [&](size_t c) {
++            size_t count = 0;
++            trace.visit_column(static_cast<Column>(c), [&](uint32_t, const FF&) { count++; });
++            offsets[c + 1] = 4 + 36 * count;
++        });
++        for (size_t c = 0; c < num_columns; c++) {
++            offsets[c + 1] += offsets[c];
++        }
++        *out_len = offsets[num_columns];
++        *out = static_cast<uint8_t*>(std::malloc(*out_len));
++        bb::parallel_for(num_columns, [&](size_t c) {
++            uint8_t* at = *out + offsets[c];
++            const auto count = static_cast<uint32_t>((offsets[c + 1] - offsets[c] - 4) / 36);
++            std::memcpy(at, &count, 4);
++            at += 4;
 +            trace.visit_column(static_cast<Column>(c), [&](uint32_t row, const FF& value) {
 +                const auto canonical = value.from_montgomery_form();
-+                put(&row, 4);
-+                put(canonical.data, 32);
-+                count++;
++                std::memcpy(at, &row, 4);
++                std::memcpy(at + 4, canonical.data, 32);
++                at += 36;
 +            });
-+            std::memcpy(buf.data() + count_at, &count, 4);
 +            trace.clear_column(static_cast<Column>(c));
-+        }
++        });
++        return 0;
 +    } catch (const std::exception& e) {
-+        buf.assign(e.what(), e.what() + std::strlen(e.what()));
-+        status = 1;
++        *out_len = std::strlen(e.what());
++        *out = static_cast<uint8_t*>(std::malloc(*out_len + 1));
++        std::memcpy(*out, e.what(), *out_len);
++        return 1;
 +    }
-+    *out_len = buf.size();
-+    *out = static_cast<uint8_t*>(std::malloc(buf.size() > 0 ? buf.size() : 1));
-+    std::memcpy(*out, buf.data(), buf.size());
-+    return status;
 +}
