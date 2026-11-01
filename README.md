@@ -20,7 +20,7 @@ These are the project's binding goals — changes should be judged against them:
 | **Bit parity**: VKs bit-exact, proofs byte-exact, both directions, including the wire protocol | holds — every VK, proof and wire response checked is byte-equal, and bb-ref rejects tampered proofs as bb does ([what is checked](#parity)) |
 | **Circuit gate parity**: every selector, wire and copy-cycle identical to bb's ([docs/gate-exactness.md](docs/gate-exactness.md)) | holds — 41 stdlib gadget programs compared gate for gate, plus the VK sweeps ([parity](#parity)) |
 | **Replay the rollup through bb and bb-ref and get the same root proof** | holds — 63/63 `rollup-1117683` corpus responses byte-identical, `rollup_root` included, and 28/28 of the AVM corpus (prove, check circuit, verify) (`tools/conformance.sh`) |
-| **At parity or better with bb in performance, memory usage and wasm size** (against stock bb at the pin) | Chonk time **0.46×** native, **0.68×** wasm; the rollup **0.45×**; the AVM **0.58×**; memory **0.8–0.9×**; wasm module **2.1× smaller** ([speed and memory](#speed-and-memory), [binary size](#binary-size)) |
+| **At parity or better with bb in performance, memory usage and wasm size** (against stock bb at the pin) | Chonk time **0.46×** native, **0.68×** wasm; the rollup **0.45×**; the AVM **0.46×**; memory **0.8–0.9×**; wasm module **2.1× smaller** ([speed and memory](#speed-and-memory), [binary size](#binary-size)) |
 | **Fast to build**: a from-scratch release build well under bb's, like for like | **0.22×** bb's time with the AVM, **0.46×** without, on 16 cores ([build time](#build-time)) |
 | **95%+ test coverage on the critical paths**, without redundant tests | core **95%** standalone, plus full soundness sweeps ([docs/testing.md](docs/testing.md)) |
 | **Documentation an engineer can descend**: each component's purpose without the math; first use of any odd name links to its explanation | [tour](docs/tour.md) → module READMEs → [glossary](docs/glossary.md) |
@@ -102,14 +102,15 @@ threads, the same box, replayed through bb-avm and then bb-ref (with the AVM) on
 | BbCircuitVerify | 32 | 0.52 s | 0.43 s | 0.83× |
 | BbInit | 1 | 0.00 s | 0.00 s | |
 | **rollup total** (peak RSS 12.02 GB → 11.24 GB) | **63** | **300.89 s** | **135.61 s** | **0.45×** |
-| BbAvmProve | 7 | 59.75 s | 35.47 s | 0.59× |
-| BbAvmCheckCircuit | 7 | 30.39 s | 16.78 s | 0.55× |
-| BbAvmVerify | 14 | 1.66 s | 1.43 s | 0.86× |
-| **AVM total** (peak RSS 12.59 GB → 9.02 GB) | **28** | **91.80 s** | **53.69 s** | **0.58×** |
+| BbAvmProve | 7 | 57.26 s | 27.61 s | 0.48× |
+| BbAvmCheckCircuit | 7 | 29.71 s | 12.22 s | 0.41× |
+| BbAvmVerify | 14 | 1.77 s | 1.42 s | 0.80× |
+| **AVM total** (peak RSS 12.62 GB → 10.14 GB) | **28** | **88.74 s** | **41.25 s** | **0.46×** |
 
 The AVM's simulation and trace generation are bb's own code in both binaries, so its rows compare
 the proving and checking around them, and how fast the trace reaches them (AVM rows re-measured
-2026-11-01 with the parallel trace hand-off and relation-major circuit check).
+2026-11-01 at bb-ref `9cbcecc`: the parallel trace hand-off, relation-major circuit check and
+parallel bytecode decomposition).
 
 Try it in a browser: **[charlielye.github.io/bb-ref](https://charlielye.github.io/bb-ref/)** proves
 the same flows with both engines side by side ([js/](js/README.md)).

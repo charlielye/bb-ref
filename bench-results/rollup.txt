@@ -24,16 +24,16 @@ BbInit                                                    1      0.00s      0.00
 TOTAL                                                    63    300.89s    135.61s    0.45x
 peak RSS: bb 12.02GB, bb-ref 11.24GB
 
-# AVM corpus re-measured 2026-11-01 (parallel trace hand-off, relation-major circuit check)
+# AVM corpus re-measured 2026-11-01, bb-ref 9cbcecc (parallel trace hand-off, relation-major circuit check, parallel bytecode decomposition)
 threads: 16 (both binaries)
 
 bb vs bb-ref (sequential replay of the same corpus)
 
 operation            n         bb     bb-ref   ref/bb
 -----------------------------------------------------
-BbAvmProve           7     59.75s     35.47s    0.59x
-BbAvmCheckCircuit    7     30.39s     16.78s    0.55x
-BbAvmVerify         14      1.66s      1.43s    0.86x
+BbAvmProve           7     57.26s     27.61s    0.48x
+BbAvmCheckCircuit    7     29.71s     12.22s    0.41x
+BbAvmVerify         14      1.77s      1.42s    0.80x
 -----------------------------------------------------
-TOTAL               28     91.80s     53.69s    0.58x
-peak RSS: bb 12.59GB, bb-ref 9.02GB
+TOTAL               28     88.74s     41.25s    0.46x
+peak RSS: bb 12.62GB, bb-ref 10.14GB
