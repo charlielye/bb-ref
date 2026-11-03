@@ -254,6 +254,21 @@ ports of the [chonk-golf](https://github.com/olehmisar/chonk-golf) patch series 
   55.5 → 57.2 s at 12.51 → 11.88 GiB. mimalloc remains an A/B feature (`--features mimalloc`).
   The arena is glibc Linux only (it relies on Linux's zero-on-`MADV_DONTNEED`); macOS, iOS,
   Android and wasm keep the system allocator.
+- **Low memory mode** (`--slow_low_memory`, `BB_SLOW_LOW_MEMORY=1`; `--storage_budget`,
+  `BB_STORAGE_BUDGET`): the arena's reservation is a shared mapping of an unlinked sparse file in
+  `TMPDIR` instead of anonymous memory, so every big block is a file page the kernel can write back
+  and drop; bb's mode (aztec-packages#25732) file-backs polynomials only. A range gets its disk
+  blocks (`fallocate`) only when handed out without them, freed ranges keep their pages for reuse,
+  and `trim` punches free ranges out; punching every free instead cost 29k `fallocate`s under the
+  arena lock (4.2 → 32 s). Private memory (iOS's footprint) peaks at 17–22 MiB on the chonk flows
+  for 2% wall; what is left is glibc's small-allocation heap. Measure it with `tools/footprint.sh`,
+  uncapped. Under a cgroup cap (`tools/memory_floor.sh`) file pages count too, and the floor is set
+  by the kernel's reclaim racing the writeback of dirty pages, so it moves with the host: the
+  transfer flow completed in 64 MiB at 8 threads on bbbench (EBS), 32 MiB on a workstation, 120 MiB
+  on a c5ad with local NVMe, and 20 MiB at 1 thread (18 min, bbbench); the OOMs come with the cap
+  almost all dirty file pages. Punching freed ranges early or a background `sync_file_range` did not
+  lower it. Give the cap the io controller (a system scope), without which the kernel does not
+  bound a cgroup's dirty pages. glibc Linux only for now.
 - **Zeroed accumulators are written before they are read** (`Polynomial::linear_combination`,
   `add_linear_quotients`, the MSM bucket histograms). Reading a fresh zeroed page maps the kernel's
   shared zero page; the `+=` that follows is a copy-on-write fault that sends a TLB-flush IPI to

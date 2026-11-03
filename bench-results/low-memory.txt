@@ -1,0 +1,118 @@
+# Low memory mode, 2026-11-03. tools/footprint.sh, uncapped, 6 threads, BB_RNG_SEED=12345, 2 runs per cell.
+# bbref-bench-nvme: c5ad.4xlarge (EPYC 7R32, 16 vCPU, 32 GB), TMPDIR, CRS and flows on local NVMe (ext4).
+# bb: stock bb at the pin 1117683; bb-25732: aztec-packages 31d4755 (#25732 head) --slow_low_memory; bb-ref e30cdbb.
+# peak anon = peak RssAnon (private memory; iOS footprint proxy); peak rss includes file pages.
+== deploy_ecdsar1+sponsored_fpc
+bb pin                 exit 0  wall   4.77 s  peak anon  231.4 MiB  peak rss  254.7 MiB
+bb #25732 slow         exit 0  wall   5.21 s  peak anon   40.0 MiB  peak rss  252.0 MiB
+bb-ref                 exit 0  wall   3.21 s  peak anon  190.5 MiB  peak rss  220.3 MiB
+bb-ref low             exit 0  wall   3.30 s  peak anon   16.4 MiB  peak rss  217.4 MiB
+bb pin                 exit 0  wall   4.86 s  peak anon  232.0 MiB  peak rss  256.5 MiB
+bb #25732 slow         exit 0  wall   5.24 s  peak anon   41.2 MiB  peak rss  252.2 MiB
+bb-ref                 exit 0  wall   3.25 s  peak anon  190.7 MiB  peak rss  219.9 MiB
+bb-ref low             exit 0  wall   3.22 s  peak anon   18.3 MiB  peak rss  220.3 MiB
+== deploy_schnorr+sponsored_fpc
+bb pin                 exit 0  wall   4.46 s  peak anon  224.0 MiB  peak rss  254.3 MiB
+bb #25732 slow         exit 0  wall   4.89 s  peak anon   38.9 MiB  peak rss  247.9 MiB
+bb-ref                 exit 0  wall   2.99 s  peak anon  189.3 MiB  peak rss  217.3 MiB
+bb-ref low             exit 0  wall   3.12 s  peak anon   17.0 MiB  peak rss  214.6 MiB
+bb pin                 exit 0  wall   4.37 s  peak anon  220.8 MiB  peak rss  252.0 MiB
+bb #25732 slow         exit 0  wall   4.87 s  peak anon   38.9 MiB  peak rss  247.8 MiB
+bb-ref                 exit 0  wall   3.02 s  peak anon  188.2 MiB  peak rss  218.4 MiB
+bb-ref low             exit 0  wall   3.04 s  peak anon   17.3 MiB  peak rss  214.2 MiB
+== ecdsar1+amm_add_liquidity_1_recursions+sponsored_fpc
+bb pin                 exit 0  wall   7.02 s  peak anon  245.5 MiB  peak rss  269.6 MiB
+bb #25732 slow         exit 0  wall   7.73 s  peak anon   41.6 MiB  peak rss  259.3 MiB
+bb-ref                 exit 0  wall   5.00 s  peak anon  196.4 MiB  peak rss  227.8 MiB
+bb-ref low             exit 0  wall   5.03 s  peak anon   21.5 MiB  peak rss  226.6 MiB
+bb pin                 exit 0  wall   6.96 s  peak anon  244.3 MiB  peak rss  268.4 MiB
+bb #25732 slow         exit 0  wall   7.81 s  peak anon   42.9 MiB  peak rss  259.4 MiB
+bb-ref                 exit 0  wall   4.83 s  peak anon  197.4 MiB  peak rss  228.7 MiB
+bb-ref low             exit 0  wall   4.92 s  peak anon   19.6 MiB  peak rss  225.3 MiB
+== ecdsar1+deploy_tokenContract_with_registration+sponsored_fpc
+bb pin                 exit 0  wall   5.49 s  peak anon  230.4 MiB  peak rss  260.4 MiB
+bb #25732 slow         exit 0  wall   6.01 s  peak anon   41.1 MiB  peak rss  259.4 MiB
+bb-ref                 exit 0  wall   3.61 s  peak anon  200.1 MiB  peak rss  231.3 MiB
+bb-ref low             exit 0  wall   3.72 s  peak anon   20.5 MiB  peak rss  229.5 MiB
+bb pin                 exit 0  wall   5.47 s  peak anon  230.2 MiB  peak rss  260.2 MiB
+bb #25732 slow         exit 0  wall   6.02 s  peak anon   41.6 MiB  peak rss  259.3 MiB
+bb-ref                 exit 0  wall   3.62 s  peak anon  198.3 MiB  peak rss  228.5 MiB
+bb-ref low             exit 0  wall   3.84 s  peak anon   21.6 MiB  peak rss  229.1 MiB
+== ecdsar1+storage_proof_7_layers+sponsored_fpc
+bb pin                 exit 0  wall  16.27 s  peak anon  648.2 MiB  peak rss  673.8 MiB
+bb #25732 slow         exit 0  wall  16.85 s  peak anon  101.0 MiB  peak rss  618.1 MiB
+bb-ref                 exit 0  wall   8.52 s  peak anon  533.4 MiB  peak rss  576.4 MiB
+bb-ref low             exit 0  wall   8.73 s  peak anon   20.1 MiB  peak rss  573.3 MiB
+bb pin                 exit 0  wall  15.80 s  peak anon  629.9 MiB  peak rss  655.5 MiB
+bb #25732 slow         exit 0  wall  16.82 s  peak anon  100.4 MiB  peak rss  618.7 MiB
+bb-ref                 exit 0  wall   8.55 s  peak anon  531.2 MiB  peak rss  573.7 MiB
+bb-ref low             exit 0  wall   8.66 s  peak anon   19.0 MiB  peak rss  572.2 MiB
+== ecdsar1+token_bridge_claim_private+sponsored_fpc
+bb pin                 exit 0  wall   4.70 s  peak anon  229.2 MiB  peak rss  259.1 MiB
+bb #25732 slow         exit 0  wall   5.23 s  peak anon   41.0 MiB  peak rss  258.8 MiB
+bb-ref                 exit 0  wall   3.19 s  peak anon  194.7 MiB  peak rss  226.2 MiB
+bb-ref low             exit 0  wall   3.34 s  peak anon   19.5 MiB  peak rss  226.0 MiB
+bb pin                 exit 0  wall   4.70 s  peak anon  228.5 MiB  peak rss  258.5 MiB
+bb #25732 slow         exit 0  wall   5.25 s  peak anon   40.3 MiB  peak rss  258.8 MiB
+bb-ref                 exit 0  wall   3.21 s  peak anon  193.7 MiB  peak rss  225.1 MiB
+bb-ref low             exit 0  wall   3.22 s  peak anon   19.4 MiB  peak rss  224.8 MiB
+== ecdsar1+transfer_0_recursions+private_fpc
+bb pin                 exit 0  wall   6.12 s  peak anon  236.2 MiB  peak rss  261.3 MiB
+bb #25732 slow         exit 0  wall   6.70 s  peak anon   41.6 MiB  peak rss  259.2 MiB
+bb-ref                 exit 0  wall   4.16 s  peak anon  196.1 MiB  peak rss  227.0 MiB
+bb-ref low             exit 0  wall   4.22 s  peak anon   20.3 MiB  peak rss  227.3 MiB
+bb pin                 exit 0  wall   6.10 s  peak anon  235.3 MiB  peak rss  264.1 MiB
+bb #25732 slow         exit 0  wall   6.65 s  peak anon   40.0 MiB  peak rss  259.2 MiB
+bb-ref                 exit 0  wall   4.38 s  peak anon  198.0 MiB  peak rss  229.2 MiB
+bb-ref low             exit 0  wall   4.32 s  peak anon   20.5 MiB  peak rss  223.9 MiB
+== ecdsar1+transfer_0_recursions+sponsored_fpc
+bb pin                 exit 0  wall   4.23 s  peak anon  220.0 MiB  peak rss  254.1 MiB
+bb #25732 slow         exit 0  wall   4.60 s  peak anon   40.6 MiB  peak rss  251.7 MiB
+bb-ref                 exit 0  wall   2.82 s  peak anon  188.0 MiB  peak rss  219.4 MiB
+bb-ref low             exit 0  wall   2.93 s  peak anon   15.3 MiB  peak rss  215.8 MiB
+bb pin                 exit 0  wall   4.16 s  peak anon  219.8 MiB  peak rss  253.8 MiB
+bb #25732 slow         exit 0  wall   4.51 s  peak anon   38.9 MiB  peak rss  251.7 MiB
+bb-ref                 exit 0  wall   2.90 s  peak anon  188.0 MiB  peak rss  219.4 MiB
+bb-ref low             exit 0  wall   2.88 s  peak anon   17.4 MiB  peak rss  218.2 MiB
+== ecdsar1+transfer_1_recursions+private_fpc
+bb pin                 exit 0  wall   6.40 s  peak anon  230.6 MiB  peak rss  259.3 MiB
+bb #25732 slow         exit 0  wall   7.22 s  peak anon   39.4 MiB  peak rss  259.3 MiB
+bb-ref                 exit 0  wall   4.37 s  peak anon  196.5 MiB  peak rss  228.0 MiB
+bb-ref low             exit 0  wall   4.60 s  peak anon   20.7 MiB  peak rss  227.9 MiB
+bb pin                 exit 0  wall   6.44 s  peak anon  235.8 MiB  peak rss  259.1 MiB
+bb #25732 slow         exit 0  wall   7.01 s  peak anon   41.6 MiB  peak rss  259.5 MiB
+bb-ref                 exit 0  wall   4.45 s  peak anon  195.0 MiB  peak rss  226.5 MiB
+bb-ref low             exit 0  wall   4.50 s  peak anon   20.5 MiB  peak rss  227.5 MiB
+== ecdsar1+transfer_1_recursions+sponsored_fpc
+bb pin                 exit 0  wall   4.59 s  peak anon  220.2 MiB  peak rss  254.3 MiB
+bb #25732 slow         exit 0  wall   5.13 s  peak anon   40.2 MiB  peak rss  251.9 MiB
+bb-ref                 exit 0  wall   3.12 s  peak anon  185.1 MiB  peak rss  216.7 MiB
+bb-ref low             exit 0  wall   3.27 s  peak anon   15.5 MiB  peak rss  215.6 MiB
+bb pin                 exit 0  wall   4.60 s  peak anon  219.8 MiB  peak rss  253.8 MiB
+bb #25732 slow         exit 0  wall   5.01 s  peak anon   38.7 MiB  peak rss  251.9 MiB
+bb-ref                 exit 0  wall   3.14 s  peak anon  186.8 MiB  peak rss  218.1 MiB
+bb-ref low             exit 0  wall   3.19 s  peak anon   17.8 MiB  peak rss  218.4 MiB
+bb pin                 exit 1  wall   0.02 s  peak anon    0.3 MiB  peak rss    9.0 MiB
+bb #25732 slow         exit 1  wall   0.02 s  peak anon    0.2 MiB  peak rss    8.8 MiB
+bb-ref                 exit 101  wall   0.02 s  peak anon    0.3 MiB  peak rss    1.9 MiB
+bb-ref low             exit 101  wall   0.02 s  peak anon    0.3 MiB  peak rss    2.5 MiB
+bb pin                 exit 1  wall   0.02 s  peak anon    0.2 MiB  peak rss    9.0 MiB
+bb #25732 slow         exit 1  wall   0.02 s  peak anon    0.3 MiB  peak rss    8.8 MiB
+bb-ref                 exit 101  wall   0.02 s  peak anon    0.3 MiB  peak rss    2.4 MiB
+bb-ref low             exit 101  wall   0.02 s  peak anon    0.3 MiB  peak rss    2.6 MiB
+== schnorr+deploy_tokenContract_with_registration+sponsored_fpc
+bb pin                 exit 0  wall   5.12 s  peak anon  231.0 MiB  peak rss  262.1 MiB
+bb #25732 slow         exit 0  wall   5.61 s  peak anon   41.4 MiB  peak rss  255.3 MiB
+bb-ref                 exit 0  wall   3.43 s  peak anon  195.2 MiB  peak rss  223.0 MiB
+bb-ref low             exit 0  wall   3.58 s  peak anon   16.8 MiB  peak rss  221.5 MiB
+bb pin                 exit 0  wall   5.13 s  peak anon  231.4 MiB  peak rss  258.3 MiB
+bb #25732 slow         exit 0  wall   5.54 s  peak anon   42.4 MiB  peak rss  255.4 MiB
+bb-ref                 exit 0  wall   3.34 s  peak anon  195.9 MiB  peak rss  222.8 MiB
+bb-ref low             exit 0  wall   3.45 s  peak anon   19.6 MiB  peak rss  224.5 MiB
+
+# Cgroup floors (tools/memory_floor.sh), ecdsar1+transfer_1_recursions+private_fpc, --slow_low_memory, user scope (no io controller), bbbench (c7a.4xlarge, EBS gp3 6000 IOPS / 500 MB/s), single runs:
+bb-ref, 8 threads: floor 64 MiB (60 MiB OOM), 27.2 s; uncapped 2.3 s
+bb-ref, 1 thread:  floor 20 MiB (16 MiB fails), 1097 s; 28 MiB 127 s; 52 MiB 76 s; uncapped 9.7 s
+bb #25732, 8 threads: floor 208 MiB (204 MiB fails), 5.8 s; uncapped 4.9 s
+# Same on bbref-bench-nvme, system scope with the io controller, floor confirmed by a second run: bb-ref 8 threads 120 MiB, 19.9 s (uncapped 3.8 s).
+# Local workstation (faster disk), user scope: bb-ref 8 threads completes at 32 MiB in 185 s; stock bb at the pin needs ~260 MiB normal, ~360 MiB with --slow_low_memory.
