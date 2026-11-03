@@ -20,7 +20,7 @@ These are the project's binding goals — changes should be judged against them:
 | **Bit parity**: VKs bit-exact, proofs byte-exact, both directions, including the wire protocol | holds — every VK, proof and wire response checked is byte-equal, and bb-ref rejects tampered proofs as bb does ([what is checked](#parity)) |
 | **Circuit gate parity**: every selector, wire and copy-cycle identical to bb's ([docs/gate-exactness.md](docs/gate-exactness.md)) | holds — 41 stdlib gadget programs compared gate for gate, plus the VK sweeps ([parity](#parity)) |
 | **Replay the rollup through bb and bb-ref and get the same root proof** | holds — 63/63 `rollup-1117683` corpus responses byte-identical, `rollup_root` included, and 28/28 of the AVM corpus (prove, check circuit, verify) (`tools/conformance.sh`) |
-| **At parity or better with bb in performance, memory usage and wasm size** (against stock bb at the pin) | Chonk time **0.46×** native, **0.68×** wasm; the rollup **0.45×**; the AVM **0.46×**; memory **0.8–0.9×**, and **17–22 MiB** private in low memory mode (bb's: 39–101); wasm module **2.1× smaller** ([speed and memory](#speed-and-memory), [binary size](#binary-size)) |
+| **At parity or better with bb in performance, memory usage and wasm size** (against stock bb at the pin) | Chonk time **0.46×** native, **0.68×** wasm; the rollup **0.45×**; the AVM **0.46×**; memory **0.8–0.9×**, and **17–22 MiB** private in [low memory mode](#low-memory-environments) (bb's: 39–101); wasm module **2.1× smaller** ([speed and memory](#speed-and-memory), [binary size](#binary-size)) |
 | **Fast to build**: a from-scratch release build well under bb's, like for like | **0.22×** bb's time with the AVM, **0.46×** without, on 16 cores ([build time](#build-time)) |
 | **95%+ test coverage on the critical paths**, without redundant tests | core **95%** standalone, plus full soundness sweeps ([docs/testing.md](docs/testing.md)) |
 | **Documentation an engineer can descend**: each component's purpose without the math; first use of any odd name links to its explanation | [tour](docs/tour.md) → module READMEs → [glossary](docs/glossary.md) |
@@ -88,35 +88,6 @@ was 0.47×); tables of record in [bench-results/](bench-results/), method in [do
 Flows use the sponsored fee payer unless marked `private_fpc`, and an ecdsar1 account unless
 marked schnorr. With wasm wide arithmetic (node 27 nightly), bb-ref's wasm total drops to 0.56×.
 
-**Low memory mode** (bb's `--slow_low_memory`): the big blocks, polynomials and builder vectors and
-MSM scratch, live in an unlinked temp file mapped shared, so they are file pages the kernel can write
-back and drop, outside a phone's memory footprint ([docs/performance.md](docs/performance.md#allocator-and-runtime)).
-Peak private memory (what iOS's footprint counts; `tools/footprint.sh`) and wall, uncapped, 6
-threads (an iPhone 13's cores), against stock bb at the pin and bb's own low memory mode at
-[aztec-packages#25732](https://github.com/AztecProtocol/aztec-packages/pull/25732)'s head
-(`31d4755`), on a c5ad.4xlarge (Zen 2) with the temp files on local NVMe; best wall and highest
-peak of 2 runs, 2026-11-03, bb-ref `e30cdbb` ([bench-results/low-memory.txt](bench-results/low-memory.txt)):
-
-| flow | bb | bb #25732 low | bb-ref | bb-ref low |
-| --- | ---: | ---: | ---: | ---: |
-| deploy_ecdsar1 | 4.77 s, 232 MiB | 5.21 s, 41 MiB | 3.21 s, 191 MiB | 3.22 s, **18 MiB** |
-| deploy_schnorr | 4.37 s, 224 MiB | 4.87 s, 39 MiB | 2.99 s, 189 MiB | 3.04 s, **17 MiB** |
-| amm_add_liquidity_1_recursions | 6.96 s, 246 MiB | 7.73 s, 43 MiB | 4.83 s, 197 MiB | 4.92 s, **22 MiB** |
-| ecdsar1 deploy_tokenContract | 5.47 s, 230 MiB | 6.01 s, 42 MiB | 3.61 s, 200 MiB | 3.72 s, **22 MiB** |
-| storage_proof_7_layers | 15.80 s, 648 MiB | 16.82 s, 101 MiB | 8.52 s, 533 MiB | 8.66 s, **20 MiB** |
-| token_bridge_claim_private | 4.70 s, 229 MiB | 5.23 s, 41 MiB | 3.19 s, 195 MiB | 3.22 s, **20 MiB** |
-| transfer_0_recursions, private_fpc | 6.10 s, 236 MiB | 6.65 s, 42 MiB | 4.16 s, 198 MiB | 4.22 s, **20 MiB** |
-| transfer_0_recursions | 4.16 s, 220 MiB | 4.51 s, 41 MiB | 2.82 s, 188 MiB | 2.88 s, **17 MiB** |
-| transfer_1_recursions, private_fpc | 6.40 s, 236 MiB | 7.01 s, 42 MiB | 4.37 s, 196 MiB | 4.50 s, **21 MiB** |
-| transfer_1_recursions | 4.59 s, 220 MiB | 5.01 s, 40 MiB | 3.12 s, 187 MiB | 3.19 s, **18 MiB** |
-| schnorr deploy_tokenContract | 5.12 s, 231 MiB | 5.54 s, 42 MiB | 3.34 s, 196 MiB | 3.45 s, **20 MiB** |
-| **total wall** | **68.4 s** | **74.6 s** | **44.2 s** | **45.0 s** |
-
-The mode costs bb-ref 2% in wall and takes its private peak to 17–22 MiB on every flow, storage_proof
-included (bb's mode: 39–101 MiB at a 9% cost). Under a cgroup cap, which counts file pages too, a
-proof still completes in 64–120 MiB at 8 threads depending on the host, and in 20 MiB at 1 thread,
-slowly (`tools/memory_floor.sh`; bench-results/low-memory.txt).
-
 The rollup and AVM corpora (real recorded server traffic, `tools/bench.sh --pair`), native, 16
 threads, the same box, replayed through bb-avm and then bb-ref (with the AVM) one after the other,
 2026-10-31, bb-ref `4ec9af0` ([bench-results/rollup.txt](bench-results/rollup.txt)):
@@ -143,6 +114,51 @@ parallel bytecode decomposition).
 
 Try it in a browser: **[charlielye.github.io/bb-ref](https://charlielye.github.io/bb-ref/)** proves
 the same flows with both engines side by side ([js/](js/README.md)).
+
+### Low memory environments
+
+For phones and other memory-limited hosts, `--slow_low_memory` (bb's flag, also
+`BB_SLOW_LOW_MEMORY=1`) proves every pinned Chonk flow in **17–22 MiB of private memory, at 2% extra
+wall**. bb's own low memory mode at
+[aztec-packages#25732](https://github.com/AztecProtocol/aztec-packages/pull/25732) needs 39–101 MiB
+at 9% extra, and stock bb 220–648 MiB. Private memory is what iOS's footprint counts, and what an
+app extension's limit is enforced against (a keyboard's: 77 MB on an iPhone 13).
+
+The mode puts every allocation of 64 KiB or more (polynomials, the builder's vectors, MSM scratch)
+in an unlinked temp file mapped shared, where bb's puts only polynomials. Those blocks are file pages:
+the kernel can write them back and drop them, so they are outside the footprint. They are not
+gone. A proof keeps about as much resident as normal mode does (~226 MiB on the transfer flow).
+While the device has that much free it runs at full speed, and most of the data never reaches
+the disk before the file is deleted. Under memory pressure the kernel reclaims those pages first
+and the proof slows down
+([docs/performance.md](docs/performance.md#allocator-and-runtime)).
+
+Peak private memory (`tools/footprint.sh`) and wall, uncapped, 6 threads (an iPhone 13's cores),
+stock bb at the pin and bb #25732's head (`31d4755`) with `--slow_low_memory`, on a c5ad.4xlarge
+(Zen 2) with the temp files on local NVMe; best wall and highest peak of 2 runs, 2026-11-03,
+bb-ref `e30cdbb` ([bench-results/low-memory.txt](bench-results/low-memory.txt)):
+
+| flow | bb | bb #25732 low | bb-ref | bb-ref low |
+| --- | ---: | ---: | ---: | ---: |
+| deploy_ecdsar1 | 4.77 s, 232 MiB | 5.21 s, 41 MiB | 3.21 s, 191 MiB | 3.22 s, **18 MiB** |
+| deploy_schnorr | 4.37 s, 224 MiB | 4.87 s, 39 MiB | 2.99 s, 189 MiB | 3.04 s, **17 MiB** |
+| amm_add_liquidity_1_recursions | 6.96 s, 246 MiB | 7.73 s, 43 MiB | 4.83 s, 197 MiB | 4.92 s, **22 MiB** |
+| ecdsar1 deploy_tokenContract | 5.47 s, 230 MiB | 6.01 s, 42 MiB | 3.61 s, 200 MiB | 3.72 s, **22 MiB** |
+| storage_proof_7_layers | 15.80 s, 648 MiB | 16.82 s, 101 MiB | 8.52 s, 533 MiB | 8.66 s, **20 MiB** |
+| token_bridge_claim_private | 4.70 s, 229 MiB | 5.23 s, 41 MiB | 3.19 s, 195 MiB | 3.22 s, **20 MiB** |
+| transfer_0_recursions, private_fpc | 6.10 s, 236 MiB | 6.65 s, 42 MiB | 4.16 s, 198 MiB | 4.22 s, **20 MiB** |
+| transfer_0_recursions | 4.16 s, 220 MiB | 4.51 s, 41 MiB | 2.82 s, 188 MiB | 2.88 s, **17 MiB** |
+| transfer_1_recursions, private_fpc | 6.40 s, 236 MiB | 7.01 s, 42 MiB | 4.37 s, 196 MiB | 4.50 s, **21 MiB** |
+| transfer_1_recursions | 4.59 s, 220 MiB | 5.01 s, 40 MiB | 3.12 s, 187 MiB | 3.19 s, **18 MiB** |
+| schnorr deploy_tokenContract | 5.12 s, 231 MiB | 5.54 s, 42 MiB | 3.34 s, 196 MiB | 3.45 s, **20 MiB** |
+| **total wall** | **68.4 s** | **74.6 s** | **44.2 s** | **45.0 s** |
+
+**Worst case, no free memory anywhere.** A cgroup cap counts file pages too, so it stands in for a
+device with that little memory free in total. The transfer flow at 8 threads then still completes
+under a 64–120 MiB cap, depending on the host's disk and kernel, in 15–27 s instead of 2–4 s.
+At 1 thread it completes under 20 MiB, in 18 min. bb #25732 needs 208 MiB (`tools/memory_floor.sh`).
+
+Native glibc Linux for now; macOS and iOS come next, to measure on an iPhone.
 
 ### Build time
 
