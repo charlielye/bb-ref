@@ -208,6 +208,16 @@ fn msgpack_serve(path: &str) {
 }
 
 fn main() {
+    // bb's low memory mode (`--slow_low_memory`, with an optional `--storage_budget`), before
+    // anything allocates a big block.
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--slow_low_memory") {
+        let budget = args.iter().position(|a| a == "--storage_budget").map(|i| {
+            let v = args.get(i + 1).map_or("", String::as_str);
+            bb_ref::base::pool::parse_size(v).unwrap_or_else(|| panic!("--storage_budget: not a size: {v}"))
+        });
+        bb_ref::base::pool::set_low_memory(budget);
+    }
     bb_ref::base::bench::init();
     bb_ref::base::pool::adapt();
 
@@ -235,7 +245,6 @@ fn main() {
     // bb keeps ONE global engine: witness gap-fills, in-circuit masking and the prover all draw
     // from it, so `BB_RNG_SEED` must seed the global source, not just the explicit prover rng.
     bb_ref::base::rng::set_global_from_env();
-    let args: Vec<String> = std::env::args().collect();
     let cmd = args.get(1).map(String::as_str).unwrap_or("");
     let mut flags: HashMap<String, String> = HashMap::new();
     let mut i = 2;
