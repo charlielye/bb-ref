@@ -217,6 +217,7 @@ fn main() {
             bb_ref::base::pool::parse_size(v).unwrap_or_else(|| panic!("--storage_budget: not a size: {v}"))
         });
         bb_ref::base::pool::set_low_memory(budget);
+        bb_ref::base::LOW_MEMORY_FLAG.store(true, std::sync::atomic::Ordering::Relaxed);
     }
     bb_ref::base::bench::init();
     bb_ref::base::pool::adapt();

@@ -1755,7 +1755,8 @@ pub struct RoundProver<'a, F> {
     /// The relation parameters with the separator-folding constants (`fold_separators`), if any.
     folded: Option<RelationParams<F>>,
     /// Build the owned tables after round 1 rather than round 0 (see `partially_evaluate`): a
-    /// quarter of the columns' size instead of half, for an extra multiply per round-1 read.
+    /// quarter of the columns' size instead of half, for an extra multiply per round-1 read. Always
+    /// in the joint sumcheck; everywhere in low memory mode.
     pub late_tables: bool,
 }
 
@@ -1803,7 +1804,7 @@ where
             vanishes: vec![],
             pows0: vec![],
             folded: None,
-            late_tables: false,
+            late_tables: crate::base::low_memory(),
         }
     }
     /// Extension weights for this relation set and univariate length (built once, on the first round).
