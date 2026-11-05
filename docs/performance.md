@@ -269,6 +269,17 @@ ports of the [chonk-golf](https://github.com/olehmisar/chonk-golf) patch series 
   almost all dirty file pages. Punching freed ranges early or a background `sync_file_range` did not
   lower it. Give the cap the io controller (a system scope), without which the kernel does not
   bound a cgroup's dirty pages. glibc Linux only for now.
+- **Memory-lean choices** (`base::lean_memory`: always on wasm, natively in low memory mode):
+  every sumcheck builds its owned tables after round 1 at a quarter of the columns' size (late
+  tables; the joint sumcheck always does), the prover instance allocates the columns not read from
+  the gate rows after the rows are freed, the dedup commit's scalar map starts small, and (wasm
+  only) the translator columns the joint PCS does not open are freed before it. wasm linear-memory
+  peak on bbbench (node 24, 8 threads): the small flows 205-222 -> 186-198 MiB, storage_proof 548 ->
+  ~480 MiB, for +0.3% total wall (+0.0-1.0% per flow). Natively they are not taken outside low
+  memory mode: the dedup map's regrowth cost 0.7% and the column free 0.5% (even compiled in,
+  unused), against native peaks already below bb's. Find the wasm peak with the timing build's
+  `BBREF_TIMING_RSS=1`, which reports linear memory per phase: a native dhat profile finds the
+  moment of most live data, which on the small flows is not when wasm's high-water mark is set.
 - **Zeroed accumulators are written before they are read** (`Polynomial::linear_combination`,
   `add_linear_quotients`, the MSM bucket histograms). Reading a fresh zeroed page maps the kernel's
   shared zero page; the `+=` that follows is a copy-on-write fault that sends a TLB-flush IPI to

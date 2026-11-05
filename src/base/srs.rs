@@ -927,10 +927,10 @@ where
         use std::collections::HashMap;
         assert_eq!(std::mem::size_of::<G::ScalarField>(), 32);
         let key = |s: &G::ScalarField| unsafe { std::mem::transmute_copy::<G::ScalarField, [u64; 4]>(s) };
-        // Where memory is tight (wasm, low memory mode), sized for few distinct scalars and grown as
+        // Where memory is tight (`lean_memory`: wasm, low memory mode), sized for few distinct scalars and grown as
         // needed: four 2^17-row commits each sized for half their rows held 20 MiB at the small
         // flows' wasm peak. Natively the regrowth costs the wires (many distinct values) 0.7%.
-        let cap = if cfg!(target_family = "wasm") || crate::base::low_memory() {
+        let cap = if crate::base::lean_memory() {
             coeffs.len().min(1 << 12)
         } else {
             coeffs.len() / 2

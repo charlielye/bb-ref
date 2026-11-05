@@ -169,14 +169,14 @@ impl ProverInstance {
         };
         // Only the selectors are read from the gate rows; the other columns are written once the
         // rows are consumed (and, when `release`, freed). On wasm, allocating commits memory, so
-        // they are also allocated only then, as in low memory mode; natively pages are otherwise
+        // they are also allocated only then (`lean_memory`, so also in low memory mode); natively pages are otherwise
         // committed when written, and an allocation after the free would zero reused memory serially.
         let selectors = [Ent::q_m, Ent::q_c, Ent::q_l, Ent::q_r, Ent::q_o, Ent::q_4, Ent::q_5];
         let from_rows: Vec<bool> = layout
             .unshifted
             .iter()
             .map(|e| {
-                !(cfg!(target_family = "wasm") || crate::base::low_memory())
+                !crate::base::lean_memory()
                     || selectors.contains(e)
                     || blocks
                         .iter()
