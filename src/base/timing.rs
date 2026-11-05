@@ -1,7 +1,8 @@
 //! Debug instrumentation, compiled in by the `timing` feature only: [`on`] is constant false
 //! without it, so every probe it guards folds away. In a timing build the env vars select output:
 //! with `BBREF_TIMING=1`, `phase(label)` prints the time since the previous phase mark; with
-//! `BBREF_TIMING_RSS=1` also the process RSS at the mark, for attributing peak memory to a phase.
+//! `BBREF_TIMING_RSS=1` also the process RSS at the mark (on wasm the linear memory's size), for
+//! attributing peak memory to a phase.
 
 use std::cell::Cell;
 
@@ -46,6 +47,13 @@ fn rss_gb() -> Option<(f64, f64)> {
     if !on("BBREF_TIMING_RSS") {
         return None;
     }
+    // wasm: linear memory's size, which only grows, so it is both the current figure and the peak.
+    #[cfg(target_family = "wasm")]
+    {
+        let gb = (core::arch::wasm32::memory_size(0) << 16) as f64 / (1u64 << 30) as f64;
+        return Some((gb, gb));
+    }
+    #[allow(unreachable_code)]
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
     let field = |tag: &str| -> Option<f64> {
         let kb: f64 = status
