@@ -66,13 +66,8 @@ Chonk (client IVC) proving over the 11 pinned transaction flows, stock bb at the
 bb-ref, both seeded, 8 threads, on a 16-core Zen 4 box (bbbench). Time is wall, best of 3; ratio is
 bb-ref / bb, below 1 is better. Wasm runs under V8 (node 24, worker threads and shared memory, the
 browser's shape); its memory is the wasm linear-memory peak, native's is peak RSS. Every bb-ref
-proof is byte-identical to bb's. Measured 2026-10-23, pin `1117683`, bb-ref `7c9e511`, except native
-memory, re-measured 2026-10-28 with the big-block arena (same box and method; that run's wall total
-was 0.47×), and bb-ref's wasm memory, re-measured 2026-11-05 with the memory-lean wasm prover
-(`2a6bb29`; same box, node 24, 8 threads, max of 3 runs; [bench-results/wasm-memory.txt](bench-results/wasm-memory.txt)).
-Its wasm wall against the master before it (`58ae0d2`): +0.3% in total (58.7 → 58.9 s, interleaved,
-+0.0–1.0% per flow); the wasm wall columns are not re-measured. Tables of record in
-[bench-results/](bench-results/), method in [docs/performance.md](docs/performance.md).
+proof is byte-identical to bb's. Tables of record in [bench-results/](bench-results/), method in
+[docs/performance.md](docs/performance.md).
 
 | flow | native bb | bb-ref | ratio | native mem bb | bb-ref | wasm bb | bb-ref | ratio | wasm mem bb | bb-ref |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -93,8 +88,8 @@ Flows use the sponsored fee payer unless marked `private_fpc`, and an ecdsar1 ac
 marked schnorr. With wasm wide arithmetic (node 27 nightly), bb-ref's wasm total drops to 0.56×.
 
 The rollup and AVM corpora (real recorded server traffic, `tools/bench.sh --pair`), native, 16
-threads, the same box, replayed through bb-avm and then bb-ref (with the AVM) one after the other,
-2026-10-31, bb-ref `4ec9af0` ([bench-results/rollup.txt](bench-results/rollup.txt)):
+threads, the same box, replayed through bb-avm and then bb-ref (with the AVM) one after the other
+([bench-results/rollup.txt](bench-results/rollup.txt)):
 
 | corpus operation | n | bb | bb-ref | ratio |
 | --- | ---: | ---: | ---: | ---: |
@@ -112,9 +107,7 @@ threads, the same box, replayed through bb-avm and then bb-ref (with the AVM) on
 | **AVM total** (peak RSS 12.62 GB → 10.14 GB) | **28** | **88.74 s** | **41.25 s** | **0.46×** |
 
 The AVM's simulation and trace generation are bb's own code in both binaries, so its rows compare
-the proving and checking around them, and how fast the trace reaches them (AVM rows re-measured
-2026-11-01 at bb-ref `9cbcecc`: the parallel trace hand-off, relation-major circuit check and
-parallel bytecode decomposition).
+the proving and checking around them, and how fast the trace reaches them.
 
 Try it in a browser: **[charlielye.github.io/bb-ref](https://charlielye.github.io/bb-ref/)** proves
 the same flows with both engines side by side ([js/](js/README.md)).
@@ -138,9 +131,8 @@ and the proof slows down
 ([docs/performance.md](docs/performance.md#allocator-and-runtime)).
 
 Peak private memory (`tools/footprint.sh`) and wall, uncapped, 6 threads (an iPhone 13's cores),
-stock bb at the pin and bb #25732's head (`31d4755`) with `--slow_low_memory`, on a c5ad.4xlarge
-(Zen 2) with the temp files on local NVMe; best wall and highest peak of 2 runs, 2026-11-03,
-bb-ref `e30cdbb` ([bench-results/low-memory.txt](bench-results/low-memory.txt)):
+against stock bb and bb #25732 with `--slow_low_memory`, on a Zen 2 box with the temp files on
+local NVMe ([bench-results/low-memory.txt](bench-results/low-memory.txt)):
 
 | flow | bb | bb #25732 low | bb-ref | bb-ref low |
 | --- | ---: | ---: | ---: | ---: |
@@ -162,9 +154,8 @@ device with that little memory free in total. The transfer flow at 8 threads the
 under a 64–120 MiB cap, depending on the host's disk and kernel, in 15–27 s instead of 2–4 s.
 At 1 thread it completes under 20 MiB, in 18 min. bb #25732 needs 208 MiB (`tools/memory_floor.sh`).
 
-Native glibc Linux for now; macOS and iOS come next, to measure on an iPhone. In wasm there is no
-mode: the browser prover always takes the memory-lean choices low memory mode makes natively (they
-cost it ~0.3%), and has no file to back the arena with.
+The mode is native: glibc Linux now, macOS and iOS next. The browser prover always takes the
+memory-lean choices the mode makes natively.
 
 ### Build time
 

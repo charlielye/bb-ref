@@ -26,15 +26,14 @@ one instrumented run per prover. Ratios are bb-ref / bb (below 1 is better).
 | chonk native, peak RSS (per-flow range; 2026-10-28, big-block arena) | 0.25–0.70 GB | 0.21–0.56 GB | **0.77–0.88×** |
 | chonk **wasm/V8** (node 24), wall | 86.17 s | 58.43 s | **0.68×** (0.48–0.76) |
 | chonk wasm/V8, proving-only | 77.08 s | 54.62 s | 0.71× (0.48–0.81) |
-| chonk wasm/V8, peak linear memory (per-flow range; bb-ref 2026-11-05, memory-lean wasm prover) | 0.22–0.66 GB | 0.18–0.48 GB | **0.73–0.83×** |
+| chonk wasm/V8, peak linear memory (per-flow range) | 0.22–0.66 GB | 0.18–0.48 GB | **0.73–0.83×** |
 | chonk wasm/V8, wide arithmetic (node 27 nightly, `--wasm-wide-arithmetic`), wall | 84.34 s | 47.36 s | 0.56× (0.39–0.63) |
 | rollup corpus, 62 server ops, native 16 threads (2026-10-14, older pin `3b2c553`) | 301.06 s | 138.87 s | 0.46× |
 | rollup corpus, peak RSS (same run) | 12.56 GB | 12.89 GB | 1.03× (behind) |
 
 Measured 2026-10-23 at the pin `1117683`, bb-ref `7c9e511`, except the rollup rows, which predate
-the repin and have not been re-run, bb-ref's wasm memory, re-measured 2026-11-05 on the same box
-(`2a6bb29`, [wasm-memory.txt](../bench-results/wasm-memory.txt); its wasm wall is +0.3% on the master
-before it, `58ae0d2`), and the native RSS row, re-measured 2026-10-28 on the same box
+the repin and have not been re-run, bb-ref's wasm memory ([wasm-memory.txt](../bench-results/wasm-memory.txt)),
+and the native RSS row, re-measured 2026-10-28 on the same box
 after the big-block arena (`src/base/pool.rs`; below) replaced glibc for allocations of 64 KiB and
 up. Before it bb-ref was 6–34% above bb on every flow with a live heap at or below bb's: glibc
 stranded freed buffers in per-thread arenas. bb-ref now uses less memory than bb on every flow,
@@ -275,11 +274,10 @@ ports of the [chonk-golf](https://github.com/olehmisar/chonk-golf) patch series 
   every sumcheck builds its owned tables after round 1 at a quarter of the columns' size (late
   tables; the joint sumcheck always does), the prover instance allocates the columns not read from
   the gate rows after the rows are freed, the dedup commit's scalar map starts small, and (wasm
-  only) the translator columns the joint PCS does not open are freed before it. wasm linear-memory
-  peak on bbbench (node 24, 8 threads): the small flows 205-222 -> 186-198 MiB, storage_proof 548 ->
-  ~480 MiB, for +0.3% total wall (+0.0-1.0% per flow). Natively they are not taken outside low
-  memory mode: the dedup map's regrowth cost 0.7% and the column free 0.5% (even compiled in,
-  unused), against native peaks already below bb's. Find the wasm peak with the timing build's
+  only) the translator columns the joint PCS does not open are freed before it. They take about
+  10% off wasm's linear-memory peak for ~0.3% of wall. Natively they are left to low memory mode:
+  there the dedup map's regrowth costs 0.7% and the column free 0.5% (even compiled in, unused),
+  and native peaks are already below bb's. Find the wasm peak with the timing build's
   `BBREF_TIMING_RSS=1`, which reports linear memory per phase: a native dhat profile finds the
   moment of most live data, which on the small flows is not when wasm's high-water mark is set.
 - **Zeroed accumulators are written before they are read** (`Polynomial::linear_combination`,
