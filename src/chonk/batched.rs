@@ -138,10 +138,12 @@ pub fn joint_prove(
     t.send_vec("Sumcheck:evaluations_translator", &trans_full);
     let libra_evaluation = zk.claimed_evaluation();
     t.send("Libra:claimed_evaluation", &libra_evaluation);
-    // In-place folding keeps the round-0 capacity of every table; free them before the PCS, and
-    // the translator columns it does not open (the mini-circuit wires, whose evaluations sumcheck
-    // sent, and the Lagrange selectors): the PCS is the small flows' memory peak.
+    // In-place folding keeps the round-0 capacity of every table; free them before the PCS.
     drop((mega_state, trans_state));
+    // On wasm the translator columns the PCS does not open go too (the mini-circuit wires, whose
+    // evaluations sumcheck sent, and the Lagrange selectors): the PCS is near the small flows'
+    // linear-memory peak. wasm only: compiled into the native prover, even unused, it cost 0.5%.
+    #[cfg(target_family = "wasm")]
     for e in 0..crate::goblin::translator::FIRST_SHIFTED {
         if !PCS_UNSHIFTED.contains(&e) && !PCS_TO_BE_SHIFTED.contains(&e) {
             trans.cols[e] = Poly::zero(0);
