@@ -927,8 +927,11 @@ where
         use std::collections::HashMap;
         assert_eq!(std::mem::size_of::<G::ScalarField>(), 32);
         let key = |s: &G::ScalarField| unsafe { std::mem::transmute_copy::<G::ScalarField, [u64; 4]>(s) };
+        // Sized for few distinct scalars and grown as needed: a dedup column has few (the
+        // translator's 14-bit range columns at most 2^14), and four 2^17-row commits each sized
+        // for half their rows held 20 MiB at the small flows' memory peak.
         let mut map: HashMap<[u64; 4], u32, LimbHashBuilder> =
-            HashMap::with_capacity_and_hasher(coeffs.len() / 2, Default::default());
+            HashMap::with_capacity_and_hasher(coeffs.len().min(1 << 12), Default::default());
         let mut reps: Vec<u32> = Vec::new();
         let mut counts: Vec<u32> = Vec::new();
         let mut cluster_of: Vec<(u32, u32)> = Vec::with_capacity(coeffs.len());

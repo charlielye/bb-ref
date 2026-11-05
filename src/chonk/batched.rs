@@ -138,8 +138,15 @@ pub fn joint_prove(
     t.send_vec("Sumcheck:evaluations_translator", &trans_full);
     let libra_evaluation = zk.claimed_evaluation();
     t.send("Libra:claimed_evaluation", &libra_evaluation);
-    // In-place folding keeps the round-0 capacity of every table; free them before the PCS.
+    // In-place folding keeps the round-0 capacity of every table; free them before the PCS, and
+    // the translator columns it does not open (the mini-circuit wires, whose evaluations sumcheck
+    // sent, and the Lagrange selectors): the PCS is the small flows' memory peak.
     drop((mega_state, trans_state));
+    for e in 0..crate::goblin::translator::FIRST_SHIFTED {
+        if !PCS_UNSHIFTED.contains(&e) && !PCS_TO_BE_SHIFTED.contains(&e) {
+            trans.cols[e] = Poly::zero(0);
+        }
+    }
 
     // --- joint PCS ---
     let libra = small_subgroup_ipa_prove::<Bn254>(&zk, &challenge, &libra_evaluation, ck, t, rng);
