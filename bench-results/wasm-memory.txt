@@ -1,0 +1,23 @@
+# wasm Chonk memory, 2026-11-05: the memory-lean wasm prover against master 58ae0d2.
+# bbbench (EPYC 9R14, Zen 4), bb-ref CLI module (--profile lto) under node 24 (tools/runwasi_threads.mjs,
+# worker threads + shared memory), 8 threads, BB_RNG_SEED=12345, 3 interleaved reps per flow after a warmup,
+# every proof equal to the single-threaded pin bb golden. Columns: min/median wall, max linear-memory peak,
+# paired-median wall ratio vs master. "branch-low" is the build whose wasm behaviour is master 2a6bb29's: the
+# memory-lean choices on (they are unconditional on wasm from 2a6bb29; this run set them with
+# BB_SLOW_LOW_MEMORY=1 on the build before). "branch" is the same build without them.
+wasm under node, 8 threads, reps 3, flows 11, variants ['master', 'branch', 'branch-low']
+deploy_ecdsar1+sponsored_fpc                 | master:   4.31/  4.32 s  205.7 MiB | branch:   4.31/  4.32 s  197.4 MiB (1.000x) | branch-low:   4.34/  4.34 s  186.1 MiB (1.005x)
+deploy_schnorr+sponsored_fpc                 | master:   4.04/  4.05 s  204.8 MiB | branch:   4.04/  4.05 s  193.0 MiB (0.998x) | branch-low:   4.05/  4.06 s  185.7 MiB (1.002x)
+ecdsar1+amm_add_liquidity_1_recursions+spons | master:   6.27/  6.29 s  211.8 MiB | branch:   6.27/  6.30 s  199.4 MiB (1.000x) | branch-low:   6.32/  6.33 s  192.2 MiB (1.010x)
+ecdsar1+deploy_tokenContract_with_registrati | master:   4.90/  4.90 s  222.2 MiB | branch:   4.89/  4.93 s  210.2 MiB (1.006x) | branch-low:   4.94/  4.94 s  198.3 MiB (1.008x)
+ecdsar1+storage_proof_7_layers+sponsored_fpc | master:  10.54/ 10.57 s  548.2 MiB | branch:  10.54/ 10.54 s  545.8 MiB (0.997x) | branch-low:  10.64/ 10.65 s  491.0 MiB (1.008x)
+ecdsar1+token_bridge_claim_private+sponsored | master:   4.37/  4.39 s  213.2 MiB | branch:   4.35/  4.37 s  190.3 MiB (0.995x) | branch-low:   4.37/  4.40 s  190.4 MiB (1.002x)
+ecdsar1+transfer_0_recursions+private_fpc    | master:   5.49/  5.50 s  214.6 MiB | branch:   5.47/  5.48 s  198.1 MiB (0.996x) | branch-low:   5.50/  5.52 s  191.5 MiB (1.005x)
+ecdsar1+transfer_0_recursions+sponsored_fpc  | master:   3.91/  3.96 s  206.8 MiB | branch:   3.89/  3.89 s  186.2 MiB (0.990x) | branch-low:   3.92/  3.93 s  186.2 MiB (1.003x)
+ecdsar1+transfer_1_recursions+private_fpc    | master:   5.78/  5.83 s  212.9 MiB | branch:   5.77/  5.78 s  197.1 MiB (0.990x) | branch-low:   5.83/  5.86 s  191.9 MiB (1.005x)
+ecdsar1+transfer_1_recursions+sponsored_fpc  | master:   4.25/  4.27 s  204.5 MiB | branch:   4.26/  4.26 s  185.8 MiB (1.002x) | branch-low:   4.27/  4.28 s  185.9 MiB (1.000x)
+schnorr+deploy_tokenContract_with_registrati | master:   4.59/  4.61 s  216.2 MiB | branch:   4.60/  4.62 s  206.3 MiB (1.002x) | branch-low:   4.61/  4.62 s  197.8 MiB (1.004x)
+total median wall: master 58.7 s, branch 58.5 s, branch-low 58.9 s
+
+# Native, same box, tools/ab_chonk.sh, 8 threads, 7 interleaved reps: 2a6bb29's native prover (normal mode)
+# against master 58ae0d2: paired median 1.000, 16/77 wins (measured on 0651056, whose native code 2a6bb29 keeps).

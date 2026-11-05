@@ -26,13 +26,15 @@ one instrumented run per prover. Ratios are bb-ref / bb (below 1 is better).
 | chonk native, peak RSS (per-flow range; 2026-10-28, big-block arena) | 0.25–0.70 GB | 0.21–0.56 GB | **0.77–0.88×** |
 | chonk **wasm/V8** (node 24), wall | 86.17 s | 58.43 s | **0.68×** (0.48–0.76) |
 | chonk wasm/V8, proving-only | 77.08 s | 54.62 s | 0.71× (0.48–0.81) |
-| chonk wasm/V8, peak linear memory (per-flow range) | 0.22–0.66 GB | 0.20–0.53 GB | **0.81–0.94×** |
+| chonk wasm/V8, peak linear memory (per-flow range; bb-ref 2026-11-05, memory-lean wasm prover) | 0.22–0.66 GB | 0.18–0.48 GB | **0.73–0.83×** |
 | chonk wasm/V8, wide arithmetic (node 27 nightly, `--wasm-wide-arithmetic`), wall | 84.34 s | 47.36 s | 0.56× (0.39–0.63) |
 | rollup corpus, 62 server ops, native 16 threads (2026-10-14, older pin `3b2c553`) | 301.06 s | 138.87 s | 0.46× |
 | rollup corpus, peak RSS (same run) | 12.56 GB | 12.89 GB | 1.03× (behind) |
 
 Measured 2026-10-23 at the pin `1117683`, bb-ref `7c9e511`, except the rollup rows, which predate
-the repin and have not been re-run, and the native RSS row, re-measured 2026-10-28 on the same box
+the repin and have not been re-run, bb-ref's wasm memory, re-measured 2026-11-05 on the same box
+(`2a6bb29`, [wasm-memory.txt](../bench-results/wasm-memory.txt); its wasm wall is +0.3% on the master
+before it, `58ae0d2`), and the native RSS row, re-measured 2026-10-28 on the same box
 after the big-block arena (`src/base/pool.rs`; below) replaced glibc for allocations of 64 KiB and
 up. Before it bb-ref was 6–34% above bb on every flow with a live heap at or below bb's: glibc
 stranded freed buffers in per-thread arenas. bb-ref now uses less memory than bb on every flow,

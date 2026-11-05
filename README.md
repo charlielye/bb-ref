@@ -20,7 +20,7 @@ These are the project's binding goals — changes should be judged against them:
 | **Bit parity**: VKs bit-exact, proofs byte-exact, both directions, including the wire protocol | holds — every VK, proof and wire response checked is byte-equal, and bb-ref rejects tampered proofs as bb does ([what is checked](#parity)) |
 | **Circuit gate parity**: every selector, wire and copy-cycle identical to bb's ([docs/gate-exactness.md](docs/gate-exactness.md)) | holds — 41 stdlib gadget programs compared gate for gate, plus the VK sweeps ([parity](#parity)) |
 | **Replay the rollup through bb and bb-ref and get the same root proof** | holds — 63/63 `rollup-1117683` corpus responses byte-identical, `rollup_root` included, and 28/28 of the AVM corpus (prove, check circuit, verify) (`tools/conformance.sh`) |
-| **At parity or better with bb in performance, memory usage and wasm size** (against stock bb at the pin) | Chonk time **0.46×** native, **0.68×** wasm; the rollup **0.45×**; the AVM **0.46×**; memory **0.8–0.9×**, and **17–22 MiB** private in [low memory mode](#low-memory-environments) (bb's: 39–101); wasm module **2.1× smaller** ([speed and memory](#speed-and-memory), [binary size](#binary-size)) |
+| **At parity or better with bb in performance, memory usage and wasm size** (against stock bb at the pin) | Chonk time **0.46×** native, **0.68×** wasm; the rollup **0.45×**; the AVM **0.46×**; memory **0.8–0.9×** native, **0.7–0.8×** wasm, and **17–22 MiB** private in [low memory mode](#low-memory-environments) (bb's: 39–101); wasm module **2.1× smaller** ([speed and memory](#speed-and-memory), [binary size](#binary-size)) |
 | **Fast to build**: a from-scratch release build well under bb's, like for like | **0.22×** bb's time with the AVM, **0.46×** without, on 16 cores ([build time](#build-time)) |
 | **95%+ test coverage on the critical paths**, without redundant tests | core **95%** standalone, plus full soundness sweeps ([docs/testing.md](docs/testing.md)) |
 | **Documentation an engineer can descend**: each component's purpose without the math; first use of any odd name links to its explanation | [tour](docs/tour.md) → module READMEs → [glossary](docs/glossary.md) |
@@ -68,21 +68,25 @@ bb-ref / bb, below 1 is better. Wasm runs under V8 (node 24, worker threads and 
 browser's shape); its memory is the wasm linear-memory peak, native's is peak RSS. Every bb-ref
 proof is byte-identical to bb's. Measured 2026-10-23, pin `1117683`, bb-ref `7c9e511`, except native
 memory, re-measured 2026-10-28 with the big-block arena (same box and method; that run's wall total
-was 0.47×); tables of record in [bench-results/](bench-results/), method in [docs/performance.md](docs/performance.md).
+was 0.47×), and bb-ref's wasm memory, re-measured 2026-11-05 with the memory-lean wasm prover
+(`2a6bb29`; same box, node 24, 8 threads, max of 3 runs; [bench-results/wasm-memory.txt](bench-results/wasm-memory.txt)).
+Its wasm wall against the master before it (`58ae0d2`): +0.3% in total (58.7 → 58.9 s, interleaved,
++0.0–1.0% per flow); the wasm wall columns are not re-measured. Tables of record in
+[bench-results/](bench-results/), method in [docs/performance.md](docs/performance.md).
 
 | flow | native bb | bb-ref | ratio | native mem bb | bb-ref | wasm bb | bb-ref | ratio | wasm mem bb | bb-ref |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| deploy_ecdsar1 | 3.12 s | 1.52 s | 0.49× | 0.25 GB | 0.22 GB | 5.68 s | 4.29 s | 0.76× | 0.23 GB | 0.20 GB |
-| deploy_schnorr | 2.89 s | 1.40 s | 0.48× | 0.28 GB | 0.22 GB | 5.31 s | 4.02 s | 0.76× | 0.22 GB | 0.20 GB |
-| amm_add_liquidity_1_recursions | 4.76 s | 2.37 s | 0.50× | 0.26 GB | 0.22 GB | 8.58 s | 6.28 s | 0.73× | 0.23 GB | 0.21 GB |
-| ecdsar1 deploy_tokenContract | 3.66 s | 1.73 s | 0.47× | 0.26 GB | 0.23 GB | 6.50 s | 4.87 s | 0.75× | 0.24 GB | 0.21 GB |
-| storage_proof_7_layers | 10.42 s | 4.00 s | 0.38× | 0.70 GB | 0.56 GB | 22.22 s | 10.67 s | 0.48× | 0.66 GB | 0.53 GB |
-| token_bridge_claim_private | 3.16 s | 1.53 s | 0.48× | 0.26 GB | 0.22 GB | 5.83 s | 4.35 s | 0.75× | 0.23 GB | 0.21 GB |
-| transfer_0_recursions, private_fpc | 4.16 s | 2.02 s | 0.49× | 0.26 GB | 0.23 GB | 7.45 s | 5.50 s | 0.74× | 0.24 GB | 0.21 GB |
-| transfer_0_recursions | 2.76 s | 1.33 s | 0.48× | 0.25 GB | 0.21 GB | 5.10 s | 3.87 s | 0.76× | 0.22 GB | 0.20 GB |
-| transfer_1_recursions, private_fpc | 4.43 s | 2.14 s | 0.48× | 0.26 GB | 0.22 GB | 7.83 s | 5.77 s | 0.74× | 0.25 GB | 0.21 GB |
-| transfer_1_recursions | 3.07 s | 1.46 s | 0.48× | 0.25 GB | 0.22 GB | 5.59 s | 4.22 s | 0.75× | 0.22 GB | 0.20 GB |
-| schnorr deploy_tokenContract | 3.40 s | 1.62 s | 0.48× | 0.27 GB | 0.23 GB | 6.08 s | 4.59 s | 0.75× | 0.23 GB | 0.21 GB |
+| deploy_ecdsar1 | 3.12 s | 1.52 s | 0.49× | 0.25 GB | 0.22 GB | 5.68 s | 4.29 s | 0.76× | 0.23 GB | 0.18 GB |
+| deploy_schnorr | 2.89 s | 1.40 s | 0.48× | 0.28 GB | 0.22 GB | 5.31 s | 4.02 s | 0.76× | 0.22 GB | 0.18 GB |
+| amm_add_liquidity_1_recursions | 4.76 s | 2.37 s | 0.50× | 0.26 GB | 0.22 GB | 8.58 s | 6.28 s | 0.73× | 0.23 GB | 0.19 GB |
+| ecdsar1 deploy_tokenContract | 3.66 s | 1.73 s | 0.47× | 0.26 GB | 0.23 GB | 6.50 s | 4.87 s | 0.75× | 0.24 GB | 0.19 GB |
+| storage_proof_7_layers | 10.42 s | 4.00 s | 0.38× | 0.70 GB | 0.56 GB | 22.22 s | 10.67 s | 0.48× | 0.66 GB | 0.48 GB |
+| token_bridge_claim_private | 3.16 s | 1.53 s | 0.48× | 0.26 GB | 0.22 GB | 5.83 s | 4.35 s | 0.75× | 0.23 GB | 0.19 GB |
+| transfer_0_recursions, private_fpc | 4.16 s | 2.02 s | 0.49× | 0.26 GB | 0.23 GB | 7.45 s | 5.50 s | 0.74× | 0.24 GB | 0.19 GB |
+| transfer_0_recursions | 2.76 s | 1.33 s | 0.48× | 0.25 GB | 0.21 GB | 5.10 s | 3.87 s | 0.76× | 0.22 GB | 0.18 GB |
+| transfer_1_recursions, private_fpc | 4.43 s | 2.14 s | 0.48× | 0.26 GB | 0.22 GB | 7.83 s | 5.77 s | 0.74× | 0.25 GB | 0.19 GB |
+| transfer_1_recursions | 3.07 s | 1.46 s | 0.48× | 0.25 GB | 0.22 GB | 5.59 s | 4.22 s | 0.75× | 0.22 GB | 0.18 GB |
+| schnorr deploy_tokenContract | 3.40 s | 1.62 s | 0.48× | 0.27 GB | 0.23 GB | 6.08 s | 4.59 s | 0.75× | 0.23 GB | 0.19 GB |
 | **total** | **45.83 s** | **21.12 s** | **0.46×** | | | **86.17 s** | **58.43 s** | **0.68×** | | |
 
 Flows use the sponsored fee payer unless marked `private_fpc`, and an ecdsar1 account unless
@@ -158,7 +162,9 @@ device with that little memory free in total. The transfer flow at 8 threads the
 under a 64–120 MiB cap, depending on the host's disk and kernel, in 15–27 s instead of 2–4 s.
 At 1 thread it completes under 20 MiB, in 18 min. bb #25732 needs 208 MiB (`tools/memory_floor.sh`).
 
-Native glibc Linux for now; macOS and iOS come next, to measure on an iPhone.
+Native glibc Linux for now; macOS and iOS come next, to measure on an iPhone. In wasm there is no
+mode: the browser prover always takes the memory-lean choices low memory mode makes natively (they
+cost it ~0.3%), and has no file to back the arena with.
 
 ### Build time
 
