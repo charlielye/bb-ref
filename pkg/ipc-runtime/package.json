@@ -1,0 +1,54 @@
+{
+  "name": "@aztec-foundation/ipc-runtime",
+  "packageManager": "yarn@4.13.0",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dest/index.js",
+  "types": "dest/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dest/index.d.ts",
+      "import": "./dest/index.js"
+    },
+    "./wasm": {
+      "browser": {
+        "types": "./dest/wasm/browser/index.d.ts",
+        "default": "./dest/wasm/browser/index.js"
+      },
+      "default": {
+        "types": "./dest/wasm/node/index.d.ts",
+        "default": "./dest/wasm/node/index.js"
+      }
+    },
+    "./wasm/node": {
+      "types": "./dest/wasm/node/index.d.ts",
+      "default": "./dest/wasm/node/index.js"
+    },
+    "./wasm/browser": {
+      "types": "./dest/wasm/browser/index.d.ts",
+      "default": "./dest/wasm/browser/index.js"
+    },
+    "./registry": {
+      "types": "./dest/backend_registry.d.ts",
+      "default": "./dest/backend_registry.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dest",
+    "test": "tsc -p tsconfig.json && node --test dest/*.test.js"
+  },
+  "files": [
+    "build",
+    "dest",
+    "scripts",
+    "src"
+  ],
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5.6.3"
+  },
+  "bin": {
+    "ipc-runtime-prepare-arch-packages": "./scripts/prepare_arch_packages.mjs"
+  }
+}

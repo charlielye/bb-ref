@@ -1,0 +1,1 @@
+[{"engine":"ref","file":"bb-ref-threads.wasm","raw":8479407,"gzip":2066888},{"engine":"ref","file":"bb-ref-wide-threads.wasm","raw":8179608,"gzip":1953214},{"engine":"bb","file":"barretenberg-threads.wasm","raw":18153482,"gzip":4038374},{"engine":"bb","file":"barretenberg.wasm","raw":18152048,"gzip":4034743}]
