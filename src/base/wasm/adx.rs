@@ -11,9 +11,10 @@
 //! `cmov`/borrow mask: on its own an add measures mixed (dependent 2.4 → 1.9 ns, streaming
 //! 2.0 → 2.5 ns), but in place they took 5% off chonk proving. Negation measured neutral and stays
 //! arkworks'.
-//! Inversion is bb's Bernstein–Yang safegcd (`safegcd` below) in place of arkworks' binary EEA:
+//! Inversion is bb's Bernstein–Yang safegcd (`safegcd.rs`) in place of arkworks' binary EEA:
 //! 4.2 → 1.2 µs, and 8% of chonk proving samples were in `inverse` (mostly the MSM's Fq tree).
 
+use super::safegcd;
 use ark_ff::{BigInt, Fp, MontBackend, MontConfig};
 use core::arch::asm;
 
@@ -238,101 +239,6 @@ fn sub(a: [u64; 4], b: [u64; 4], p: &[u64; 6]) -> [u64; 4] {
     [t0, t1, t2, t3]
 }
 
-/// Bernstein–Yang safegcd inverse (bb's `bernstein_yang_inverse.hpp`, with golf 0007's batched
-/// variable-time divsteps): (f, g) start at (p, a) with Bézout coefficients (d, e), d·a ≡ f and
-/// e·a ≡ g (mod p). Each round runs 62 divsteps (`divsteps.rs`) on the low limbs of f and g alone,
-/// collecting them in a 2×2 matrix, and then applies the matrix to the full state with an exact
-/// /2^62 (plus k·p on the (d, e) side to make it exact); 12 rounds cover the 735-divstep bound for
-/// 254-bit inputs. When g reaches 0, f = ±1 and a⁻¹ = ±d. Integers are 5 limbs, the top one signed.
-mod safegcd {
-    use super::super::divsteps::divsteps;
-
-    type S = [u64; 5];
-    const MASK: u64 = (1 << 62) - 1;
-
-    /// a·x + b·y as a 6-limb signed integer.
-    fn lincomb(a: i64, x: &S, b: i64, y: &S) -> [u64; 6] {
-        let (mut t, mut c) = ([0u64; 6], 0i128);
-        for i in 0..4 {
-            c += a as i128 * x[i] as i128 + b as i128 * y[i] as i128;
-            t[i] = c as u64;
-            c >>= 64;
-        }
-        c += a as i128 * x[4] as i64 as i128 + b as i128 * y[4] as i64 as i128;
-        [t[0], t[1], t[2], t[3], c as u64, (c >> 64) as u64]
-    }
-
-    /// Exact arithmetic t / 2^62.
-    fn shift(t: &[u64; 6]) -> S {
-        core::array::from_fn(|i| (t[i] >> 62) | (t[i + 1] << 2))
-    }
-
-    /// (a·x + b·y + k·p) / 2^62, with k making the division exact.
-    fn row(a: i64, x: &S, b: i64, y: &S, p: &S, pinv: u64) -> S {
-        let mut t = lincomb(a, x, b, y);
-        let k = t[0].wrapping_neg().wrapping_mul(pinv) & MASK;
-        let mut c = 0u128;
-        for i in 0..6 {
-            c += t[i] as u128 + if i < 5 { k as u128 * p[i] as u128 } else { 0 };
-            t[i] = c as u64;
-            c >>= 64;
-        }
-        shift(&t)
-    }
-
-    fn add(x: &mut S, y: &S) {
-        let mut c = false;
-        for i in 0..5 {
-            (x[i], c) = x[i].carrying_add(y[i], c);
-        }
-    }
-
-    /// Into [0, p) by repeated ±p (|x| stays within a few dozen p between calls).
-    fn canon(x: &mut S, p: &S) {
-        let minus_p = neg(*p);
-        loop {
-            if (x[4] as i64) < 0 {
-                add(x, p);
-            } else if x.iter().rev().ge(p.iter().rev()) {
-                add(x, &minus_p);
-            } else {
-                break;
-            }
-        }
-    }
-
-    fn neg(mut x: S) -> S {
-        x = x.map(|l| !l);
-        add(&mut x, &[1, 0, 0, 0, 0]);
-        x
-    }
-
-    /// a⁻¹ mod p for 0 < a < p; `p` as for `mul`.
-    pub(super) fn inverse(a: &[u64; 4], p: &[u64; 6]) -> [u64; 4] {
-        let pinv = p[4].wrapping_neg() & MASK;
-        let p: S = [p[0], p[1], p[2], p[3], 0];
-        let (mut f, mut g, mut d, mut e) = (p, [a[0], a[1], a[2], a[3], 0], [0; 5], [1, 0, 0, 0, 0]);
-        let mut delta = 1;
-        for i in 0..12 {
-            let [u, v, q, r] = divsteps::<62>(&mut delta, f[0], g[0]);
-            (f, g) = (shift(&lincomb(u, &f, v, &g)), shift(&lincomb(q, &f, r, &g)));
-            (d, e) = (row(u, &d, v, &e, &p, pinv), row(q, &d, r, &e, &p, pinv));
-            if g == [0; 5] {
-                break;
-            }
-            if i % 4 == 3 {
-                canon(&mut d, &p);
-                canon(&mut e, &p);
-            }
-        }
-        if (f[4] as i64) < 0 {
-            d = neg(d);
-        }
-        canon(&mut d, &p);
-        [d[0], d[1], d[2], d[3]]
-    }
-}
-
 macro_rules! adx_config {
     ($name:ident, $ark:ty) => {
         #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
@@ -401,42 +307,9 @@ adx_config!(FqConfig, ark_bn254::FqConfig);
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use ark_ff::{AdditiveGroup, Field, UniformRand};
-
-    /// Limb-for-limb against arkworks on edge values (0, 1, p−1, p−2, values with all-ones and
-    /// top-heavy limbs) and random ones.
-    fn check<C: MontConfig<4>, A: MontConfig<4>>() {
-        type F<C> = Fp<MontBackend<C, 4>, 4>;
-        let m = A::MODULUS.0;
-        let mut limbs = vec![
-            [0; 4],
-            [1, 0, 0, 0],
-            [m[0] - 1, m[1], m[2], m[3]],
-            [m[0] - 2, m[1], m[2], m[3]],
-            [u64::MAX, u64::MAX, u64::MAX, m[3] - 1],
-            [0, 0, 0, m[3]],
-            [u64::MAX, 0, u64::MAX, 0],
-        ];
-        let mut rng = ark_std::test_rng();
-        limbs.extend((0..2000).map(|_| F::<A>::rand(&mut rng).0 .0));
-        for x in &limbs {
-            let (ox, ax) = (F::<C>::new_unchecked(BigInt(*x)), F::<A>::new_unchecked(BigInt(*x)));
-            assert_eq!(ox.square().0, ax.square().0, "square {x:?}");
-            assert_eq!(ox.double().0, ax.double().0, "double {x:?}");
-            assert_eq!(ox.inverse().map(|v| v.0), ax.inverse().map(|v| v.0), "inverse {x:?}");
-            for y in limbs.iter().step_by(7).chain(&limbs[..7]) {
-                let (oy, ay) = (F::<C>::new_unchecked(BigInt(*y)), F::<A>::new_unchecked(BigInt(*y)));
-                assert_eq!((ox * oy).0, (ax * ay).0, "mul {x:?} {y:?}");
-                assert_eq!((ox + oy).0, (ax + ay).0, "add {x:?} {y:?}");
-                assert_eq!((ox - oy).0, (ax - ay).0, "sub {x:?} {y:?}");
-            }
-        }
-    }
-
     #[test]
     fn matches_arkworks() {
-        check::<FrConfig, ark_bn254::FrConfig>();
-        check::<FqConfig, ark_bn254::FqConfig>();
+        super::super::check_against_arkworks::<super::FrConfig, ark_bn254::FrConfig>();
+        super::super::check_against_arkworks::<super::FqConfig, ark_bn254::FqConfig>();
     }
 }

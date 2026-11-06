@@ -3,8 +3,9 @@
 //! `mont29.rs`) and the curves bb-ref's own configs over them (`curves.rs`); with simd128, bb's
 //! four-lane kernels (`quad261.rs`) drive the streaming polynomial ops (`packed.rs`) and the MSM
 //! tree drain (`tree.rs`). On x86-64 with ADX the fields are `adx.rs`'s (arkworks' constants and
-//! stored form, bb's multiply and square) under the same curve configs; every other target uses
-//! arkworks' own bn254/grumpkin configs. Callers stay `cfg`-free: the same names exist on every
+//! stored form, bb's multiply and square) and on aarch64 `arm64.rs`'s (the same, with an aarch64
+//! multiply), both inverting with `safegcd.rs`, under the same curve configs; every other target
+//! uses arkworks' own bn254/grumpkin configs. Callers stay `cfg`-free: the same names exist on every
 //! target, and the native fallbacks answer `false`/`None` so the generic scalar paths run.
 //! The wide-arithmetic build (`--cfg wasm_wide`, target feature `wide-arithmetic`) replaces the
 //! 2^261 field and its four-lane kernels with `wide.rs`'s 4×64 field in arkworks' 2^256 domain
@@ -17,6 +18,13 @@ use crate::base::Fq;
 mod adx;
 #[cfg(all(target_arch = "wasm32", not(feature = "heap-profile")))]
 mod alloc;
+#[cfg(target_arch = "aarch64")]
+mod arm64;
+#[cfg(any(
+    all(target_arch = "x86_64", target_feature = "adx", target_feature = "bmi2"),
+    target_arch = "aarch64"
+))]
+mod safegcd;
 #[cfg(not(all(target_arch = "wasm32", not(feature = "heap-profile"))))]
 pub use crate::base::pool::alloc_zeroed;
 #[cfg(all(target_arch = "wasm32", not(feature = "heap-profile")))]
@@ -25,12 +33,14 @@ pub use alloc::alloc_zeroed_par as alloc_zeroed;
 mod by29;
 #[cfg(any(
     target_family = "wasm",
-    all(target_arch = "x86_64", target_feature = "adx", target_feature = "bmi2")
+    all(target_arch = "x86_64", target_feature = "adx", target_feature = "bmi2"),
+    target_arch = "aarch64"
 ))]
 mod curves;
 #[cfg(any(
     target_family = "wasm",
-    all(target_arch = "x86_64", target_feature = "adx", target_feature = "bmi2")
+    all(target_arch = "x86_64", target_feature = "adx", target_feature = "bmi2"),
+    target_arch = "aarch64"
 ))]
 mod divsteps;
 #[cfg(all(target_family = "wasm", wasm_wide))]
@@ -44,16 +54,20 @@ mod field;
 mod mont29;
 #[cfg(all(target_arch = "x86_64", target_feature = "adx", target_feature = "bmi2"))]
 pub use adx::{FqConfig, FrConfig};
+#[cfg(target_arch = "aarch64")]
+pub use arm64::{FqConfig, FrConfig};
 #[cfg(any(
     target_family = "wasm",
-    all(target_arch = "x86_64", target_feature = "adx", target_feature = "bmi2")
+    all(target_arch = "x86_64", target_feature = "adx", target_feature = "bmi2"),
+    target_arch = "aarch64"
 ))]
 pub use curves::{G1Config, GrumpkinConfig};
 #[cfg(all(target_family = "wasm", not(wasm_wide)))]
 pub use field::{FqConfig, FrConfig};
 #[cfg(not(any(
     target_family = "wasm",
-    all(target_arch = "x86_64", target_feature = "adx", target_feature = "bmi2")
+    all(target_arch = "x86_64", target_feature = "adx", target_feature = "bmi2"),
+    target_arch = "aarch64"
 )))]
 pub use {
     ark_bn254::{g1::Config as G1Config, FqConfig, FrConfig},
@@ -144,4 +158,42 @@ pub fn try_batch_add_indexed<F>(_dx: &mut [F], _dy: &mut [F], _pairs: &[(u32, u3
 #[inline(always)]
 pub fn try_batch_double_indexed<F>(_dx: &mut [F], _dy: &mut [F], _idx: &[u32]) -> bool {
     false
+}
+
+#[cfg(all(
+    test,
+    any(
+        all(target_arch = "x86_64", target_feature = "adx", target_feature = "bmi2"),
+        target_arch = "aarch64"
+    )
+))]
+/// A native field config limb-for-limb against arkworks' on edge values (0, 1, p−1, p−2, values with all-ones and
+/// top-heavy limbs) and random ones.
+pub(crate) fn check_against_arkworks<C: ark_ff::MontConfig<4>, A: ark_ff::MontConfig<4>>() {
+    use ark_ff::{AdditiveGroup, BigInt, Field, Fp, MontBackend, UniformRand};
+    type F<C> = Fp<MontBackend<C, 4>, 4>;
+    let m = A::MODULUS.0;
+    let mut limbs = vec![
+        [0; 4],
+        [1, 0, 0, 0],
+        [m[0] - 1, m[1], m[2], m[3]],
+        [m[0] - 2, m[1], m[2], m[3]],
+        [u64::MAX, u64::MAX, u64::MAX, m[3] - 1],
+        [0, 0, 0, m[3]],
+        [u64::MAX, 0, u64::MAX, 0],
+    ];
+    let mut rng = ark_std::test_rng();
+    limbs.extend((0..2000).map(|_| F::<A>::rand(&mut rng).0 .0));
+    for x in &limbs {
+        let (ox, ax) = (F::<C>::new_unchecked(BigInt(*x)), F::<A>::new_unchecked(BigInt(*x)));
+        assert_eq!(ox.square().0, ax.square().0, "square {x:?}");
+        assert_eq!(ox.double().0, ax.double().0, "double {x:?}");
+        assert_eq!(ox.inverse().map(|v| v.0), ax.inverse().map(|v| v.0), "inverse {x:?}");
+        for y in limbs.iter().step_by(7).chain(&limbs[..7]) {
+            let (oy, ay) = (F::<C>::new_unchecked(BigInt(*y)), F::<A>::new_unchecked(BigInt(*y)));
+            assert_eq!((ox * oy).0, (ax * ay).0, "mul {x:?} {y:?}");
+            assert_eq!((ox + oy).0, (ax + ay).0, "add {x:?} {y:?}");
+            assert_eq!((ox - oy).0, (ax - ay).0, "sub {x:?} {y:?}");
+        }
+    }
 }
