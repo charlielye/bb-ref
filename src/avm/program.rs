@@ -270,13 +270,21 @@ fn compile(r: &super::tables::Relation) -> Option<Program> {
     Some(b.finish(outs, r.partial_length))
 }
 
+thread_local! {
+    /// Per operation of the program being accumulated: its value is the same at every point.
+    static CONSTANT: std::cell::RefCell<Vec<bool>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 impl Program {
     /// Subrelation `j`'s points.
     pub fn points(&self, j: usize) -> usize {
         self.outs[j].points
     }
     /// Add the relation over the edge `row0 + k·delta` into `acc` (point-major, one value per
-    /// subrelation per point, each subrelation at its own points).
+    /// subrelation per point, each subrelation at its own points). An operation whose inputs are
+    /// the same at every point (columns with a zero delta: most selectors on most edges) is computed
+    /// once and its value filled across the points, and a product with an identically zero operand
+    /// is zero without the other (a lookup's accumulation on rows its selectors leave out).
     pub fn accumulate<F: FieldLike<Native = Fr>>(
         &self,
         acc: &mut [F],
@@ -294,35 +302,65 @@ impl Program {
             Param::Beta => &p.beta,
             Param::Gamma => &p.gamma,
         };
-        for (i, op) in self.ops.iter().enumerate() {
-            let n = self.computed[i] as usize;
-            if n == 0 {
-                continue;
+        CONSTANT.with_borrow_mut(|cst| {
+            if cst.len() < self.ops.len() {
+                cst.resize(self.ops.len(), false);
             }
-            let (lo, hi) = regs.split_at_mut(i * w);
-            let out = &mut hi[..n];
-            let reg = |r: u32| &lo[r as usize * w..r as usize * w + n];
-            match *op {
-                Op::Col(j) => {
-                    let (j, mut v) = (j as usize, row0[j as usize].clone());
-                    for (k, o) in out.iter_mut().enumerate() {
-                        if k > 0 {
-                            v += &delta[j];
-                        }
-                        *o = v.clone();
-                    }
+            for (i, op) in self.ops.iter().enumerate() {
+                let n = self.computed[i] as usize;
+                if n == 0 {
+                    continue;
                 }
-                Op::Add(a, b) => zip(out, reg(a), reg(b), |x, y| x.clone() + y),
-                Op::Sub(a, b) => zip(out, reg(a), reg(b), |x, y| x.clone() - y),
-                Op::Mul(a, b) => zip(out, reg(a), reg(b), |x, y| x.clone() * y),
-                Op::AddK(a, c) => map(out, reg(a), &F::constant(c), |x, c| x.clone() + c),
-                Op::MulK(a, c) => map(out, reg(a), &F::constant(c), |x, c| x.clone() * c),
-                Op::KSub(c, a) => map(out, reg(a), &F::constant(c), |x, c| c.clone() - x),
-                Op::AddP(a, q) => map(out, reg(a), param(q), |x, c| x.clone() + c),
-                Op::MulP(a, q) => map(out, reg(a), param(q), |x, c| x.clone() * c),
+                let (lo, hi) = regs.split_at_mut(i * w);
+                let r0 = |r: u32| &lo[r as usize * w];
+                let zero = |r: u32| cst[r as usize] && r0(r).is_zero();
+                let one = match *op {
+                    Op::Col(j) => delta[j as usize].is_zero().then(|| row0[j as usize].clone()),
+                    Op::Mul(a, b) if zero(a) || zero(b) => Some(F::zero()),
+                    Op::Add(a, b) | Op::Sub(a, b) | Op::Mul(a, b) if !(cst[a as usize] && cst[b as usize]) => None,
+                    Op::Add(a, b) => Some(r0(a).clone() + r0(b)),
+                    Op::Sub(a, b) => Some(r0(a).clone() - r0(b)),
+                    Op::Mul(a, b) => Some(r0(a).clone() * r0(b)),
+                    Op::AddK(a, _) | Op::MulK(a, _) | Op::KSub(_, a) | Op::AddP(a, _) | Op::MulP(a, _)
+                        if !cst[a as usize] =>
+                    {
+                        None
+                    }
+                    Op::AddK(a, c) => Some(r0(a).clone() + &F::constant(c)),
+                    Op::MulK(a, c) => Some(r0(a).clone() * &F::constant(c)),
+                    Op::KSub(c, a) => Some(F::constant(c) - r0(a)),
+                    Op::AddP(a, q) => Some(r0(a).clone() + param(q)),
+                    Op::MulP(a, q) => Some(r0(a).clone() * param(q)),
+                };
+                cst[i] = one.is_some();
+                if let Some(v) = one {
+                    hi[..self.need[i] as usize].fill(v);
+                    continue;
+                }
+                let out = &mut hi[..n];
+                let reg = |r: u32| &lo[r as usize * w..r as usize * w + n];
+                match *op {
+                    Op::Col(j) => {
+                        let (j, mut v) = (j as usize, row0[j as usize].clone());
+                        for (k, o) in out.iter_mut().enumerate() {
+                            if k > 0 {
+                                v += &delta[j];
+                            }
+                            *o = v.clone();
+                        }
+                    }
+                    Op::Add(a, b) => zip(out, reg(a), reg(b), |x, y| x.clone() + y),
+                    Op::Sub(a, b) => zip(out, reg(a), reg(b), |x, y| x.clone() - y),
+                    Op::Mul(a, b) => zip(out, reg(a), reg(b), |x, y| x.clone() * y),
+                    Op::AddK(a, c) => map(out, reg(a), &F::constant(c), |x, c| x.clone() + c),
+                    Op::MulK(a, c) => map(out, reg(a), &F::constant(c), |x, c| x.clone() * c),
+                    Op::KSub(c, a) => map(out, reg(a), &F::constant(c), |x, c| c.clone() - x),
+                    Op::AddP(a, q) => map(out, reg(a), param(q), |x, c| x.clone() + c),
+                    Op::MulP(a, q) => map(out, reg(a), param(q), |x, c| x.clone() * c),
+                }
+                extend(&mut hi[..self.need[i] as usize], n);
             }
-            extend(&mut hi[..self.need[i] as usize], n);
-        }
+        });
         let ns = self.outs.len();
         for (j, o) in self.outs.iter().enumerate() {
             for k in 0..o.points {
