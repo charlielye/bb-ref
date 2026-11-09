@@ -87,6 +87,10 @@ proof is byte-identical to bb's. Tables of record in [bench-results/](bench-resu
 Flows use the sponsored fee payer unless marked `private_fpc`, and an ecdsar1 account unless
 marked schnorr. With wasm wide arithmetic (node 27 nightly), bb-ref's wasm total drops to 0.56×.
 
+On ARM (Graviton4, 16 vCPU, 8 threads; bb built with its `arm64-linux` preset), native wall
+**0.82×** bb over the same flows (sum of best walls 32.31 s against 41.11 s; 0.68–0.84× per flow),
+peak RSS 0.20–0.56 GB against 0.24–0.65 GB ([bench-results/arm-graviton.txt](bench-results/arm-graviton.txt)).
+
 The rollup and AVM corpora (real recorded server traffic, `tools/bench.sh --pair`), native, 16
 threads, the same box, replayed through bb-avm and then bb-ref (with the AVM) one after the other
 ([bench-results/rollup.txt](bench-results/rollup.txt)):
