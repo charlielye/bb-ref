@@ -836,8 +836,9 @@ where
     /// Commit to many polynomials with bounded MSM concurrency (bb `batch_commit`): each MSM is
     /// internally parallel, so a few at a time saturate the cores while capping the live
     /// per-MSM scratch that an unbounded fan-out multiplies. The bound keeps that scratch (~64 B
-    /// per point: scalars, histograms, schedules) within bb's 32 MiB batch budget: largest first,
-    /// groups of at most 32 MSMs whose points total at most 2^19 (a longer one alone), so a long
+    /// per point: scalars, histograms, schedules) within a budget: largest first, groups of at most
+    /// 128 MSMs whose points total at most 2^24 natively, 32 and 2^19 (bb's 32 MiB) where memory is
+    /// tight (a longer one alone), so a long
     /// column does not serialize thousands of short ones (the AVM's wires). Nothing waits but
     /// rayon's own joins: a worker blocked in one runs any queued task, so a wait for budget there
     /// can sit on top of the very MSM holding it.
@@ -847,8 +848,14 @@ where
         G::ScalarField: Send + Sync,
     {
         use rayon::prelude::*;
-        const CONCURRENT_MSMS: usize = 32;
-        const BUDGET: usize = (32 << 20) / 64;
+        // Natively, many columns' MSMs in flight at once (the AVM commits thousands): golf's
+        // aggregate-workspace lever, AVM prove 0.95x on bbbench. Where memory is tight (wasm, low
+        // memory mode), bb's 32 MiB batch budget.
+        let (concurrent, budget) = if crate::base::lean_memory() {
+            (32, (32 << 20) / 64)
+        } else {
+            (128, (1 << 30) / 64)
+        };
         let size = |i: usize| polys[i].end_index().saturating_sub(polys[i].start);
         let mut order: Vec<usize> = (0..polys.len()).collect();
         order.sort_by_key(|&i| std::cmp::Reverse(size(i)));
@@ -856,9 +863,9 @@ where
         let mut rest = &order[..];
         while !rest.is_empty() {
             let mut points = 0;
-            let k = rest.iter().take(CONCURRENT_MSMS).take_while(|&&i| {
+            let k = rest.iter().take(concurrent).take_while(|&&i| {
                 points += size(i);
-                points <= BUDGET
+                points <= budget
             });
             let (group, tail) = rest.split_at(k.count().max(1));
             let commits: Vec<G> = group.par_iter().map(|&i| self.commit(polys[i])).collect();
