@@ -233,6 +233,7 @@ impl<F: FieldLike> RelationSet<F> for HonkRelations<'_> {
             Rel::Poseidon2QuadInternal,
             Rel::Poseidon2QuadInternalTerminal,
             Rel::Poseidon2TransitionEntry,
+            Rel::Poseidon2Internal,
         ];
         let alpha = |g: usize| if g == 0 { F::one() } else { alphas[g - 1].clone() };
         let mut out = params.clone();

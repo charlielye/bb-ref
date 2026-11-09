@@ -87,6 +87,9 @@ impl Rel {
             Rel::Elliptic => elliptic(acc, r, scaling),
             Rel::Memory => memory(acc, r, p, scaling),
             Rel::NonNativeField => non_native_field(acc, r, scaling),
+            Rel::Poseidon2Internal if T::IS_PROVER && !p.quad_batching.is_empty() => {
+                quad_batched(self, acc, r, &p.quad_batching, scaling)
+            }
             Rel::Poseidon2External => poseidon2_external(acc, r, scaling),
             Rel::Poseidon2Internal => poseidon2_internal(acc, r, scaling),
             Rel::Masking => {}
@@ -721,6 +724,16 @@ fn poseidon2_transition_entry<T: FieldLike>(acc: &mut [T], r: &Row<T>, scaling: 
 
 /// S-box inputs `(wire, shifted, constant selector)` and linear wires `(wire, shifted)` of the
 /// Poseidon2 quad relations' bodies (the terminal relation's S-boxes are the first four).
+const INTERNAL_SBOX: [(Ent, bool, Ent); 1] = [(w_l, false, q_l)];
+const INTERNAL_WIRES: [(Ent, bool); 7] = [
+    (w_r, false),
+    (w_o, false),
+    (w_4, false),
+    (w_l, true),
+    (w_r, true),
+    (w_o, true),
+    (w_4, true),
+];
 const QUAD_SBOX: [(Ent, bool, Ent); 7] = [
     (w_l, false, q_l),
     (w_r, false, q_r),
@@ -794,6 +807,15 @@ pub fn quad_batching_constants<F: FieldLike>(rel: Rel, w: &[F]) -> Vec<F> {
             out.extend((0..3).map(|i| w[0].clone() + w[1].clone() * &a1[i] + w[2].clone() * &a2[i]));
             out.extend(w.iter().map(|w| -w.clone()));
         }
+        // With p = w_r + w_o + w_4: A_0 = u·d_1 + p − s_l and A_j = w_j'·(d_j − 1) + p − s_j' + u
+        // (j' the j-th of w_r, w_o, w_4), so Σ_j w_j A_j weighs u by w_0·d_1 + w_1 + w_2 + w_3.
+        Rel::Poseidon2Internal => {
+            let dm1: [F; 4] = INTERNAL_MATRIX_DIAGONAL_MINUS_ONE.map(|h| F::constant(from_hex(h)));
+            let sum = w.iter().fold(F::zero(), |a, w| a + w);
+            out = vec![w[0].clone() * &(dm1[0].clone() + &c::<F>(1)) + &w[1] + &w[2] + &w[3]];
+            out.extend((1..4).map(|j| sum.clone() + &(w[j].clone() * &dm1[j])));
+            out.extend(w.iter().map(|w| -w.clone()));
+        }
         _ => unreachable!("not a Poseidon2 quad relation"),
     }
     out
@@ -803,6 +825,12 @@ pub fn quad_batching_constants<F: FieldLike>(rel: Rel, w: &[F]) -> Vec<F> {
 /// each `m_i` folded into the degree-1 factor of `x⁵ = x⁴·x`.
 fn quad_batched<T: FieldLike>(rel: Rel, acc: &mut [T], r: &Row<T>, consts: &[Vec<T>], scaling: &T) {
     let (q, sbox, wires, consts) = match rel {
+        Rel::Poseidon2Internal => (
+            q_poseidon2_internal,
+            &INTERNAL_SBOX[..],
+            &INTERNAL_WIRES[..],
+            &consts[3],
+        ),
         Rel::Poseidon2QuadInternal => (q_poseidon2_quad_internal, &QUAD_SBOX[..], &QUAD_WIRES[..], &consts[0]),
         Rel::Poseidon2QuadInternalTerminal => (
             q_poseidon2_quad_internal_terminal,
