@@ -12,6 +12,9 @@ use super::safegcd;
 use ark_ff::{BigInt, Fp, MontBackend, MontConfig};
 
 /// a·b·2^-256 mod p (the no-carry CIOS), for a, b < p; `p` is the modulus's limbs, then `INV`.
+/// `b`'s limbs and the modulus are loaded inside the block as each round needs them: passed as
+/// registers they took 27, and the callers' hot loops (the MSM's bucket tree) spilled and rebuilt
+/// the constants around every multiply (Graviton4 chonk: 0.991 paired median).
 #[inline(always)]
 fn mul(a: &[u64; 4], b: &[u64; 4], p: &[u64; 6]) -> [u64; 4] {
     let (r0, r1, r2, r3): (u64, u64, u64, u64);
@@ -29,42 +32,49 @@ fn mul(a: &[u64; 4], b: &[u64; 4], p: &[u64; 6]) -> [u64; 4] {
             )
         };
     }
-    // One round: the products a·b_i, `$add` them into t, then t = (t + m·p) / 2^64, m = t0·INV.
+    // One round: the products a·b_i (b_i at byte offset `$off`), `$add` them into t, then
+    // t = (t + m·p) / 2^64 with m = t0·INV.
     macro_rules! round {
-        ($bi:literal, $add:expr) => {
+        ($off:literal, $add:expr) => {
             concat!(
-                "mul {l0}, {a0}, ", $bi, "\n umulh {h0}, {a0}, ", $bi, "\n",
-                "mul {l1}, {a1}, ", $bi, "\n umulh {h1}, {a1}, ", $bi, "\n",
-                "mul {l2}, {a2}, ", $bi, "\n umulh {h2}, {a2}, ", $bi, "\n",
-                "mul {l3}, {a3}, ", $bi, "\n umulh {h3}, {a3}, ", $bi, "\n",
+                "ldr {bi}, [{bp}, #", $off, "]\n",
+                "mul {l0}, {a0}, {bi}\n umulh {h0}, {a0}, {bi}\n",
+                "mul {l1}, {a1}, {bi}\n umulh {h1}, {a1}, {bi}\n",
+                "mul {l2}, {a2}, {bi}\n umulh {h2}, {a2}, {bi}\n",
+                "mul {l3}, {a3}, {bi}\n umulh {h3}, {a3}, {bi}\n",
                 $add,
-                "mul {m}, {t0}, {inv}\n",
-                "mul {l0}, {m}, {p0}\n umulh {h0}, {m}, {p0}\n",
-                "mul {l1}, {m}, {p1}\n umulh {h1}, {m}, {p1}\n",
-                "mul {l2}, {m}, {p2}\n umulh {h2}, {m}, {p2}\n",
-                "mul {l3}, {m}, {p3}\n umulh {h3}, {m}, {p3}\n",
+                "ldr {m}, [{pp}, #32]\n mul {m}, {t0}, {m}\n",
+                "ldp {pa}, {pb}, [{pp}]\n",
+                "mul {l0}, {m}, {pa}\n umulh {h0}, {m}, {pa}\n",
+                "mul {l1}, {m}, {pb}\n umulh {h1}, {m}, {pb}\n",
+                "ldp {pa}, {pb}, [{pp}, #16]\n",
+                "mul {l2}, {m}, {pa}\n umulh {h2}, {m}, {pa}\n",
+                "mul {l3}, {m}, {pb}\n umulh {h3}, {m}, {pb}\n",
                 "adds {t0}, {t0}, {l0}\n adcs {t1}, {t1}, {l1}\n adcs {t2}, {t2}, {l2}\n adcs {t3}, {t3}, {l3}\n adc {t4}, {t4}, xzr\n",
                 "adds {t0}, {t1}, {h0}\n adcs {t1}, {t2}, {h1}\n adcs {t2}, {t3}, {h2}\n adc {t3}, {t4}, {h3}\n",
             )
         };
     }
-    // SAFETY: register-only arithmetic.
+    // SAFETY: reads only `b` and `p`, both valid for their lengths.
     unsafe {
         core::arch::asm!(
-            round!("{b0}", first!()),
-            round!("{b1}", next!()),
-            round!("{b2}", next!()),
-            round!("{b3}", next!()),
+            round!("0", first!()),
+            round!("8", next!()),
+            round!("16", next!()),
+            round!("24", next!()),
             // t < 2p: subtract p unless that borrows.
-            "subs {l0}, {t0}, {p0}", "sbcs {l1}, {t1}, {p1}", "sbcs {l2}, {t2}, {p2}", "sbcs {l3}, {t3}, {p3}",
+            "ldp {pa}, {pb}, [{pp}]",
+            "subs {l0}, {t0}, {pa}", "sbcs {l1}, {t1}, {pb}",
+            "ldp {pa}, {pb}, [{pp}, #16]",
+            "sbcs {l2}, {t2}, {pa}", "sbcs {l3}, {t3}, {pb}",
             "csel {t0}, {t0}, {l0}, lo", "csel {t1}, {t1}, {l1}, lo", "csel {t2}, {t2}, {l2}, lo", "csel {t3}, {t3}, {l3}, lo",
             a0 = in(reg) a[0], a1 = in(reg) a[1], a2 = in(reg) a[2], a3 = in(reg) a[3],
-            b0 = in(reg) b[0], b1 = in(reg) b[1], b2 = in(reg) b[2], b3 = in(reg) b[3],
-            p0 = in(reg) p[0], p1 = in(reg) p[1], p2 = in(reg) p[2], p3 = in(reg) p[3], inv = in(reg) p[4],
+            bp = in(reg) b.as_ptr(), pp = in(reg) p.as_ptr(),
             t0 = out(reg) r0, t1 = out(reg) r1, t2 = out(reg) r2, t3 = out(reg) r3, t4 = out(reg) _,
-            m = out(reg) _, l0 = out(reg) _, l1 = out(reg) _, l2 = out(reg) _, l3 = out(reg) _,
+            bi = out(reg) _, m = out(reg) _, pa = out(reg) _, pb = out(reg) _,
+            l0 = out(reg) _, l1 = out(reg) _, l2 = out(reg) _, l3 = out(reg) _,
             h0 = out(reg) _, h1 = out(reg) _, h2 = out(reg) _, h3 = out(reg) _,
-            options(pure, nomem, nostack),
+            options(pure, readonly, nostack),
         );
     }
     [r0, r1, r2, r3]

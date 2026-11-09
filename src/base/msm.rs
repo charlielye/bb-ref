@@ -352,7 +352,7 @@ where
     // overflow list that one tree reduce per window folds back in. Output: per-(thread, window)
     // dense partials with a presence bitmap — no second survivor tree per job or per window.
     const SUBCHUNK: usize = crate::base::wasm::MSM_SUBCHUNK;
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     const GATHER_PREFETCH: usize = 16;
     struct Partial<P: SWCurveConfig> {
         lo: usize,
@@ -406,17 +406,14 @@ where
                             }
                             // The point loads are random over the SRS; prefetching a few entries
                             // ahead keeps more of them in flight than the branchy loop does.
-                            #[cfg(target_arch = "x86_64")]
+                            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
                             if let Some(&f) = sched.get(j + GATHER_PREFETCH) {
                                 let k = (f & 0x3fff_ffff) as usize;
                                 let p = match phi_table {
                                     Some(tbl) if f & PHI != 0 => &tbl[k],
                                     _ => &points[k],
                                 };
-                                unsafe {
-                                    use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
-                                    _mm_prefetch(p as *const Affine<P> as *const i8, _MM_HINT_T0);
-                                }
+                                crate::base::prefetch(p);
                             }
                             let e = sched[j];
                             let i = (e & 0x3fff_ffff) as usize;

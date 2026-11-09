@@ -35,6 +35,25 @@ pub use srs::{CommitmentKey, GrumpkinKey};
 pub use transcript::{NativeTranscript, Transcript};
 pub use vk::Vk;
 
+/// Hint that `p` is read soon (into L1): x86-64 `prefetcht0`, aarch64 `prfm pldl1keep`, else
+/// nothing. For access patterns the hardware prefetchers miss (random SRS gathers, the sumcheck's
+/// many interleaved column streams).
+#[inline(always)]
+pub fn prefetch<T>(p: *const T) {
+    #[cfg(target_arch = "x86_64")]
+    // SAFETY: a prefetch never faults.
+    unsafe {
+        std::arch::x86_64::_mm_prefetch(p as *const i8, std::arch::x86_64::_MM_HINT_T0)
+    };
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: a prefetch never faults.
+    unsafe {
+        std::arch::asm!("prfm pldl1keep, [{p}]", p = in(reg) p, options(nostack, preserves_flags, readonly))
+    };
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    let _ = p;
+}
+
 /// The prover's memory-lean choices (late sumcheck tables, late instance columns, small dedup
 /// maps; docs/performance.md): always on wasm, where they cost ~0.3%, and natively in low memory
 /// mode, where a native prover's speed is otherwise worth more than their memory.

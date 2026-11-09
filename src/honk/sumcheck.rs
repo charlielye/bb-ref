@@ -1388,10 +1388,10 @@ fn accumulate_edge<F: NativeField>(
         }
     }
     // Prefetch the edge two ahead: its ~40 interleaved column streams outrun the hardware prefetchers.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     for &j in s.cols.iter().chain(&s.skip_cols[..live]) {
         if let Some(r) = column_ref(table, j, 2 * e + 4) {
-            unsafe { std::arch::x86_64::_mm_prefetch(r as *const F as *const i8, std::arch::x86_64::_MM_HINT_T0) };
+            crate::base::prefetch(r);
         }
     }
     for &j in &s.cols {
@@ -1657,7 +1657,7 @@ fn window_start<F: FieldLike>(s: &[F]) -> usize {
 
 /// Address of column `j` at row `i`, for the prefetch (`None` past the column's end, and for a
 /// `Folded` column).
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn column_ref<'t, F>(table: &'t [Column<F>], j: usize, i: usize) -> Option<&'t F> {
     match &table[j] {
         Column::Borrowed(st, s) => s.get(i.wrapping_sub(*st)),
