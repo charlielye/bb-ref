@@ -256,8 +256,409 @@ index 1719e1435d5..e37a4fbba84 100644
  
      void process_instruction_fetching(
          const simulation::EventEmitterInterface<simulation::InstructionFetchingEvent>::Container& events,
+diff --git a/barretenberg/cpp/src/barretenberg/vm2/tracegen/execution_trace.cpp b/barretenberg/cpp/src/barretenberg/vm2/tracegen/execution_trace.cpp
+index 0664ef6caa7..14cb3c15903 100644
+--- a/barretenberg/cpp/src/barretenberg/vm2/tracegen/execution_trace.cpp
++++ b/barretenberg/cpp/src/barretenberg/vm2/tracegen/execution_trace.cpp
+@@ -9,6 +9,7 @@
+ 
+ #include "barretenberg/aztec/aztec_constants.hpp"
+ #include "barretenberg/common/assert.hpp"
++#include "barretenberg/common/thread.hpp"
+ #include "barretenberg/vm2/common/addressing.hpp"
+ #include "barretenberg/vm2/common/field.hpp"
+ #include "barretenberg/vm2/common/instruction_spec.hpp"
+@@ -324,28 +325,50 @@ uint32_t dying_context_for_phase(TransactionPhase phase, const FailingContexts&
+ void ExecutionTraceBuilder::process(
+     const simulation::EventEmitterInterface<simulation::ExecutionEvent>::Container& ex_events, TraceContainer& trace)
+ {
+-    uint32_t row = 1; // We start from row 1 because this trace contains shifted columns.
+-
+-    // Preprocess events to determine which contexts will fail
++    // Resolve the small chronological state machine before filling independent rows.
+     const FailingContexts failures = preprocess_for_discard(ex_events);
+-
+-    // Some variables updated per loop iteration to track
+-    // whether or not the upcoming row should "discard" [side effects].
+-    uint32_t dying_context_id = 0;
+-    // dying_context_id captures whether we discard or not. Namely, discard == 1 <=> dying_context_id != 0
+-    // is a circuit invariant. For this reason, we use a lambda to preserve the invariant.
+-    auto is_discarding = [&dying_context_id]() { return dying_context_id != 0; };
+-    bool is_first_event_in_enqueued_call = true;
+-    bool prev_row_was_enter_call = false;
+-
+-    for (const auto& ex_event : ex_events) {
+-        // Check if this is the first event in an enqueued call and whether
+-        // the phase should be discarded
+-        if (!is_discarding() && is_first_event_in_enqueued_call &&
+-            is_phase_discarded(ex_event.after_context_event.phase, failures)) {
+-            dying_context_id = dying_context_for_phase(ex_event.after_context_event.phase, failures);
++    struct RowState {
++        uint32_t dying_context_id;
++        bool enqueued_call_start;
++        bool previous_row_entered_call;
++    };
++    std::vector<RowState> row_states;
++    row_states.reserve(ex_events.size());
++    uint32_t discarding_context_id = 0;
++    bool next_enqueued_call_start = true;
++    bool previous_entered_call = false;
++    for (const auto& event : ex_events) {
++        if (discarding_context_id == 0 && next_enqueued_call_start &&
++            is_phase_discarded(event.after_context_event.phase, failures)) {
++            discarding_context_id = dying_context_for_phase(event.after_context_event.phase, failures);
+         }
++        row_states.push_back({ discarding_context_id, next_enqueued_call_start, previous_entered_call });
++        // Only NONE and OPCODE_EXECUTION reach the opcode-execution temporality group.
++        const bool reaches_opcode =
++            event.error == ExecutionError::NONE || event.error == ExecutionError::OPCODE_EXECUTION;
++        bool enters_call = false;
++        if (reaches_opcode) {
++            const auto opcode = event.wire_instruction.get_exec_opcode();
++            enters_call = opcode == ExecutionOpCode::CALL || opcode == ExecutionOpCode::STATICCALL;
++        }
++        if (event.is_failure() && event.after_context_event.id == discarding_context_id) {
++            discarding_context_id = 0;
++        } else if (enters_call && discarding_context_id == 0 &&
++                   failures.does_context_fail.contains(event.next_context_id)) {
++            discarding_context_id = event.next_context_id;
++        }
++        next_enqueued_call_start = event.after_context_event.parent_id == 0 && event.is_exit();
++        previous_entered_call = enters_call;
++    }
+ 
++    const auto process_event = [&](size_t index) {
++        const auto& ex_event = ex_events[index];
++        const uint32_t row = static_cast<uint32_t>(index + 1); // Row zero is reserved for shifted columns.
++        const auto& state = row_states[index];
++        const uint32_t dying_context_id = state.dying_context_id;
++        const bool is_first_event_in_enqueued_call = state.enqueued_call_start;
++        const bool prev_row_was_enter_call = state.previous_row_entered_call;
++        const auto is_discarding = [dying_context_id]() { return dying_context_id != 0; };
+         const bool has_parent = ex_event.after_context_event.parent_id != 0;
+ 
+         /**************************************************************************************************
+@@ -576,7 +599,6 @@ void ExecutionTraceBuilder::process(
+ 
+         // These booleans are used after of the "opcode code execution" block but need
+         // to be set as part of the "opcode code execution" block.
+-        bool sel_enter_call = false;
+         bool sel_exit_call = false;
+         bool execute_revert = false;
+ 
+@@ -599,7 +621,6 @@ void ExecutionTraceBuilder::process(
+             // Execution trace opcodes specific logic.
+             // Note that the opcode selectors were set above. (e.g., sel_execute_call, sel_execute_static_call, ..).
+             if (*exec_opcode == ExecutionOpCode::CALL || *exec_opcode == ExecutionOpCode::STATICCALL) {
+-                sel_enter_call = true;
+ 
+                 const Gas gas_left = ex_event.after_context_event.gas_limit - ex_event.after_context_event.gas_used;
+ 
+@@ -772,37 +793,23 @@ void ExecutionTraceBuilder::process(
+                       { C::execution_dying_context_diff_inv, dying_context_diff }, // Will be inverted in batch.
+                       { C::execution_enqueued_call_end, enqueued_call_end ? 1 : 0 },
+                   } });
+-
+-        // Trace-generation is done for this event.
+-        // Now, use this event to determine whether we should set/reset the discard flag for the NEXT event.
+-        // Note: is_failure implies discard is true.
+-        const bool event_kills_dying_context = is_failure && is_dying_context;
+-
+-        if (event_kills_dying_context) {
+-            // Set/unset discard flag if the current event is the one that kills the dying context
+-            dying_context_id = 0;
+-        } else if (sel_enter_call && !is_discarding() &&
+-                   failures.does_context_fail.contains(ex_event.next_context_id)) {
+-            // If making a nested call, and discard isn't already high...
+-            // if the nested context being entered eventually dies, we set which context is dying (implicitly raise
+-            // discard flag). NOTE: If a [STATIC]CALL instruction _itself_ errors, we don't set the discard flag
+-            // because we aren't actually entering a new context. This is already captured by `sel_enter_call`
+-            // boolean which is set to true only during opcode execution temporality group which cannot
+-            // fail for CALL/STATICALL.
+-            dying_context_id = ex_event.next_context_id;
++    };
++
++    // Align chunks to trace shards: writers never share a cell, and normally share no shard.
++    constexpr size_t chunk_size = TraceContainer::INTERVAL_SIZE;
++    const size_t num_chunks = (ex_events.size() + chunk_size) / chunk_size;
++    if (num_chunks < 4) {
++        for (size_t index = 0; index < ex_events.size(); ++index) {
++            process_event(index);
+         }
+-        // Otherwise, we aren't entering or exiting a dying context,
+-        // so just propagate discard and dying context.
+-        // Implicit: dying_context_id = dying_context_id; discard = discard;
+-
+-        // If an enqueued call just exited, next event (if any) is the first in an enqueued call.
+-        // Update flag for next iteration.
+-        is_first_event_in_enqueued_call = !has_parent && sel_exit_call;
+-
+-        // Track this bool for use determining whether the next row is the first in a context
+-        prev_row_was_enter_call = sel_enter_call;
+-
+-        row++;
++    } else {
++        parallel_for(num_chunks, [&](size_t chunk) {
++            const size_t first_row = std::max<size_t>(1, chunk * chunk_size);
++            const size_t end_row = std::min(ex_events.size() + 1, (chunk + 1) * chunk_size);
++            for (size_t row = first_row; row < end_row; ++row) {
++                process_event(row - 1);
++            }
++        });
+     }
+ 
+     // Batch invert the columns.
+@@ -853,6 +860,9 @@ void ExecutionTraceBuilder::process_execution_spec(const simulation::ExecutionEv
+                                                    TraceContainer& trace,
+                                                    uint32_t row)
+ {
++    constexpr FF field_zero = FF::zero();
++    constexpr FF field_one = FF::one();
++
+     // At this point we can assume instruction fetching succeeded, so this should never fail.
+     ExecutionOpCode exec_opcode = ex_event.wire_instruction.get_exec_opcode();
+     const auto& exec_spec = get_exec_instruction_spec().at(exec_opcode);
+@@ -871,11 +881,11 @@ void ExecutionTraceBuilder::process_execution_spec(const simulation::ExecutionEv
+     for (size_t i = 0; i < AVM_MAX_REGISTERS; i++) {
+         trace.set(row,
+                   { {
+-                      { REGISTER_IS_WRITE_COLUMNS[i], register_info.is_write(i) ? 1 : 0 },
+-                      { REGISTER_MEM_OP_COLUMNS[i], register_info.is_active(i) ? 1 : 0 },
++                      { REGISTER_IS_WRITE_COLUMNS[i], register_info.is_write(i) ? field_one : field_zero },
++                      { REGISTER_MEM_OP_COLUMNS[i], register_info.is_active(i) ? field_one : field_zero },
+                       { REGISTER_EXPECTED_TAG_COLUMNS[i],
+                         register_info.need_tag_check(i) ? static_cast<uint8_t>(*(register_info.expected_tag(i))) : 0 },
+-                      { REGISTER_TAG_CHECK_COLUMNS[i], register_info.need_tag_check(i) ? 1 : 0 },
++                      { REGISTER_TAG_CHECK_COLUMNS[i], register_info.need_tag_check(i) ? field_one : field_zero },
+                   } });
+     }
+ 
+@@ -944,6 +954,11 @@ void ExecutionTraceBuilder::process_addressing(const simulation::AddressingEvent
+                                                TraceContainer& trace,
+                                                uint32_t row)
+ {
++    // These conditions encode field bits. Avoid a runtime integer-to-Montgomery
++    // conversion for each operand/flag, including the padded zero operands.
++    constexpr FF field_zero = FF::zero();
++    constexpr FF field_one = FF::one();
++
+     // At this point we can assume instruction fetching succeeded, so this should never fail.
+     ExecutionOpCode exec_opcode = instruction.get_exec_opcode();
+     const ExecInstructionSpec& ex_spec = get_exec_instruction_spec().at(exec_opcode);
+@@ -1003,13 +1018,13 @@ void ExecutionTraceBuilder::process_addressing(const simulation::AddressingEvent
+     for (size_t i = 0; i < AVM_MAX_OPERANDS; i++) {
+         trace.set(row,
+                   { {
+-                      { OPERAND_IS_RELATIVE_WIRE_COLUMNS[i], is_relative[i] ? 1 : 0 },
+-                      { OPERAND_IS_INDIRECT_WIRE_COLUMNS[i], is_indirect[i] ? 1 : 0 },
+-                      { OPERAND_RELATIVE_OVERFLOW_COLUMNS[i], relative_oob[i] ? 1 : 0 },
++                      { OPERAND_IS_RELATIVE_WIRE_COLUMNS[i], is_relative[i] ? field_one : field_zero },
++                      { OPERAND_IS_INDIRECT_WIRE_COLUMNS[i], is_indirect[i] ? field_one : field_zero },
++                      { OPERAND_RELATIVE_OVERFLOW_COLUMNS[i], relative_oob[i] ? field_one : field_zero },
+                       { OPERAND_AFTER_RELATIVE_COLUMNS[i], after_relative[i] },
+-                      { OPERAND_APPLY_INDIRECTION_COLUMNS[i], apply_indirection[i] ? 1 : 0 },
++                      { OPERAND_APPLY_INDIRECTION_COLUMNS[i], apply_indirection[i] ? field_one : field_zero },
+                       { OPERAND_IS_RELATIVE_VALID_BASE_COLUMNS[i],
+-                        (is_relative_effective[i] && !base_address_invalid) ? 1 : 0 },
++                        (is_relative_effective[i] && !base_address_invalid) ? field_one : field_zero },
+                       { RESOLVED_OPERAND_COLUMNS[i], resolved_operand[i] },
+                       { RESOLVED_OPERAND_TAG_COLUMNS[i], resolved_operand_tag[i] },
+                   } });
+@@ -1022,23 +1037,23 @@ void ExecutionTraceBuilder::process_addressing(const simulation::AddressingEvent
+         bool is_indirect = is_operand_indirect(instruction.addressing_mode, i);
+         trace.set(row,
+                   { {
+-                      { OPERAND_IS_RELATIVE_WIRE_COLUMNS[i], is_relative ? 1 : 0 },
+-                      { OPERAND_IS_INDIRECT_WIRE_COLUMNS[i], is_indirect ? 1 : 0 },
++                      { OPERAND_IS_RELATIVE_WIRE_COLUMNS[i], is_relative ? field_one : field_zero },
++                      { OPERAND_IS_INDIRECT_WIRE_COLUMNS[i], is_indirect ? field_one : field_zero },
+                   } });
+     }
+ 
+     // Inverse of following difference is required when base address is invalid.
+     FF base_address_tag_diff = base_address_invalid ? FF(static_cast<uint8_t>(addr_event.base_address.get_tag())) -
+                                                           FF(static_cast<uint8_t>(MemoryTag::U32))
+-                                                    : 0;
++                                                    : field_zero;
+ 
+     // Tag check after indirection.
+     bool some_final_check_failed = std::ranges::any_of(addr_event.resolution_info, [](const auto& info) {
+         return info.error.has_value() && *info.error == AddressingEventError::INVALID_ADDRESS_AFTER_INDIRECTION;
+     });
+-    FF batched_tags_diff = 0;
++    FF batched_tags_diff = field_zero;
+     if (some_final_check_failed) {
+-        FF power_of_2 = 1;
++        FF power_of_2 = field_one;
+         for (size_t i = 0; i < AVM_MAX_OPERANDS; ++i) {
+             if (apply_indirection[i]) {
+                 batched_tags_diff += power_of_2 * (FF(resolved_operand_tag[i]) - FF(MEM_TAG_U32));
+@@ -1068,21 +1083,21 @@ void ExecutionTraceBuilder::process_addressing(const simulation::AddressingEvent
+                                   }) +
+                   // Some invalid address after indirection.
+                   (some_final_check_failed ? 1 : 0))
+-            : 0;
++            : field_zero;
+ 
+     trace.set(
+         row,
+         { {
+-            { C::execution_sel_addressing_error, addressing_failed ? 1 : 0 },
++            { C::execution_sel_addressing_error, addressing_failed ? field_one : field_zero },
+             { C::execution_addressing_error_collection_inv, addressing_error_collection }, // Will be inverted in batch.
+             { C::execution_base_address_val, addr_event.base_address.as_ff() },
+             { C::execution_base_address_tag, static_cast<uint8_t>(addr_event.base_address.get_tag()) },
+             { C::execution_base_address_tag_diff_inv, base_address_tag_diff }, // Will be inverted in batch.
+             { C::execution_batched_tags_diff_inv, batched_tags_diff },         // Will be inverted in batch.
+-            { C::execution_sel_some_final_check_failed, some_final_check_failed ? 1 : 0 },
+-            { C::execution_sel_base_address_failure, base_address_invalid ? 1 : 0 },
++            { C::execution_sel_some_final_check_failed, some_final_check_failed ? field_one : field_zero },
++            { C::execution_sel_base_address_failure, base_address_invalid ? field_one : field_zero },
+             { C::execution_num_relative_operands_inv, num_relative_operands }, // Will be inverted in batch later.
+-            { C::execution_sel_do_base_check, do_base_check ? 1 : 0 },
++            { C::execution_sel_do_base_check, do_base_check ? field_one : field_zero },
+             { C::execution_highest_address, AVM_HIGHEST_MEM_ADDRESS },
+         } });
+ }
+diff --git a/barretenberg/cpp/src/barretenberg/vm2/tracegen/memory_trace.cpp b/barretenberg/cpp/src/barretenberg/vm2/tracegen/memory_trace.cpp
+index 1ea7538b7fd..c5bc83e8528 100644
+--- a/barretenberg/cpp/src/barretenberg/vm2/tracegen/memory_trace.cpp
++++ b/barretenberg/cpp/src/barretenberg/vm2/tracegen/memory_trace.cpp
+@@ -3,6 +3,7 @@
+ #include <algorithm>
+ #include <array>
+ #include <cstdint>
++#include <type_traits>
+ 
+ #include "barretenberg/common/assert.hpp"
+ #include "barretenberg/vm2/common/field.hpp"
+@@ -24,6 +25,19 @@
+ 
+ namespace bb::avm2::tracegen {
+ 
++std::array<uint64_t, 2> MemoryTraceBuilder::get_event_sort_key(const simulation::MemoryEvent& event)
++{
++    static_assert(std::is_same_v<decltype(event.space_id), uint16_t>);
++    static_assert(std::is_same_v<decltype(event.addr), uint32_t>);
++    static_assert(std::is_same_v<decltype(event.execution_clk), uint32_t>);
++    static_assert(std::is_same_v<std::underlying_type_t<simulation::MemoryMode>, int32_t>);
++    // Bias signed mode into unsigned order. Do not assume only READ/WRITE values:
++    // this preserves the full existing comparator domain, including negative modes.
++    const uint32_t mode = static_cast<uint32_t>(static_cast<int32_t>(event.mode)) ^ (uint32_t{ 1 } << 31);
++    return { (static_cast<uint64_t>(event.space_id) << 32) | event.addr,
++             (static_cast<uint64_t>(event.execution_clk) << 32) | mode };
++}
++
+ /**
+  * @brief Processes memory events into the memory subtrace.
+  *
+@@ -38,18 +52,27 @@ void MemoryTraceBuilder::process(const simulation::EventEmitterInterface<simulat
+     using simulation::MemoryEvent;
+     using simulation::MemoryMode;
+ 
+-    // Create a vector of pointers to avoid copying the events.
+-    std::vector<const simulation::MemoryEvent*> event_ptrs;
++    // Cache immutable comparison keys beside pointers, avoiding scattered event
++    // reads on every comparison. No event payloads are copied or moved.
++    struct SortEntry {
++        std::array<uint64_t, 2> key;
++        const MemoryEvent* event;
++    };
++    std::vector<SortEntry> sorted_events;
+     const size_t trace_size = events.size();
+-    event_ptrs.reserve(trace_size);
++    sorted_events.reserve(trace_size);
+ 
+     for (const auto& event : events) {
+-        event_ptrs.push_back(&event);
++        sorted_events.push_back({ get_event_sort_key(event), &event });
+     }
+ 
+-    std::ranges::sort(event_ptrs, [](const auto* lhs, const auto* rhs) { return lhs->operator<(*rhs); });
++    std::ranges::sort(sorted_events, [](const auto& lhs, const auto& rhs) { return lhs.key < rhs.key; });
+ 
+     using C = Column;
++    // Select pre-encoded Boolean fields instead of converting runtime 0/1 integers
++    // into Montgomery form for every row.
++    constexpr FF field_zero = FF::zero();
++    constexpr FF field_one = FF::one();
+ 
+     // We rely on the following assert in computing C::memory_tag_ff_diff_inv value
+     // below. Namely: (tag - MemoryTag::FF).invert() == tag.invert().
+@@ -69,7 +92,7 @@ void MemoryTraceBuilder::process(const simulation::EventEmitterInterface<simulat
+     uint32_t row = 1;
+ 
+     for (uint32_t i = 0; i < trace_size; i++) {
+-        const auto& event = *event_ptrs[i];
++        const auto& event = *sorted_events[i].event;
+         const bool is_last = i + 1 == trace_size;
+         const bool sel_tag_is_ff = event.value.get_tag() == MemoryTag::FF;
+         const uint64_t global_addr = (static_cast<uint64_t>(event.space_id) << 32) + event.addr;
+@@ -81,7 +104,7 @@ void MemoryTraceBuilder::process(const simulation::EventEmitterInterface<simulat
+         uint64_t global_addr_diff = 0;
+ 
+         if (!is_last) {
+-            const auto& next_event = *event_ptrs[i + 1];
++            const auto& next_event = *sorted_events[i + 1].event;
+             const uint64_t next_global_addr = (static_cast<uint64_t>(next_event.space_id) << 32) + next_event.addr;
+             const uint64_t next_timestamp =
+                 (static_cast<uint64_t>(next_event.execution_clk) << 1) + static_cast<uint64_t>(next_event.mode);
+@@ -97,23 +120,24 @@ void MemoryTraceBuilder::process(const simulation::EventEmitterInterface<simulat
+ 
+         trace.set(row,
+                   { {
+-                      { C::memory_sel, 1 },
++                      { C::memory_sel, field_one },
+                       { C::memory_value, event.value },
+                       { C::memory_tag, static_cast<uint8_t>(event.value.get_tag()) },
+                       { C::memory_space_id, event.space_id },
+                       { C::memory_address, event.addr },
+                       { C::memory_clk, event.execution_clk },
+-                      { C::memory_rw, event.mode == MemoryMode::WRITE ? 1 : 0 },
+-                      { C::memory_sel_rng_chk, is_last ? 0 : 1 },
+-                      { C::memory_last_access, last_access },
++                      { C::memory_rw, event.mode == MemoryMode::WRITE ? field_one : field_zero },
++                      { C::memory_sel_rng_chk, is_last ? field_zero : field_one },
++                      { C::memory_last_access, last_access ? field_one : field_zero },
+                       { C::memory_glob_addr_diff_inv, global_addr_diff }, // Will be inverted in batch later
+                       { C::memory_diff, diff },
+                       { C::memory_limb_0_, diff & 0xFFFF },
+                       { C::memory_limb_1_, (diff >> 16) & 0xFFFF },
+                       { C::memory_limb_2_, (diff >> 32) },
+-                      { C::memory_sel_tag_is_ff, sel_tag_is_ff ? 1 : 0 },
++                      { C::memory_sel_tag_is_ff, sel_tag_is_ff ? field_one : field_zero },
+                       { C::memory_tag_ff_diff_inv, tag_inverts.at(static_cast<uint8_t>(event.value.get_tag())) },
+-                      { C::memory_sel_rng_write, (event.mode == MemoryMode::WRITE && !sel_tag_is_ff) ? 1 : 0 },
++                      { C::memory_sel_rng_write,
++                        (event.mode == MemoryMode::WRITE && !sel_tag_is_ff) ? field_one : field_zero },
+                       { C::memory_max_bits, get_tag_bits(event.value.get_tag()) },
+                   } });
+         row++;
+diff --git a/barretenberg/cpp/src/barretenberg/vm2/tracegen/memory_trace.hpp b/barretenberg/cpp/src/barretenberg/vm2/tracegen/memory_trace.hpp
+index 5f35d449759..a1bd30ff38a 100644
+--- a/barretenberg/cpp/src/barretenberg/vm2/tracegen/memory_trace.hpp
++++ b/barretenberg/cpp/src/barretenberg/vm2/tracegen/memory_trace.hpp
+@@ -1,5 +1,8 @@
+ #pragma once
+ 
++#include <array>
++#include <cstdint>
++
+ #include "barretenberg/vm2/generated/columns.hpp"
+ #include "barretenberg/vm2/simulation/events/event_emitter.hpp"
+ #include "barretenberg/vm2/simulation/events/memory_event.hpp"
+@@ -10,6 +13,9 @@ namespace bb::avm2::tracegen {
+ 
+ class MemoryTraceBuilder final {
+   public:
++    // Exact lexicographic comparator key, including the signed mode ordering.
++    static std::array<uint64_t, 2> get_event_sort_key(const simulation::MemoryEvent& event);
++
+     void process(const simulation::EventEmitterInterface<simulation::MemoryEvent>::Container& events,
+                  TraceContainer& trace);
+ 
 diff --git a/barretenberg/cpp/src/barretenberg/vm2/tracegen_helper.cpp b/barretenberg/cpp/src/barretenberg/vm2/tracegen_helper.cpp
-index 431bd449a0d..7741566c06f 100644
+index 431bd449a0d..5cc924f3c06 100644
 --- a/barretenberg/cpp/src/barretenberg/vm2/tracegen_helper.cpp
 +++ b/barretenberg/cpp/src/barretenberg/vm2/tracegen_helper.cpp
 @@ -117,6 +117,18 @@ auto build_public_inputs_columns_jobs(TraceContainer& trace, const PublicInputs&
@@ -288,7 +689,19 @@ index 431bd449a0d..7741566c06f 100644
              // Subtrace jobs.
              std::vector<std::function<void()>>{
                  [&]() {
-@@ -220,12 +234,6 @@ void AvmTraceGenHelper::fill_trace_columns(TraceContainer& trace,
+@@ -204,11 +218,6 @@ void AvmTraceGenHelper::fill_trace_columns(TraceContainer& trace,
+                     AVM_TRACK_TIME("tracegen/tx", tx_builder.process(events.tx, trace));
+                     clear_events(events.tx);
+                 },
+-                [&]() {
+-                    ExecutionTraceBuilder exec_builder;
+-                    AVM_TRACK_TIME("tracegen/execution", exec_builder.process(events.execution, trace));
+-                    clear_events(events.execution);
+-                },
+                 [&]() {
+                     AddressDerivationTraceBuilder address_derivation_builder;
+                     AVM_TRACK_TIME("tracegen/address_derivation",
+@@ -220,12 +229,6 @@ void AvmTraceGenHelper::fill_trace_columns(TraceContainer& trace,
                      AVM_TRACK_TIME("tracegen/alu", alu_builder.process(events.alu, trace));
                      clear_events(events.alu);
                  },
@@ -301,10 +714,19 @@ index 431bd449a0d..7741566c06f 100644
                  [&]() {
                      BytecodeTraceBuilder bytecode_builder;
                      AVM_TRACK_TIME("tracegen/bytecode_hashing",
-@@ -419,6 +427,7 @@ void AvmTraceGenHelper::fill_trace_columns(TraceContainer& trace,
+@@ -418,7 +421,15 @@ void AvmTraceGenHelper::fill_trace_columns(TraceContainer& trace,
+                     clear_events(events.emit_public_log_events);
                  } });
  
-         AVM_TRACK_TIME("tracegen/traces", execute_jobs(jobs));
+-        AVM_TRACK_TIME("tracegen/traces", execute_jobs(jobs));
++        AVM_TRACK_TIME("tracegen/traces", {
++            // Execution fills independent row chunks in parallel. Run it outside the
++            // other job group so it can use the existing top-level thread pool.
++            ExecutionTraceBuilder exec_builder;
++            AVM_TRACK_TIME("tracegen/execution", exec_builder.process(events.execution, trace));
++            clear_events(events.execution);
++            execute_jobs(jobs);
++        });
 +        clear_events(events.bytecode_decomposition);
      }
  }
