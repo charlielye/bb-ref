@@ -24,10 +24,10 @@ def frames(path):
         i += 4 + n
 
 
-def write(path, payloads, first_id=0):
+def write(path, payloads, first_id=0, ids=None):
     with open(path, "wb") as f:
         for k, p in enumerate(payloads):
-            f.write(struct.pack("<IQ", 8 + len(p), first_id + k) + p)
+            f.write(struct.pack("<IQ", 8 + len(p), ids[k] if ids else first_id + k) + p)
 
 
 def pack(obj):
@@ -62,15 +62,17 @@ def main():
                 payloads.append(command("BbAvmVerify", {"proof": p, "public_inputs": public_inputs}))
         write(out, payloads, first_id=len(requests))
     elif mode == "goldens":
-        payloads = []
+        payloads, ids = [], []
         for path in rest:
-            for _, resp in frames(path):
+            for request_id, resp in frames(path):
                 obj = msgpack.unpackb(resp, raw=False)
                 assert pack(obj) == resp, "msgpack re-encode is not exact"
                 if isinstance(obj[1], dict) and "stats" in obj[1]:
                     obj[1]["stats"] = []
                 payloads.append(pack(obj))
-        write(out, payloads)
+                ids.append(request_id)
+        # Responses echo their request's id; keep it.
+        write(out, payloads, ids=ids)
     else:
         print(__doc__)
         sys.exit(1)
