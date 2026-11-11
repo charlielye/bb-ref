@@ -60,6 +60,16 @@ fn min_pts_per_thread() -> usize {
     *V
 }
 
+fn task_min_pts() -> usize {
+    static V: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
+        std::env::var("BBREF_MSM_TASK_MIN")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(256)
+    });
+    *V
+}
+
 pub fn msm<P: SWCurveConfig>(points: &[Affine<P>], scalars: &[P::ScalarField]) -> Projective<P>
 where
     P::BaseField: crate::base::wasm::QuadConsts + crate::base::endo::EndoField,
@@ -175,7 +185,7 @@ where
     // bb's stage layout: every O(n) pass is parallel across scalar-range tasks, windows together.
     // Digits are decoded twice (count pass, scatter pass) instead of materialized — cheaper than
     // streaming an n x windows matrix through memory.
-    let tasks = rayon::current_num_threads().clamp(1, n.div_ceil(2048));
+    let tasks = rayon::current_num_threads().clamp(1, n.div_ceil(task_min_pts()));
     let task_ranges: Vec<std::ops::Range<usize>> = (0..tasks)
         .map(|t| t * n.div_ceil(tasks)..((t + 1) * n.div_ceil(tasks)).min(n))
         .collect();
@@ -363,6 +373,11 @@ where
     if timing {
         s6a_timing::reset();
     }
+    // A thread's chunks of every window stream through one sequence of SUBCHUNK blocks, so each
+    // block's batched-affine levels share their inversions across windows: at high thread counts a
+    // single window's chunk is a few hundred entries over a handful of buckets, and per-window
+    // trees paid every level's inversion once per window. Run ids are window·(half + 1) + bucket.
+    let id_stride = (half + 1) as u32;
     let partials: Vec<Vec<Partial<P>>> = (0..threads)
         .into_par_iter()
         .map(|t| {
@@ -370,150 +385,194 @@ where
             let mut run_id: Vec<u32> = Vec::with_capacity(SUBCHUNK);
             let mut run_len: Vec<u32> = Vec::with_capacity(SUBCHUNK);
             let mut scratch = TreeScratch::<P>::with_capacity(SUBCHUNK);
-            (0..num_windows)
-                .map(|w| {
-                    let ch = &chunks[w];
-                    let (cs_lo, cs_hi) = (ch.start[t], ch.start[t + 1]);
-                    if cs_lo == cs_hi {
+            let mut parts: Vec<Partial<P>> = chunks
+                .iter()
+                .map(|ch| {
+                    if ch.start[t] == ch.start[t + 1] {
                         return Partial {
                             lo: 0,
                             dense: Vec::new(),
                             present: Vec::new(),
                         };
                     }
-                    let (my_lo, my_hi) = (ch.lo[t], ch.hi[t]);
-                    let width = my_hi - my_lo + 1;
-                    let mut dense = vec![Affine::<P>::zero(); width];
-                    let mut present = vec![0u8; width];
-                    let mut overflow: Vec<(u32, Affine<P>)> = Vec::new();
-                    let sched = &schedules[w];
-                    let bs = &bucket_starts[w];
-                    // 0-based bucket cursor: bs[b] <= pos < bs[b + 1]; the digit is b + 1.
-                    let mut b = bs.partition_point(|&st| st as usize <= cs_lo) - 1;
-                    let mut pos = cs_lo;
-                    let (mut tg, mut tt, mut td) = (0u64, 0u64, 0u64);
-                    let now = || crate::base::timing::Instant::now();
-                    while pos < cs_hi {
-                        let end = (pos + SUBCHUNK).min(cs_hi);
-                        let t_g = timing.then(now);
-                        block_p.clear();
-                        run_id.clear();
-                        run_len.clear();
-                        let (mut cur, mut cnt) = (u32::MAX, 0u32);
-                        for j in pos..end {
-                            while bs[b + 1] as usize <= j {
-                                b += 1;
-                            }
-                            // The point loads are random over the SRS; prefetching a few entries
-                            // ahead keeps more of them in flight than the branchy loop does.
-                            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-                            if let Some(&f) = sched.get(j + GATHER_PREFETCH) {
-                                let k = (f & 0x3fff_ffff) as usize;
-                                let p = match phi_table {
-                                    Some(tbl) if f & PHI != 0 => &tbl[k],
-                                    _ => &points[k],
-                                };
-                                crate::base::prefetch(p);
-                            }
-                            let e = sched[j];
-                            let i = (e & 0x3fff_ffff) as usize;
-                            if b as u32 != cur {
-                                if cnt > 0 {
-                                    run_id.push(cur);
-                                    run_len.push(cnt);
-                                }
-                                cur = b as u32;
-                                cnt = 1;
-                            } else {
-                                cnt += 1;
-                            }
-                            let mut pt = points[i];
-                            if e & PHI != 0 {
-                                pt = match phi_table {
-                                    Some(tbl) => tbl[i],
-                                    None => Affine::<P>::new_unchecked(beta * pt.x, -pt.y),
-                                };
-                            }
-                            block_p.push(if e >> 31 == 1 { -pt } else { pt });
+                    let width = ch.hi[t] - ch.lo[t] + 1;
+                    Partial {
+                        lo: ch.lo[t],
+                        dense: vec![Affine::<P>::zero(); width],
+                        present: vec![0u8; width],
+                    }
+                })
+                .collect();
+            let mut overflows: Vec<Vec<(u32, Affine<P>)>> = vec![Vec::new(); num_windows];
+            let (mut tg, mut tt, mut td) = (0u64, 0u64, 0u64);
+            let now = || crate::base::timing::Instant::now();
+            // Reduce the block and densify its survivors into their windows' slots; a slot already
+            // filled (its bucket's run was cut by a block boundary) goes to the window's overflow.
+            let mut flush = |block_p: &mut Vec<Affine<P>>,
+                             run_id: &mut Vec<u32>,
+                             run_len: &mut Vec<u32>,
+                             parts: &mut Vec<Partial<P>>,
+                             overflows: &mut Vec<Vec<(u32, Affine<P>)>>| {
+                let t_t = timing.then(now);
+                tree_reduce(run_id, run_len, block_p, &mut scratch);
+                if let Some(t) = t_t {
+                    tt += t.elapsed().as_nanos() as u64;
+                }
+                let t_d = timing.then(now);
+                let mut idx = 0;
+                for r in 0..run_id.len() {
+                    let (w, b) = ((run_id[r] / id_stride) as usize, (run_id[r] % id_stride) as usize);
+                    let part = &mut parts[w];
+                    for _ in 0..run_len[r] {
+                        let slot = b + 1 - part.lo;
+                        if part.present[slot] != 0 {
+                            overflows[w].push((slot as u32, block_p[idx]));
+                        } else {
+                            part.dense[slot] = block_p[idx];
+                            part.present[slot] = 1;
                         }
+                        idx += 1;
+                    }
+                }
+                if let Some(t) = t_d {
+                    td += t.elapsed().as_nanos() as u64;
+                }
+                block_p.clear();
+                run_id.clear();
+                run_len.clear();
+            };
+            let (mut cur, mut cnt) = (u32::MAX, 0u32);
+            let mut t_g = timing.then(now);
+            for w in 0..num_windows {
+                let ch = &chunks[w];
+                let (cs_lo, cs_hi) = (ch.start[t], ch.start[t + 1]);
+                if cs_lo == cs_hi {
+                    continue;
+                }
+                let sched = &schedules[w];
+                let bs = &bucket_starts[w];
+                // 0-based bucket cursor: bs[b] <= pos < bs[b + 1]; the digit is b + 1.
+                let mut b = bs.partition_point(|&st| st as usize <= cs_lo) - 1;
+                let base = w as u32 * id_stride;
+                for j in cs_lo..cs_hi {
+                    while bs[b + 1] as usize <= j {
+                        b += 1;
+                    }
+                    // The point loads are random over the SRS; prefetching a few entries ahead
+                    // keeps more of them in flight than the branchy loop does.
+                    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+                    if let Some(&f) = sched.get(j + GATHER_PREFETCH) {
+                        let k = (f & 0x3fff_ffff) as usize;
+                        let p = match phi_table {
+                            Some(tbl) if f & PHI != 0 => &tbl[k],
+                            _ => &points[k],
+                        };
+                        crate::base::prefetch(p);
+                    }
+                    let e = sched[j];
+                    let i = (e & 0x3fff_ffff) as usize;
+                    let id = base + b as u32;
+                    if id != cur {
                         if cnt > 0 {
                             run_id.push(cur);
                             run_len.push(cnt);
                         }
+                        cur = id;
+                        cnt = 1;
+                    } else {
+                        cnt += 1;
+                    }
+                    let mut pt = points[i];
+                    if e & PHI != 0 {
+                        pt = match phi_table {
+                            Some(tbl) => tbl[i],
+                            None => Affine::<P>::new_unchecked(beta * pt.x, -pt.y),
+                        };
+                    }
+                    block_p.push(if e >> 31 == 1 { -pt } else { pt });
+                    if block_p.len() == SUBCHUNK {
+                        run_id.push(cur);
+                        run_len.push(cnt);
+                        (cur, cnt) = (u32::MAX, 0);
                         if let Some(t) = t_g {
                             tg += t.elapsed().as_nanos() as u64;
                         }
-                        let t_t = timing.then(now);
-                        tree_reduce(&mut run_id, &mut run_len, &mut block_p, &mut scratch);
-                        if let Some(t) = t_t {
-                            tt += t.elapsed().as_nanos() as u64;
-                        }
-                        let t_d = timing.then(now);
-                        let mut idx = 0;
-                        for r in 0..run_id.len() {
-                            for _ in 0..run_len[r] {
-                                let slot = run_id[r] as usize + 1 - my_lo;
-                                if present[slot] != 0 {
-                                    overflow.push((slot as u32, block_p[idx]));
-                                } else {
-                                    dense[slot] = block_p[idx];
-                                    present[slot] = 1;
+                        flush(&mut block_p, &mut run_id, &mut run_len, &mut parts, &mut overflows);
+                        t_g = timing.then(now);
+                    }
+                }
+            }
+            if cnt > 0 {
+                run_id.push(cur);
+                run_len.push(cnt);
+            }
+            if let Some(t) = t_g {
+                tg += t.elapsed().as_nanos() as u64;
+            }
+            if !block_p.is_empty() {
+                flush(&mut block_p, &mut run_id, &mut run_len, &mut parts, &mut overflows);
+            }
+            if timing {
+                s6a_timing::add(tg, tt, td);
+            }
+            parts
+                .into_iter()
+                .zip(overflows)
+                .map(
+                    |(
+                        Partial {
+                            lo: my_lo,
+                            mut dense,
+                            mut present,
+                        },
+                        overflow,
+                    )| {
+                        let width = dense.len();
+                        // Overflow entries arrive slot-sorted (blocks walk digits in order), so each
+                        // slot's head + partials are consecutive: one tree reduce settles them all.
+                        if !overflow.is_empty() {
+                            block_p.clear();
+                            run_id.clear();
+                            run_len.clear();
+                            let mut k = 0;
+                            while k < overflow.len() {
+                                let slot = overflow[k].0;
+                                block_p.push(dense[slot as usize]);
+                                let mut c = 1u32;
+                                while k < overflow.len() && overflow[k].0 == slot {
+                                    block_p.push(overflow[k].1);
+                                    c += 1;
+                                    k += 1;
                                 }
-                                idx += 1;
+                                run_id.push(slot);
+                                run_len.push(c);
+                            }
+                            tree_reduce(&mut run_id, &mut run_len, &mut block_p, &mut scratch);
+                            let mut idx = 0;
+                            for r in 0..run_id.len() {
+                                for _ in 0..run_len[r] {
+                                    dense[run_id[r] as usize] = block_p[idx];
+                                    idx += 1;
+                                }
+                            }
+                            // A slot whose entries cancelled to infinity has no survivor.
+                            let mut seen = vec![false; width];
+                            for &id in run_id.iter() {
+                                seen[id as usize] = true;
+                            }
+                            for (slot, _) in overflow.iter() {
+                                if !seen[*slot as usize] {
+                                    present[*slot as usize] = 0;
+                                }
                             }
                         }
-                        if let Some(t) = t_d {
-                            td += t.elapsed().as_nanos() as u64;
+                        Partial {
+                            lo: my_lo,
+                            dense,
+                            present,
                         }
-                        pos = end;
-                    }
-                    // Overflow entries arrive slot-sorted (sub-chunks walk digits in order), so each
-                    // slot's head + partials are consecutive: one tree reduce settles them all.
-                    if !overflow.is_empty() {
-                        block_p.clear();
-                        run_id.clear();
-                        run_len.clear();
-                        let mut k = 0;
-                        while k < overflow.len() {
-                            let slot = overflow[k].0;
-                            block_p.push(dense[slot as usize]);
-                            let mut c = 1u32;
-                            while k < overflow.len() && overflow[k].0 == slot {
-                                block_p.push(overflow[k].1);
-                                c += 1;
-                                k += 1;
-                            }
-                            run_id.push(slot);
-                            run_len.push(c);
-                        }
-                        tree_reduce(&mut run_id, &mut run_len, &mut block_p, &mut scratch);
-                        let mut idx = 0;
-                        for r in 0..run_id.len() {
-                            for _ in 0..run_len[r] {
-                                dense[run_id[r] as usize] = block_p[idx];
-                                idx += 1;
-                            }
-                        }
-                        // A slot whose entries cancelled to infinity has no survivor.
-                        let mut seen = vec![false; width];
-                        for &id in run_id.iter() {
-                            seen[id as usize] = true;
-                        }
-                        for (slot, _) in overflow.iter() {
-                            if !seen[*slot as usize] {
-                                present[*slot as usize] = 0;
-                            }
-                        }
-                    }
-                    if timing {
-                        s6a_timing::add(tg, tt, td);
-                    }
-                    Partial {
-                        lo: my_lo,
-                        dense,
-                        present,
-                    }
-                })
+                    },
+                )
                 .collect()
         })
         .collect();
@@ -622,7 +681,9 @@ where
         })
         .collect();
     // bb Stage 7: per-window sum of the task partials.
+    // Windows in parallel: at high thread counts this is windows × tasks projective adds.
     let window_sums: Vec<Projective<P>> = (0..num_windows)
+        .into_par_iter()
         .map(|w| per_task.iter().fold(Projective::<P>::zero(), |a, s| a + s[w]))
         .collect();
 

@@ -2326,7 +2326,7 @@ where
     }
     if split_timing {
         eprintln!(
-            "[timing]     sumcheck split: univariate {:.2}s, fold {:.2}s, setup {:.2}s",
+            "[timing]     sumcheck split: univariate {:.4}s, fold {:.4}s, setup {:.4}s",
             t_uni.as_secs_f64(),
             t_fold.as_secs_f64(),
             t_setup.elapsed().as_secs_f64() - t_uni.as_secs_f64() - t_fold.as_secs_f64()

@@ -79,7 +79,7 @@ pub fn phase(label: &str) {
         .unwrap_or_default();
     LAST.with(|last| {
         if let Some(prev) = last.get() {
-            eprintln!("[timing] {label}: {:.2}s{rss}", (now - prev).as_secs_f64());
+            eprintln!("[timing] {label}: {:.4}s{rss}", (now - prev).as_secs_f64());
         } else {
             eprintln!("[timing] {label}{rss}");
         }
