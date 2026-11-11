@@ -16,7 +16,7 @@ A new golf leader only needs its new commits classified against this table.
 |---|---|---|---|
 | 86c7cbd5a63 | MSM duplicate-scalar dedup hint for AVM wires | HAVE | `srs.rs` `commit` → `commit_dedup` when `dedup_pays` |
 | 537da1d1d2b | PCS batching without per-thread full-size scratch | HAVE | `poly.rs` `scaled_batch` per-chunk destinations |
-| bb7fd5b1245 | reuse an equal-extent unshifted poly as PCS batch dst | CANDIDATE | `avm/prover.rs` `prove`: one fresh N-sized buffer |
+| bb7fd5b1245 | reuse an equal-extent unshifted poly as PCS batch dst | PORTED | `avm/prover.rs` `prove`: unshifted batch = shifted batch + the other columns (with 0fb8beecc3f: AVM 1% at 16 threads) |
 | c28646b04e8 | lookup inverses in bounded row chunks | HAVE | `avm/prover.rs` `compute_inverses` 2^14-row chunks |
 | 7ec5116c597 | reuse lazy edge storage between rows | NA | no per-column heap univariates (`program.rs` regs) |
 | 6c698123b5b | inverse edge zero check before extension | HAVE | `avm/relations.rs` `skip` on row0/row1 |
@@ -24,7 +24,7 @@ A new golf leader only needs its new commits classified against this table.
 | f2447a5001f | compress lookup tuple endpoints | HAVE | `avm/program.rs` tuple terms by forward differences |
 | dcc77a13a49 | parallel execution trace rows after a state prepass | HAVE | `pin/bb-avm-sim.patch` |
 | 90d34d22d2d | reuse inverse tuple terms past columns' zero tail | CANDIDATE | `avm/prover.rs` `compute_inverses` |
-| 0fb8beecc3f | skip lookup accumulation when contributions are zero | CANDIDATE | `avm/program.rs` Interaction: order products so the zero short-circuit drops them |
+| 0fb8beecc3f | skip lookup accumulation when contributions are zero | PORTED | `avm/program.rs` Interaction: selectors and counts multiplied first, so the zero short-circuit drops the tuple products |
 | b53db7babd5 | fill constant linear edges without repeated adds | HAVE | `avm/program.rs` constant ops computed once |
 | b48840e7d1f | cache memory-event sort keys | HAVE | `pin/bb-avm-sim.patch` |
 
@@ -56,7 +56,7 @@ A new golf leader only needs its new commits classified against this table.
 | 2598995a862 | two interleaved Horner chains (0044) | NA | measured 0% |
 | aae1f27c5db | q_arith == 1 fast path (0047) | HAVE | `relations.rs`, `graded.rs` |
 | 6eebca8cad1 | log-derivative lookup: absent terms dropped (0048) | HAVE | `Graded` constant-zero products |
-| 7aba3835254 | batch the delta-range subrelations (0049) | CANDIDATE | `relations.rs` `delta_range` |
+| 7aba3835254 | batch the delta-range subrelations (0049) | REJECTED | with 0635286250e: Chonk 0.4% (median 0%), rollup 0%: within noise |
 | 2858c20c426 | chunked gate tile storage (0051) | NA | `Vec<GateRow>`, mremap growth |
 | 54c647a5749 | wasm: skip packed fold on identical pairs (0053) | HAVE | `wasm/packed.rs` |
 | 55baba25d32 | parallel lookup read counts (0057) | HAVE | `prover_instance.rs` |
@@ -75,10 +75,10 @@ A new golf leader only needs its new commits classified against this table.
 | cc2a9fe9002 | wasm: Fq affine-add square kernel | CANDIDATE | `wasm/tree.rs` slope² |
 | 934c0e90cb0 | wasm: reuse identities in cycle links | HAVE | `prover_instance.rs` |
 | 7e1357b053f | subrelation batching on packed wasm edges | HAVE | `relations.rs` `quad_batched` on every target |
-| 7183bca83c2 | dense lookup tables without a map | CANDIDATE | `prover_instance.rs` per-table HashMap |
+| 7183bca83c2 | dense lookup tables without a map | PORTED | `prover_instance.rs` `dense_key_width`: row from the key(s), checked against the table (with b0cde44c3af: Chonk 1.1–1.3%) |
 | 42727b32b29 | represented field constants in dense validation | NA | C++ codegen fix |
-| 17587c84e31 | compact row indices for lookup resolution | CANDIDATE | with 7183bca83c2 |
-| 0635286250e | batch native Poseidon2 subrelations | CANDIDATE | internal HAVE; external still four subrelations |
+| 17587c84e31 | compact row indices for lookup resolution | NA | the dense path resolves every non-trivial Chonk table; the map is left to tiny ones |
+| 0635286250e | batch native Poseidon2 subrelations | REJECTED | internal HAVE; external batching measured within noise (with 7aba3835254) |
 
 ## Native: builder, stdlib, fields, MSM
 
@@ -92,16 +92,16 @@ A new golf leader only needs its new commits classified against this table.
 | 03374585cdc | uintx skip zero-half muls | HAVE | num-bigint sized to operands |
 | f1a53a15bda | compile-time field one/neg_one | HAVE | ark consts |
 | de61a74b671 | lock-free parallel_for pool, spin then sleep | NA | rayon; longer spin measured (parity at 32 threads, +55% CPU), not taken |
-| 8e1ba52c660 | Poseidon2 native shorter critical path | CANDIDATE | `base/poseidon2.rs` |
+| 8e1ba52c660 | Poseidon2 native shorter critical path | REJECTED | internal rounds' S-box off the sum path: Chonk 0.4% (median 0%), within noise |
 | 5e1130037d7 | sha256 SHA-NI | HAVE | `sha2` crate |
 | f0e1dc177b4 | keccak ÷11^k by single-limb divisions | CANDIDATE | `stdlib/keccak.rs` `theta` BigUint divisions |
-| bc6ae622812 | bigfield cached CRT bounds, unreduced zero | CANDIDATE | `stdlib/bigfield.rs` `unreduced_zero`, quotient bits |
+| bc6ae622812 | bigfield cached CRT bounds, unreduced zero | REJECTED | CRT bounds HAVE; the rest measured within noise (with 917e64912e7) |
 | e7b0c23c055 | bigfield 512-bit borrow bound | NA | variable-width BigUint |
 | a3e233be0fe | keccak runtime slice loop | HAVE | `stdlib/keccak.rs` |
 | b53d80e1f8e | field_t compile-time Montgomery ±1 | HAVE | ark consts |
 | d662afbceab | multilinear batching merge | HAVE | `honk/multilinear_batching.rs` |
 | 1e771588d9a | IFMA batch-affine drain | HAVE | `ifma.rs` `Chords` |
-| 83e0ed5cef2 | Poseidon2 interleaved S-box / internal matrix | CANDIDATE | with 8e1ba52c660 |
+| 83e0ed5cef2 | Poseidon2 interleaved S-box / internal matrix | REJECTED | with 8e1ba52c660 |
 | 3ab2961add9 | lower-latency ADX mont mul, split sqr | HAVE | `wasm/adx.rs` |
 | 49a89c36140 | MSM 6b batched adds on IFMA drain | HAVE | `msm.rs` |
 | e34d0d4c0f7 | IFMA drain edge-case tests | HAVE | `ifma.rs` tests |
@@ -122,12 +122,12 @@ A new golf leader only needs its new commits classified against this table.
 | 13a969a09db | wasm: gather into packed queue | CANDIDATE | `msm.rs` 6a + `wasm/tree.rs` staging copy |
 | 315870f5bc4 | wasm: cached tile masks | NA | no per-window membership pass |
 | 20b7cbda631 | wasm: skip windows above actual bits | CANDIDATE | `msm.rs` `decode` early exit |
-| 917e64912e7 | bigfield deferred madd division | CANDIDATE | `stdlib/bigfield.rs` `madd` `div_rem` |
+| 917e64912e7 | bigfield deferred madd division | REJECTED | `div_rem` and a deferred madd division: rollup 0%, within noise |
 | 5c16c504450 | native inverse reused in paired add/sub | CANDIDATE | `stdlib/biggroup.rs` (ROM tables only) |
 | 9898083a5d6 | only requested lookup wrappers | CANDIDATE | `stdlib/plookup.rs` |
 | 1a010e35ab3 | narrow bounded reciprocal division | NA | num-bigint division |
 | c40996aa7c2 | dynamic MSM bucket-window scheduling | NA | one cross-window stream per thread |
-| b0cde44c3af | count-sort bounded range lists | CANDIDATE | `circuit/builder.rs` `process_range_list` |
+| b0cde44c3af | count-sort bounded range lists | PORTED | `circuit/builder.rs` `sorted_range_values`: counting sort over the range, lists sorted in parallel |
 | 1674a60df7d | reuse native range sub-limb values | CANDIDATE | `circuit/builder.rs` (negligible) |
 | f719fc6e18e | Montgomery conversion by direct REDC | HAVE | ark `into_bigint` |
 
