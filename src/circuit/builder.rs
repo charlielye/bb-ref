@@ -946,20 +946,37 @@ impl Builder {
         sublimb_indices
     }
 
-    fn process_range_list(&mut self, list: &mut RangeList) {
+    /// A list's real variables, deduplicated, and their values in ascending order: a counting sort
+    /// over the list's range (golf's bounded count-sort), the comparison sort past it.
+    fn sorted_range_values(&self, list: &mut RangeList) -> Vec<u32> {
         assert!(!list.variable_indices.is_empty());
         for x in &mut list.variable_indices {
             *x = self.real_variable_index[*x as usize];
         }
         list.variable_indices.sort_unstable();
         list.variable_indices.dedup();
-        let mut sorted_list: Vec<u32> = list
+        let mut values: Vec<u32> = list
             .variable_indices
             .iter()
             .map(|i| Self::low_u64(&self.get_variable(*i)) as u32)
             .collect();
-        sorted_list.sort_unstable();
+        let range = list.target_range as usize;
+        if range < 1 << 20 && values.len() > range && values.iter().all(|&v| v as usize <= range) {
+            let mut counts = vec![0u32; range + 1];
+            for &v in &values {
+                counts[v as usize] += 1;
+            }
+            values.clear();
+            for (v, &n) in counts.iter().enumerate() {
+                values.extend(std::iter::repeat_n(v as u32, n as usize));
+            }
+        } else {
+            values.sort_unstable();
+        }
+        values
+    }
 
+    fn process_range_list(&mut self, list: &RangeList, sorted_list: Vec<u32>) {
         let mut padding = (NUM_WIRES - list.variable_indices.len() % NUM_WIRES) % NUM_WIRES;
         if list.variable_indices.len() <= NUM_WIRES {
             padding += NUM_WIRES;
@@ -978,10 +995,17 @@ impl Builder {
         self.create_sort_constraint_with_edges(&indices, Fr::zero(), Fr::from(list.target_range));
     }
 
+    /// The lists' sorts run in parallel; their gates and variables are added in list order.
     fn process_range_lists(&mut self) {
+        use rayon::prelude::*;
         let mut lists = std::mem::take(&mut self.range_lists);
-        for list in lists.values_mut() {
-            self.process_range_list(list);
+        let sorted: Vec<Vec<u32>> = {
+            let me = &*self;
+            let mut lv: Vec<&mut RangeList> = lists.values_mut().collect();
+            lv.par_iter_mut().map(|l| me.sorted_range_values(l)).collect()
+        };
+        for (list, values) in lists.values().zip(sorted) {
+            self.process_range_list(list, values);
         }
         self.range_lists = lists;
     }

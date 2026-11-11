@@ -415,21 +415,44 @@ impl ProverInstance {
                 .lookup_tables
                 .par_iter()
                 .map(|table| {
-                    let index: std::collections::HashMap<[Fr; 3], u32, crate::base::srs::LimbHashBuilder> = (0..table
-                        .size())
-                        .map(|i| {
-                            (
-                                [table.columns[0][i], table.columns[1][i], table.columns[2][i]],
-                                i as u32,
-                            )
-                        })
-                        .collect();
-                    let rows: Vec<u32> = table
-                        .lookup_gates
-                        .par_iter()
-                        .with_min_len(1 << 12)
-                        .map(|gate| index[&gate.to_table_components(table.use_twin_keys)])
-                        .collect();
+                    let rows: Vec<u32> = if let Some(width) = dense_key_width(table) {
+                        // A dense table's row is its key (one key) or k0·width + k1 (two keys).
+                        let size = table.size();
+                        table
+                            .lookup_gates
+                            .par_iter()
+                            .with_min_len(1 << 12)
+                            .map(|gate| {
+                                let k = gate.to_table_components(table.use_twin_keys);
+                                let row = match (small(&k[0]), width) {
+                                    (Some(k0), 0) => k0 as usize,
+                                    (Some(k0), w) => k0 as usize * w + small(&k[1]).map_or(size, |k1| k1 as usize),
+                                    _ => size,
+                                };
+                                assert!(
+                                    row < size && (0..3).all(|c| table.columns[c][row] == k[c]),
+                                    "lookup gate not in its table"
+                                );
+                                row as u32
+                            })
+                            .collect()
+                    } else {
+                        let index: std::collections::HashMap<[Fr; 3], u32, crate::base::srs::LimbHashBuilder> = (0
+                            ..table.size())
+                            .map(|i| {
+                                (
+                                    [table.columns[0][i], table.columns[1][i], table.columns[2][i]],
+                                    i as u32,
+                                )
+                            })
+                            .collect();
+                        table
+                            .lookup_gates
+                            .par_iter()
+                            .with_min_len(1 << 12)
+                            .map(|gate| index[&gate.to_table_components(table.use_twin_keys)])
+                            .collect()
+                    };
                     let mut counts = vec![0u32; table.size()];
                     for r in rows {
                         counts[r as usize] += 1;
@@ -653,4 +676,28 @@ fn gate_selector_entity(kind: Kind) -> Ent {
         Kind::Poseidon2QuadIntTerminal => Ent::q_poseidon2_quad_internal_terminal,
         Kind::Poseidon2TransitionEntry => Ent::q_poseidon2_transition_entry,
     }
+}
+
+/// `v` as a u64 if it is one.
+fn small(v: &Fr) -> Option<u64> {
+    use ark_ff::PrimeField;
+    let b = v.into_bigint();
+    (b.0[1] | b.0[2] | b.0[3] == 0).then_some(b.0[0])
+}
+
+/// A table whose rows enumerate its keys (golf's dense lookup resolution): `Some(0)` when row i's
+/// key is i, `Some(w)` when row i's two keys are (i / w, i mod w); None otherwise (resolved by map).
+/// Serial: it runs inside the per-table parallel loop, where a nested split lets blocked workers
+/// steal other tables' scans and stack them up.
+fn dense_key_width(table: &crate::circuit::plookup::BasicTable) -> Option<usize> {
+    let n = table.size();
+    if n < 64 {
+        return None;
+    }
+    let key = |c: usize, i: usize| small(&table.columns[c][i]).map(|v| v as usize);
+    if !table.use_twin_keys {
+        return (0..n).all(|i| key(0, i) == Some(i)).then_some(0);
+    }
+    let w = (0..n).find(|&i| key(0, i) != Some(0))?;
+    (w > 1 && n % w == 0 && (0..n).all(|i| key(0, i) == Some(i / w) && key(1, i) == Some(i % w))).then_some(w)
 }
