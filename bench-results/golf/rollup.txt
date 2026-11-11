@@ -1,0 +1,24 @@
+rollup corpus rollup-1117683, sequential replay, 16 threads, seed 12345, 2026-11-11, host ip-172-31-27-76, bb: golf (merged leaders on rc7, golf/all7) (00000000.00000000.00000000), bb-ref: ac8cbbd
+threads: 16 (both binaries)
+
+bb vs bb-ref (sequential replay of the same corpus)
+
+operation                                                 n         bb     bb-ref   ref/bb
+------------------------------------------------------------------------------------------
+BbCircuitProve PrivateTxBaseRollupArtifact                9     59.53s     51.38s    0.86x
+BbCircuitProve RootRollupArtifact                         2     49.17s     38.33s    0.78x
+BbCircuitProve CheckpointRootRollupArtifact               2     32.68s     26.04s    0.80x
+BbCircuitProve CheckpointRootSingleBlockRollupArtifact    2     28.08s     22.67s    0.81x
+BbCircuitProve BlockRootRollupArtifact                    2      7.61s      7.14s    0.94x
+BbCircuitProve BlockRootSingleTxRollupArtifact            4      7.34s      7.31s    1.00x
+BbCircuitProve TxMergeRollupArtifact                      1      3.73s      3.43s    0.92x
+BbCircuitProve CheckpointMergeRollupArtifact              1      3.69s      3.49s    0.95x
+BbCircuitProve BlockMergeRollupArtifact                   1      3.55s      3.42s    0.96x
+BbCircuitProve InboxParity4Artifact                       4      0.64s      0.56s    0.88x
+BbCircuitVerify                                          32      0.39s      0.47s    1.20x
+BbCircuitProve BlockRootNoTxsRollupArtifact               1      0.31s      0.28s    0.92x
+BbCircuitProve CheckpointPaddingRollupArtifact            1      0.11s      0.13s    1.21x
+BbInit                                                    1      0.00s      0.00s    0.67x
+------------------------------------------------------------------------------------------
+TOTAL                                                    63    196.82s    164.68s    0.84x
+peak RSS: bb 10.62GB, bb-ref 11.25GB

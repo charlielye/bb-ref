@@ -1,0 +1,18 @@
+basis: bb wall from the stripped module (the release module carries a 100 MB name section that costs ~2% of wall to load); bb proving-only from its ENABLE_WASM_BENCH module via --bench_out
+bb-ref: the wide-arithmetic module (--cfg wasm_wide); bb: the same modules as chonk-v8.txt
+wasm_check: /home/ubuntu/bb-ref/tables-bb-ref-wide.wasm ok (7038 memory.copy)
+runtime: v8 (node v27.0.0-nightly20261013c883ccf3b2 --wasm-wide-arithmetic), threads: 8 (both provers), seed: 12345, flows: 11, wall = best of 3, proving = one instrumented run
+date: 2026-11-11, host: ip-172-31-27-76, bb module: bb-golf.wasm (28749975 bytes), bb bench module: /home/ubuntu/bench-bb.wasm, bb-ref module: tables-bb-ref-wide.wasm (12363167 bytes), bb-ref: ac8cbbd
+flow                                                                bb  bb-ref  ratio  bb prv ref prv  ratio  bb mem ref mem    mem
+deploy_ecdsar1+sponsored_fpc                                      5.38    4.36  0.81x       -    4.06      -   0.22G   0.18G  0.82x
+deploy_schnorr+sponsored_fpc                                      4.99    4.08  0.82x       -    3.75      -   0.22G   0.18G  0.83x
+ecdsar1+amm_add_liquidity_1_recursions+sponsored_fpc              7.86    6.27  0.80x       -    5.82      -   0.22G   0.19G  0.84x
+ecdsar1+deploy_tokenContract_with_registration+sponsored_fpc      6.16    4.91  0.80x       -    4.63      -   0.22G   0.19G  0.86x
+ecdsar1+storage_proof_7_layers+sponsored_fpc                     13.23   10.68  0.81x       -   10.28      -   0.59G   0.49G  0.84x
+ecdsar1+token_bridge_claim_private+sponsored_fpc                  5.37    4.18  0.78x       -    4.16      -   0.22G   0.19G  0.86x
+ecdsar1+transfer_0_recursions+private_fpc                         6.88    5.53  0.80x       -    5.27      -   0.22G   0.19G  0.83x
+ecdsar1+transfer_0_recursions+sponsored_fpc                       4.86    3.94  0.81x       -    3.67      -   0.20G   0.18G  0.91x
+ecdsar1+transfer_1_recursions+private_fpc                         7.22    5.85  0.81x       -    5.45      -   0.22G   0.19G  0.83x
+ecdsar1+transfer_1_recursions+sponsored_fpc                       5.23    4.38  0.84x       -    3.98      -   0.21G   0.18G  0.86x
+schnorr+deploy_tokenContract_with_registration+sponsored_fpc      5.69    4.62  0.81x       -    4.28      -   0.22G   0.19G  0.88x
+TOTAL                                                            72.87   58.80  0.81x    0.00   55.37  0.00x
