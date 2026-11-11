@@ -208,7 +208,15 @@ where
     let chunk = if crate::base::wasm::PACKED {
         (per_thread.div_ceil(4) * 4).clamp(16, 512)
     } else {
-        per_thread.max(128)
+        // A multiple of 8: the IFMA replay takes whole lane groups.
+        // The IFMA replay amortises its per-pass inversion over fewer points than the scalar
+        // passes, so small rounds spread over more threads.
+        let floor = if crate::base::ifma::available::<P::BaseField>() {
+            32
+        } else {
+            128
+        };
+        per_thread.max(floor).next_multiple_of(8)
     };
     (0..q)
         .step_by(chunk)
@@ -217,6 +225,9 @@ where
         .flat_map_iter(|s| {
             let m = chunk.min(q - s);
             let block = [&p0[s..s + m], &p1[s..s + m], &p2[s..s + m], &p3[s..s + m]];
+            if let Some(out) = crate::base::ifma::try_fold_two_rounds(block, &digits, top, &endo.beta) {
+                return out;
+            }
             if let Some(out) = crate::base::wasm::try_fold_two_rounds(block, &digits, top, &endo.beta) {
                 return out;
             }

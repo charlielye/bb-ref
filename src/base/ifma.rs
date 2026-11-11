@@ -222,9 +222,9 @@ mod x86 {
     /// Per-modulus constants: k·p for k = 1, 2, 4 as normalised 52-bit limbs, −p⁻¹ mod 2^52, and
     /// ⌊2^52 / (⌊p / 2^208⌋ + 1)⌋, `canonical`'s quotient estimate.
     pub(crate) struct Consts {
-        p: [u64; 5],
-        p2: [u64; 5],
-        p4: [u64; 5],
+        pub(crate) p: [u64; 5],
+        pub(crate) p2: [u64; 5],
+        pub(crate) p4: [u64; 5],
         pinv: u64,
         qk: u64,
     }
@@ -748,6 +748,237 @@ impl PermLanes {
     }
     pub fn finish<F: 'static>(&mut self) -> Option<[F; PERM_POINTS]> {
         match *self {}
+    }
+}
+
+/// One block of `base::fold`'s two-round IPA SRS fold on IFMA lanes (golf's IFMA replay of
+/// `batch_two_round_fold`): eight output points per lane group, every column — the three
+/// multiplied bases' [1..8]·B tables, φ(P0)'s x column, the accumulator — held in 52-bit lanes for
+/// the whole Horner chain, each batched doubling or addition sharing one scalar inversion across
+/// the block. Same contract as the wasm replay: `bases` are the block's slices of P0..P3, `digits`
+/// the four terms' signed Booth digits (term 2 is φ(P0)), `top` the highest non-zero window. None
+/// off an IFMA CPU, for another curve, a block that isn't a non-empty multiple of 8, or when a lane
+/// meets a non-generic pair (a zero denominator); the caller then runs its exact scalar passes.
+pub fn try_fold_two_rounds<P: ark_ec::short_weierstrass::SWCurveConfig>(
+    bases: [&[ark_ec::short_weierstrass::Affine<P>]; 4],
+    digits: &[[i8; 33]; 4],
+    top: usize,
+    beta: &P::BaseField,
+) -> Option<Vec<ark_ec::short_weierstrass::Affine<P>>> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        use crate::base::GrumpkinConfig;
+        use ark_ec::short_weierstrass::Affine;
+        let m = bases[0].len();
+        if core::any::TypeId::of::<P>() != core::any::TypeId::of::<GrumpkinConfig>()
+            || !available::<Fr>()
+            || m == 0
+            || m % 8 != 0
+        {
+            return None;
+        }
+        let b: [&[Affine<GrumpkinConfig>]; 4] = unsafe { core::mem::transmute_copy(&bases) };
+        let r = unsafe { fold2::block(b, digits, top, &*(beta as *const P::BaseField as *const Fr)) }?;
+        Some(unsafe { core::mem::transmute::<Vec<Affine<GrumpkinConfig>>, Vec<Affine<P>>>(r) })
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = (bases, digits, top, beta);
+        None
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+mod fold2 {
+    use super::x86::{add, canonical, load8, mont_mul, store8, sub_plus, Consts};
+    use super::{Fr, V5};
+    use crate::base::GrumpkinConfig;
+    use ark_ec::short_weierstrass::Affine;
+    use ark_ff::{AdditiveGroup, Field, PrimeField};
+
+    const C: Consts = Consts::new(<Fr as PrimeField>::MODULUS.0);
+
+    /// Batched inversion and the two point operations over columns of canonical lanes. Bounds as
+    /// in `add_kernel` (units of p): denominators < 3, numerators < 3.6, slopes ~4.2; results are
+    /// reduced to [0, p) after every operation.
+    struct Ctx {
+        zero: V5,
+        den: Vec<V5>,
+        pre: Vec<V5>,
+    }
+
+    impl Ctx {
+        /// `den[g] ← 1/den[g]` lane-wise; false on a zero lane.
+        #[target_feature(enable = "avx512f,avx512ifma")]
+        unsafe fn invert(&mut self) -> bool {
+            let c = &C;
+            self.pre.clear();
+            let mut acc = load8([Fr::ONE; 8].as_ptr());
+            for g in 0..self.den.len() {
+                self.pre.push(acc);
+                acc = mont_mul(c, &acc, &self.den[g]);
+            }
+            let mut lanes = [Fr::ZERO; 8];
+            store8(lanes.as_mut_ptr(), &canonical(c, &acc));
+            let mut prefix = [Fr::ONE; 8];
+            for l in 1..8 {
+                prefix[l] = prefix[l - 1] * lanes[l - 1];
+            }
+            let Some(mut inv) = (prefix[7] * lanes[7]).inverse() else {
+                return false;
+            };
+            for l in (0..8).rev() {
+                let li = inv * prefix[l];
+                inv *= lanes[l];
+                lanes[l] = li;
+            }
+            let mut acc = load8(lanes.as_ptr());
+            for g in (0..self.den.len()).rev() {
+                let d = self.den[g];
+                self.den[g] = mont_mul(c, &acc, &self.pre[g]);
+                acc = mont_mul(c, &acc, &d);
+            }
+            true
+        }
+
+        /// (ax, ay) ← (ax, ay) + (bx, ±by), or ← 2·(ax, ay) when `b` is None.
+        #[target_feature(enable = "avx512f,avx512ifma")]
+        unsafe fn op(&mut self, ax: &mut [V5], ay: &mut [V5], b: Option<(&[V5], &[V5], bool)>) -> bool {
+            let c = &C;
+            self.den.clear();
+            for g in 0..ax.len() {
+                self.den.push(match b {
+                    None => add(&ay[g], &ay[g]),
+                    Some((bx, _, _)) => sub_plus(&bx[g], &ax[g], None, &c.p2),
+                });
+            }
+            if !self.invert() {
+                return false;
+            }
+            for g in 0..ax.len() {
+                let (x1, y1) = (ax[g], ay[g]);
+                let (dy, x2) = match b {
+                    None => {
+                        let xx = mont_mul(c, &x1, &x1);
+                        (add(&add(&xx, &xx), &xx), x1)
+                    }
+                    Some((bx, by, false)) => (sub_plus(&by[g], &y1, None, &c.p2), bx[g]),
+                    Some((bx, by, true)) => (sub_plus(&self.zero, &by[g], Some(&y1), &c.p2), bx[g]),
+                };
+                let slope = mont_mul(c, &dy, &self.den[g]);
+                let x3 = canonical(c, &sub_plus(&mont_mul(c, &slope, &slope), &x1, Some(&x2), &c.p4));
+                let y3 = mont_mul(c, &slope, &sub_plus(&x1, &x3, None, &c.p));
+                ay[g] = canonical(c, &sub_plus(&y3, &y1, None, &c.p2));
+                ax[g] = x3;
+            }
+            true
+        }
+    }
+
+    #[target_feature(enable = "avx512f,avx512ifma")]
+    unsafe fn columns(pts: &[Affine<GrumpkinConfig>]) -> (Vec<V5>, Vec<V5>) {
+        let (mut xs, mut ys) = (Vec::with_capacity(pts.len() / 8), Vec::with_capacity(pts.len() / 8));
+        for g in pts.chunks_exact(8) {
+            xs.push(load8(core::array::from_fn::<Fr, 8, _>(|l| g[l].x).as_ptr()));
+            ys.push(load8(core::array::from_fn::<Fr, 8, _>(|l| g[l].y).as_ptr()));
+        }
+        (xs, ys)
+    }
+
+    #[target_feature(enable = "avx512f,avx512ifma")]
+    pub(super) unsafe fn block(
+        bases: [&[Affine<GrumpkinConfig>]; 4],
+        digits: &[[i8; 33]; 4],
+        top: usize,
+        beta: &Fr,
+    ) -> Option<Vec<Affine<GrumpkinConfig>>> {
+        let c = &C;
+        let groups = bases[0].len() / 8;
+        let zero = load8([Fr::ZERO; 8].as_ptr());
+        let mut cx = Ctx {
+            zero,
+            den: Vec::with_capacity(groups),
+            pre: Vec::with_capacity(groups),
+        };
+        // tx[8b + k], ty[8b + k] = (k+1)·B_b; phix[k] = β·tx[k] (φ(P0) = (β·x, y)).
+        let (mut tx, mut ty) = (Vec::with_capacity(24), Vec::with_capacity(24));
+        for b in &bases[..3] {
+            let (x0, y0) = columns(b);
+            let (mut x, mut y) = (x0.clone(), y0.clone());
+            if !cx.op(&mut x, &mut y, None) {
+                return None;
+            }
+            tx.push(x0.clone());
+            ty.push(y0.clone());
+            for _ in 2..8 {
+                tx.push(x.clone());
+                ty.push(y.clone());
+                if !cx.op(&mut x, &mut y, Some((&x0, &y0, false))) {
+                    return None;
+                }
+            }
+            tx.push(x);
+            ty.push(y);
+        }
+        let bv = load8([*beta; 8].as_ptr());
+        let phix: Vec<Vec<V5>> = tx[..8]
+            .iter()
+            .map(|t| t.iter().map(|v| canonical(c, &mont_mul(c, v, &bv))).collect())
+            .collect();
+
+        let (mut ax, mut ay) = (vec![zero; groups], vec![zero; groups]);
+        let mut started = false;
+        for w in (0..=top).rev() {
+            if started {
+                for _ in 0..4 {
+                    if !cx.op(&mut ax, &mut ay, None) {
+                        return None;
+                    }
+                }
+            }
+            for (term, dset) in digits.iter().enumerate() {
+                let d = dset[w];
+                if d == 0 {
+                    continue;
+                }
+                let k = d.unsigned_abs() as usize - 1;
+                let (bx, by) = match term {
+                    0 => (&tx[k], &ty[k]),
+                    1 => (&tx[8 + k], &ty[8 + k]),
+                    2 => (&phix[k], &ty[k]),
+                    _ => (&tx[16 + k], &ty[16 + k]),
+                };
+                if started {
+                    if !cx.op(&mut ax, &mut ay, Some((bx, by, d < 0))) {
+                        return None;
+                    }
+                } else {
+                    ax.copy_from_slice(bx);
+                    for g in 0..groups {
+                        ay[g] = if d < 0 {
+                            canonical(c, &sub_plus(&zero, &by[g], None, &c.p))
+                        } else {
+                            by[g]
+                        };
+                    }
+                    started = true;
+                }
+            }
+        }
+        let (x3, y3) = columns(bases[3]);
+        if !cx.op(&mut ax, &mut ay, Some((&x3, &y3, false))) {
+            return None;
+        }
+        let mut out = Vec::with_capacity(8 * groups);
+        let (mut xs, mut ys) = ([Fr::ZERO; 8], [Fr::ZERO; 8]);
+        for g in 0..groups {
+            store8(xs.as_mut_ptr(), &ax[g]);
+            store8(ys.as_mut_ptr(), &ay[g]);
+            for l in 0..8 {
+                out.push(Affine::new_unchecked(xs[l], ys[l]));
+            }
+        }
+        Some(out)
     }
 }
 
