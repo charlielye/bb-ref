@@ -255,14 +255,17 @@ fn compile(r: &super::tables::Relation) -> Option<Program> {
             let (sum, both) = (b.add(a, s), b.mul(a, s));
             let exists = b.sub(sum, both);
             let first = b.sub(lhs, exists);
-            // a · inverse · t1 − s · inverse · t0 (· counts)
-            let (inv_t1, inv_t0) = (b.mul(inv, t1), b.mul(t0, inv));
-            let read = b.mul(a, inv_t1);
-            let mut write = b.mul(s, inv_t0);
+            // a · inverse · t1 − s · inverse · t0 (· counts), selectors and counts first: where
+            // one is zero on the edge the zero short-circuit drops the tuple products (golf).
+            let a_inv = b.mul(a, inv);
+            let read = b.mul(a_inv, t1);
+            let mut s_c = s;
             if let Some(c) = counts {
                 let c = b.col(*c);
-                write = b.mul(write, c);
+                s_c = b.mul(s, c);
             }
+            let s_inv = b.mul(s_c, inv);
+            let write = b.mul(s_inv, t0);
             let second = b.sub(read, write);
             vec![(first, true), (second, false)]
         }

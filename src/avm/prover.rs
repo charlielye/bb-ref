@@ -306,9 +306,19 @@ pub fn prove(mut polys: Vec<Poly>, srs: &Srs) -> Vec<Fr> {
     let (tbs_start, tbs_end) = (l.to_be_shifted_start(), l.to_be_shifted_end());
     let dyadic = |p: &[(&Poly, Fr)]| p.iter().map(|(q, _)| q.len()).max().unwrap_or(1).next_power_of_two();
     let shifted_terms: Vec<(&Poly, Fr)> = (tbs_start..tbs_end).map(|i| (&polys[i], challenges[i])).collect();
-    let unshifted_terms: Vec<(&Poly, Fr)> = (0..l.num_unshifted()).map(|i| (&polys[i], challenges[i])).collect();
-    let size = dyadic(&unshifted_terms);
+    let size = dyadic(
+        &(0..l.num_unshifted())
+            .map(|i| (&polys[i], challenges[i]))
+            .collect::<Vec<_>>(),
+    );
     let batched_shifted = Poly::linear_combination(size, &shifted_terms);
+    // The to-be-shifted columns carry the same challenges in both batches: the unshifted batch is
+    // the shifted one plus the other columns (bb's `batched_unshifted += batched_shifted`).
+    let mut unshifted_terms: Vec<(&Poly, Fr)> = (0..l.num_unshifted())
+        .filter(|i| !(tbs_start..tbs_end).contains(i))
+        .map(|i| (&polys[i], challenges[i]))
+        .collect();
+    unshifted_terms.push((&batched_shifted, Fr::one()));
     let batched_unshifted = Poly::linear_combination(size, &unshifted_terms);
     crate::base::timing::phase("avm: pcs batching");
     let claim = shplemini_prove::<Bn254>(
