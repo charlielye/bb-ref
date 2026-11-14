@@ -101,6 +101,12 @@ fn compute_inverses(polys: &mut [Poly], p: &RelationParams<Fr>) {
         .iter()
         .map(|&(src_sel, dst_sel, ..)| entity_len(polys_ref, src_sel).max(entity_len(polys_ref, dst_sel)))
         .collect();
+    // Past every one of a tuple's columns the term is γ alone (golf): no Horner there.
+    let tuple_end = |cols: &[usize]| cols.iter().map(|&c| entity_len(polys_ref, c)).max().unwrap_or(0);
+    let tuple_ends: Vec<(usize, usize)> = interactions
+        .iter()
+        .map(|&(_, _, _, src, dst)| (tuple_end(src), tuple_end(dst)))
+        .collect();
     let mut inv: Vec<Vec<Fr>> = ends.iter().map(|&end| vec![Fr::zero(); end]).collect();
     let mut chunks: Vec<(usize, usize, &mut [Fr])> = Vec::new();
     for (k, v) in inv.iter_mut().enumerate() {
@@ -108,9 +114,17 @@ fn compute_inverses(polys: &mut [Poly], p: &RelationParams<Fr>) {
     }
     chunks.into_par_iter().for_each(|(k, from, out)| {
         let (src_sel, dst_sel, _, src, dst) = interactions[k];
+        let (src_end, dst_end) = tuple_ends[k];
+        let term = |cols: &[usize], end: usize, row: usize| {
+            if row < end {
+                tuple_term(polys_ref, cols, row, p)
+            } else {
+                p.gamma
+            }
+        };
         for (o, row) in out.iter_mut().zip(from..) {
             if entity_at(polys_ref, src_sel, row).is_one() || entity_at(polys_ref, dst_sel, row).is_one() {
-                *o = tuple_term(polys_ref, src, row, p) * tuple_term(polys_ref, dst, row, p);
+                *o = term(src, src_end, row) * term(dst, dst_end, row);
             }
         }
         ark_ff::serial_batch_inversion_and_mul(out, &Fr::one());
