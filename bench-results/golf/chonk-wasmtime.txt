@@ -1,17 +1,17 @@
 basis: bb wall from the stripped module (the release module carries a 100 MB name section that costs ~2% of wall to load); bb proving-only from its ENABLE_WASM_BENCH module via --bench_out
-wasm_check: /home/ubuntu/bb-ref/tables-bb-ref.wasm ok (7074 memory.copy)
+wasm_check: /home/ubuntu/bb-ref/tables-bb-ref.wasm ok (7514 memory.copy)
 runtime: wasmtime (wasmtime 36.0.0 (ada802c68 2025-08-20)), threads: 8 (both provers), seed: 12345, flows: 11, wall = best of 3, proving = one instrumented run
-date: 2026-11-14, host: ip-172-31-27-76, bb module: bb-golf8b.wasm (30795556 bytes), bb bench module: /home/ubuntu/bench-bb.wasm, bb-ref module: tables-bb-ref.wasm (13144075 bytes), bb-ref: fa8dde4
+date: 2026-11-14, host: ip-172-31-27-76, bb module: bb-golf8b.wasm (30795556 bytes), bb bench module: none, bb-ref module: tables-bb-ref.wasm (13267838 bytes), bb-ref: 9d8b21d
 flow                                                                bb  bb-ref  ratio  bb prv ref prv  ratio  bb mem ref mem    mem
-deploy_ecdsar1+sponsored_fpc                                      4.64    4.34  0.94x       -    4.11      -   0.92G   0.64G  0.70x
-deploy_schnorr+sponsored_fpc                                      4.35    4.06  0.93x       -    3.81      -   0.32G   0.23G  0.72x
-ecdsar1+amm_add_liquidity_1_recursions+sponsored_fpc              6.97    6.58  0.94x       -    6.17      -   0.32G   0.24G  0.73x
-ecdsar1+deploy_tokenContract_with_registration+sponsored_fpc      5.28    4.98  0.94x       -    4.66      -   0.30G   0.24G  0.79x
-ecdsar1+storage_proof_7_layers+sponsored_fpc                     11.94   11.57  0.97x       -   10.97      -   0.69G   0.51G  0.74x
-ecdsar1+token_bridge_claim_private+sponsored_fpc                  4.62    4.37  0.95x       -    4.45      -   0.30G   0.23G  0.78x
-ecdsar1+transfer_0_recursions+private_fpc                         6.05    5.66  0.94x       -    5.30      -   0.32G   0.23G  0.73x
-ecdsar1+transfer_0_recursions+sponsored_fpc                       4.03    3.82  0.95x       -    3.59      -   0.30G   0.23G  0.77x
-ecdsar1+transfer_1_recursions+private_fpc                         6.39    6.00  0.94x       -    5.62      -   0.33G   0.24G  0.72x
-ecdsar1+transfer_1_recursions+sponsored_fpc                       4.45    4.22  0.95x       -    3.98      -   0.30G   0.23G  0.76x
-schnorr+deploy_tokenContract_with_registration+sponsored_fpc      5.01    4.69  0.94x       -    4.35      -   0.30G   0.24G  0.80x
-TOTAL                                                            63.73   60.29  0.95x    0.00   57.01  0.00x
+deploy_ecdsar1+sponsored_fpc                                      4.62    4.26  0.92x       -    4.03      -   0.30G   0.23G  0.76x
+deploy_schnorr+sponsored_fpc                                      4.34    3.94  0.91x       -    3.71      -   0.32G   0.23G  0.72x
+ecdsar1+amm_add_liquidity_1_recursions+sponsored_fpc              6.98    6.53  0.94x       -    6.02      -   0.32G   0.24G  0.73x
+ecdsar1+deploy_tokenContract_with_registration+sponsored_fpc      5.26    4.92  0.94x       -    4.59      -   0.30G   0.24G  0.79x
+ecdsar1+storage_proof_7_layers+sponsored_fpc                     11.91   11.53  0.97x       -   10.91      -   0.69G   0.52G  0.76x
+ecdsar1+token_bridge_claim_private+sponsored_fpc                  4.61    4.31  0.93x       -    4.02      -   0.30G   0.23G  0.77x
+ecdsar1+transfer_0_recursions+private_fpc                         6.03    5.62  0.93x       -    5.18      -   0.32G   0.24G  0.73x
+ecdsar1+transfer_0_recursions+sponsored_fpc                       4.02    3.76  0.94x       -    3.49      -   0.30G   0.23G  0.77x
+ecdsar1+transfer_1_recursions+private_fpc                         6.42    5.97  0.93x       -    5.52      -   0.32G   0.24G  0.73x
+ecdsar1+transfer_1_recursions+sponsored_fpc                       4.44    4.16  0.94x       -    3.90      -   0.30G   0.23G  0.77x
+schnorr+deploy_tokenContract_with_registration+sponsored_fpc      5.00    4.62  0.92x       -    4.27      -   0.30G   0.24G  0.80x
+TOTAL                                                            63.63   59.62  0.94x    0.00   55.65  0.00x

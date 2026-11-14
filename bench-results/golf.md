@@ -13,8 +13,8 @@ engine; golf's rollup leader with it is faster than the build measured here.
 | | threads | time | memory | table |
 |---|---|---|---|---|
 | Chonk, native (11 flows) | 8 | **0.91×** wall, 0.92× proving | **0.88–0.98×** | [chonk-native](golf/chonk-native.txt) |
-| Chonk, wasm, V8 | 8 | 1.03× | **0.80–0.92×** | [chonk-v8](golf/chonk-v8.txt) |
-| Chonk, wasm, wasmtime | 8 | **0.95×** | **0.70–0.80×** | [chonk-wasmtime](golf/chonk-wasmtime.txt) |
+| Chonk, wasm, V8 | 8 | **1.00×** | **0.82–0.94×** | [chonk-v8](golf/chonk-v8.txt) |
+| Chonk, wasm, wasmtime | 8 | **0.94×** | **0.72–0.80×** | [chonk-wasmtime](golf/chonk-wasmtime.txt) |
 | Chonk, wasm, V8 wide arithmetic | 8 | **0.83×** | **0.81–0.94×** | [chonk-v8-wide](golf/chonk-v8-wide.txt) |
 | Chonk, native ARM (Graviton4) | 8 | **0.95×** | **0.87–0.96×** | [arm-graviton](golf/arm-graviton.txt) |
 | Rollup corpus (63 responses) | 16 | **0.97×** | **0.96×** (10.26 vs 10.69 GB peak) | [rollup](golf/rollup.txt) |
@@ -28,10 +28,10 @@ preset (AVM off).
 
 ## Where golf leads
 
-- **Chonk on V8**: ~3%, on every flow. V8 runs bb-ref's module faster than wasmtime does, but
-  golf's more so (on wasmtime golf trails by 5%). By scope the gap is mostly the HyperNova folding
-  sumcheck, which golf evaluates for every relation on 5-wide SIMD lanes and bb-ref (beyond the
-  permutation relation) on scalars, then MSM and the ECCVM.
+- **Chonk on V8, by scope**: parity overall, but golf leads in the HyperNova folding sumcheck
+  (it evaluates every relation on 5-wide SIMD lanes; bb-ref, beyond the permutation relation, on
+  scalars) and in MSM, and bb-ref makes it back elsewhere; storage_proof, the largest flow, is
+  ~4% behind.
 - **Rollup's small recursion circuits** (merges, block roots): golf 4–9% ahead, where recursion
   constraint construction (serial in bb-ref, ~18% of the corpus) dominates; bb-ref leads on the
   large circuits.
