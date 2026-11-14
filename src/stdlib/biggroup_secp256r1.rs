@@ -8,26 +8,26 @@ use super::bool::BoolT;
 use super::field::FieldT;
 use super::plookup::read_accumulators;
 use crate::base::field::{from_u256, U256};
+use crate::base::uint::Uint;
 use crate::base::Fr;
 use crate::circuit::plookup::{MultiTableId, ReadData};
 use crate::circuit::secp256r1_fixed_base as tables;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_secp256r1::Config;
-use num_bigint::BigUint;
 
 type Fq = super::biggroup::Fq<Config>;
 type P256 = Element<Config>;
 
 /// bb `compute_secp256r1_fake_glv_decomposition`: extended Euclid on `(n, s)` until the remainder
 /// drops below 2¹²⁸, giving `(α, |β|, β < 0)` with `β·s ≡ α (mod n)`.
-fn fake_glv_decomposition(s: &BigUint) -> (BigUint, BigUint, bool) {
-    let n: BigUint = ark_secp256r1::Fr::MODULUS.into();
+fn fake_glv_decomposition(s: &Uint) -> (Uint, Uint, bool) {
+    let n: Uint = Uint::from_bigint(ark_secp256r1::Fr::MODULUS);
     let half_n = &n >> 1;
-    let bound = BigUint::from(1u64) << 128;
+    let bound = Uint::from(1u64) << 128;
     let (mut u_prev, mut u_curr) = (n.clone(), s.clone());
-    let (mut v_prev, mut v_curr) = (BigUint::from(0u64), BigUint::from(1u64));
-    while u_curr >= bound && u_curr != BigUint::from(0u64) {
+    let (mut v_prev, mut v_curr) = (Uint::from(0u64), Uint::from(1u64));
+    while u_curr >= bound && u_curr != Uint::from(0u64) {
         let q = &u_prev / &u_curr;
         let u_next = &u_prev - &q * &u_curr;
         let v_next = (&v_prev + &n - (&q % &n) * &v_curr % &n) % &n;
@@ -113,7 +113,7 @@ impl P256 {
             .or(&u2.eq(&neg_one));
         let u2_safe = Scalar::<Config>::conditional_assign(&u2_is_degenerate, &Scalar::<Config>::from_u64(2), u2);
 
-        let n: BigUint = ark_secp256r1::Fr::MODULUS.into();
+        let n: Uint = Uint::from_bigint(ark_secp256r1::Fr::MODULUS);
         let u2_n = u2_safe.get_value() % &n;
         let t2_native = (pubkey.get_value() * ark_secp256r1::Fr::from(u2_n.clone())).into_affine();
         let (alpha, beta_abs, beta_is_negative) = fake_glv_decomposition(&u2_n);

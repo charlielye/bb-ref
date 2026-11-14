@@ -7,11 +7,11 @@ use super::bigfield::{BigField, NUM_LIMBS, NUM_LIMB_BITS};
 use super::bool::BoolT;
 use super::field::{Ctx, FieldT};
 use super::memory::TwinRomTable;
+use crate::base::uint::Uint;
 use crate::base::Fr;
 use ark_ec::short_weierstrass::{Affine, Projective, SWCurveConfig};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{Field, PrimeField, Zero};
-use num_bigint::BigUint;
 
 /// The per-curve constants bb keeps in `precomputed_generators_*_impl.hpp`.
 pub trait BigGroupCurve: SWCurveConfig<BaseField: PrimeField, ScalarField: PrimeField> {
@@ -37,8 +37,8 @@ impl<P: BigGroupCurve> Clone for Element<P> {
     }
 }
 
-fn to_big<F: PrimeField>(f: &F) -> BigUint {
-    f.into_bigint().into()
+fn to_big<F: PrimeField>(f: &F) -> Uint {
+    Uint::from_bigint(f.into_bigint())
 }
 
 /// Accumulator of a chain of additions whose `y` is only materialized at the end (bb
@@ -74,7 +74,7 @@ pub trait ScalarOps<P: BigGroupCurve>: Clone {
     fn ctx_of(&self) -> Option<Ctx>;
     fn is_const(&self) -> bool;
     /// The scalar as an integer, reduced mod the scalar-field modulus.
-    fn reduced_value(&self) -> BigUint;
+    fn reduced_value(&self) -> Uint;
     fn to_native(&self) -> P::ScalarField;
     fn from_native_constant(v: P::ScalarField) -> Self;
     fn add_s(&self, other: &Self) -> Self;
@@ -89,7 +89,7 @@ pub trait ScalarOps<P: BigGroupCurve>: Clone {
 }
 
 fn scalar_modulus_bits<P: BigGroupCurve>() -> usize {
-    let m: BigUint = P::ScalarField::MODULUS.into();
+    let m: Uint = Uint::from_bigint(P::ScalarField::MODULUS);
     m.bits() as usize
 }
 
@@ -100,7 +100,7 @@ impl<P: BigGroupCurve> ScalarOps<P> for Scalar<P> {
     fn is_const(&self) -> bool {
         self.is_constant()
     }
-    fn reduced_value(&self) -> BigUint {
+    fn reduced_value(&self) -> Uint {
         self.get_value() % Scalar::<P>::modulus()
     }
     fn to_native(&self) -> P::ScalarField {
@@ -174,7 +174,7 @@ impl ScalarOps<crate::base::G1Config> for FieldT {
     fn is_const(&self) -> bool {
         self.is_constant()
     }
-    fn reduced_value(&self) -> BigUint {
+    fn reduced_value(&self) -> Uint {
         to_big(&self.get_value())
     }
     fn to_native(&self) -> Fr {
@@ -202,7 +202,7 @@ impl ScalarOps<crate::base::G1Config> for FieldT {
             let mut entry = naf_entries[num_rounds - 1 - i].to_field();
             entry = entry.mul(&FieldT::constant(-Fr::from(2u64)));
             entry = entry.add(&FieldT::constant(Fr::from(1u64)));
-            entry = entry.mul(&FieldT::constant(Fr::from(BigUint::from(1u64) << i)));
+            entry = entry.mul(&FieldT::constant(Fr::from(Uint::from(1u64) << i)));
             accumulators.push(entry);
         }
         accumulators.push(naf_entries[num_rounds].to_field().neg());
@@ -215,10 +215,10 @@ impl<P: BigGroupCurve> Element<P> {
     fn has_a() -> bool {
         !P::COEFF_A.is_zero()
     }
-    fn curve_a() -> BigUint {
+    fn curve_a() -> Uint {
         to_big(&P::COEFF_A)
     }
-    fn curve_b() -> BigUint {
+    fn curve_b() -> Uint {
         to_big(&P::COEFF_B)
     }
 
@@ -375,7 +375,7 @@ impl<P: BigGroupCurve> Element<P> {
     }
     /// bb `get_standard_form`: coordinates forced to `(0, 0)` at infinity.
     pub fn get_standard_form(&self) -> Self {
-        let zero = Fq::<P>::constant(self.ctx(), &BigUint::from(0u64));
+        let zero = Fq::<P>::constant(self.ctx(), &Uint::from(0u64));
         Self {
             x: Fq::<P>::conditional_assign(&self.is_infinity, &zero, &self.x),
             y: Fq::<P>::conditional_assign(&self.is_infinity, &zero, &self.y),
@@ -503,7 +503,7 @@ impl<P: BigGroupCurve> Element<P> {
     pub fn dbl_internal(&self) -> Self {
         let is_infinity = self.is_point_at_infinity();
         let two_y = self.y.add(&self.y);
-        let one = Fq::<P>::constant(self.ctx(), &BigUint::from(1u64));
+        let one = Fq::<P>::constant(self.ctx(), &Uint::from(1u64));
         let denominator = Fq::<P>::conditional_assign(&is_infinity, &one, &two_y);
         let two_x = self.x.add(&self.x);
         let three_x = two_x.add(&self.x);
@@ -723,7 +723,7 @@ impl<P: BigGroupCurve> Element<P> {
         };
         let mut naf_entries: Vec<BoolT> = Vec::with_capacity(num_rounds + 1);
         let skew_value = !scalar_multiplier.bit(0);
-        scalar_multiplier += BigUint::from(skew_value as u64);
+        scalar_multiplier += Uint::from(skew_value as u64);
         let skew = BoolT::from_witness_ranged(&ctx, skew_value);
         // bb fills naf_entries[num_rounds], then [num_rounds - 1 - i] for i in 0..num_rounds-1, then [0]
         let mut middle: Vec<BoolT> = Vec::with_capacity(num_rounds);
@@ -746,7 +746,7 @@ impl<P: BigGroupCurve> Element<P> {
 
     pub(crate) fn create_group_element_rom_tables(
         rom_data: &[Self],
-        limb_max: &mut [BigUint; NUM_LIMBS * 2],
+        limb_max: &mut [Uint; NUM_LIMBS * 2],
     ) -> [TwinRomTable; NUM_LIMBS + 1] {
         let mut x_lo = vec![];
         let mut x_hi = vec![];
@@ -775,7 +775,7 @@ impl<P: BigGroupCurve> Element<P> {
     pub(crate) fn read_group_element_rom_tables(
         tables: &mut [TwinRomTable; NUM_LIMBS + 1],
         index: &FieldT,
-        limb_max: &[BigUint; NUM_LIMBS * 2],
+        limb_max: &[Uint; NUM_LIMBS * 2],
     ) -> Self {
         let xlo = tables[0].read(index);
         let xhi = tables[1].read(index);
@@ -860,7 +860,7 @@ impl<P: BigGroupCurve> Element<P> {
             if is_inf.get_value() && is_inf.is_constant() {
                 continue;
             }
-            if s.reduced_value() == BigUint::from(0u64) && s.is_const() {
+            if s.reduced_value() == Uint::from(0u64) && s.is_const() {
                 continue;
             }
             let point = p.conditional_select(&one, &is_inf);
@@ -959,7 +959,7 @@ impl<P: BigGroupCurve> Element<P> {
         if has_constant_terms || (big_points.is_empty() && small_points.is_empty()) {
             let affine = constant_accumulator.into_affine();
             accumulator = Some(if affine.is_zero() {
-                let zero = Fq::<P>::constant(builder.clone(), &BigUint::from(0u64));
+                let zero = Fq::<P>::constant(builder.clone(), &Uint::from(0u64));
                 Self::new(zero.clone(), zero, true)
             } else {
                 Self::constant_point(None, &affine)
@@ -1005,7 +1005,7 @@ struct LookupTable<P: BigGroupCurve> {
     length: usize,
     element_table: Vec<Element<P>>,
     coordinates: [TwinRomTable; NUM_LIMBS + 1],
-    limb_max: [BigUint; NUM_LIMBS * 2],
+    limb_max: [Uint; NUM_LIMBS * 2],
 }
 
 impl<P: BigGroupCurve> LookupTable<P> {
@@ -1087,7 +1087,7 @@ impl<P: BigGroupCurve> LookupTable<P> {
             let neg = element_table[table_size / 2 - 1 - i].neg();
             element_table.push(neg);
         }
-        let mut limb_max: [BigUint; NUM_LIMBS * 2] = std::array::from_fn(|_| BigUint::from(0u64));
+        let mut limb_max: [Uint; NUM_LIMBS * 2] = std::array::from_fn(|_| Uint::from(0u64));
         let coordinates = Element::<P>::create_group_element_rom_tables(&element_table, &mut limb_max);
         Self {
             length,
@@ -1342,10 +1342,10 @@ impl crate::base::group::GroupLike<FieldT> for Element<crate::base::G1Config> {
 impl BigGroupCurve for crate::base::G1Config {
     fn biggroup_offset_generator() -> Affine<Self> {
         let x = crate::base::Fq::from(
-            BigUint::parse_bytes(b"169b33374f53b95f16edf369c34509da6485297ee10452a62af4bd2820d6fb33", 16).unwrap(),
+            Uint::parse_bytes(b"169b33374f53b95f16edf369c34509da6485297ee10452a62af4bd2820d6fb33", 16).unwrap(),
         );
         let y = crate::base::Fq::from(
-            BigUint::parse_bytes(b"019d6e473e9b638cfe2b8f232288a075050a381b745cffaa9f9264121567315b", 16).unwrap(),
+            Uint::parse_bytes(b"019d6e473e9b638cfe2b8f232288a075050a381b745cffaa9f9264121567315b", 16).unwrap(),
         );
         Affine::new_unchecked(x, y)
     }
@@ -1360,10 +1360,10 @@ impl BigGroupCurve for ark_secp256k1::Config {
 impl BigGroupCurve for ark_secp256r1::Config {
     fn biggroup_offset_generator() -> Affine<Self> {
         let x = ark_secp256r1::Fq::from(
-            BigUint::parse_bytes(b"b61bd0f5671bc04ec041799e87e735af4ed40920c6ca71e63c8010ff162bd90a", 16).unwrap(),
+            Uint::parse_bytes(b"b61bd0f5671bc04ec041799e87e735af4ed40920c6ca71e63c8010ff162bd90a", 16).unwrap(),
         );
         let y = ark_secp256r1::Fq::from(
-            BigUint::parse_bytes(b"338540b43f94cbfe32a1e62d192ea7d5827f4a4a66bb781a02321033110e492b", 16).unwrap(),
+            Uint::parse_bytes(b"338540b43f94cbfe32a1e62d192ea7d5827f4a4a66bb781a02321033110e492b", 16).unwrap(),
         );
         Affine::new_unchecked(x, y)
     }

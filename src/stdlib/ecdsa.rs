@@ -7,10 +7,10 @@ use super::biggroup::{BigGroupCurve, Element, Fq, Scalar};
 use super::biggroup_secp256k1::secp256k1_ecdsa_mul;
 use super::bool::BoolT;
 use super::byte_array::ByteArray;
+use crate::base::uint::Uint;
 use ark_ec::short_weierstrass::Affine;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::PrimeField;
-use num_bigint::BigUint;
 
 /// bb `ecdsa_verify_signature<secp256r1>`: `r`, `s` and the hashed message are 32-byte big-endian
 /// strings; returns whether the signature is valid under `public_key`.
@@ -55,8 +55,8 @@ fn verify<C: BigGroupCurve>(
     s: &ByteArray,
     mul: impl FnOnce(&Element<C>, &BoolT, &Element<C>, &Scalar<C>, &Scalar<C>) -> (Element<C>, Option<BoolT>),
 ) -> BoolT {
-    let fq_modulus: BigUint = C::BaseField::MODULUS.into();
-    let fr_modulus: BigUint = C::ScalarField::MODULUS.into();
+    let fq_modulus: Uint = Uint::from_bigint(C::BaseField::MODULUS);
+    let fr_modulus: Uint = Uint::from_bigint(C::ScalarField::MODULUS);
     let z = Scalar::<C>::from_bytes(hashed_message);
     let is_x_less_than_modulus = public_key.x().is_less_than(&fq_modulus);
     let is_y_less_than_modulus = public_key.y().is_less_than(&fq_modulus);

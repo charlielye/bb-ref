@@ -8,10 +8,10 @@ use super::biggroup::{ChainAddAccumulator, Element, Fq, Scalar};
 use super::bool::BoolT;
 use super::field::{Ctx, FieldT};
 use super::plookup::read_pair_from_table;
+use crate::base::uint::Uint;
 use crate::base::Fr;
 use crate::circuit::ecc_generator_tables::{multitable_id, GeneratorTable, BETA_HEX};
 use ark_ff::PrimeField;
-use num_bigint::BigUint;
 
 type K1 = ark_secp256k1::Config;
 type FqK1 = Fq<K1>;
@@ -21,22 +21,22 @@ type P1 = Element<K1>;
 /// λ: the cube root of unity mod n with `λ·P = (β·x, y)`.
 const LAMBDA_HEX: &str = "5363ad4cc05c30e0a5261c028812645a122e22ea20816678df02967c1b23bd72";
 
-fn scalar_modulus() -> BigUint {
-    ark_secp256k1::Fr::MODULUS.into()
+fn scalar_modulus() -> Uint {
+    Uint::from_bigint(ark_secp256k1::Fr::MODULUS)
 }
 
 /// bb `field::compute_endomorphism_k2` + `split_into_endomorphism_scalars` (full-width path):
 /// `k = klo - λ·khi (mod n)`, each half returned as (canonical value, was-negated).
-fn split_into_endomorphism_scalars(k: &BigUint) -> ((BigUint, bool), (BigUint, bool)) {
+fn split_into_endomorphism_scalars(k: &Uint) -> ((Uint, bool), (Uint, bool)) {
     let n = scalar_modulus();
-    let lambda = BigUint::parse_bytes(LAMBDA_HEX.as_bytes(), 16).unwrap();
+    let lambda = Uint::parse_bytes(LAMBDA_HEX.as_bytes(), 16).unwrap();
     // The lattice basis constants from bb's secp256k1 FrParams.
-    let g1 = (BigUint::from(0xE4437ED6010E8828u64) << 64) + 0x6F547FA90ABFE4C4u64;
-    let g2 = (BigUint::from(0x3086D221A7D46BCDu64) << 64) + 0xE86C90E49284EB15u64;
-    let minus_b1 = (BigUint::from(0xE4437ED6010E8828u64) << 64) + 0x6F547FA90ABFE4C3u64;
-    let b2 = (BigUint::from(0x3086D221A7D46BCDu64) << 64) + 0xe86c90e49284eb15u64;
+    let g1 = (Uint::from(0xE4437ED6010E8828u64) << 64) + 0x6F547FA90ABFE4C4u64;
+    let g2 = (Uint::from(0x3086D221A7D46BCDu64) << 64) + 0xE86C90E49284EB15u64;
+    let minus_b1 = (Uint::from(0xE4437ED6010E8828u64) << 64) + 0x6F547FA90ABFE4C3u64;
+    let b2 = (Uint::from(0x3086D221A7D46BCDu64) << 64) + 0xe86c90e49284eb15u64;
 
-    let mask = (BigUint::from(1u64) << 256u32) - 1u64;
+    let mask = (Uint::from(1u64) << 256u32) - 1u64;
     let c1 = (&g2 * k) >> 256u32;
     let c2 = (&g1 * k) >> 256u32;
     let q1_lo = (c1 * minus_b1) & &mask;
@@ -44,7 +44,7 @@ fn split_into_endomorphism_scalars(k: &BigUint) -> ((BigUint, bool), (BigUint, b
     let khi = (&n + q2_lo % &n + &n - q1_lo % &n) % &n;
     let klo = (&khi * &lambda + k) % &n;
 
-    let negate = |v: BigUint| {
+    let negate = |v: Uint| {
         if v.bits() >= 130 {
             ((&n - &v) % &n, true)
         } else {
@@ -56,7 +56,7 @@ fn split_into_endomorphism_scalars(k: &BigUint) -> ((BigUint, bool), (BigUint, b
 
 /// bb `wnaf::fixed_wnaf<num_bits, 1, wnaf_size>`: `wnaf[0]` is the most significant entry; each
 /// entry packs a `(wnaf_size-1)`-bit magnitude with the sign in bit 31.
-fn fixed_wnaf(k: &BigUint, num_bits: usize, wnaf_size: usize) -> (Vec<u64>, bool) {
+fn fixed_wnaf(k: &Uint, num_bits: usize, wnaf_size: usize) -> (Vec<u64>, bool) {
     let entries = num_bits.div_ceil(wnaf_size);
     let bits = |position: usize, count: usize| -> u64 {
         let mut v = 0u64;
@@ -188,19 +188,19 @@ fn reconstruct_bigfield_from_wnaf(
     let reconstructed_positive_part = FrK1::from_halves(&sum, &zero, false, 0);
     let reconstructed_positive_part = reconstructed_positive_part
         .add(&reconstructed_positive_part)
-        .add_to_lower_limb(&positive_skew.to_field(), &BigUint::from(1u64));
+        .add_to_lower_limb(&positive_skew.to_field(), &Uint::from(1u64));
 
     let wnaf_window_size = 1u64 << (wnaf_size - 1);
-    let mut negative_constant_wnaf_offset = BigUint::from(0u64);
+    let mut negative_constant_wnaf_offset = Uint::from(0u64);
     for i in 0..rounds {
-        negative_constant_wnaf_offset += BigUint::from(wnaf_window_size * 2 - 1) << (i * wnaf_size);
+        negative_constant_wnaf_offset += Uint::from(wnaf_window_size * 2 - 1) << (i * wnaf_size);
     }
     negative_constant_wnaf_offset <<= stagger;
     if stagger > 0 {
         negative_constant_wnaf_offset += (1u64 << wnaf_size) - 1;
     }
     let reconstructed_negative_part = FrK1::constant(None, &negative_constant_wnaf_offset)
-        .add_to_lower_limb(&negative_skew.to_field(), &BigUint::from(1u64));
+        .add_to_lower_limb(&negative_skew.to_field(), &Uint::from(1u64));
 
     reconstructed_positive_part.sub(&reconstructed_negative_part)
 }
@@ -217,7 +217,7 @@ pub struct Secp256k1Wnaf {
 #[allow(clippy::too_many_arguments)]
 fn compute_secp256k1_single_wnaf(
     ctx: &Ctx,
-    scalar: &BigUint,
+    scalar: &Uint,
     wnaf_size: usize,
     stagger: usize,
     is_negative: bool,
@@ -300,7 +300,7 @@ fn compute_secp256k1_endo_wnaf(
     let (khi_reconstructed, khi_out) =
         compute_secp256k1_single_wnaf(&ctx, &khi, wnaf_size, hi_stagger, khi_negative, range_constrain_wnaf);
 
-    let lambda = BigUint::parse_bytes(LAMBDA_HEX.as_bytes(), 16).unwrap();
+    let lambda = Uint::parse_bytes(LAMBDA_HEX.as_bytes(), 16).unwrap();
     let minus_lambda = FrK1::constant(None, &(&n - &lambda));
     let reconstructed_scalar = khi_reconstructed.madd(&minus_lambda, &[klo_reconstructed]);
 
@@ -350,7 +350,7 @@ impl EightBitFixedBaseTable {
 /// bb `four_bit_table_plookup`: ROM tables of the 16 odd wNAF multiples `{-15·P, …, 15·P}`.
 struct FourBitTable {
     tables: [super::memory::TwinRomTable; 5],
-    limb_max: [BigUint; 8],
+    limb_max: [Uint; 8],
 }
 
 impl FourBitTable {
@@ -370,7 +370,7 @@ fn create_endo_pair_four_bit_table(input: &P1) -> (FourBitTable, FourBitTable) {
     for i in 0..8 {
         table[i] = table[15 - i].neg();
     }
-    let beta = FqK1::constant(None, &BigUint::parse_bytes(BETA_HEX.as_bytes(), 16).unwrap());
+    let beta = FqK1::constant(None, &Uint::parse_bytes(BETA_HEX.as_bytes(), 16).unwrap());
     let mut endo_table: Vec<P1> = Vec::with_capacity(16);
     for i in 0..16 {
         // endo x is filled below; start from the mirrored-y point.
@@ -391,7 +391,7 @@ fn create_endo_pair_four_bit_table(input: &P1) -> (FourBitTable, FourBitTable) {
         endo_table[15 - i] = P1::with_infinity(x, endo_table[15 - i].y().clone(), &BoolT::constant(false), false);
     }
     let build = |elements: &[P1]| {
-        let mut limb_max: [BigUint; 8] = Default::default();
+        let mut limb_max: [Uint; 8] = Default::default();
         let tables = P1::create_group_element_rom_tables(elements, &mut limb_max);
         FourBitTable { tables, limb_max }
     };

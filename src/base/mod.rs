@@ -18,6 +18,7 @@ pub mod rng;
 pub mod srs;
 pub mod timing;
 pub mod transcript;
+pub mod uint;
 pub mod vk;
 pub mod wasm;
 

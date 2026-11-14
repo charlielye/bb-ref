@@ -6,12 +6,12 @@
 use super::bool::BoolT;
 use super::byte_array::ByteArray;
 use super::field::{Ctx, FieldT};
-use crate::base::field::{from_limbs_mod_order, from_u256, u256, FieldLike, U256};
+use crate::base::field::{from_u256, u256, FieldLike, U256};
+use crate::base::uint::Uint;
 use crate::base::Fr;
 use crate::circuit::nnf::{AddSimple, NonNativeMultiplicationWitnesses, DEFAULT_NON_NATIVE_FIELD_LIMB_BITS};
 use crate::circuit::BlockId;
 use ark_ff::PrimeField;
-use num_bigint::BigUint;
 use std::cell::RefCell;
 use std::marker::PhantomData;
 
@@ -23,14 +23,14 @@ const MAX_UNREDUCED_LIMB_BITS: u64 = NUM_LIMB_BITS + MAX_ADDITION_LOG;
 const PROHIBITED_LIMB_BITS: u64 = MAX_UNREDUCED_LIMB_BITS + 5;
 
 struct CrtBounds {
-    maximum_crt_product: BigUint,
-    maximum_unreduced_value: BigUint,
-    prohibited_value: BigUint,
-    maximum_unreduced_limb_value: BigUint,
-    prohibited_limb_value: BigUint,
+    maximum_crt_product: Uint,
+    maximum_unreduced_value: Uint,
+    prohibited_value: Uint,
+    maximum_unreduced_limb_value: Uint,
+    prohibited_limb_value: Uint,
 }
 static CRT_BOUNDS: std::sync::LazyLock<CrtBounds> = std::sync::LazyLock::new(|| {
-    let maximum_crt_product = pow2(NUM_LIMB_BITS * NUM_LIMBS as u64) * BigUint::from(Fr::MODULUS);
+    let maximum_crt_product = pow2(NUM_LIMB_BITS * NUM_LIMBS as u64) * Uint::from(Fr::MODULUS);
     let maximum_product_bits = msb(&maximum_crt_product) - 1;
     CrtBounds {
         maximum_unreduced_value: pow2(maximum_product_bits >> 1) - 1u64,
@@ -41,8 +41,8 @@ static CRT_BOUNDS: std::sync::LazyLock<CrtBounds> = std::sync::LazyLock::new(|| 
     }
 });
 
-/// `Σ limbs[i] · 2^(68 i)` in one fixed-width accumulator rather than four shifted BigUints (golf 0046).
-fn combine_limbs<I: IntoIterator<Item = u64>>(limbs: [I; NUM_LIMBS]) -> BigUint {
+/// `Σ limbs[i] · 2^(68 i)`.
+fn combine_limbs<I: IntoIterator<Item = u64>>(limbs: [I; NUM_LIMBS]) -> Uint {
     let mut acc = [0u64; 16];
     for (i, limb) in limbs.into_iter().enumerate() {
         let (w, b) = ((NUM_LIMB_BITS as usize * i) / 64, (NUM_LIMB_BITS as usize * i) % 64);
@@ -60,30 +60,27 @@ fn combine_limbs<I: IntoIterator<Item = u64>>(limbs: [I; NUM_LIMBS]) -> BigUint 
             carry = t >> 64;
         }
     }
-    BigUint::new(acc.iter().flat_map(|d| [*d as u32, (d >> 32) as u32]).collect())
+    Uint::from_limbs(&acc)
 }
 
-fn big(f: &Fr) -> BigUint {
-    f.into_bigint().into()
+fn big(f: &Fr) -> Uint {
+    Uint::from_bigint(f.into_bigint())
 }
-fn fr(b: &BigUint) -> Fr {
+fn fr(b: &Uint) -> Fr {
     to_field(b)
 }
-fn to_field<F: PrimeField>(b: &BigUint) -> F {
-    if b.bits() > 256 {
-        return F::from(b.clone());
-    }
-    from_limbs_mod_order(b.iter_u64_digits())
+fn to_field<F: PrimeField>(b: &Uint) -> F {
+    b.to_field()
 }
-fn pow2(bits: u64) -> BigUint {
-    BigUint::from(1u64) << bits
+fn pow2(bits: u64) -> Uint {
+    Uint::from(1u64) << bits
 }
-fn msb(v: &BigUint) -> u64 {
-    assert!(*v != BigUint::from(0u64));
+fn msb(v: &Uint) -> u64 {
+    assert!(*v != Uint::from(0u64));
     v.bits() - 1
 }
 /// `value.slice(start, end)` of bb's uint256/512: bits `start..end`.
-fn slice(v: &BigUint, start: u64, end: u64) -> BigUint {
+fn slice(v: &Uint, start: u64, end: u64) -> Uint {
     (v >> start) & (pow2(end - start) - 1u64)
 }
 fn shift_k(k: u64) -> Fr {
@@ -93,11 +90,11 @@ fn shift_k(k: u64) -> Fr {
 #[derive(Clone)]
 pub struct Limb {
     pub element: FieldT,
-    pub maximum_value: BigUint,
+    pub maximum_value: Uint,
 }
 
 impl Limb {
-    fn new(element: FieldT, max: BigUint) -> Self {
+    fn new(element: FieldT, max: Uint) -> Self {
         let maximum_value = if element.is_constant() {
             let v = big(&element.additive_constant);
             assert!(v <= max, "constant limb above its maximum");
@@ -136,38 +133,38 @@ impl<N: PrimeField> Clone for BigField<N> {
 impl<N: PrimeField> BigField<N> {
     // ---- constants of the target field ----
 
-    pub fn modulus() -> BigUint {
-        N::MODULUS.into()
+    pub fn modulus() -> Uint {
+        Uint::from_bigint(N::MODULUS)
     }
-    fn native(v: &BigUint) -> N {
+    fn native(v: &Uint) -> N {
         to_field(v)
     }
-    fn native_value(n: &N) -> BigUint {
-        n.into_bigint().into()
+    fn native_value(n: &N) -> Uint {
+        Uint::from_bigint(n.into_bigint())
     }
     pub fn num_last_limb_bits() -> u64 {
         msb(&Self::modulus()) + 1 - NUM_LIMB_BITS * 3
     }
-    pub fn default_maximum_limb() -> BigUint {
+    pub fn default_maximum_limb() -> Uint {
         pow2(NUM_LIMB_BITS) - 1u64
     }
-    pub fn default_maximum_most_significant_limb() -> BigUint {
+    pub fn default_maximum_most_significant_limb() -> Uint {
         pow2(Self::num_last_limb_bits()) - 1u64
     }
-    fn default_maximum_remainder() -> BigUint {
+    fn default_maximum_remainder() -> Uint {
         pow2(NUM_LIMB_BITS * 3 + Self::num_last_limb_bits()) - 1u64
     }
-    fn binary_basis_modulus() -> BigUint {
+    fn binary_basis_modulus() -> Uint {
         pow2(NUM_LIMB_BITS * NUM_LIMBS as u64)
     }
-    fn prime_basis_modulus() -> BigUint {
-        Fr::MODULUS.into()
+    fn prime_basis_modulus() -> Uint {
+        Uint::from_bigint(Fr::MODULUS)
     }
     /// `-p mod r`.
     fn negative_prime_modulus_mod_native_basis() -> Fr {
         -fr(&Self::modulus())
     }
-    fn neg_modulus_mod_binary_basis_limbs_big() -> [BigUint; NUM_LIMBS] {
+    fn neg_modulus_mod_binary_basis_limbs_big() -> [Uint; NUM_LIMBS] {
         let neg = Self::binary_basis_modulus() - Self::modulus();
         std::array::from_fn(|i| slice(&neg, NUM_LIMB_BITS * i as u64, NUM_LIMB_BITS * (i as u64 + 1)))
     }
@@ -175,22 +172,22 @@ impl<N: PrimeField> BigField<N> {
         Self::neg_modulus_mod_binary_basis_limbs_big().map(|l| fr(&l))
     }
     // The CRT bounds depend only on the limb layout and the native field, so they are computed once.
-    fn get_maximum_crt_product() -> &'static BigUint {
+    fn get_maximum_crt_product() -> &'static Uint {
         &CRT_BOUNDS.maximum_crt_product
     }
-    fn get_maximum_unreduced_value() -> &'static BigUint {
+    fn get_maximum_unreduced_value() -> &'static Uint {
         &CRT_BOUNDS.maximum_unreduced_value
     }
-    fn get_prohibited_value() -> &'static BigUint {
+    fn get_prohibited_value() -> &'static Uint {
         &CRT_BOUNDS.prohibited_value
     }
-    fn get_maximum_unreduced_limb_value() -> &'static BigUint {
+    fn get_maximum_unreduced_limb_value() -> &'static Uint {
         &CRT_BOUNDS.maximum_unreduced_limb_value
     }
-    fn get_prohibited_limb_value() -> &'static BigUint {
+    fn get_prohibited_limb_value() -> &'static Uint {
         &CRT_BOUNDS.prohibited_limb_value
     }
-    fn get_quotient_max_bits(remainders_max: &[BigUint]) -> usize {
+    fn get_quotient_max_bits(remainders_max: &[Uint]) -> usize {
         let mut base = Self::get_maximum_crt_product().clone();
         for r in remainders_max {
             base -= r;
@@ -198,12 +195,12 @@ impl<N: PrimeField> BigField<N> {
         base /= Self::modulus();
         (msb(&base) - 1) as usize
     }
-    fn mul_product_overflows_crt_modulus(as_max: &[BigUint], bs_max: &[BigUint], to_add: &[Self]) -> bool {
-        let mut product_sum = BigUint::from(0u64);
+    fn mul_product_overflows_crt_modulus(as_max: &[Uint], bs_max: &[Uint], to_add: &[Self]) -> bool {
+        let mut product_sum = Uint::from(0u64);
         for (a, b) in as_max.iter().zip(bs_max) {
             product_sum += a * b;
         }
-        let add_term: BigUint = to_add.iter().map(|a| a.get_maximum_value()).sum();
+        let add_term: Uint = to_add.iter().map(|a| a.get_maximum_value()).sum();
         product_sum + add_term >= *Self::get_maximum_crt_product()
     }
 
@@ -215,7 +212,7 @@ impl<N: PrimeField> BigField<N> {
     pub fn limb_element(&self, i: usize) -> FieldT {
         self.state.borrow().limbs[i].element.clone()
     }
-    fn limb_max(&self, i: usize) -> BigUint {
+    fn limb_max(&self, i: usize) -> Uint {
         self.state.borrow().limbs[i].maximum_value.clone()
     }
     fn prime_limb(&self) -> FieldT {
@@ -233,13 +230,13 @@ impl<N: PrimeField> BigField<N> {
     pub fn get_prime_basis_limb(&self) -> FieldT {
         self.prime_limb()
     }
-    pub fn set_limb_max(&self, i: usize, m: BigUint) {
+    pub fn set_limb_max(&self, i: usize, m: Uint) {
         self.state.borrow_mut().limbs[i].maximum_value = m;
     }
     pub fn ctx(&self) -> Option<Ctx> {
         self.ctx.clone()
     }
-    fn limb_maximums(&self) -> [BigUint; NUM_LIMBS] {
+    fn limb_maximums(&self) -> [Uint; NUM_LIMBS] {
         std::array::from_fn(|i| self.limb_max(i))
     }
     fn limb_witness_indices(&self) -> [u32; NUM_LIMBS] {
@@ -249,12 +246,12 @@ impl<N: PrimeField> BigField<N> {
         self.prime_limb().is_constant()
     }
     /// The integer the limbs encode (not reduced).
-    pub fn get_value(&self) -> BigUint {
+    pub fn get_value(&self) -> Uint {
         combine_limbs(std::array::from_fn(|i| {
             self.limb_element(i).get_value().into_bigint().0
         }))
     }
-    pub fn get_maximum_value(&self) -> BigUint {
+    pub fn get_maximum_value(&self) -> Uint {
         let s = self.state.borrow();
         combine_limbs(std::array::from_fn(|i| s.limbs[i].maximum_value.iter_u64_digits()))
     }
@@ -273,7 +270,7 @@ impl<N: PrimeField> BigField<N> {
         }
     }
     /// A constant (bb `bigfield(ctx, uint256_t)`).
-    pub fn constant(ctx: Option<Ctx>, value: &BigUint) -> Self {
+    pub fn constant(ctx: Option<Ctx>, value: &Uint) -> Self {
         assert!(*value < Self::modulus(), "bigfield constant not reduced");
         let limbs = std::array::from_fn(|i| {
             let l = slice(value, NUM_LIMB_BITS * i as u64, NUM_LIMB_BITS * (i as u64 + 1));
@@ -282,7 +279,7 @@ impl<N: PrimeField> BigField<N> {
         Self::from_state(ctx, limbs, FieldT::constant(fr(value)))
     }
     pub fn from_u64(v: u64) -> Self {
-        Self::constant(None, &BigUint::from(v))
+        Self::constant(None, &Uint::from(v))
     }
     pub fn from_native(v: &N) -> Self {
         Self::constant(None, &Self::native_value(v))
@@ -294,7 +291,7 @@ impl<N: PrimeField> BigField<N> {
         Self::from_u64(1)
     }
     fn zero_with_ctx(ctx: Option<Ctx>) -> Self {
-        Self::constant(ctx, &BigUint::from(0u64))
+        Self::constant(ctx, &Uint::from(0u64))
     }
     /// bb `unreduced_zero`: a multiple of the modulus above the reduction bound, as a constant.
     pub fn unreduced_zero() -> Self {
@@ -462,12 +459,12 @@ impl<N: PrimeField> BigField<N> {
     }
 
     /// bb `create_from_u512_as_witness`: fresh limb witnesses tied by one big-add gate, range-checked.
-    pub fn create_from_u512_as_witness(ctx: &Ctx, value: &BigUint, can_overflow: bool, maximum_bitlength: u64) -> Self {
+    pub fn create_from_u512_as_witness(ctx: &Ctx, value: &Uint, can_overflow: bool, maximum_bitlength: u64) -> Self {
         assert!(
             (can_overflow && maximum_bitlength == 0)
                 || (!can_overflow && (maximum_bitlength == 0 || maximum_bitlength > 3 * NUM_LIMB_BITS))
         );
-        let limbs: [BigUint; 4] =
+        let limbs: [Uint; 4] =
             std::array::from_fn(|i| slice(value, NUM_LIMB_BITS * i as u64, NUM_LIMB_BITS * (i as u64 + 1)));
         let (w0, w1, w2, w3, wp) = {
             let mut b = ctx.borrow_mut();
@@ -632,7 +629,7 @@ impl<N: PrimeField> BigField<N> {
         let modulus = Self::modulus();
         let (quotient_value, remainder_value) = (&value / &modulus, &value % &modulus);
         let maximum_quotient_size = self.get_maximum_value() / &modulus;
-        let mut maximum_quotient_bits = if maximum_quotient_size == BigUint::from(0u64) {
+        let mut maximum_quotient_bits = if maximum_quotient_size == Uint::from(0u64) {
             1
         } else {
             msb(&maximum_quotient_size) + 1
@@ -651,7 +648,7 @@ impl<N: PrimeField> BigField<N> {
         let zero_idx = ctx.borrow().zero_idx();
         let zero_limb = || Limb {
             element: FieldT::from_witness_index(&ctx, zero_idx),
-            maximum_value: BigUint::from(0u64),
+            maximum_value: Uint::from(0u64),
         };
         let quotient = Self::from_state(
             Some(ctx.clone()),
@@ -686,7 +683,7 @@ impl<N: PrimeField> BigField<N> {
     // ---- arithmetic ----
 
     /// bb `add_to_lower_limb`: add a small native-field term to limb 0 (and the prime limb).
-    pub fn add_to_lower_limb(&self, other: &FieldT, other_maximum_value: &BigUint) -> Self {
+    pub fn add_to_lower_limb(&self, other: &FieldT, other_maximum_value: &Uint) -> Self {
         self.reduction_check();
         assert!(other_maximum_value + self.limb_max(0) <= *Self::get_maximum_unreduced_limb_value());
         let ctx = self.ctx.clone().or_else(|| other.ctx.clone());
@@ -884,17 +881,17 @@ impl<N: PrimeField> BigField<N> {
 
     /// `(reduction required, quotient bits)` for a product with these bounds (bb `get_quotient_reduction_info`).
     fn get_quotient_reduction_info(
-        as_max: &[BigUint],
-        bs_max: &[BigUint],
+        as_max: &[Uint],
+        bs_max: &[Uint],
         to_add: &[Self],
-        remainders_max: &[BigUint],
+        remainders_max: &[Uint],
     ) -> (bool, u64) {
         if Self::mul_product_overflows_crt_modulus(as_max, bs_max, to_add) {
             return (true, 0);
         }
         let num_quotient_bits = Self::get_quotient_max_bits(remainders_max) as u64;
         // `floor(max / p) >= 2^bits` exactly when `max >= p · 2^bits`: no wide division (golf 0045).
-        let mut maximum = to_add.iter().map(|a| a.get_maximum_value()).sum::<BigUint>();
+        let mut maximum = to_add.iter().map(|a| a.get_maximum_value()).sum::<Uint>();
         for (a, b) in as_max.iter().zip(bs_max) {
             maximum += a * b;
         }
@@ -903,7 +900,7 @@ impl<N: PrimeField> BigField<N> {
         }
         (false, num_quotient_bits)
     }
-    fn compute_partial_schoolbook_multiplication(a: &[BigUint; 4], b: &[BigUint; 4]) -> (BigUint, BigUint) {
+    fn compute_partial_schoolbook_multiplication(a: &[Uint; 4], b: &[Uint; 4]) -> (Uint, Uint) {
         let r0 = &a[0] * &b[0];
         let r1 = &a[1] * &b[0] + &a[0] * &b[1];
         let r2 = &a[1] * &b[1] + &a[2] * &b[0] + &a[0] * &b[2];
@@ -939,7 +936,7 @@ impl<N: PrimeField> BigField<N> {
         }
         denominator.reduction_check();
         let mut ctx = denominator.ctx.clone();
-        let mut numerator_values = BigUint::from(0u64);
+        let mut numerator_values = Uint::from(0u64);
         let mut numerator_constant = true;
         for n in numerators {
             if ctx.is_none() {
@@ -952,9 +949,9 @@ impl<N: PrimeField> BigField<N> {
         let modulus = Self::modulus();
         let left = numerator_values;
         let right = denominator.get_value();
-        let mut inverse_value = BigUint::from(0u64);
+        let mut inverse_value = Uint::from(0u64);
         let denominator_reduced = &right % &modulus;
-        if denominator_reduced != BigUint::from(0u64) {
+        if denominator_reduced != Uint::from(0u64) {
             let numerator_native = Self::native(&(&left % &modulus));
             let inv = numerator_native * Self::native(&denominator_reduced).inverse().unwrap();
             inverse_value = Self::native_value(&inv);
@@ -963,13 +960,13 @@ impl<N: PrimeField> BigField<N> {
         if numerator_constant && denominator.is_constant() {
             if check_for_zero {
                 assert!(
-                    denominator.get_value() != BigUint::from(0u64),
+                    denominator.get_value() != Uint::from(0u64),
                     "bigfield: division by zero"
                 );
             }
             return Self::constant(ctx, &inverse_value);
         }
-        let numerator_max: Vec<BigUint> = numerators.iter().map(|n| n.get_maximum_value()).collect();
+        let numerator_max: Vec<Uint> = numerators.iter().map(|n| n.get_maximum_value()).collect();
         let (reduction_required, num_quotient_bits) = Self::get_quotient_reduction_info(
             &[Self::default_maximum_remainder()],
             &[denominator.get_maximum_value()],
@@ -1004,7 +1001,7 @@ impl<N: PrimeField> BigField<N> {
         }
         if self.is_constant() {
             let modulus = Self::modulus();
-            let mut result_val = BigUint::from(1u64);
+            let mut result_val = Uint::from(1u64);
             let mut base = self.get_value() % &modulus;
             let mut e = exponent;
             while e > 0 {
@@ -1039,7 +1036,7 @@ impl<N: PrimeField> BigField<N> {
         let ctx = self.ctx_of(to_mul);
         self.reduction_check();
         to_mul.reduction_check();
-        let mut add_values = BigUint::from(0u64);
+        let mut add_values = Uint::from(0u64);
         let mut add_constant = true;
         for a in to_add {
             a.reduction_check();
@@ -1089,7 +1086,7 @@ impl<N: PrimeField> BigField<N> {
         for r in mul_right.iter() {
             r.reduction_check();
         }
-        let maxes = |l: &[Self], r: &[Self]| -> (Vec<BigUint>, Vec<BigUint>) {
+        let maxes = |l: &[Self], r: &[Self]| -> (Vec<Uint>, Vec<Uint>) {
             (
                 l.iter().map(|x| x.get_maximum_value()).collect(),
                 r.iter().map(|x| x.get_maximum_value()).collect(),
@@ -1099,20 +1096,20 @@ impl<N: PrimeField> BigField<N> {
         let mut reduction_required =
             Self::get_quotient_reduction_info(&max_left, &max_right, to_add, &[Self::default_maximum_remainder()]).0;
         while reduction_required {
-            let mut updates: Vec<(BigUint, usize, usize)> = Vec::with_capacity(2 * n);
+            let mut updates: Vec<(Uint, usize, usize)> = Vec::with_capacity(2 * n);
             for i in 0..n {
                 let original_left = mul_left[i].get_maximum_value();
                 let original_right = mul_right[i].get_maximum_value();
                 let original_product = &original_left * &original_right;
                 if mul_left[i].is_constant() {
-                    updates.push((BigUint::from(0u64), i, 0));
+                    updates.push((Uint::from(0u64), i, 0));
                 } else {
                     let new_product = Self::default_maximum_remainder() * &original_right;
                     assert!(new_product <= original_product, "bigfield: This should never happen");
                     updates.push((&original_product - new_product, i, 0));
                 }
                 if mul_right[i].is_constant() {
-                    updates.push((BigUint::from(0u64), i, 1));
+                    updates.push((Uint::from(0u64), i, 1));
                 } else {
                     let new_product = Self::default_maximum_remainder() * &original_left;
                     assert!(new_product <= original_product, "bigfield: This should never happen");
@@ -1123,7 +1120,7 @@ impl<N: PrimeField> BigField<N> {
             // distinct in practice)
             updates.sort_by(|a, b| b.0.cmp(&a.0));
             let (update_size, idx, which) = &updates[0];
-            assert!(*update_size != BigUint::from(0u64), "bigfield: Can't reduce further");
+            assert!(*update_size != Uint::from(0u64), "bigfield: Can't reduce further");
             if *which == 0 {
                 mul_left[*idx].self_reduce();
             } else {
@@ -1141,7 +1138,7 @@ impl<N: PrimeField> BigField<N> {
         assert_eq!(mul_left.len(), mul_right.len());
         assert!(mul_left.len() <= MAXIMUM_SUMMAND_COUNT && to_add.len() <= MAXIMUM_SUMMAND_COUNT);
         let modulus = Self::modulus();
-        let mut add_right_constant_sum = BigUint::from(0u64);
+        let mut add_right_constant_sum = Uint::from(0u64);
         let mut add_constant = true;
         let mut new_to_add: Vec<Self> = vec![];
         for a in to_add {
@@ -1153,7 +1150,7 @@ impl<N: PrimeField> BigField<N> {
                 new_to_add.push(a.clone());
             }
         }
-        let mut sum_of_constant_products = BigUint::from(0u64);
+        let mut sum_of_constant_products = Uint::from(0u64);
         let mut new_input_left: Vec<Self> = vec![];
         let mut new_input_right: Vec<Self> = vec![];
         let mut product_sum_constant = true;
@@ -1170,10 +1167,10 @@ impl<N: PrimeField> BigField<N> {
         if product_sum_constant {
             let remainder_value = (&sum_of_constant_products + &add_right_constant_sum) % &modulus;
             if add_constant {
-                assert!(!fix_remainder_to_zero || remainder_value == BigUint::from(0u64));
+                assert!(!fix_remainder_to_zero || remainder_value == Uint::from(0u64));
                 return Self::constant(ctx, &remainder_value);
             }
-            if remainder_value != BigUint::from(0u64) {
+            if remainder_value != Uint::from(0u64) {
                 new_to_add.push(Self::constant(ctx, &remainder_value));
             }
             let result = Self::sum(&new_to_add);
@@ -1185,30 +1182,30 @@ impl<N: PrimeField> BigField<N> {
         }
         let ctx = ctx.expect("mult_madd without a builder");
         let constant_part_remainder = (&sum_of_constant_products + &add_right_constant_sum) % &modulus;
-        if constant_part_remainder != BigUint::from(0u64) {
+        if constant_part_remainder != Uint::from(0u64) {
             new_to_add.push(Self::constant(Some(ctx.clone()), &constant_part_remainder));
         }
-        let mut add_right_final_sum = BigUint::from(0u64);
-        let mut add_right_maximum = BigUint::from(0u64);
+        let mut add_right_final_sum = Uint::from(0u64);
+        let mut add_right_maximum = Uint::from(0u64);
         for a in &new_to_add {
             a.reduction_check();
             add_right_final_sum += a.get_value();
             add_right_maximum += a.get_maximum_value();
         }
         let final_number_of_products = new_input_left.len();
-        let worst_case_product_sum = BigUint::from(final_number_of_products as u64)
+        let worst_case_product_sum = Uint::from(final_number_of_products as u64)
             * Self::default_maximum_remainder()
             * Self::default_maximum_remainder();
         assert!(worst_case_product_sum + add_right_maximum < *Self::get_maximum_crt_product());
         Self::perform_reductions_for_mult_madd(&mut new_input_left, &mut new_input_right, &new_to_add);
-        let mut sum_of_products_final = BigUint::from(0u64);
+        let mut sum_of_products_final = Uint::from(0u64);
         for (l, r) in new_input_left.iter().zip(&new_input_right) {
             sum_of_products_final += l.get_value() * r.get_value();
         }
         let num_quotient_bits = Self::get_quotient_max_bits(&[Self::default_maximum_remainder()]) as u64;
         let v = sum_of_products_final + add_right_final_sum;
         let (quotient_value, remainder_value) = (&v / &modulus, &v % &modulus);
-        if fix_remainder_to_zero && remainder_value != BigUint::from(0u64) {
+        if fix_remainder_to_zero && remainder_value != Uint::from(0u64) {
             // Recorded, not aborted: the fixed-to-zero remainder constraint fails on mock witnesses.
             ctx.borrow_mut().failure("bigfield: nonzero remainder fixed to zero");
         }
@@ -1259,7 +1256,7 @@ impl<N: PrimeField> BigField<N> {
                 .chain(to_sub)
                 .find_map(|e| e.ctx.clone())
         });
-        if divisor.get_value() % &modulus == BigUint::from(0u64) {
+        if divisor.get_value() % &modulus == Uint::from(0u64) {
             // Recorded, not aborted: write-VK mock witnesses can produce a zero divisor.
             if let Some(c) = &ctx {
                 c.borrow_mut().failure("bigfield: division by zero in msub_div");
@@ -1409,7 +1406,7 @@ impl<N: PrimeField> BigField<N> {
         self.assert_less_than(&Self::modulus());
     }
 
-    pub fn assert_less_than(&self, upper_limit: &BigUint) {
+    pub fn assert_less_than(&self, upper_limit: &Uint) {
         if self.is_constant() {
             assert!(self.get_value() % Self::modulus() < *upper_limit);
             return;
@@ -1432,7 +1429,7 @@ impl<N: PrimeField> BigField<N> {
         );
     }
 
-    pub fn is_less_than(&self, upper_limit: &BigUint) -> BoolT {
+    pub fn is_less_than(&self, upper_limit: &Uint) -> BoolT {
         self.range_constrain_limbs();
         let limit = |a: u64, b: u64| FieldT::constant(fr(&slice(upper_limit, a, b)));
         let u0 = limit(0, NUM_LIMB_BITS);
@@ -1463,27 +1460,27 @@ impl<N: PrimeField> BigField<N> {
         self.unsafe_assert_less_than(&Self::modulus());
     }
 
-    fn unsafe_assert_less_than(&self, upper_limit: &BigUint) {
+    fn unsafe_assert_less_than(&self, upper_limit: &Uint) {
         if self.is_constant() {
             assert!(self.get_value() < *upper_limit);
             return;
         }
-        assert!(*upper_limit != BigUint::from(0u64));
+        assert!(*upper_limit != Uint::from(0u64));
         let ctx = self.ctx.clone().unwrap();
         let strict_upper_limit = upper_limit - 1u64;
         let value = self.get_value();
-        let ul: [BigUint; 4] = std::array::from_fn(|i| {
+        let ul: [Uint; 4] = std::array::from_fn(|i| {
             slice(
                 &strict_upper_limit,
                 NUM_LIMB_BITS * i as u64,
                 NUM_LIMB_BITS * (i as u64 + 1),
             )
         });
-        let val: [BigUint; 3] =
+        let val: [Uint; 3] =
             std::array::from_fn(|i| slice(&value, NUM_LIMB_BITS * i as u64, NUM_LIMB_BITS * (i as u64 + 1)));
         let borrow_0_value = val[0] > ul[0];
-        let borrow_1_value = &val[1] + BigUint::from(borrow_0_value as u64) > ul[1];
-        let borrow_2_value = &val[2] + BigUint::from(borrow_1_value as u64) > ul[2];
+        let borrow_1_value = &val[1] + Uint::from(borrow_0_value as u64) > ul[1];
+        let borrow_2_value = &val[2] + Uint::from(borrow_1_value as u64) > ul[2];
         let limit: [FieldT; 4] = std::array::from_fn(|i| FieldT::constant(fr(&ul[i])));
         let borrow_0 = BoolT::from_witness(&ctx, borrow_0_value).to_field();
         let borrow_1 = BoolT::from_witness(&ctx, borrow_1_value).to_field();
@@ -1552,7 +1549,7 @@ impl<N: PrimeField> BigField<N> {
         let diff = self.sub(other);
         let diff_val = diff.get_value();
         let quotient_512 = &diff_val / &modulus;
-        let num_quotient_bits = Self::get_quotient_max_bits(&[BigUint::from(0u64)]) as u64;
+        let num_quotient_bits = Self::get_quotient_max_bits(&[Uint::from(0u64)]) as u64;
         let quotient = Self::from_halves(
             &FieldT::from_witness(&ctx, fr(&slice(&quotient_512, 0, NUM_LIMB_BITS * 2))),
             &FieldT::from_witness(&ctx, fr(&slice(&quotient_512, NUM_LIMB_BITS * 2, NUM_LIMB_BITS * 4))),
@@ -1564,7 +1561,7 @@ impl<N: PrimeField> BigField<N> {
 
     pub fn assert_is_not_equal(&self, other: &Self) {
         let modulus = Self::modulus();
-        let overload_count = |maximum_value: &BigUint| {
+        let overload_count = |maximum_value: &Uint| {
             let mut target = modulus.clone();
             let mut count = 0;
             while target <= *maximum_value {
@@ -1631,13 +1628,13 @@ impl<N: PrimeField> BigField<N> {
             &Self::neg_modulus_mod_binary_basis_limbs_big(),
             &input_quotient.limb_maximums(),
         );
-        let mut max_remainders_lo = BigUint::from(0u64);
+        let mut max_remainders_lo = Uint::from(0u64);
         for r in input_remainders {
             max_remainders_lo += r.limb_max(0) + (r.limb_max(1) << NUM_LIMB_BITS);
         }
         let borrow_lo_value = (&max_remainders_lo + (pow2(2 * NUM_LIMB_BITS) - 1u64)) >> (2 * NUM_LIMB_BITS);
         let borrow_lo = FieldT::constant(fr(&borrow_lo_value));
-        let (mut max_a0, mut max_a1) = (BigUint::from(0u64), BigUint::from(0u64));
+        let (mut max_a0, mut max_a1) = (Uint::from(0u64), Uint::from(0u64));
         for a in to_add {
             max_a0 += a.limb_max(0) + (a.limb_max(1) << NUM_LIMB_BITS);
             max_a1 += a.limb_max(2) + (a.limb_max(3) << NUM_LIMB_BITS);
@@ -1777,7 +1774,7 @@ impl<N: PrimeField> BigField<N> {
             .chain(input_right)
             .find_map(|e| e.ctx.clone())
             .unwrap();
-        let mut max_remainders_lo = BigUint::from(0u64);
+        let mut max_remainders_lo = Uint::from(0u64);
         for r in input_remainders {
             max_remainders_lo += r.limb_max(0) + (r.limb_max(1) << NUM_LIMB_BITS);
         }

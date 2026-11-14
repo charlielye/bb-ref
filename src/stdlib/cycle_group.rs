@@ -70,11 +70,11 @@ impl CycleScalar {
     /// halves, with `no_wrap_split_at` splits where limb bounds overflow.
     pub fn from_bigfield(scalar: &crate::stdlib::bigfield::BigField<crate::base::Fq>) -> Self {
         use crate::base::field::{from_u256, U256};
+        use crate::base::uint::Uint;
         use crate::stdlib::bigfield::NUM_LIMB_BITS as LIMB_BITS;
-        use num_bigint::BigUint;
         const LO_BITS: usize = 128;
         const HI_BITS: usize = 126;
-        if scalar.get_maximum_value() >= (BigUint::from(1u64) << (LO_BITS + HI_BITS)) {
+        if scalar.get_maximum_value() >= (Uint::from(1u64) << (LO_BITS + HI_BITS)) {
             scalar.self_reduce();
         }
         let mut limb0 = scalar.get_limb(0).element;
@@ -93,7 +93,7 @@ impl CycleScalar {
             limb1_max += &limb0_max >> LIMB_BITS;
         }
         let lo_bits_in_limb_1 = LO_BITS - LIMB_BITS as usize;
-        let (limb1_lo, limb1_hi) = if limb1_max < (BigUint::from(1u64) << lo_bits_in_limb_1) {
+        let (limb1_lo, limb1_hi) = if limb1_max < (Uint::from(1u64) << lo_bits_in_limb_1) {
             (limb1, FieldT::constant(Fr::from(0u64)))
         } else {
             let limb1_max_bits = limb1_max.bits() as usize;
