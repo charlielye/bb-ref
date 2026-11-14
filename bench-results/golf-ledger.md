@@ -24,7 +24,7 @@ A new golf leader only needs its new commits classified against this table.
 | a3f8a9afc07 | don't zero fully overwritten fold tables | HAVE | `sumcheck.rs` `fold_vec` collects, no zero-fill |
 | f2447a5001f | compress lookup tuple endpoints | HAVE | `avm/program.rs` tuple terms by forward differences |
 | dcc77a13a49 | parallel execution trace rows after a state prepass | HAVE | `pin/bb-avm-sim.patch` |
-| 90d34d22d2d | reuse inverse tuple terms past columns' zero tail | CANDIDATE | `avm/prover.rs` `compute_inverses`: past every tuple column's end the term is γ |
+| 90d34d22d2d | reuse inverse tuple terms past columns' zero tail | PORTED | `avm/prover.rs` `compute_inverses`: γ past the tuple columns' ends (AVM check 3%, total 2% by ablation) |
 | 0fb8beecc3f | skip lookup accumulation when contributions are zero | PORTED | `avm/program.rs` Interaction: selectors and counts multiplied first, so the zero short-circuit drops the tuple products |
 | b53db7babd5 | fill constant linear edges without repeated adds | HAVE | `avm/program.rs` constant ops computed once |
 | b48840e7d1f | cache memory-event sort keys | HAVE | `pin/bb-avm-sim.patch` |
@@ -72,7 +72,7 @@ A new golf leader only needs its new commits classified against this table.
 | 8faecf7202e | materialize tables after two rounds (0074) | HAVE | `sumcheck.rs` late tables (native default off: slower) |
 | f0016934531 | Chonk instances free circuit data (0075) | HAVE | `prover_instance.rs` |
 | c58d8944186 | wasm: packed deferred folds, folded-view reads | SKIP | folds packed already; packing round-1 reads ~100 LOC for an est. 0.3-0.6% wasm |
-| e9580a0a4fb | wasm: packed grand-product term rows | CANDIDATE | `oink_prover.rs` grand-product terms in quad261 lanes on wasm |
+| e9580a0a4fb | wasm: packed grand-product term rows | SKIP | est. 0.3-0.6% wasm for ~40 LOC, while bb-ref leads golf on wasm |
 | cc2a9fe9002 | wasm: Fq affine-add square kernel | NA | a hook reusing the multiply; the real square kernel is SKIP above |
 | 934c0e90cb0 | wasm: reuse identities in cycle links | HAVE | `prover_instance.rs` |
 | 7e1357b053f | subrelation batching on packed wasm edges | HAVE | `relations.rs` `quad_batched` on every target |
@@ -95,7 +95,7 @@ A new golf leader only needs its new commits classified against this table.
 | de61a74b671 | lock-free parallel_for pool, spin then sleep | NA | rayon; longer spin measured (parity at 32 threads, +55% CPU), not taken |
 | 8e1ba52c660 | Poseidon2 native shorter critical path | REJECTED | internal rounds' S-box off the sum path: Chonk 0.4% (median 0%), within noise |
 | 5e1130037d7 | sha256 SHA-NI | HAVE | `sha2` crate |
-| f0e1dc177b4 | keccak ÷11^k by single-limb divisions | CANDIDATE | `stdlib/keccak.rs` `theta` on base-11 digits (`base11_digits`/`fr11`) |
+| f0e1dc177b4 | keccak ÷11^k by single-limb divisions | PORTED | `stdlib/keccak.rs` `theta` on base-11 digits (no BigUint left in keccak; rollup within noise) |
 | bc6ae622812 | bigfield cached CRT bounds, unreduced zero | REJECTED | CRT bounds HAVE; the rest measured within noise (with 917e64912e7) |
 | e7b0c23c055 | bigfield 512-bit borrow bound | NA | variable-width BigUint |
 | a3e233be0fe | keccak runtime slice loop | HAVE | `stdlib/keccak.rs` |
@@ -122,7 +122,7 @@ A new golf leader only needs its new commits classified against this table.
 | a4329353966 | CPU shared across concurrent MSMs | HAVE | `srs.rs` `batch_commit` |
 | 13a969a09db | wasm: gather into packed queue | SKIP | fusing the first gather level saves one copy, est. <0.3% wasm |
 | 315870f5bc4 | wasm: cached tile masks | NA | no per-window membership pass |
-| 20b7cbda631 | wasm: skip windows above actual bits | CANDIDATE | `msm.rs` `decode`: stop at each scalar's own bit length |
+| 20b7cbda631 | wasm: skip windows above actual bits | REJECTED | per-scalar decode bound: Chonk 1.003x (median 1.000) with the set |
 | 917e64912e7 | bigfield deferred madd division | REJECTED | `div_rem` and a deferred madd division: rollup 0%, within noise |
 | 5c16c504450 | native inverse reused in paired add/sub | SKIP | ROM tables only, a few µs |
 | 9898083a5d6 | only requested lookup wrappers | SKIP | wrapper Rc clones, <0.1% |
@@ -163,8 +163,8 @@ rests on golf's own fixed-seed engine and is left out of the comparison build.
 | 008 | client-wasm | perf(wasm): bound the thread pool's idle spin by a poll count instead of the WASI clock | NA | golf's spin read the WASI clock; rayon counts idle rounds |
 | 009 | client-wasm | perf(wasm): build release wasm with -O2 -fno-vectorize instead of -Oz | NA | golf's own wasm opt level vs its memory guard; bb-ref's `[profile.lto]` level is measured separately |
 | 010 | rollup-c7i | perf(stdlib): derive missing cycle_group offset generators in parallel | HAVE | `base/generators.rs` derives in parallel |
-| 011 | rollup-c7i | perf(stdlib): add the summed offset generators once per Straus round | CANDIDATE | `stdlib/cycle_group.rs` Straus: add the summed offset generators once per round (est. ~0.3 s per RootRollup) |
-| 012 | rollup-c7i | perf(stdlib): cheaper native Straus hints in plookup fixed-base batch_mul | CANDIDATE | with 011: mixed adds and a reserved transcript in the native Straus hints |
+| 011 | rollup-c7i | perf(stdlib): add the summed offset generators once per Straus round | REJECTED | Straus offset-sum / mixed adds: rollup corpus 127.7 vs 127.4 s with the set, within noise |
+| 012 | rollup-c7i | perf(stdlib): cheaper native Straus hints in plookup fixed-base batch_mul | REJECTED | Straus offset-sum / mixed adds: rollup corpus 127.7 vs 127.4 s with the set, within noise |
 | 013 | rollup-c7i | refactor(bb): draw the default rollup IPA opening apart from proving it | HAVE | `acir/honk_recursion.rs` `arbitrary_valid_proof_draws` |
 | 014 | rollup-c7i | perf(dsl): skip proving the unused mock Honk proof under a constant predicate | HAVE | `acir/honk_recursion.rs` `arbitrary_valid_proof_draws` |
 | 015 | rollup-c7i | perf(numeric): slice lookup keys with one division per digit | SKIP | lookup/range bookkeeping, each est. <0.2% |
@@ -173,7 +173,7 @@ rests on golf's own fixed-seed engine and is left out of the comparison build.
 | 018 | rollup-c7i | perf(stdlib): read only the used lookup rows in SHA-256 | SKIP | lookup/range bookkeeping, each est. <0.2% |
 | 019 | rollup-c7i | perf(builder): resolve a lookup table once per run of equal table ids | SKIP | lookup/range bookkeeping, each est. <0.2% |
 | 020 | rollup-c7i | perf(numeric): visit only set bits in map_into_sparse_form | SKIP | lookup/range bookkeeping, each est. <0.2% |
-| 021 | rollup-c7i | perf(ipa): reuse the known commitment when proving a fresh IPA claim | CANDIDATE | `rollup/ipa_recursive.rs`: reuse the random claim's commitment instead of a second 2^15 MSM |
+| 021 | rollup-c7i | perf(ipa): reuse the known commitment when proving a fresh IPA claim | PORTED | `rollup/ipa_recursive.rs`: the fresh claim's commitment, no second MSM (rollup within noise; removes work) |
 | 022 | rollup-c7i | perf(builder): convert each limb once in range_constrain_two_limbs | SKIP | lookup/range bookkeeping, each est. <0.2% |
 | 023 | rollup-c7i | perf(builder): look up the range list once per small range constraint | SKIP | lookup/range bookkeeping, each est. <0.2% |
 | 024 | rollup-c7i | perf(builder): register new sublimbs straight into their range list | SKIP | lookup/range bookkeeping, each est. <0.2% |
@@ -186,7 +186,7 @@ rests on golf's own fixed-seed engine and is left out of the comparison build.
 | 031 | rollup-c7i | perf(builder): append the delta-range rows of a sort constraint from one prepared row | NA | Rust row literal, no per-row constructor |
 | 032 | rollup-c7i | perf(builder): count range-list values in parallel chunks | SKIP | lookup/range bookkeeping, each est. <0.2% |
 | 033 | rollup-c7i | perf(builder): append the sorted variables of a range list in one step | SKIP | lookup/range bookkeeping, each est. <0.2% |
-| 034 | rollup-c7i | perf(builder): deduplicate range lists through a variable bitmap in parallel chunks | CANDIDATE | `sorted_range_values`: parallel remap, sort and value reads of the dominant list (est. 0.5-1% rollup) |
+| 034 | rollup-c7i | perf(builder): deduplicate range lists through a variable bitmap in parallel chunks | REJECTED | parallel range-list remap/sort/reads: rollup within noise |
 | 035 | rollup-c7i | test(builder): pin range-list processing against the serial composition | NA | tests only |
 | 036 | rollup-c7i | perf(common): size gzip output from the ISIZE trailer instead of doubling | HAVE | flate2 streaming, presized reads |
 | 037 | rollup-c7i | perf(common): read gzip input files in one bulk read | HAVE | flate2 streaming, presized reads |
@@ -196,14 +196,14 @@ rests on golf's own fixed-seed engine and is left out of the comparison build.
 | 041 | rollup-c7i | perf(srs): release the native CRS's pages in parallel when it is destroyed | NA | the CRS is a file mapping, never dropped in the server |
 | 042 | rollup-c7i | perf(ecc): check VectorFieldPushSpan bounds once per walk instead of per access | NA | C++ IFMA container |
 | 043 | rollup-c7i | perf(trace): build copy cycles in uninitialised, parallel-touched storage | HAVE | `prover_instance.rs` CSR copy cycles and row-chunk selectors in parallel |
-| 044 | rollup-c7i | perf(trace): cap the copy-cycle scans at 16 tasks | CANDIDATE | `prover_instance.rs` copy-cycle scans capped at 16 tasks (wide boxes only) |
+| 044 | rollup-c7i | perf(trace): cap the copy-cycle scans at 16 tasks | REJECTED | copy-cycle cap: no change at 16 threads |
 | 045 | rollup-c7i | perf(trace): copy selectors in row-chunk tasks | HAVE | `prover_instance.rs` CSR copy cycles and row-chunk selectors in parallel |
 | 046 | rollup-c7i | perf(srs): read and parse the cached Grumpkin CRS in parallel | SKIP | Grumpkin CRS parse, once per server life |
 | 047 | rollup-c7i | perf(ipa): convert the random opening's draws to field elements in parallel | SKIP | IPA random-opening draws / blocked fold scratch: <0.1% or memory-only |
-| 048 | rollup-c7i | perf(ipa): compute the native IPA opening proof of a rollup circuit in the background | CANDIDATE | prove the native rollup IPA opening in the background (est. 0.5-1% rollup; measure the phase first) |
+| 048 | rollup-c7i | perf(ipa): compute the native IPA opening proof of a rollup circuit in the background | REJECTED | profiled: `rec: ipa claim+proof` is 1.2% of the rollup replay, the most a background proof could hide |
 | 049 | rollup-c7i | perf(ipa): fold the SRS in blocks to bound the fold's scratch memory | SKIP | IPA random-opening draws / blocked fold scratch: <0.1% or memory-only |
 | 050 | rollup-c7i | test(common): cover DeferredValue's joins, shared result, exceptions and thread count | NA | tests only |
-| 051 | rollup-c7i | fix(srs): honour BB_VERIFY_CRS in the BN254 loader, as v6.0.0 does | CANDIDATE | honour BB_VERIFY_CRS (security parity with v6.0.0) |
+| 051 | rollup-c7i | fix(srs): honour BB_VERIFY_CRS in the BN254 loader, as v6.0.0 does | PORTED | `base/srs.rs` `load_bn254_g1_verified` (security parity with v6.0.0; proofs unchanged) |
 | 052 | rollup-c7i | fix(srs): close the Grumpkin CRS descriptor on every exit and guard its test without threads or exceptions | NA | Rust files close on drop |
 | 053 | rollup-c7i | perf(polynomials): release an instance's polynomial pages with one team of threads | HAVE | `pool.rs` arena keeps and reuses freed blocks within a request |
 | 054 | rollup-c7i | perf(stdlib_circuit_builders): release a builder's large blocks with one team of threads | HAVE | `pool.rs` arena keeps and reuses freed blocks within a request |
@@ -219,7 +219,7 @@ rests on golf's own fixed-seed engine and is left out of the comparison build.
 | 064 | rollup-c7i | perf(stdlib_circuit_builders): release every sizeable block of a recording builder when it is destroyed | NA | no recording builders |
 | 065 | rollup-c7i | fix(common): keep the DEBUG_LOG recursion guard per thread | NA | C++/platform specific |
 | 066 | rollup-c7i | test(stdlib_circuit_builders): share the all-member Ultra builder comparison | NA | tests only |
-| 067 | rollup-c7i | feat(dsl): build leading Honk recursion constraints on scratch threads and splice them | CANDIDATE | build leading Honk recursion constraints on scratch threads and splice: applies (bb-ref builds them serially), est. 2-4% rollup for ~1-1.5k LOC; measure the recursion phase first |
+| 067 | rollup-c7i | feat(dsl): build leading Honk recursion constraints on scratch threads and splice them | CANDIDATE | profiled: building recursion constraints (rec: verify_recursive 9.8%, rec: pre-ipa 6.3%, build: recursion+io 5.1%) is ~21% of the rollup replay, serial. The largest open lever; a port of golf's splice design is ~1-1.5k LOC |
 | 068 | rollup-c7i | test(dsl): cover four refusals of a scratch-built constraint and the entropy its threads draw | NA | tests only |
 | 069 | rollup-c7i | perf(dsl): return the memory a scratch thread freed before its builder is destroyed | NA | no recording builders |
 | 070 | rollup-c7i | feat(stdlib_circuit_builders): let another thread cancel a build on a recording builder | SKIP | scratch-thread recursion bundle (with 067) |
@@ -237,21 +237,21 @@ rests on golf's own fixed-seed engine and is left out of the comparison build.
 | 082 | rollup-c7i | perf(bb): keep freed heap memory in AVM and UltraHonk proving | HAVE | `pool.rs` arena keeps and reuses freed blocks within a request |
 | 083 | avm-c7i | perf(avm): load the CRS while simulating and generating the trace | NA | the server's CRS pool loads once |
 | 084 | avm-c7i | perf(avm): absorb the first challenge's known input during the wire commitments | SKIP | AVM: absorb the transcript's known prefix during wire commits, ~60 LOC for ~0.3% |
-| 085 | avm-c7i | perf(sumcheck): build large slot accumulators on their threads and sum them in parallel | CANDIDATE | `sumcheck.rs`: sum the slot accumulators in parallel (grows with threads) |
-| 086 | avm-c7i | perf(avm): batch the sumcheck relations in parallel | CANDIDATE | `sumcheck.rs` `batch_over_relations` in parallel for the AVM's ~460 relations |
-| 087 | avm-c7i | perf(avm): keep execution events in a deque | CANDIDATE | pin: AVM execution events in a deque (est. ~0.5 s serial on large txs) |
-| 088 | avm-c7i | perf(avm): write the memory trace rows on all threads | CANDIDATE | pin: AVM memory trace rows on all threads |
+| 085 | avm-c7i | perf(sumcheck): build large slot accumulators on their threads and sum them in parallel | PORTED | `honk/sumcheck.rs` (with 085/086/099: AVM prove 1-4% by ablation; AVM 16 threads, bbbench: the set 0.94x corpus / 0.89x golf's inputs) |
+| 086 | avm-c7i | perf(avm): batch the sumcheck relations in parallel | PORTED | `honk/sumcheck.rs` (with 085/086/099: AVM prove 1-4% by ablation; AVM 16 threads, bbbench: the set 0.94x corpus / 0.89x golf's inputs) |
+| 087 | avm-c7i | perf(avm): keep execution events in a deque | PORTED | `pin/bb-avm-sim.patch` (golf's hunks; the remainder of the set's AVM gain, ~3-7%; AVM 16 threads, bbbench: the set 0.94x corpus / 0.89x golf's inputs) |
+| 088 | avm-c7i | perf(avm): write the memory trace rows on all threads | PORTED | `pin/bb-avm-sim.patch` (golf's hunks; the remainder of the set's AVM gain, ~3-7%; AVM 16 threads, bbbench: the set 0.94x corpus / 0.89x golf's inputs) |
 | 089 | avm-c7i | perf(avm): split large multi-permutation tracegen jobs into parts | SKIP | pin: split multi-permutation tracegen jobs, ~170 lines, mostly past 32 threads |
-| 090 | avm-c7i | perf(avm): release the proving polynomials' pages in parallel after the proof | CANDIDATE | `pool::trim` releases dirty free ranges serially before each response: split across threads or move after the response (time trim first) |
-| 091 | avm-c7i | perf(common): add a helper that releases a large block's pages from several threads | CANDIDATE | `pool::trim` releases dirty free ranges serially before each response: split across threads or move after the response (time trim first) |
-| 092 | avm-c7i | perf(avm): invert lookup rows in chunks of 2^12 rows | CANDIDATE | `avm/prover.rs` inverse chunks 2^14 → 2^12 (A/B) |
+| 090 | avm-c7i | perf(avm): release the proving polynomials' pages in parallel after the proof | REJECTED | profiled: `pool::trim` is 0.4% of the rollup replay (16 threads, bbbench) |
+| 091 | avm-c7i | perf(common): add a helper that releases a large block's pages from several threads | REJECTED | profiled: `pool::trim` is 0.4% of the rollup replay (16 threads, bbbench) |
+| 092 | avm-c7i | perf(avm): invert lookup rows in chunks of 2^12 rows | SKIP | the A/B was invalid (both sides at 2^12) and the estimate small: left at 2^14 |
 | 093 | avm-c7i | perf(flavor): look up an entity's label by its offset when the entities are one span | NA | no label assertions in AVM key construction |
-| 094 | avm-c7i | perf(avm): free the execution events as a job of the tracegen group | CANDIDATE | pin: free execution events as a tracegen job |
+| 094 | avm-c7i | perf(avm): free the execution events as a job of the tracegen group | PORTED | `pin/bb-avm-sim.patch` (golf's hunks; the remainder of the set's AVM gain, ~3-7%; AVM 16 threads, bbbench: the set 0.94x corpus / 0.89x golf's inputs) |
 | 095 | avm-c7i | perf(avm): fill a long bytecode decomposition in parts of the tracegen group | HAVE | pin bytecode decomposition parts; AVM key sized to the proof |
 | 096 | avm-c7i | perf(avm): free the interaction jobs and their shared indices on the pool | SKIP | pin: free interaction jobs on the pool, <0.5% |
 | 097 | avm-c7i | perf(msm): release the small-member pool's arena slices from their workers | NA | rayon nesting and the arena replace golf's MSM chunking/arenas |
 | 098 | avm-c7i | perf(avm): load only the CRS points the proof needs, while building the polynomials | HAVE | pin bytecode decomposition parts; AVM key sized to the proof |
-| 099 | avm-c7i | perf(avm): size the sumcheck gate separator table to the rows the rounds read | CANDIDATE | `sumcheck.rs` gate separator table sized to the live edges |
+| 099 | avm-c7i | perf(avm): size the sumcheck gate separator table to the rows the rounds read | PORTED | `honk/sumcheck.rs` (with 085/086/099: AVM prove 1-4% by ablation; AVM 16 threads, bbbench: the set 0.94x corpus / 0.89x golf's inputs) |
 | 100 | avm-c7i | perf(sumcheck): scale and zero each relation's accumulators in its batching task | NA | no separate scale/zero passes |
 | 101 | avm-c7i | perf(polynomials): skip the zero-fill dispatch for an empty polynomial | HAVE | small zeroed allocations bypass the pool |
 | 102 | avm-c7i | fix(polynomials): build the page release's fields without the release | NA | C++ build warning |
