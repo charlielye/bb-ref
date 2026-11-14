@@ -679,19 +679,18 @@ where
     drop(_gb);
     let _gf = crate::base::bench::Scope::new("Gemini::compute_fold_polynomials");
     let (f, g) = (&batched_unshifted.coeffs, &batched_to_be_shifted.coeffs);
-    let a_0 = Poly::from_coeffs(
-        (0..n)
-            .into_par_iter()
-            .map(|i| f[i] + g.get(i + 1).copied().unwrap_or_default())
-            .collect(),
-    );
     crate::base::timing::phase("    shplemini: batching");
 
-    // folds A_{l+1}[j] = A_l[2j] + u_l (A_l[2j+1] - A_l[2j]), l = 0..log_n-2
+    // folds A_{l+1}[j] = A_l[2j] + u_l (A_l[2j+1] - A_l[2j]), l = 0..log_n-2. A_0 = F + G/X is
+    // only ever folded, so A_1 is folded from it a chunk at a time rather than A_0 held whole.
     let mut folds: Vec<Poly> = Vec::with_capacity(virtual_log_n - 1);
-    for l in 0..log_n - 1 {
-        let current: &[Fr] = if l == 0 { &a_0.coeffs } else { &folds[l - 1].coeffs };
-        folds.push(Poly::from_coeffs(crate::base::poly::fold_par(current, &u[l])));
+    folds.push(Poly::from_coeffs(crate::base::poly::fold_par_with(n, &u[0], |start, a| {
+        for (i, a) in (start..).zip(a) {
+            *a = f[i] + g.get(i + 1).copied().unwrap_or_default();
+        }
+    })));
+    for l in 1..log_n - 1 {
+        folds.push(Poly::from_coeffs(crate::base::poly::fold_par(&folds[l - 1].coeffs, &u[l])));
     }
     // constant folds for the virtual rounds
     if log_n < virtual_log_n {
@@ -730,6 +729,8 @@ where
         })
         .unzip();
     let (a_0_pos, a_0_neg) = (Poly::from_coeffs(a_0_pos), Poly::from_coeffs(a_0_neg));
+    // F and G are spent: Shplonk's quotient is the next full-size allocation.
+    drop((batched_unshifted, batched_to_be_shifted));
 
     let mut claims = Vec::with_capacity(virtual_log_n + 1);
     let a_0_pos_eval = a_0_pos.evaluate_par(&r);

@@ -301,6 +301,31 @@ pub fn fold_par<F: FieldLike + Copy + Send + Sync + 'static>(src: &[F], u: &F) -
     out
 }
 
+/// [`fold_par`] of a `len`-long source that is never materialised: `fill(start, buf)` writes the
+/// source's values `start..start + buf.len()` into a per-chunk buffer.
+pub fn fold_par_with<F: FieldLike + Copy + Send + Sync + 'static>(
+    len: usize,
+    u: &F,
+    fill: impl Fn(usize, &mut [F]) + Sync,
+) -> Vec<F> {
+    const CHUNK: usize = 1 << 12;
+    assert!(len % 2 == 0);
+    let half = len / 2;
+    let mut out = Vec::with_capacity(half);
+    let dst = &mut out.spare_capacity_mut()[..half];
+    dst.par_chunks_mut(CHUNK).enumerate().for_each(|(k, d)| {
+        let mut s = vec![F::zero(); 2 * d.len()];
+        fill(2 * CHUNK * k, &mut s);
+        if !crate::base::wasm::try_fold_into(&s, d, u) {
+            for (o, p) in d.iter_mut().zip(s.chunks(2)) {
+                o.write(p[0] + *u * (p[1] - p[0]));
+            }
+        }
+    });
+    unsafe { out.set_len(half) };
+    out
+}
+
 /// The table of `eq(x, r[..log_n]) · ∏_{j ≥ log_n} (1 - r_j)` over the hypercube, index bit `j` ↔ `r[j]`
 /// (bb `ProverEqPolynomial::construct`).
 pub fn eq_table<F: FieldLike + Copy + Send + Sync>(r: &[F], log_n: usize) -> Vec<F> {
