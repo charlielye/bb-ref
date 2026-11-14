@@ -1328,9 +1328,23 @@ where
         g.clear();
         g.extend(busy.iter().map(|b| b.load(std::sync::atomic::Ordering::Relaxed)));
     }
-    let mut out = Accumulators::new(rels, d);
-    for slot in &slots {
-        if let Some((acc, _)) = slot.lock().unwrap().take() {
+    let mut accs: Vec<Accumulators<F>> = slots
+        .iter()
+        .filter_map(|s| s.lock().unwrap().take().map(|(a, _)| a))
+        .collect();
+    let mut out = accs.pop().unwrap_or_else(|| Accumulators::new(rels, d));
+    if accs.len() * out.data.len() >= 1 << 16 {
+        // The AVM's tens of thousands of coefficients times the slots: summed over coefficient
+        // chunks in parallel (golf), each chunk adding every slot.
+        out.data.par_chunks_mut(4096).enumerate().for_each(|(c, chunk)| {
+            for a in &accs {
+                for (x, y) in chunk.iter_mut().zip(&a.data[c * 4096..]) {
+                    *x += *y;
+                }
+            }
+        });
+    } else {
+        for acc in accs {
             out = Accumulators::add(out, acc);
         }
     }
@@ -1536,8 +1550,8 @@ fn accumulate_edge<F: NativeField>(
 }
 
 /// bb `batch_over_relations`: `S(k) = sum_r Λ_r(k) sum_j α_{r,j} acc_{r,j}(k) [lin. indep.: · (1 + k(β - 1)) · c]`.
-fn batch_over_relations<F: FieldLike + Copy>(
-    rels: &impl RelationSet<F>,
+fn batch_over_relations<F: NativeField>(
+    rels: &(impl RelationSet<F> + Sync),
     ext: &ExtensionWeights<F>,
     acc: &Accumulators<F>,
     alphas: &[F],
@@ -1558,25 +1572,31 @@ fn batch_over_relations<F: FieldLike + Copy>(
         }
         None => (None, None),
     };
-    // Batched polynomial of the coefficient-form relations, and the point values of the rest.
-    let mut coeffs = vec![F::zero(); d];
-    let mut points = vec![F::zero(); d];
-    let mut tmp: Vec<F> = Vec::with_capacity(d);
-    let mut alpha_idx = 0;
-    for ri in 0..rels.num_relations() {
+    // Batched polynomial of the coefficient-form relations, and the point values of the rest. Each
+    // relation's terms are independent and field addition is exact, so a large set (the AVM's
+    // hundreds of relations, golf) sums them in parallel. Subrelation g takes α_{g−1} (α_0 = 1).
+    let n = rels.num_relations();
+    let mut start = Vec::with_capacity(n);
+    let mut g = 0;
+    for ri in 0..n {
+        start.push(g);
+        g += rels.num_subrelations(ri);
+    }
+    let relation = |ri: usize| -> (Vec<F>, Vec<F>) {
+        let mut coeffs = vec![F::zero(); d];
+        let mut points = vec![F::zero(); d];
         let offset_only = rels.offset_only(ri);
         let m = if offset_only { off_lin } else { main_lin };
+        // Offset-only relation with no row disabling: factor 0, contributes nothing.
+        if offset_only && m.is_none() {
+            return (coeffs, points);
+        }
         let graded = coefficient_form(rels, ri, d);
         let len = rels.partial_length(ri).min(d);
+        let mut tmp: Vec<F> = Vec::with_capacity(d);
         for j in 0..rels.num_subrelations(ri) {
-            let alpha = if ri == 0 && j == 0 { F::one() } else { alphas[alpha_idx] };
-            if !(ri == 0 && j == 0) {
-                alpha_idx += 1;
-            }
-            // Offset-only relation with no row disabling: factor 0, contributes nothing.
-            if offset_only && m.is_none() {
-                continue;
-            }
+            let g = start[ri] + j;
+            let alpha = if g == 0 { F::one() } else { alphas[g - 1] };
             let lin = rels.linearly_independent(ri, j);
             if graded {
                 tmp.clear();
@@ -1604,7 +1624,20 @@ fn batch_over_relations<F: FieldLike + Copy>(
                 }
             }
         }
-    }
+        (coeffs, points)
+    };
+    let add = |(mut c, mut p): (Vec<F>, Vec<F>), (c2, p2): (Vec<F>, Vec<F>)| {
+        c.iter_mut().zip(&c2).for_each(|(a, b)| *a += *b);
+        p.iter_mut().zip(&p2).for_each(|(a, b)| *a += *b);
+        (c, p)
+    };
+    let zeros = || (vec![F::zero(); d], vec![F::zero(); d]);
+    let (coeffs, mut points) = if n >= 64 {
+        use rayon::prelude::*;
+        (0..n).into_par_iter().map(relation).reduce(zeros, add)
+    } else {
+        (0..n).map(relation).fold(zeros(), add)
+    };
     // Evaluate the batched polynomial at the points 0, 1, ..., d-1 and add the pointwise terms.
     let mut x = F::zero();
     for out in points.iter_mut() {
@@ -1893,21 +1926,28 @@ where
             }
             let detail = round_detail();
             let t_pows = crate::base::timing::Instant::now();
-            if self.pows0.is_empty() {
-                self.pows0 = gate_separator_products(betas, 0, 1 << (self.log_n - 1));
-            }
-            // Round r's separators are the stride-2^r subsequence of round 0's.
-            let pows = Pows {
-                base: &self.pows0[..],
-                step: 1usize << round,
-            };
-            let pows_us = t_pows.elapsed().as_micros();
-            let t_edges = crate::base::timing::Instant::now();
-            let _ge = crate::base::bench::Scope::new("sumcheck/accumulate_edge_chunks");
             let head_range = self.row_disabling.then(|| 0..self.excluded_head / 2);
             // Past every relation's end the edges contribute nothing.
             let rel_end = self.relation_ends(rels);
             let live_edges = rel_end.iter().max().map_or(0, |e| e.div_ceil(2));
+            // Round r's separators are the stride-2^r subsequence of round 0's, built only as far as
+            // the live edges read (golf): a short trace in a large dyadic domain skips most of the
+            // table. Its entries don't depend on its length, so a round that reads further rebuilds it.
+            let step = 1usize << round;
+            let last = live_edges
+                .max(head_range.as_ref().map_or(0, |h| h.end))
+                .saturating_sub(1);
+            if self.pows0.len() <= last * step {
+                let need = (last * step + 1).next_power_of_two().min(1 << (self.log_n - 1));
+                self.pows0 = gate_separator_products(betas, 0, need);
+            }
+            let pows = Pows {
+                base: &self.pows0[..],
+                step,
+            };
+            let pows_us = t_pows.elapsed().as_micros();
+            let t_edges = crate::base::timing::Instant::now();
+            let _ge = crate::base::bench::Scope::new("sumcheck/accumulate_edge_chunks");
             let mut head_acc: Option<Accumulators<F>> = None;
             let acc = self
                 .edge_ranges(round_size)
