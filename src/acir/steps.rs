@@ -114,7 +114,14 @@ pub fn prove_steps(
     let mut inputs: Vec<_> = (steps.iter_mut())
         .map(|s| Some((std::mem::take(&mut s.bytecode_gz), std::mem::take(&mut s.witness_gz))))
         .collect();
-    std::thread::scope(|s| {
+    let eccvm_ck = std::thread::scope(|s| {
+        // The ECCVM's IPA key is needed only by the final proof: authenticate and decode it while
+        // the steps accumulate rather than on the proof's critical path (read here: on wasm only
+        // the main thread can read files).
+        let n = crate::goblin::eccvm::FIXED_SIZE;
+        let bytes = crate::base::srs::read_grumpkin_g1(n);
+        let eccvm_ck =
+            s.spawn(move || crate::base::GrumpkinKey::from_points(crate::base::srs::decode_grumpkin_g1(&bytes, n)));
         // Step `i + 1`'s circuit, lowered on a helper thread while step `i` accumulates; its inputs
         // come back when it has to be built in turn.
         let mut next: Option<std::thread::ScopedJoinHandle<Result<Prebuilt, Inputs>>> = None;
@@ -173,7 +180,9 @@ pub fn prove_steps(
                 );
             }
         }
+        eccvm_ck.join().unwrap_or_else(|e| std::panic::resume_unwind(e))
     });
+    ivc.eccvm_ck = Some(eccvm_ck);
     let proof = ivc.prove(rng);
     let vk = ivc.hiding_vk().clone();
     (proof, vk)

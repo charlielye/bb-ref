@@ -342,6 +342,12 @@ fn read_mont_cache(path: &std::path::Path, n: usize) -> Option<Vec<G1Affine>> {
 /// The Grumpkin SRS from `grumpkin_g1_v2.flat.dat` (same raw 64-byte layout, coordinates in bn254 Fr).
 /// As bb's loader, the chunks covering the prefix are read whole and checked against their pins.
 pub fn load_grumpkin_g1(n: usize) -> Vec<GrumpkinAffine> {
+    decode_grumpkin_g1(&read_grumpkin_g1(n), n)
+}
+
+/// The pinned chunks holding the first `n` Grumpkin points, as raw bytes. Separate from
+/// [`decode_grumpkin_g1`] because on wasm only the main thread can read files.
+pub fn read_grumpkin_g1(n: usize) -> Vec<u8> {
     assert!(
         n > 0 && n <= GRUMPKIN_NUM_POINTS,
         "Grumpkin CRS point count must be between 1 and {GRUMPKIN_NUM_POINTS}"
@@ -351,7 +357,12 @@ pub fn load_grumpkin_g1(n: usize) -> Vec<GrumpkinAffine> {
     let mut buf = vec![0u8; n.div_ceil(GRUMPKIN_CHUNK_BYTES / 64) * GRUMPKIN_CHUNK_BYTES];
     f.read_exact(&mut buf)
         .unwrap_or_else(|e| panic!("CRS file too small for {n} points: {e}"));
-    verify_grumpkin_chunks(&buf).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    buf
+}
+
+/// The first `n` points of [`read_grumpkin_g1`]'s bytes, after checking every chunk against its pin.
+pub fn decode_grumpkin_g1(buf: &[u8], n: usize) -> Vec<GrumpkinAffine> {
+    verify_grumpkin_chunks(buf).unwrap_or_else(|e| panic!("grumpkin_g1_v2.flat.dat: {e}"));
     buf[..n * 64].chunks(64).map(grumpkin_from_raw).collect()
 }
 
@@ -1072,10 +1083,14 @@ impl CommitmentKey {
 pub type GrumpkinKey = Ck<GrumpkinAffine>;
 impl GrumpkinKey {
     pub fn new(num_points: usize) -> Self {
+        Self::from_points(load_grumpkin_g1(num_points))
+    }
+    pub fn from_points(points: Vec<GrumpkinAffine>) -> Self {
+        let len = points.len();
         Self {
             points: PointsView {
-                pool: std::sync::Arc::new(Points::Owned(load_grumpkin_g1(num_points))),
-                len: num_points,
+                pool: std::sync::Arc::new(Points::Owned(points)),
+                len,
             },
             phi: PhiTable::default(),
         }
