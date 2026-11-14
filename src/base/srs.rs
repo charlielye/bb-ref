@@ -32,7 +32,14 @@ pub fn crs_dir() -> PathBuf {
 /// Natively that cache is mapped rather than read ([`map_mont_cache`]): bb-ref's points have its
 /// layout, so once its coordinates are canonical a load costs nothing up front and every process on
 /// a box shares one copy of the pages.
+///
+/// With `BB_VERIFY_CRS` set the uncompressed files are skipped, as in bb v6.0.0: they carry no
+/// pinned hashes, so the points come from `bn254_g1_compressed.dat`, each chunk checked against
+/// the pins.
 pub fn load_bn254_g1(n: usize) -> Points<G1Affine> {
+    if std::env::var_os("BB_VERIFY_CRS").is_some() {
+        return Points::Owned(load_bn254_g1_verified(n));
+    }
     #[cfg(not(target_family = "wasm"))]
     if let Some(points) = map_mont_cache(&crs_dir().join("bn254_g1.mont"), n) {
         return points;
@@ -58,6 +65,36 @@ fn load_bn254_g1_files(n: usize) -> Vec<G1Affine> {
         .collect();
     assert_eq!(points[0], G1Affine::generator(), "unexpected first CRS point");
     write_mont_cache(&mont_path, &points, None);
+    points
+}
+
+/// The first `n` points from the compressed setup, every chunk read checked against its pin.
+fn load_bn254_g1_verified(n: usize) -> Vec<G1Affine> {
+    use rayon::prelude::*;
+    let path = crs_dir().join("bn254_g1_compressed.dat");
+    let chunks = (n * 32).div_ceil(BN254_CHUNK_BYTES);
+    assert!(
+        chunks <= BN254_FULL_CHUNKS,
+        "BB_VERIFY_CRS: {n} points exceed the pinned setup"
+    );
+    let mut buf = vec![0u8; chunks * BN254_CHUNK_BYTES];
+    std::fs::File::open(&path)
+        .and_then(|mut f| f.read_exact(&mut buf))
+        .unwrap_or_else(|e| {
+            panic!(
+                "BB_VERIFY_CRS: cannot read {} chunks of {}: {e}",
+                chunks,
+                path.display()
+            )
+        });
+    buf.par_chunks(BN254_CHUNK_BYTES).enumerate().for_each(|(i, chunk)| {
+        assert!(
+            sha256(chunk)[..] == BN254_G1_CHUNK_HASHES[i * 32..(i + 1) * 32],
+            "BB_VERIFY_CRS: g1 compressed chunk {i} SHA-256 mismatch"
+        );
+    });
+    let points: Vec<G1Affine> = buf[..n * 32].par_chunks(32).map(g1_from_compressed).collect();
+    assert_eq!(points[0], G1Affine::generator(), "unexpected first CRS point");
     points
 }
 
