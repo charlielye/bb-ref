@@ -197,7 +197,8 @@ fn prove_challenge_poly_opening(ck: &GrumpkinKey, claim: &IpaClaimCt, challenge_
         "opening claim does not hold for challenge polynomial"
     );
     let mut t = ipa::NativeTranscript::new();
-    ipa::add_claim_to_hash_buffer_prover(ck, challenge_poly, &challenge, &evaluation, &mut t);
+    let commitment = ipa::msm_affine(&ck.points[..challenge_poly.len()], challenge_poly);
+    ipa::add_claim_to_hash_buffer_prover(&commitment, &challenge, &evaluation, &mut t);
     ipa::compute_opening_proof(ck, challenge_poly, &challenge, &mut t);
     claim.evaluation.self_reduce();
     t.export_proof()
@@ -309,7 +310,8 @@ pub fn create_random_valid_ipa_claim_and_proof(ctx: &Ctx, ck: &GrumpkinKey) -> (
     let commitment = super::ipa::msm_affine(&ck.points[..poly.len()], &poly);
     crate::base::timing::phase("        fake-ipa: commit msm");
     let mut t = ipa::NativeTranscript::new();
-    ipa::add_claim_to_hash_buffer_prover(ck, &poly, &x, &eval, &mut t);
+    // The claim's commitment is the one just computed (golf: no second MSM).
+    ipa::add_claim_to_hash_buffer_prover(&commitment, &x, &eval, &mut t);
     ipa::compute_opening_proof(ck, &poly, &x, &mut t);
     crate::base::timing::phase("        fake-ipa: opening proof");
     // bb creates the stdlib witnesses in order: commitment, challenge, evaluation.

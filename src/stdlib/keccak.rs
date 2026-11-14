@@ -41,9 +41,6 @@ const RC: [u64; NUM_ROUNDS] = [
     0x8000000080008008,
 ];
 
-fn big(f: &Fr) -> BigUint {
-    f.into_bigint().into()
-}
 fn pow11_big(e: usize) -> BigUint {
     BigUint::from(BASE).pow(e as u32)
 }
@@ -203,16 +200,14 @@ fn theta(internal: &mut KeccakState) {
         let shifted_equivalent = c[(i + 1) % 5].mul(&FieldT::constant(Fr::from(BASE)));
         c[(i + 4) % 5].add(&shifted_equivalent)
     });
-    let divisor = pow11_big(LANE_BITS);
     let multiplicand = FieldT::constant(Fr::from(pow11_big(LANE_BITS + 1)));
     for d_i in d.iter_mut() {
-        let d_native = big(&d_i.get_value());
-        let (d_quotient, lo_native) = (&d_native / BASE, &d_native % BASE);
-        let hi_native = &d_quotient / &divisor;
-        let mid_native = &d_quotient - &hi_native * &divisor;
-        let hi = FieldT::from_witness(&internal.ctx, Fr::from(hi_native));
-        let mid = FieldT::from_witness(&internal.ctx, Fr::from(mid_native));
-        let lo = FieldT::from_witness(&internal.ctx, Fr::from(lo_native));
+        // D = hi·11^65 + mid·11 + lo, read off D's base-11 digits (golf: no wide divisions).
+        let digits = base11_digits(&d_i.get_value());
+        let mid_end = digits.len().min(LANE_BITS + 1);
+        let hi = FieldT::from_witness(&internal.ctx, fr11(digits.get(LANE_BITS + 1..).unwrap_or(&[]), false));
+        let mid = FieldT::from_witness(&internal.ctx, fr11(&digits[1..mid_end], false));
+        let lo = FieldT::from_witness(&internal.ctx, Fr::from(u64::from(digits[0])));
         d_i.assert_equal(
             &hi.mul(&multiplicand)
                 .add_two(&mid.mul(&FieldT::constant(Fr::from(BASE))), &lo),

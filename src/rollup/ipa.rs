@@ -43,14 +43,12 @@ fn powers(challenge: Fq, n: usize) -> Vec<Fq> {
 
 /// bb prover-side `add_claim_to_hash_buffer`: commits the polynomial and binds the claim.
 pub fn add_claim_to_hash_buffer_prover(
-    ck: &GrumpkinKey,
-    poly: &[Fq],
+    commitment: &GrumpkinAffine,
     challenge: &Fq,
     evaluation: &Fq,
     t: &mut NativeTranscript,
 ) {
-    let commitment = msm(&ck.points[..poly.len()], poly).into_affine();
-    t.add_to_hash_buffer("IPA:commitment", &commitment);
+    t.add_to_hash_buffer("IPA:commitment", commitment);
     t.add_to_hash_buffer("IPA:challenge", challenge);
     t.add_to_hash_buffer("IPA:evaluation", evaluation);
 }
