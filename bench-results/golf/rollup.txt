@@ -1,24 +1,24 @@
-rollup corpus rollup-1117683, sequential replay, 16 threads, seed 12345, 2026-11-14, host ip-172-31-27-76, bb: golf all8b (00000000.00000000.00000000), bb-ref: 0dbf6b1
+rollup corpus rollup-1117683, sequential replay, 16 threads, seed 12345, 2026-11-14, host ip-172-31-27-76, bb: golf all8b (00000000.00000000.00000000), bb-ref: 209597b
 threads: 16 (both binaries)
 
 bb vs bb-ref (sequential replay of the same corpus)
 
 operation                                                 n         bb     bb-ref   ref/bb
 ------------------------------------------------------------------------------------------
-BbCircuitProve PrivateTxBaseRollupArtifact                9     42.19s     39.42s    0.93x
-BbCircuitProve RootRollupArtifact                         2     30.65s     29.69s    0.97x
-BbCircuitProve CheckpointRootRollupArtifact               2     21.66s     20.20s    0.93x
-BbCircuitProve CheckpointRootSingleBlockRollupArtifact    2     18.04s     17.54s    0.97x
-BbCircuitProve BlockRootSingleTxRollupArtifact            4      5.03s      5.38s    1.07x
-BbCircuitProve BlockRootRollupArtifact                    2      5.02s      5.29s    1.05x
-BbCircuitProve CheckpointMergeRollupArtifact              1      2.41s      2.57s    1.06x
-BbCircuitProve TxMergeRollupArtifact                      1      2.38s      2.49s    1.04x
-BbCircuitProve BlockMergeRollupArtifact                   1      2.35s      2.48s    1.05x
-BbCircuitProve InboxParity4Artifact                       4      0.45s      0.44s    0.96x
+BbCircuitProve PrivateTxBaseRollupArtifact                9     41.16s     38.35s    0.93x
+BbCircuitProve RootRollupArtifact                         2     29.80s     29.02s    0.97x
+BbCircuitProve CheckpointRootRollupArtifact               2     20.99s     19.78s    0.94x
+BbCircuitProve CheckpointRootSingleBlockRollupArtifact    2     17.60s     17.44s    0.99x
+BbCircuitProve BlockRootRollupArtifact                    2      4.93s      5.18s    1.05x
+BbCircuitProve BlockRootSingleTxRollupArtifact            4      4.87s      5.32s    1.09x
+BbCircuitProve BlockMergeRollupArtifact                   1      2.35s      2.45s    1.04x
+BbCircuitProve CheckpointMergeRollupArtifact              1      2.33s      2.51s    1.07x
+BbCircuitProve TxMergeRollupArtifact                      1      2.33s      2.46s    1.05x
+BbCircuitProve InboxParity4Artifact                       4      0.52s      0.43s    0.84x
 BbCircuitVerify                                          32      0.32s      0.39s    1.21x
-BbCircuitProve BlockRootNoTxsRollupArtifact               1      0.26s      0.22s    0.87x
-BbCircuitProve CheckpointPaddingRollupArtifact            1      0.09s      0.10s    1.12x
-BbInit                                                    1      0.00s      0.00s    1.08x
+BbCircuitProve BlockRootNoTxsRollupArtifact               1      0.24s      0.22s    0.91x
+BbCircuitProve CheckpointPaddingRollupArtifact            1      0.09s      0.10s    1.11x
+BbInit                                                    1      0.00s      0.00s    1.15x
 ------------------------------------------------------------------------------------------
-TOTAL                                                    63    130.87s    126.19s    0.96x
-peak RSS: bb 10.69GB, bb-ref 11.26GB
+TOTAL                                                    63    127.55s    123.63s    0.97x
+peak RSS: bb 10.69GB, bb-ref 10.26GB
