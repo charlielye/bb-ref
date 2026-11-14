@@ -1,19 +1,19 @@
 # Chonk on ARM: AWS c8g.4xlarge (Graviton4, Neoverse V2, 16 vCPU), Ubuntu 24.04. tools/ab_chonk.sh (BENCH_HOST=graviton) --reps 5 --threads 8: interleaved, min/median wall and peak RSS per flow.
-# bb-pin: the pin built with its arm64-linux preset (AVM off). bb-golf: golf/all7 (merged golf leaders on rc7) built the same way. ref: bb-ref ac8cbbd.
+# bb-pin: the pin built with its arm64-linux preset (AVM off). bb-golf: golf/all8b (merged golf leaders on rc7) built the same way. ref: bb-ref fa8dde4.
 threads 8, reps 5, flows 11, binaries ['bb-pin', 'bb-golf', 'ref']
-deploy_ecdsar1+sponsored_fpc                               bb-pin   2.80/  2.82 0.24G  bb-golf   2.32/  2.32 0.24G  ref   2.24/  2.25 0.21G
-deploy_schnorr+sponsored_fpc                               bb-pin   2.58/  2.58 0.26G  bb-golf   2.15/  2.16 0.24G  ref   2.08/  2.09 0.21G
-ecdsar1+amm_add_liquidity_1_recursions+sponsored_fpc       bb-pin   4.27/  4.27 0.25G  bb-golf   3.52/  3.52 0.26G  ref   3.40/  3.41 0.23G
-ecdsar1+deploy_tokenContract_with_registration+sponsored_f bb-pin   3.27/  3.28 0.24G  bb-golf   2.72/  2.72 0.23G  ref   2.56/  2.56 0.22G
-ecdsar1+storage_proof_7_layers+sponsored_fpc               bb-pin   9.23/  9.24 0.65G  bb-golf   6.82/  6.87 0.60G  ref   6.02/  6.07 0.56G
-ecdsar1+token_bridge_claim_private+sponsored_fpc           bb-pin   2.85/  2.86 0.24G  bb-golf   2.37/  2.37 0.23G  ref   2.24/  2.25 0.22G
-ecdsar1+transfer_0_recursions+private_fpc                  bb-pin   3.66/  3.67 0.25G  bb-golf   3.04/  3.04 0.24G  ref   2.93/  2.93 0.22G
-ecdsar1+transfer_0_recursions+sponsored_fpc                bb-pin   2.45/  2.45 0.23G  bb-golf   2.02/  2.02 0.23G  ref   1.95/  1.96 0.21G
-ecdsar1+transfer_1_recursions+private_fpc                  bb-pin   3.90/  3.90 0.25G  bb-golf   3.18/  3.19 0.25G  ref   3.11/  3.11 0.23G
-ecdsar1+transfer_1_recursions+sponsored_fpc                bb-pin   2.69/  2.69 0.23G  bb-golf   2.26/  2.26 0.23G  ref   2.15/  2.16 0.21G
-schnorr+deploy_tokenContract_with_registration+sponsored_f bb-pin   3.05/  3.05 0.25G  bb-golf   2.56/  2.56 0.24G  ref   2.41/  2.41 0.22G
+deploy_ecdsar1+sponsored_fpc                               bb-pin   2.80/  2.82 0.24G  bb-golf   2.28/  2.29 0.24G  ref   2.24/  2.25 0.21G
+deploy_schnorr+sponsored_fpc                               bb-pin   2.58/  2.58 0.25G  bb-golf   2.12/  2.13 0.24G  ref   2.08/  2.09 0.21G
+ecdsar1+amm_add_liquidity_1_recursions+sponsored_fpc       bb-pin   4.27/  4.27 0.25G  bb-golf   3.45/  3.46 0.26G  ref   3.39/  3.41 0.23G
+ecdsar1+deploy_tokenContract_with_registration+sponsored_f bb-pin   3.27/  3.28 0.24G  bb-golf   2.73/  2.74 0.23G  ref   2.54/  2.56 0.22G
+ecdsar1+storage_proof_7_layers+sponsored_fpc               bb-pin   9.22/  9.24 0.64G  bb-golf   6.77/  6.78 0.62G  ref   6.03/  6.04 0.56G
+ecdsar1+token_bridge_claim_private+sponsored_fpc           bb-pin   2.86/  2.86 0.24G  bb-golf   2.32/  2.32 0.23G  ref   2.24/  2.25 0.22G
+ecdsar1+transfer_0_recursions+private_fpc                  bb-pin   3.66/  3.67 0.25G  bb-golf   2.98/  2.99 0.24G  ref   2.91/  2.93 0.23G
+ecdsar1+transfer_0_recursions+sponsored_fpc                bb-pin   2.43/  2.45 0.23G  bb-golf   1.99/  1.99 0.23G  ref   1.95/  1.95 0.21G
+ecdsar1+transfer_1_recursions+private_fpc                  bb-pin   3.89/  3.90 0.25G  bb-golf   3.15/  3.16 0.25G  ref   3.09/  3.10 0.22G
+ecdsar1+transfer_1_recursions+sponsored_fpc                bb-pin   2.69/  2.69 0.23G  bb-golf   2.20/  2.21 0.23G  ref   2.15/  2.16 0.21G
+schnorr+deploy_tokenContract_with_registration+sponsored_f bb-pin   3.05/  3.05 0.25G  bb-golf   2.56/  2.56 0.24G  ref   2.40/  2.40 0.22G
 
 every non-bb proof equal to the single-threaded bb golden on every run
-        bb-pin: sum of per-flow min wall    40.75s
-       bb-golf: sum of per-flow min wall    32.96s  ratio vs bb-pin: 0.809 (min-sum), paired median 0.828, wins 55/55
-           ref: sum of per-flow min wall    31.09s  ratio vs bb-pin: 0.763 (min-sum), paired median 0.797, wins 55/55
+        bb-pin: sum of per-flow min wall    40.72s
+       bb-golf: sum of per-flow min wall    32.55s  ratio vs bb-pin: 0.799 (min-sum), paired median 0.812, wins 55/55
+           ref: sum of per-flow min wall    31.02s  ratio vs bb-pin: 0.762 (min-sum), paired median 0.794, wins 55/55

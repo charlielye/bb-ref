@@ -1,13 +1,13 @@
-AVM corpus avm-1117683, sequential replay, 16 threads, seed 12345, 2026-11-11, host ip-172-31-27-76, bb: golf (merged leaders on rc7, golf/all7) (00000000.00000000.00000000), bb-ref: ac8cbbd (--features bb-avm)
+AVM corpus avm-1117683, sequential replay, 16 threads, seed 12345, 2026-11-14, host ip-172-31-27-76, bb: golf (newest leaders on rc7, golf/all8b) (00000000.00000000.00000000), bb-ref: fa8dde4 (--features bb-avm)
 threads: 16 (both binaries)
 
 bb vs bb-ref (sequential replay of the same corpus)
 
 operation            n         bb     bb-ref   ref/bb
 -----------------------------------------------------
-BbAvmProve           7     38.18s     29.52s    0.77x
-BbAvmCheckCircuit    7     33.88s     14.89s    0.44x
-BbAvmVerify         14      2.00s      1.69s    0.85x
+BbAvmProve           7     22.65s     21.74s    0.96x
+BbAvmCheckCircuit    7     21.84s      9.80s    0.45x
+BbAvmVerify         14      1.45s      1.41s    0.97x
 -----------------------------------------------------
-TOTAL               28     74.06s     46.10s    0.62x
-peak RSS: bb 12.32GB, bb-ref 10.09GB
+TOTAL               28     45.95s     32.95s    0.72x
+peak RSS: bb 10.78GB, bb-ref 10.40GB
