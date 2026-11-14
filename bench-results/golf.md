@@ -12,12 +12,12 @@ engine; golf's rollup leader with it is faster than the build measured here.
 
 | | threads | time | memory | table |
 |---|---|---|---|---|
-| Chonk, native (11 flows) | 8 | **0.93×** wall, 0.94× proving | **0.86–0.95×** | [chonk-native](golf/chonk-native.txt) |
+| Chonk, native (11 flows) | 8 | **0.91×** wall, 0.93× proving | **0.87–0.99×** | [chonk-native](golf/chonk-native.txt) |
 | Chonk, wasm, V8 | 8 | 1.03× | **0.79–0.94×** | [chonk-v8](golf/chonk-v8.txt) |
 | Chonk, wasm, wasmtime | 8 | **0.95×** | **0.70–0.80×** | [chonk-wasmtime](golf/chonk-wasmtime.txt) |
 | Chonk, wasm, V8 wide arithmetic | 8 | **0.83×** | **0.81–0.94×** | [chonk-v8-wide](golf/chonk-v8-wide.txt) |
 | Chonk, native ARM (Graviton4) | 8 | **0.95×** | **0.87–0.96×** | [arm-graviton](golf/arm-graviton.txt) |
-| Rollup corpus (63 responses) | 16 | 1.01× | 1.05× (11.24 vs 10.67 GB peak) | [rollup](golf/rollup.txt) |
+| Rollup corpus (63 responses) | 16 | **0.96×** | 1.05× (11.26 vs 10.69 GB peak) | [rollup](golf/rollup.txt) |
 | AVM corpus (prove, check, verify) | 16 | **0.72×** (prove 0.96×, check 0.45×) | **0.96×** (10.40 vs 10.78 GB) | [avm](golf/avm.txt) |
 
 x86 tables: AWS c7a.4xlarge (AMD EPYC 9R14, Zen 4, 16 cores). ARM: AWS c8g.4xlarge (Graviton4,
@@ -30,9 +30,9 @@ preset (AVM off).
 
 - **Chonk on V8**: ~3%, on every flow. Golf's module is built at `-O2 -fno-vectorize`, which V8
   favours: on wasmtime the same module trails bb-ref's by 5%.
-- **Rollup's small recursion circuits** (merges, block roots): golf 13–16% ahead, where
-  recursion constraint construction (serial in bb-ref, ~21% of the corpus) dominates; bb-ref
-  leads on the large circuits, for parity overall.
+- **Rollup's small recursion circuits** (merges, block roots): golf 4–7% ahead, where recursion
+  constraint construction (serial in bb-ref, ~18% of the corpus) dominates; bb-ref leads on the
+  large circuits.
 - **Rollup peak memory**: about 5% above golf's.
 - **Chonk past ~32 threads** (Zen 5, 64–96 vCPU): golf's pool keeps its workers spinning between
   parallel regions; rayon's go to sleep and wake one after another, which costs bb-ref ~6% at 32
