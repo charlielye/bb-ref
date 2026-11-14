@@ -684,13 +684,20 @@ where
     // folds A_{l+1}[j] = A_l[2j] + u_l (A_l[2j+1] - A_l[2j]), l = 0..log_n-2. A_0 = F + G/X is
     // only ever folded, so A_1 is folded from it a chunk at a time rather than A_0 held whole.
     let mut folds: Vec<Poly> = Vec::with_capacity(virtual_log_n - 1);
-    folds.push(Poly::from_coeffs(crate::base::poly::fold_par_with(n, &u[0], |start, a| {
-        for (i, a) in (start..).zip(a) {
-            *a = f[i] + g.get(i + 1).copied().unwrap_or_default();
-        }
-    })));
+    folds.push(Poly::from_coeffs(crate::base::poly::fold_par_with(
+        n,
+        &u[0],
+        |start, a| {
+            for (i, a) in (start..).zip(a) {
+                *a = f[i] + g.get(i + 1).copied().unwrap_or_default();
+            }
+        },
+    )));
     for l in 1..log_n - 1 {
-        folds.push(Poly::from_coeffs(crate::base::poly::fold_par(&folds[l - 1].coeffs, &u[l])));
+        folds.push(Poly::from_coeffs(crate::base::poly::fold_par(
+            &folds[l - 1].coeffs,
+            &u[l],
+        )));
     }
     // constant folds for the virtual rounds
     if log_n < virtual_log_n {
