@@ -41,6 +41,73 @@ index 928e9be4553..3e5cfa09914 100644
  )
  
  # Exclude test, bench, and fuzzer files
+diff --git a/barretenberg/cpp/src/barretenberg/vm2/simulation/events/event_emitter.hpp b/barretenberg/cpp/src/barretenberg/vm2/simulation/events/event_emitter.hpp
+index cc8b2298c54..e965a8f855d 100644
+--- a/barretenberg/cpp/src/barretenberg/vm2/simulation/events/event_emitter.hpp
++++ b/barretenberg/cpp/src/barretenberg/vm2/simulation/events/event_emitter.hpp
+@@ -8,9 +8,14 @@
+ 
+ namespace bb::avm2::simulation {
+ 
++// The container emitters collect `Event`s in. An event type may specialize it.
++template <typename Event> struct EventContainer {
++    using type = std::vector<Event>;
++};
++
+ template <typename Event> class EventEmitterInterface {
+   public:
+-    using Container = std::vector<Event>;
++    using Container = typename EventContainer<Event>::type;
+ 
+     virtual ~EventEmitterInterface() = default;
+     // Pushes the event to the event container.
+@@ -19,7 +24,7 @@ template <typename Event> class EventEmitterInterface {
+ 
+ template <typename Event> class EventEmitter : public EventEmitterInterface<Event> {
+   public:
+-    using Container = std::vector<Event>;
++    using Container = typename EventEmitterInterface<Event>::Container;
+ 
+     virtual ~EventEmitter() = default;
+     void emit(Event&& event) override { events.push_back(std::move(event)); };
+@@ -58,7 +63,7 @@ template <typename Event> class DeduplicatingEventEmitter : public EventEmitter<
+ 
+ template <typename Event> class NoopEventEmitter : public EventEmitterInterface<Event> {
+   public:
+-    using Container = std::vector<Event>;
++    using Container = typename EventEmitterInterface<Event>::Container;
+ 
+     virtual ~NoopEventEmitter() = default;
+ 
+diff --git a/barretenberg/cpp/src/barretenberg/vm2/simulation/events/execution_event.hpp b/barretenberg/cpp/src/barretenberg/vm2/simulation/events/execution_event.hpp
+index b61b2ae5179..2d727c406e1 100644
+--- a/barretenberg/cpp/src/barretenberg/vm2/simulation/events/execution_event.hpp
++++ b/barretenberg/cpp/src/barretenberg/vm2/simulation/events/execution_event.hpp
+@@ -1,12 +1,14 @@
+ #pragma once
+ 
+ #include <cstdint>
++#include <deque>
+ #include <vector>
+ 
+ #include "barretenberg/vm2/common/memory_types.hpp"
+ #include "barretenberg/vm2/common/opcodes.hpp"
+ #include "barretenberg/vm2/simulation/events/addressing_event.hpp"
+ #include "barretenberg/vm2/simulation/events/context_events.hpp"
++#include "barretenberg/vm2/simulation/events/event_emitter.hpp"
+ #include "barretenberg/vm2/simulation/events/gas_event.hpp"
+ #include "barretenberg/vm2/simulation/lib/serialization.hpp"
+ 
+@@ -53,4 +55,9 @@ struct ExecutionEvent {
+     bool is_exit() const { return is_failure() || wire_instruction.get_exec_opcode() == ExecutionOpCode::RETURN; }
+ };
+ 
++// One event per executed instruction, about 2 KB each: a deque grows without moving the events already emitted.
++template <> struct EventContainer<ExecutionEvent> {
++    using type = std::deque<ExecutionEvent>;
++};
++
+ } // namespace bb::avm2::simulation
 diff --git a/barretenberg/cpp/src/barretenberg/vm2/trace_ffi.cpp b/barretenberg/cpp/src/barretenberg/vm2/trace_ffi.cpp
 new file mode 100644
 index 00000000000..3e60f5f3995
@@ -257,7 +324,7 @@ index 1719e1435d5..e37a4fbba84 100644
      void process_instruction_fetching(
          const simulation::EventEmitterInterface<simulation::InstructionFetchingEvent>::Container& events,
 diff --git a/barretenberg/cpp/src/barretenberg/vm2/tracegen/execution_trace.cpp b/barretenberg/cpp/src/barretenberg/vm2/tracegen/execution_trace.cpp
-index 0664ef6caa7..14cb3c15903 100644
+index 0664ef6caa7..9f6fb9c94f8 100644
 --- a/barretenberg/cpp/src/barretenberg/vm2/tracegen/execution_trace.cpp
 +++ b/barretenberg/cpp/src/barretenberg/vm2/tracegen/execution_trace.cpp
 @@ -9,6 +9,7 @@
@@ -268,16 +335,53 @@ index 0664ef6caa7..14cb3c15903 100644
  #include "barretenberg/vm2/common/addressing.hpp"
  #include "barretenberg/vm2/common/field.hpp"
  #include "barretenberg/vm2/common/instruction_spec.hpp"
-@@ -324,28 +325,50 @@ uint32_t dying_context_for_phase(TransactionPhase phase, const FailingContexts&
+@@ -212,8 +213,7 @@ struct FailingContexts {
+  * @param ex_events The execution events.
+  * @return The failing contexts.
+  */
+-FailingContexts preprocess_for_discard(
+-    const simulation::EventEmitterInterface<simulation::ExecutionEvent>::Container& ex_events)
++template <typename Events> FailingContexts preprocess_for_discard(const Events& ex_events)
+ {
+     FailingContexts dying_info;
+ 
+@@ -223,7 +223,7 @@ FailingContexts preprocess_for_discard(
+     // would lead to the same results.
+ 
+     // Preprocessing pass 1: find the events that exit the app logic and teardown phases
+-    for (const auto& ex_event : ex_events) {
++    for (const simulation::ExecutionEvent& ex_event : ex_events) {
+         bool is_exit = ex_event.is_exit();
+         bool is_top_level = ex_event.after_context_event.parent_id == 0;
+ 
+@@ -240,7 +240,7 @@ FailingContexts preprocess_for_discard(
+     }
+ 
+     // Preprocessing pass 2: find all contexts that fail and mark them
+-    for (const auto& ex_event : ex_events) {
++    for (const simulation::ExecutionEvent& ex_event : ex_events) {
+         if (ex_event.is_failure()) {
+             dying_info.does_context_fail.insert(ex_event.after_context_event.id);
+         }
+@@ -324,28 +324,64 @@ uint32_t dying_context_for_phase(TransactionPhase phase, const FailingContexts&
  void ExecutionTraceBuilder::process(
      const simulation::EventEmitterInterface<simulation::ExecutionEvent>::Container& ex_events, TraceContainer& trace)
  {
 -    uint32_t row = 1; // We start from row 1 because this trace contains shifted columns.
--
++    process_events(ex_events, trace);
++}
+ 
 -    // Preprocess events to determine which contexts will fail
-+    // Resolve the small chronological state machine before filling independent rows.
-     const FailingContexts failures = preprocess_for_discard(ex_events);
--
+-    const FailingContexts failures = preprocess_for_discard(ex_events);
++template <std::same_as<std::vector<simulation::ExecutionEvent>> Events>
++void ExecutionTraceBuilder::process(const Events& ex_events, TraceContainer& trace)
++{
++    process_events(ex_events, trace);
++}
++
++template void ExecutionTraceBuilder::process(const std::vector<simulation::ExecutionEvent>& ex_events,
++                                             TraceContainer& trace);
+ 
 -    // Some variables updated per loop iteration to track
 -    // whether or not the upcoming row should "discard" [side effects].
 -    uint32_t dying_context_id = 0;
@@ -293,6 +397,10 @@ index 0664ef6caa7..14cb3c15903 100644
 -        if (!is_discarding() && is_first_event_in_enqueued_call &&
 -            is_phase_discarded(ex_event.after_context_event.phase, failures)) {
 -            dying_context_id = dying_context_for_phase(ex_event.after_context_event.phase, failures);
++template <typename Events> void ExecutionTraceBuilder::process_events(const Events& ex_events, TraceContainer& trace)
++{
++    // Resolve the small chronological state machine before filling independent rows.
++    const FailingContexts failures = preprocess_for_discard(ex_events);
 +    struct RowState {
 +        uint32_t dying_context_id;
 +        bool enqueued_call_start;
@@ -303,11 +411,11 @@ index 0664ef6caa7..14cb3c15903 100644
 +    uint32_t discarding_context_id = 0;
 +    bool next_enqueued_call_start = true;
 +    bool previous_entered_call = false;
-+    for (const auto& event : ex_events) {
++    for (const simulation::ExecutionEvent& event : ex_events) {
 +        if (discarding_context_id == 0 && next_enqueued_call_start &&
 +            is_phase_discarded(event.after_context_event.phase, failures)) {
 +            discarding_context_id = dying_context_for_phase(event.after_context_event.phase, failures);
-         }
++        }
 +        row_states.push_back({ discarding_context_id, next_enqueued_call_start, previous_entered_call });
 +        // Only NONE and OPCODE_EXECUTION reach the opcode-execution temporality group.
 +        const bool reaches_opcode =
@@ -322,13 +430,13 @@ index 0664ef6caa7..14cb3c15903 100644
 +        } else if (enters_call && discarding_context_id == 0 &&
 +                   failures.does_context_fail.contains(event.next_context_id)) {
 +            discarding_context_id = event.next_context_id;
-+        }
+         }
 +        next_enqueued_call_start = event.after_context_event.parent_id == 0 && event.is_exit();
 +        previous_entered_call = enters_call;
 +    }
  
 +    const auto process_event = [&](size_t index) {
-+        const auto& ex_event = ex_events[index];
++        const simulation::ExecutionEvent& ex_event = ex_events[index];
 +        const uint32_t row = static_cast<uint32_t>(index + 1); // Row zero is reserved for shifted columns.
 +        const auto& state = row_states[index];
 +        const uint32_t dying_context_id = state.dying_context_id;
@@ -338,7 +446,7 @@ index 0664ef6caa7..14cb3c15903 100644
          const bool has_parent = ex_event.after_context_event.parent_id != 0;
  
          /**************************************************************************************************
-@@ -576,7 +599,6 @@ void ExecutionTraceBuilder::process(
+@@ -576,7 +612,6 @@ void ExecutionTraceBuilder::process(
  
          // These booleans are used after of the "opcode code execution" block but need
          // to be set as part of the "opcode code execution" block.
@@ -346,7 +454,7 @@ index 0664ef6caa7..14cb3c15903 100644
          bool sel_exit_call = false;
          bool execute_revert = false;
  
-@@ -599,7 +621,6 @@ void ExecutionTraceBuilder::process(
+@@ -599,7 +634,6 @@ void ExecutionTraceBuilder::process(
              // Execution trace opcodes specific logic.
              // Note that the opcode selectors were set above. (e.g., sel_execute_call, sel_execute_static_call, ..).
              if (*exec_opcode == ExecutionOpCode::CALL || *exec_opcode == ExecutionOpCode::STATICCALL) {
@@ -354,7 +462,7 @@ index 0664ef6caa7..14cb3c15903 100644
  
                  const Gas gas_left = ex_event.after_context_event.gas_limit - ex_event.after_context_event.gas_used;
  
-@@ -772,37 +793,23 @@ void ExecutionTraceBuilder::process(
+@@ -772,37 +806,23 @@ void ExecutionTraceBuilder::process(
                        { C::execution_dying_context_diff_inv, dying_context_diff }, // Will be inverted in batch.
                        { C::execution_enqueued_call_end, enqueued_call_end ? 1 : 0 },
                    } });
@@ -408,7 +516,7 @@ index 0664ef6caa7..14cb3c15903 100644
      }
  
      // Batch invert the columns.
-@@ -853,6 +860,9 @@ void ExecutionTraceBuilder::process_execution_spec(const simulation::ExecutionEv
+@@ -853,6 +873,9 @@ void ExecutionTraceBuilder::process_execution_spec(const simulation::ExecutionEv
                                                     TraceContainer& trace,
                                                     uint32_t row)
  {
@@ -418,7 +526,7 @@ index 0664ef6caa7..14cb3c15903 100644
      // At this point we can assume instruction fetching succeeded, so this should never fail.
      ExecutionOpCode exec_opcode = ex_event.wire_instruction.get_exec_opcode();
      const auto& exec_spec = get_exec_instruction_spec().at(exec_opcode);
-@@ -871,11 +881,11 @@ void ExecutionTraceBuilder::process_execution_spec(const simulation::ExecutionEv
+@@ -871,11 +894,11 @@ void ExecutionTraceBuilder::process_execution_spec(const simulation::ExecutionEv
      for (size_t i = 0; i < AVM_MAX_REGISTERS; i++) {
          trace.set(row,
                    { {
@@ -433,7 +541,7 @@ index 0664ef6caa7..14cb3c15903 100644
                    } });
      }
  
-@@ -944,6 +954,11 @@ void ExecutionTraceBuilder::process_addressing(const simulation::AddressingEvent
+@@ -944,6 +967,11 @@ void ExecutionTraceBuilder::process_addressing(const simulation::AddressingEvent
                                                 TraceContainer& trace,
                                                 uint32_t row)
  {
@@ -445,7 +553,7 @@ index 0664ef6caa7..14cb3c15903 100644
      // At this point we can assume instruction fetching succeeded, so this should never fail.
      ExecutionOpCode exec_opcode = instruction.get_exec_opcode();
      const ExecInstructionSpec& ex_spec = get_exec_instruction_spec().at(exec_opcode);
-@@ -1003,13 +1018,13 @@ void ExecutionTraceBuilder::process_addressing(const simulation::AddressingEvent
+@@ -1003,13 +1031,13 @@ void ExecutionTraceBuilder::process_addressing(const simulation::AddressingEvent
      for (size_t i = 0; i < AVM_MAX_OPERANDS; i++) {
          trace.set(row,
                    { {
@@ -464,7 +572,7 @@ index 0664ef6caa7..14cb3c15903 100644
                        { RESOLVED_OPERAND_COLUMNS[i], resolved_operand[i] },
                        { RESOLVED_OPERAND_TAG_COLUMNS[i], resolved_operand_tag[i] },
                    } });
-@@ -1022,23 +1037,23 @@ void ExecutionTraceBuilder::process_addressing(const simulation::AddressingEvent
+@@ -1022,23 +1050,23 @@ void ExecutionTraceBuilder::process_addressing(const simulation::AddressingEvent
          bool is_indirect = is_operand_indirect(instruction.addressing_mode, i);
          trace.set(row,
                    { {
@@ -493,7 +601,7 @@ index 0664ef6caa7..14cb3c15903 100644
          for (size_t i = 0; i < AVM_MAX_OPERANDS; ++i) {
              if (apply_indirection[i]) {
                  batched_tags_diff += power_of_2 * (FF(resolved_operand_tag[i]) - FF(MEM_TAG_U32));
-@@ -1068,21 +1083,21 @@ void ExecutionTraceBuilder::process_addressing(const simulation::AddressingEvent
+@@ -1068,21 +1096,21 @@ void ExecutionTraceBuilder::process_addressing(const simulation::AddressingEvent
                                    }) +
                    // Some invalid address after indirection.
                    (some_final_check_failed ? 1 : 0))
@@ -520,19 +628,55 @@ index 0664ef6caa7..14cb3c15903 100644
              { C::execution_highest_address, AVM_HIGHEST_MEM_ADDRESS },
          } });
  }
+diff --git a/barretenberg/cpp/src/barretenberg/vm2/tracegen/execution_trace.hpp b/barretenberg/cpp/src/barretenberg/vm2/tracegen/execution_trace.hpp
+index 8f4dea30b74..1f6188110e3 100644
+--- a/barretenberg/cpp/src/barretenberg/vm2/tracegen/execution_trace.hpp
++++ b/barretenberg/cpp/src/barretenberg/vm2/tracegen/execution_trace.hpp
+@@ -1,5 +1,6 @@
+ #pragma once
+ 
++#include <concepts>
+ #include <cstdint>
+ #include <span>
+ #include <vector>
+@@ -20,6 +21,9 @@ class ExecutionTraceBuilder final {
+   public:
+     void process(const simulation::EventEmitterInterface<simulation::ExecutionEvent>::Container& ex_events,
+                  TraceContainer& trace);
++    // The same for events held in a vector. A template, so that a braced list selects the overload above.
++    template <std::same_as<std::vector<simulation::ExecutionEvent>> Events>
++    void process(const Events& ex_events, TraceContainer& trace);
+ 
+     // Public for testing.
+     void process_instr_fetching(const simulation::Instruction& instruction, TraceContainer& trace, uint32_t row);
+@@ -49,6 +53,9 @@ class ExecutionTraceBuilder final {
+                                     uint32_t row);
+ 
+     static const InteractionDefinition interactions;
++
++  private:
++    template <typename Events> void process_events(const Events& ex_events, TraceContainer& trace);
+ };
+ 
+ } // namespace bb::avm2::tracegen
 diff --git a/barretenberg/cpp/src/barretenberg/vm2/tracegen/memory_trace.cpp b/barretenberg/cpp/src/barretenberg/vm2/tracegen/memory_trace.cpp
-index 1ea7538b7fd..c5bc83e8528 100644
+index 1ea7538b7fd..5eca027dd09 100644
 --- a/barretenberg/cpp/src/barretenberg/vm2/tracegen/memory_trace.cpp
 +++ b/barretenberg/cpp/src/barretenberg/vm2/tracegen/memory_trace.cpp
-@@ -3,6 +3,7 @@
+@@ -2,9 +2,12 @@
+ 
  #include <algorithm>
  #include <array>
++#include <atomic>
  #include <cstdint>
 +#include <type_traits>
  
  #include "barretenberg/common/assert.hpp"
++#include "barretenberg/common/thread.hpp"
  #include "barretenberg/vm2/common/field.hpp"
-@@ -24,6 +25,19 @@
+ #include "barretenberg/vm2/common/memory_types.hpp"
+ #include "barretenberg/vm2/common/tagged_value.hpp"
+@@ -24,6 +27,19 @@
  
  namespace bb::avm2::tracegen {
  
@@ -552,22 +696,25 @@ index 1ea7538b7fd..c5bc83e8528 100644
  /**
   * @brief Processes memory events into the memory subtrace.
   *
-@@ -38,18 +52,27 @@ void MemoryTraceBuilder::process(const simulation::EventEmitterInterface<simulat
-     using simulation::MemoryEvent;
-     using simulation::MemoryMode;
+@@ -35,21 +51,35 @@ namespace bb::avm2::tracegen {
+ void MemoryTraceBuilder::process(const simulation::EventEmitterInterface<simulation::MemoryEvent>::Container& events,
+                                  TraceContainer& trace)
+ {
+-    using simulation::MemoryEvent;
+-    using simulation::MemoryMode;
++    sort_events(events);
++    write_rows(trace);
++}
  
 -    // Create a vector of pointers to avoid copying the events.
 -    std::vector<const simulation::MemoryEvent*> event_ptrs;
-+    // Cache immutable comparison keys beside pointers, avoiding scattered event
-+    // reads on every comparison. No event payloads are copied or moved.
-+    struct SortEntry {
-+        std::array<uint64_t, 2> key;
-+        const MemoryEvent* event;
-+    };
-+    std::vector<SortEntry> sorted_events;
-     const size_t trace_size = events.size();
+-    const size_t trace_size = events.size();
 -    event_ptrs.reserve(trace_size);
-+    sorted_events.reserve(trace_size);
++void MemoryTraceBuilder::sort_events(
++    const simulation::EventEmitterInterface<simulation::MemoryEvent>::Container& events)
++{
++    sorted_events.clear();
++    sorted_events.reserve(events.size());
  
      for (const auto& event : events) {
 -        event_ptrs.push_back(&event);
@@ -576,6 +723,14 @@ index 1ea7538b7fd..c5bc83e8528 100644
  
 -    std::ranges::sort(event_ptrs, [](const auto* lhs, const auto* rhs) { return lhs->operator<(*rhs); });
 +    std::ranges::sort(sorted_events, [](const auto& lhs, const auto& rhs) { return lhs.key < rhs.key; });
++}
++
++void MemoryTraceBuilder::write_rows(TraceContainer& trace) const
++{
++    using simulation::MemoryEvent;
++    using simulation::MemoryMode;
++
++    const size_t trace_size = sorted_events.size();
  
      using C = Column;
 +    // Select pre-encoded Boolean fields instead of converting runtime 0/1 integers
@@ -585,16 +740,25 @@ index 1ea7538b7fd..c5bc83e8528 100644
  
      // We rely on the following assert in computing C::memory_tag_ff_diff_inv value
      // below. Namely: (tag - MemoryTag::FF).invert() == tag.invert().
-@@ -69,7 +92,7 @@ void MemoryTraceBuilder::process(const simulation::EventEmitterInterface<simulat
-     uint32_t row = 1;
+@@ -65,11 +95,12 @@ void MemoryTraceBuilder::process(const simulation::EventEmitterInterface<simulat
+     }
+     FF::batch_invert(tag_inverts);
  
-     for (uint32_t i = 0; i < trace_size; i++) {
+-    // We use shift in this trace and keep the first row empty.
+-    uint32_t row = 1;
+-
+-    for (uint32_t i = 0; i < trace_size; i++) {
 -        const auto& event = *event_ptrs[i];
++    // Row i + 1 depends only on sorted events i and i + 1 (row 0 is left empty because shifted columns are used).
++    // Without assert_diff, a diff that is too large skips the row and sets write_in_order instead.
++    std::atomic<bool> write_in_order = false;
++    const auto write_row = [&](uint32_t i, bool assert_diff) {
++        const uint32_t row = i + 1;
 +        const auto& event = *sorted_events[i].event;
          const bool is_last = i + 1 == trace_size;
          const bool sel_tag_is_ff = event.value.get_tag() == MemoryTag::FF;
          const uint64_t global_addr = (static_cast<uint64_t>(event.space_id) << 32) + event.addr;
-@@ -81,7 +104,7 @@ void MemoryTraceBuilder::process(const simulation::EventEmitterInterface<simulat
+@@ -81,7 +112,7 @@ void MemoryTraceBuilder::process(const simulation::EventEmitterInterface<simulat
          uint64_t global_addr_diff = 0;
  
          if (!is_last) {
@@ -603,7 +767,16 @@ index 1ea7538b7fd..c5bc83e8528 100644
              const uint64_t next_global_addr = (static_cast<uint64_t>(next_event.space_id) << 32) + next_event.addr;
              const uint64_t next_timestamp =
                  (static_cast<uint64_t>(next_event.execution_clk) << 1) + static_cast<uint64_t>(next_event.mode);
-@@ -97,23 +120,24 @@ void MemoryTraceBuilder::process(const simulation::EventEmitterInterface<simulat
+@@ -92,31 +123,62 @@ void MemoryTraceBuilder::process(const simulation::EventEmitterInterface<simulat
+             diff = last_access ? global_addr_diff : (next_timestamp - timestamp - two_consecutive_writes);
+ 
+             // Defensive: diff must fit in 48 bits for the 3x16-bit limb decomposition.
++            if (!assert_diff && diff >= (1ULL << 48)) {
++                write_in_order.store(true, std::memory_order_relaxed);
++                return;
++            }
+             BB_ASSERT(diff < (1ULL << 48));
+         }
  
          trace.set(row,
                    { {
@@ -633,21 +806,52 @@ index 1ea7538b7fd..c5bc83e8528 100644
 +                        (event.mode == MemoryMode::WRITE && !sel_tag_is_ff) ? field_one : field_zero },
                        { C::memory_max_bits, get_tag_bits(event.value.get_tag()) },
                    } });
-         row++;
+-        row++;
++    };
++
++    // Align chunks to trace shards: writers never share a cell, and normally share no shard.
++    constexpr size_t chunk_size = TraceContainer::INTERVAL_SIZE;
++    const size_t num_chunks = (trace_size + chunk_size) / chunk_size;
++    if (num_chunks < 4) {
++        for (uint32_t i = 0; i < trace_size; i++) {
++            write_row(i, /*assert_diff=*/true);
++        }
++    } else {
++        parallel_for(num_chunks, [&](size_t chunk) {
++            const size_t first_row = std::max<size_t>(1, chunk * chunk_size);
++            const size_t end_row = std::min(trace_size + 1, (chunk + 1) * chunk_size);
++            try {
++                for (size_t row = first_row; row < end_row; ++row) {
++                    write_row(static_cast<uint32_t>(row - 1), /*assert_diff=*/false);
++                }
++            } catch (...) {
++                write_in_order.store(true, std::memory_order_relaxed);
++            }
++        });
++        // Errors are raised on this thread, by the serial loop: it stops at the same row with the same error.
++        if (write_in_order.load()) {
++            for (uint32_t i = 0; i < trace_size; i++) {
++                write_row(i, /*assert_diff=*/true);
++            }
++        }
+     }
+ 
+     // Batch invert the columns.
 diff --git a/barretenberg/cpp/src/barretenberg/vm2/tracegen/memory_trace.hpp b/barretenberg/cpp/src/barretenberg/vm2/tracegen/memory_trace.hpp
-index 5f35d449759..a1bd30ff38a 100644
+index 5f35d449759..e14d58abc77 100644
 --- a/barretenberg/cpp/src/barretenberg/vm2/tracegen/memory_trace.hpp
 +++ b/barretenberg/cpp/src/barretenberg/vm2/tracegen/memory_trace.hpp
-@@ -1,5 +1,8 @@
+@@ -1,5 +1,9 @@
  #pragma once
  
 +#include <array>
 +#include <cstdint>
++#include <vector>
 +
  #include "barretenberg/vm2/generated/columns.hpp"
  #include "barretenberg/vm2/simulation/events/event_emitter.hpp"
  #include "barretenberg/vm2/simulation/events/memory_event.hpp"
-@@ -10,6 +13,9 @@ namespace bb::avm2::tracegen {
+@@ -10,10 +14,26 @@ namespace bb::avm2::tracegen {
  
  class MemoryTraceBuilder final {
    public:
@@ -657,8 +861,25 @@ index 5f35d449759..a1bd30ff38a 100644
      void process(const simulation::EventEmitterInterface<simulation::MemoryEvent>::Container& events,
                   TraceContainer& trace);
  
++    // process() in two steps: the sort can run beside other builders, and write_rows() then fills the rows on all
++    // threads. The events must outlive write_rows().
++    void sort_events(const simulation::EventEmitterInterface<simulation::MemoryEvent>::Container& events);
++    void write_rows(TraceContainer& trace) const;
++
+     static const InteractionDefinition interactions;
++
++  private:
++    // Caches the immutable comparison key beside a pointer, avoiding scattered event reads on every comparison.
++    struct SortEntry {
++        std::array<uint64_t, 2> key;
++        const simulation::MemoryEvent* event;
++    };
++    std::vector<SortEntry> sorted_events;
+ };
+ 
+ } // namespace bb::avm2::tracegen
 diff --git a/barretenberg/cpp/src/barretenberg/vm2/tracegen_helper.cpp b/barretenberg/cpp/src/barretenberg/vm2/tracegen_helper.cpp
-index 431bd449a0d..5cc924f3c06 100644
+index 431bd449a0d..5b02232e2cb 100644
 --- a/barretenberg/cpp/src/barretenberg/vm2/tracegen_helper.cpp
 +++ b/barretenberg/cpp/src/barretenberg/vm2/tracegen_helper.cpp
 @@ -117,6 +117,18 @@ auto build_public_inputs_columns_jobs(TraceContainer& trace, const PublicInputs&
@@ -680,7 +901,14 @@ index 431bd449a0d..5cc924f3c06 100644
  void execute_jobs(std::span<std::function<void()>> jobs)
  {
      parallel_for(jobs.size(), [&](size_t i) { jobs[i](); });
-@@ -197,6 +209,8 @@ void AvmTraceGenHelper::fill_trace_columns(TraceContainer& trace,
+@@ -192,11 +204,15 @@ void AvmTraceGenHelper::fill_trace_columns(TraceContainer& trace,
+ {
+     // We process the events in parallel. Ideally the jobs should access disjoint column sets.
+     {
++        // The longest builder: its sort is a job below, its rows are written once the jobs are done.
++        MemoryTraceBuilder memory_trace_builder;
+         auto jobs = concatenate(
+             // Precomputed column jobs.
              build_precomputed_columns_jobs(trace),
              // Public inputs column jobs.
              build_public_inputs_columns_jobs(trace, public_inputs),
@@ -689,7 +917,7 @@ index 431bd449a0d..5cc924f3c06 100644
              // Subtrace jobs.
              std::vector<std::function<void()>>{
                  [&]() {
-@@ -204,11 +218,6 @@ void AvmTraceGenHelper::fill_trace_columns(TraceContainer& trace,
+@@ -204,11 +220,6 @@ void AvmTraceGenHelper::fill_trace_columns(TraceContainer& trace,
                      AVM_TRACK_TIME("tracegen/tx", tx_builder.process(events.tx, trace));
                      clear_events(events.tx);
                  },
@@ -701,7 +929,7 @@ index 431bd449a0d..5cc924f3c06 100644
                  [&]() {
                      AddressDerivationTraceBuilder address_derivation_builder;
                      AVM_TRACK_TIME("tracegen/address_derivation",
-@@ -220,12 +229,6 @@ void AvmTraceGenHelper::fill_trace_columns(TraceContainer& trace,
+@@ -220,12 +231,6 @@ void AvmTraceGenHelper::fill_trace_columns(TraceContainer& trace,
                      AVM_TRACK_TIME("tracegen/alu", alu_builder.process(events.alu, trace));
                      clear_events(events.alu);
                  },
@@ -714,7 +942,20 @@ index 431bd449a0d..5cc924f3c06 100644
                  [&]() {
                      BytecodeTraceBuilder bytecode_builder;
                      AVM_TRACK_TIME("tracegen/bytecode_hashing",
-@@ -418,7 +421,15 @@ void AvmTraceGenHelper::fill_trace_columns(TraceContainer& trace,
+@@ -343,11 +348,7 @@ void AvmTraceGenHelper::fill_trace_columns(TraceContainer& trace,
+                                    indexed_tree_check_trace_builder.process(events.indexed_tree_check_events, trace));
+                     clear_events(events.indexed_tree_check_events);
+                 },
+-                [&]() {
+-                    MemoryTraceBuilder memory_trace_builder;
+-                    AVM_TRACK_TIME("tracegen/memory", memory_trace_builder.process(events.memory, trace));
+-                    clear_events(events.memory);
+-                },
++                [&]() { AVM_TRACK_TIME("tracegen/memory_sort", memory_trace_builder.sort_events(events.memory)); },
+                 [&]() {
+                     DataCopyTraceBuilder data_copy_trace_builder;
+                     AVM_TRACK_TIME("tracegen/data_copy",
+@@ -418,7 +419,19 @@ void AvmTraceGenHelper::fill_trace_columns(TraceContainer& trace,
                      clear_events(events.emit_public_log_events);
                  } });
  
@@ -724,8 +965,12 @@ index 431bd449a0d..5cc924f3c06 100644
 +            // other job group so it can use the existing top-level thread pool.
 +            ExecutionTraceBuilder exec_builder;
 +            AVM_TRACK_TIME("tracegen/execution", exec_builder.process(events.execution, trace));
-+            clear_events(events.execution);
++            // Freeing the execution events takes tens of ms on a large transaction, and no job of the group reads
++            // them: free them as one of its jobs, so the pool is not idle meanwhile.
++            jobs.emplace_back([&]() { clear_events(events.execution); });
 +            execute_jobs(jobs);
++            AVM_TRACK_TIME("tracegen/memory", memory_trace_builder.write_rows(trace));
++            clear_events(events.memory);
 +        });
 +        clear_events(events.bytecode_decomposition);
      }
