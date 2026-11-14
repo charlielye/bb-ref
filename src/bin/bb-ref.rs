@@ -171,6 +171,7 @@ fn msgpack_run(input_path: &str) {
 
         let response = handle_request(&mut handler, &frame[8..]);
         bb_ref::base::pool::trim();
+        bb_ref::base::timing::phase("pool: trim");
         out.write_all(&((response.len() + 8) as u32).to_le_bytes()).unwrap();
         out.write_all(&request_id.to_le_bytes()).unwrap();
         out.write_all(&response).unwrap();
@@ -203,6 +204,7 @@ fn msgpack_serve(path: &str) {
     server.run(|_client_id, request| {
         let response = handle_request(&mut handler, request);
         bb_ref::base::pool::trim();
+        bb_ref::base::timing::phase("pool: trim");
         response
     });
 }
