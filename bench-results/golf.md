@@ -32,7 +32,7 @@ preset (AVM off).
   golf's more so (on wasmtime golf trails by 5%). By scope the gap is mostly the HyperNova folding
   sumcheck, which golf evaluates for every relation on 5-wide SIMD lanes and bb-ref (beyond the
   permutation relation) on scalars, then MSM and the ECCVM.
-- **Rollup's small recursion circuits** (merges, block roots): golf 4–7% ahead, where recursion
+- **Rollup's small recursion circuits** (merges, block roots): golf 4–9% ahead, where recursion
   constraint construction (serial in bb-ref, ~18% of the corpus) dominates; bb-ref leads on the
   large circuits.
 - **Chonk past ~32 threads** (Zen 5, 64–96 vCPU): golf's pool keeps its workers spinning between
