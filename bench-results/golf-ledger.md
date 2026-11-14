@@ -73,7 +73,7 @@ A new golf leader only needs its new commits classified against this table.
 | f0016934531 | Chonk instances free circuit data (0075) | HAVE | `prover_instance.rs` |
 | c58d8944186 | wasm: packed deferred folds, folded-view reads | SKIP | folds packed already; packing round-1 reads ~100 LOC for an est. 0.3-0.6% wasm |
 | e9580a0a4fb | wasm: packed grand-product term rows | SKIP | est. 0.3-0.6% wasm for ~40 LOC, while bb-ref leads golf on wasm |
-| cc2a9fe9002 | wasm: Fq affine-add square kernel | NA | a hook reusing the multiply; the real square kernel is SKIP above |
+| cc2a9fe9002 | wasm: Fq affine-add square kernel | NA | a hook reusing the multiply; the real square kernel is REJECTED (client-wasm 002) |
 | 934c0e90cb0 | wasm: reuse identities in cycle links | HAVE | `prover_instance.rs` |
 | 7e1357b053f | subrelation batching on packed wasm edges | HAVE | `relations.rs` `quad_batched` on every target |
 | 7183bca83c2 | dense lookup tables without a map | PORTED | `prover_instance.rs` `dense_key_width`: row from the key(s), checked against the table (with b0cde44c3af: Chonk 1.1–1.3%) |
@@ -154,7 +154,7 @@ rests on golf's own fixed-seed engine and is left out of the comparison build.
 |---|---|---|---|---|
 | 000 | client-wasm | Build release WASM with -Oz to fit the memory guard | NA | golf's own wasm opt level vs its memory guard; bb-ref's `[profile.lto]` level is measured separately |
 | 001 | client-wasm | perf(msm): skip Montgomery conversions of zero scalars in pippenger_round_parallel | NA | no in-place scalar conversion; zero-heavy inputs compacted first |
-| 002 | client-wasm | perf(wasm): square VectorField with a dedicated Karatsuba kernel | SKIP | dedicated Karatsuba square in quad261: ~150-200 LOC for an est. 0.2-0.5% wasm |
+| 002 | client-wasm | perf(wasm): square VectorField with a dedicated Karatsuba kernel | REJECTED | built bit-identical to the multiply (quad261 `mont_sqr`, 40 limb products, shared reduction) at the MSM tree\'s slope square: V8 chonk 59.26 vs 59.14 s (0.998x), noise; reverted |
 | 003 | client-wasm | perf(common): format failed-assertion messages out of line | NA | C++ assert codegen |
 | 004 | client-wasm | perf(wasm): pack staged VectorField lanes with the transpose constructor | HAVE | `wasm/quad261.rs` `QuadFp::pack` is the transpose |
 | 005 | client-wasm | perf(wasm): evaluate single live lanes of sparse Poseidon2 relations on the scalar path | HAVE | per-edge scalar evaluation with per-relation skip |
@@ -219,7 +219,7 @@ rests on golf's own fixed-seed engine and is left out of the comparison build.
 | 064 | rollup-c7i | perf(stdlib_circuit_builders): release every sizeable block of a recording builder when it is destroyed | NA | no recording builders |
 | 065 | rollup-c7i | fix(common): keep the DEBUG_LOG recursion guard per thread | NA | C++/platform specific |
 | 066 | rollup-c7i | test(stdlib_circuit_builders): share the all-member Ultra builder comparison | NA | tests only |
-| 067 | rollup-c7i | feat(dsl): build leading Honk recursion constraints on scratch threads and splice them | CANDIDATE | profiled: building recursion constraints (rec: verify_recursive 9.8%, rec: pre-ipa 6.3%, build: recursion+io 5.1%) is ~21% of the rollup replay, serial. The largest open lever; a port of golf's splice design is ~1-1.5k LOC |
+| 067 | rollup-c7i | feat(dsl): build leading Honk recursion constraints on scratch threads and splice them | SKIP | ceiling measured from per-constraint timings: 11 of the replay\'s 30 proving requests hold two or more Honk recursion constraints, so perfect overlap saves at most 4.7 of 126 s (3.7%) before the splice\'s copies; ~1-1.5k LOC (the rest of the serial build is single-constraint work, cut instead by the stack `Uint`, 0dbf6b1) |
 | 068 | rollup-c7i | test(dsl): cover four refusals of a scratch-built constraint and the entropy its threads draw | NA | tests only |
 | 069 | rollup-c7i | perf(dsl): return the memory a scratch thread freed before its builder is destroyed | NA | no recording builders |
 | 070 | rollup-c7i | feat(stdlib_circuit_builders): let another thread cancel a build on a recording builder | SKIP | scratch-thread recursion bundle (with 067) |
