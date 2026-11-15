@@ -17,7 +17,7 @@ engine; golf's rollup leader with it is faster than the build measured here.
 | Chonk, wasm, wasmtime | 8 | **0.94×** | **0.72–0.80×** | [chonk-wasmtime](golf/chonk-wasmtime.txt) |
 | Chonk, wasm, V8 wide arithmetic | 8 | **0.83×** | **0.81–0.94×** | [chonk-v8-wide](golf/chonk-v8-wide.txt) |
 | Chonk, native ARM (Graviton4) | 8 | **0.95×** | **0.87–0.96×** | [arm-graviton](golf/arm-graviton.txt) |
-| Rollup corpus (63 responses) | 16 | **0.97×** | **0.96×** (10.26 vs 10.69 GB peak) | [rollup](golf/rollup.txt) |
+| Rollup corpus (63 responses) | 16 | **0.93×** | **0.96×** (10.29 vs 10.67 GB peak) | [rollup](golf/rollup.txt) |
 | AVM corpus (prove, check, verify) | 16 | **0.72×** (prove 0.96×, check 0.45×) | **0.96×** (10.40 vs 10.78 GB) | [avm](golf/avm.txt) |
 
 x86 tables: AWS c7a.4xlarge (AMD EPYC 9R14, Zen 4, 16 cores). ARM: AWS c8g.4xlarge (Graviton4,
@@ -32,9 +32,10 @@ preset (AVM off).
   (it evaluates every relation on 5-wide SIMD lanes; bb-ref, beyond the permutation relation, on
   scalars) and in MSM, and bb-ref makes it back elsewhere; storage_proof, the largest flow, is
   ~4% behind.
-- **Rollup's small recursion circuits** (merges, block roots): golf 4–9% ahead, where recursion
-  constraint construction (serial in bb-ref, ~18% of the corpus) dominates; bb-ref leads on the
-  large circuits.
+- **Rollup's small circuits**: merges 1.02–1.04×, block roots 1.04–1.05×, CheckpointPadding
+  (0.1 s) and proof verification slower still; bb-ref leads 7–11% on the large circuits. On the
+  merges the recursion build, instance, Oink and sumcheck are level or ahead; the gap is the
+  PCS's full-size MSMs (Shplonk Q, KZG W) and the Shplonk quotient.
 - **Chonk past ~32 threads** (Zen 5, 64–96 vCPU): golf's pool keeps its workers spinning between
   parallel regions; rayon's go to sleep and wake one after another, which costs bb-ref ~6% at 32
   threads and more beyond. A longer rayon spin reaches parity there for ~55% more CPU; not taken.
