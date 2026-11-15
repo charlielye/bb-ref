@@ -43,6 +43,12 @@ pub(crate) fn batch_invert_nonzero<F: ark_ff::Field>(v: &mut [F], prod: &mut Vec
     v[0] = inv;
 }
 
+/// Past this many bytes of a task's histogram rows (they outgrow L2), the histogram and scatter
+/// passes walk scalars a tile at a time, window-major (golf's Stage 4): each inner loop then
+/// touches one window's row and schedule instead of every window's at once.
+const MSM_TILE_ROWS_BYTES: usize = 1 << 20;
+const MSM_TILE: usize = 2048;
+
 /// Raw pointer wrapper for the column-major digit scatter: each rayon task writes a disjoint cell.
 pub struct SendPtr<T>(pub *mut T);
 unsafe impl<T> Send for SendPtr<T> {}
@@ -225,6 +231,24 @@ where
     // Stage 1: per-task, per-window bucket histograms, one flat (task, window, bucket) array so
     // stage 2 can prefix-sum window columns in parallel.
     let cell = |t: usize, w: usize, b: usize| (t * num_windows + w) * stride + b;
+    let tiled = num_windows * stride * 4 > MSM_TILE_ROWS_BYTES;
+    // A tile's digits, window-major: entry `w * width + k` is slot `k` (two per point under GLV,
+    // the second the endomorphism half's) of window `w`; 0 for none.
+    let width = MSM_TILE * if use_glv { 2 } else { 1 };
+    let decode_tile = |start: usize, end: usize, dig: &mut [i32]| {
+        dig.fill(0);
+        for (j, i) in (start..end).enumerate() {
+            if points[i].is_zero() {
+                continue;
+            }
+            if use_glv {
+                decode(&subs[i].0, c, half, num_windows, |w, d| dig[w * width + 2 * j] = d);
+                decode(&subs[i].1, c, half, num_windows, |w, d| dig[w * width + 2 * j + 1] = d);
+            } else {
+                decode(&full[i], c, half, num_windows, |w, d| dig[w * width + j] = d);
+            }
+        }
+    };
     let mut counts: Vec<u32> = vec![0; tasks * num_windows * stride];
     {
         let ptr = SendPtr(counts.as_mut_ptr());
@@ -233,6 +257,23 @@ where
             // A task's cells are contiguous; writing them first keeps the `+=` below off the zero
             // page (see `Polynomial::linear_combination`).
             unsafe { std::slice::from_raw_parts_mut(ptr.0.add(cell(t, 0, 0)), num_windows * stride).fill(0) };
+            if tiled {
+                let mut dig = vec![0i32; num_windows * width];
+                for start in r.clone().step_by(MSM_TILE) {
+                    let end = (start + MSM_TILE).min(r.end);
+                    let len = (end - start) * (width / MSM_TILE);
+                    decode_tile(start, end, &mut dig);
+                    for w in 0..num_windows {
+                        let row = unsafe { ptr.0.add(cell(t, w, 0)) };
+                        for &d in &dig[w * width..w * width + len] {
+                            if d != 0 {
+                                unsafe { *row.add(d.unsigned_abs() as usize) += 1 };
+                            }
+                        }
+                    }
+                }
+                return;
+            }
             for i in r.clone() {
                 if !points[i].is_zero() {
                     let mut bump = |w: usize, d: i32| unsafe {
@@ -294,6 +335,32 @@ where
         let cur = SendPtr(counts.as_mut_ptr());
         task_ranges.par_iter().enumerate().for_each(|(t, r)| {
             let cur = &cur;
+            if tiled {
+                let mut dig = vec![0i32; num_windows * width];
+                for start in r.clone().step_by(MSM_TILE) {
+                    let end = (start + MSM_TILE).min(r.end);
+                    let len = (end - start) * (width / MSM_TILE);
+                    decode_tile(start, end, &mut dig);
+                    for w in 0..num_windows {
+                        let (row, sched) = unsafe { (cur.0.add(cell(t, w, 0)), ptrs[w].0) };
+                        for (k, &d) in dig[w * width..w * width + len].iter().enumerate() {
+                            if d != 0 {
+                                let (i, phi) = if use_glv {
+                                    (start + (k >> 1), (k as u32 & 1) * PHI)
+                                } else {
+                                    (start + k, 0)
+                                };
+                                unsafe {
+                                    let slot = row.add(d.unsigned_abs() as usize);
+                                    *sched.add(*slot as usize) = i as u32 | phi | if d < 0 { 1u32 << 31 } else { 0 };
+                                    *slot += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+                return;
+            }
             for i in r.clone() {
                 if !points[i].is_zero() {
                     let scatter = |phi: u32| {
