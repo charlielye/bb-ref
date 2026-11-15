@@ -40,7 +40,7 @@ where
     prove_ultra_on::<C>(inst, vk, &ck, &mut t, rng);
     let mut proof = t.export_proof();
     // bb `UltraProver_::construct_proof`: a RollupIO circuit's IPA proof rides after the Honk proof.
-    for f in &inst.ipa_proof {
+    for f in &inst.ipa_proof.take() {
         proof.extend(crate::base::codec::Transcriptable::<C::TF>::to_fields(f));
     }
     proof

@@ -7,7 +7,7 @@ use super::ipa::{self, IpaClaim, IPA_PROOF_LENGTH, LOG_POLY_LENGTH, POLY_LENGTH}
 use crate::base::codec::{FromChallenge, Transcriptable};
 use crate::base::field::{from_u256, U256};
 use crate::base::transcript::Transcript;
-use crate::base::{Fq, Fr, GrumpkinKey};
+use crate::base::{Fq, GrumpkinKey};
 use crate::stdlib::bigfield::{BigField, NUM_LIMB_BITS};
 use crate::stdlib::cycle_group::{CycleGroup, CycleScalar};
 use crate::stdlib::field::split_unique;
@@ -185,23 +185,26 @@ pub fn reduce_verify_ct(ctx: &Ctx, claim: &IpaClaimCt, t: &mut StdlibTranscript)
 
 /// Native proving of an accumulated challenge-poly claim (bb `prove_challenge_poly_opening`); the
 /// in-circuit evaluation is self-reduced afterwards like bb.
-fn prove_challenge_poly_opening(ck: &GrumpkinKey, claim: &IpaClaimCt, challenge_poly: &[Fq]) -> Vec<Fr> {
+fn prove_challenge_poly_opening(ck: &GrumpkinKey, claim: &IpaClaimCt, challenge_poly: Vec<Fq>) -> ipa::IpaProof {
     let challenge = claim.challenge.get_native_value();
     let evaluation = claim.evaluation.get_native_value();
-    let native_eval: Fq = challenge_poly
-        .iter()
-        .rev()
-        .fold(Fq::from(0u64), |acc, c| acc * challenge + c);
-    assert_eq!(
-        native_eval, evaluation,
-        "opening claim does not hold for challenge polynomial"
-    );
-    let mut t = ipa::NativeTranscript::new();
-    let commitment = ipa::msm_affine(&ck.points[..challenge_poly.len()], challenge_poly);
-    ipa::add_claim_to_hash_buffer_prover(&commitment, &challenge, &evaluation, &mut t);
-    ipa::compute_opening_proof(ck, challenge_poly, &challenge, &mut t);
     claim.evaluation.self_reduce();
-    t.export_proof()
+    let ck = ck.share();
+    ipa::IpaProof::spawn(move || {
+        let native_eval: Fq = challenge_poly
+            .iter()
+            .rev()
+            .fold(Fq::from(0u64), |acc, c| acc * challenge + c);
+        assert_eq!(
+            native_eval, evaluation,
+            "opening claim does not hold for challenge polynomial"
+        );
+        let mut t = ipa::NativeTranscript::new();
+        let commitment = ipa::msm_affine(&ck.points[..challenge_poly.len()], &challenge_poly);
+        ipa::add_claim_to_hash_buffer_prover(&commitment, &challenge, &evaluation, &mut t);
+        ipa::compute_opening_proof(&ck, &challenge_poly, &challenge, &mut t);
+        t.export_proof()
+    })
 }
 
 /// bb `IPA::full_verify_recursive`: reduce, then recompute `G_zero` from the round challenges by
@@ -247,7 +250,7 @@ pub fn full_verify_ct(ctx: &Ctx, claim: &IpaClaimCt, t: &mut StdlibTranscript, s
 
 /// bb `IPA::accumulate` on two accumulators: bind both, squeeze `alpha`/`r`, combine, natively
 /// re-prove the combined challenge polynomial.
-pub fn accumulate(ck: &GrumpkinKey, acc_1: IpaAccumulatorCt, acc_2: IpaAccumulatorCt) -> (IpaClaimCt, Vec<Fr>) {
+pub fn accumulate(ck: &GrumpkinKey, acc_1: IpaAccumulatorCt, acc_2: IpaAccumulatorCt) -> (IpaClaimCt, ipa::IpaProof) {
     let mut t = StdlibTranscript::new();
     for u in &acc_1.u_challenges_inv {
         t.add_to_hash_buffer("u_challenges_inv_1", u);
@@ -276,12 +279,12 @@ pub fn accumulate(ck: &GrumpkinKey, acc_1: IpaAccumulatorCt, acc_2: IpaAccumulat
     let poly1 = ipa::construct_poly_from_u_challenges_inv(&u1);
     let poly2 = ipa::construct_poly_from_u_challenges_inv(&u2);
     let challenge_poly: Vec<Fq> = poly1.iter().zip(&poly2).map(|(a, b)| *a + alpha_native * b).collect();
-    let proof = prove_challenge_poly_opening(ck, &claim, &challenge_poly);
+    let proof = prove_challenge_poly_opening(ck, &claim, challenge_poly);
     (claim, proof)
 }
 
 /// bb `IPA::prove_accumulator_claim`: the single-accumulator variant.
-pub fn prove_accumulator_claim(ck: &GrumpkinKey, acc: IpaAccumulatorCt) -> (IpaClaimCt, Vec<Fr>) {
+pub fn prove_accumulator_claim(ck: &GrumpkinKey, acc: IpaAccumulatorCt) -> (IpaClaimCt, ipa::IpaProof) {
     let mut t = StdlibTranscript::new();
     for u in &acc.u_challenges_inv {
         t.add_to_hash_buffer("u_challenges_inv", u);
@@ -296,24 +299,27 @@ pub fn prove_accumulator_claim(ck: &GrumpkinKey, acc: IpaAccumulatorCt) -> (IpaC
     };
     let u: Vec<Fq> = acc.u_challenges_inv.iter().map(BigField::get_native_value).collect();
     let challenge_poly = ipa::construct_poly_from_u_challenges_inv(&u);
-    let proof = prove_challenge_poly_opening(ck, &claim, &challenge_poly);
+    let proof = prove_challenge_poly_opening(ck, &claim, challenge_poly);
     (claim, proof)
 }
 
 /// bb `IPA::create_random_valid_ipa_claim_and_proof`: a random polynomial opened at a random point,
 /// drawn from the global engine, witnessed into the circuit.
-pub fn create_random_valid_ipa_claim_and_proof(ctx: &Ctx, ck: &GrumpkinKey) -> (IpaClaimCt, Vec<Fr>) {
+pub fn create_random_valid_ipa_claim_and_proof(ctx: &Ctx, ck: &GrumpkinKey) -> (IpaClaimCt, ipa::IpaProof) {
     let poly: Vec<Fq> = (0..POLY_LENGTH).map(|_| crate::base::rng::global_field()).collect();
     let x: Fq = crate::base::rng::global_field();
     let eval: Fq = poly.iter().rev().fold(Fq::from(0u64), |acc, c| acc * x + c);
     crate::base::timing::phase("        fake-ipa: poly+eval");
     let commitment = super::ipa::msm_affine(&ck.points[..poly.len()], &poly);
     crate::base::timing::phase("        fake-ipa: commit msm");
-    let mut t = ipa::NativeTranscript::new();
     // The claim's commitment is the one just computed (golf: no second MSM).
-    ipa::add_claim_to_hash_buffer_prover(&commitment, &x, &eval, &mut t);
-    ipa::compute_opening_proof(ck, &poly, &x, &mut t);
-    crate::base::timing::phase("        fake-ipa: opening proof");
+    let ck_owned = ck.share();
+    let proof = ipa::IpaProof::spawn(move || {
+        let mut t = ipa::NativeTranscript::new();
+        ipa::add_claim_to_hash_buffer_prover(&commitment, &x, &eval, &mut t);
+        ipa::compute_opening_proof(&ck_owned, &poly, &x, &mut t);
+        t.export_proof()
+    });
     // bb creates the stdlib witnesses in order: commitment, challenge, evaluation.
     let commitment_ct = CycleGroup::from_witness(ctx, commitment);
     let claim = IpaClaimCt {
@@ -321,7 +327,7 @@ pub fn create_random_valid_ipa_claim_and_proof(ctx: &Ctx, ck: &GrumpkinKey) -> (
         evaluation: FqCt::from_witness(ctx, &eval),
         commitment: commitment_ct,
     };
-    (claim, t.export_proof())
+    (claim, proof)
 }
 
 /// The 64 IPA-proof fields of a combined rollup proof, as witnesses.

@@ -654,6 +654,19 @@ pub struct Ck<G: AffineRepr> {
     phi: PhiTable<G>,
 }
 
+impl<G: AffineRepr> Ck<G> {
+    /// Another key over the same points (an `Arc` clone), for a helper thread.
+    pub fn share(&self) -> Self {
+        Self {
+            points: PointsView {
+                pool: self.points.pool.clone(),
+                len: self.points.len,
+            },
+            phi: PhiTable::default(),
+        }
+    }
+}
+
 /// The lazily built φ table, never waited on. Commits run inside rayon jobs and the table is
 /// built with rayon, so a thread blocked on the build can be the builder itself: while its
 /// `par_iter` waits it steals a sibling commit job, which would block on the cell it is filling

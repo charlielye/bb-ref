@@ -60,6 +60,34 @@ pub fn add_claim_to_hash_buffer_verifier(claim: &IpaClaim, t: &mut NativeTranscr
     t.add_to_hash_buffer("IPA:evaluation", &claim.evaluation);
 }
 
+/// A rollup circuit's 64-field IPA proof (bb `builder.ipa_proof`). Nothing in the circuit reads
+/// it -- it rides after the Honk proof -- so it is computed on a helper thread while the circuit
+/// is finished and proven, and joined when the proof is assembled.
+#[derive(Default)]
+pub enum IpaProof {
+    #[default]
+    None,
+    Ready(Vec<Fr>),
+    Pending(std::thread::JoinHandle<Vec<Fr>>),
+}
+
+impl IpaProof {
+    pub fn spawn(f: impl FnOnce() -> Vec<Fr> + Send + 'static) -> Self {
+        Self::Pending(std::thread::spawn(f))
+    }
+    pub fn is_some(&self) -> bool {
+        !matches!(self, Self::None)
+    }
+    /// The proof's fields (waiting for it if it is still being computed); empty for none.
+    pub fn take(&mut self) -> Vec<Fr> {
+        match std::mem::take(self) {
+            Self::None => vec![],
+            Self::Ready(v) => v,
+            Self::Pending(h) => h.join().unwrap_or_else(|e| std::panic::resume_unwind(e)),
+        }
+    }
+}
+
 /// bb `IPA::compute_opening_proof_internal` (single-round folds; bb's two-round variant is a
 /// wall-clock optimization with identical proof bytes).
 pub fn compute_opening_proof(ck: &GrumpkinKey, poly: &[Fq], challenge: &Fq, t: &mut NativeTranscript) {

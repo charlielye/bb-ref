@@ -81,7 +81,8 @@ fn mock_proof_fields(acir_public_inputs: usize, ipa: bool) -> Vec<Fr> {
         // bb runs `RollupIO::add_default` on a scratch builder and copies its public input values:
         // eight zeros then the random claim (challenge, evaluation, commitment halves).
         let scratch = Rc::new(RefCell::new(Builder::new()));
-        let (claim, _ipa_proof) = create_random_valid_ipa_claim_and_proof(&scratch, &GrumpkinKey::new(POLY_LENGTH));
+        let (claim, mut ipa_proof) = create_random_valid_ipa_claim_and_proof(&scratch, &GrumpkinKey::new(POLY_LENGTH));
+        ipa_proof.take();
         fields.extend(std::iter::repeat(Fr::from(0u64)).take(8));
         let v = claim.value();
         fields.extend(<Fq as Transcriptable<Fr>>::to_fields(&v.challenge));
@@ -333,8 +334,8 @@ pub fn process_honk_recursion_constraints(
         assert_eq!(accumulators.len(), 2, "root rollup must accumulate two IPA proofs");
         let a2 = accumulators.pop().unwrap();
         let a1 = accumulators.pop().unwrap();
-        let (claim, ipa_proof) = accumulate(&ck, a1, a2);
-        let proof_fields: Vec<FieldT> = ipa_proof.iter().map(|f| FieldT::from_witness(ctx, *f)).collect();
+        let (claim, mut ipa_proof) = accumulate(&ck, a1, a2);
+        let proof_fields: Vec<FieldT> = ipa_proof.take().iter().map(|f| FieldT::from_witness(ctx, *f)).collect();
         let mut t = StdlibTranscript::from_proof(&proof_fields);
         crate::rollup::ipa_recursive::full_verify_ct(ctx, &claim, &mut t, &ck);
         match points {

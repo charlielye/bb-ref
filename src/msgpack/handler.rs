@@ -250,10 +250,10 @@ fn circuit_prove_impl(cmd: BbCircuitProve, srs: &Srs) -> Result<BbCircuitProveRe
     crate::base::timing::phase("cmd: instance");
 
     // bb validates IO/IPA consistency after instance construction.
-    if ipa && inst.ipa_proof.is_empty() {
+    if ipa && !inst.ipa_proof.is_some() {
         return Err("RollupIO circuit expected IPA proof but none was provided. Ensure the circuit includes IPA accumulation data.".into());
     }
-    if !ipa && !inst.ipa_proof.is_empty() {
+    if !ipa && inst.ipa_proof.is_some() {
         return Err(
             "Non-rollup circuit should not have IPA proof. Use ipa_accumulation=true in settings for rollup circuits."
                 .into(),

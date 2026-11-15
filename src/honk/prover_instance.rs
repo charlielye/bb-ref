@@ -32,7 +32,7 @@ pub struct ProverInstance {
     pub memory_write_records: Vec<usize>,
     pub rom_logup_records: Vec<usize>,
     /// bb `builder.ipa_proof` (RollupIO circuits): appended verbatim after the Honk proof.
-    pub ipa_proof: Vec<Fr>,
+    pub ipa_proof: crate::rollup::ipa::IpaProof,
 }
 
 impl ProverInstance {
@@ -598,7 +598,7 @@ impl ProverInstance {
             memory_read_records: rebase(&builder.memory_read_records),
             memory_write_records: rebase(&builder.memory_write_records),
             rom_logup_records: rebase(&builder.rom_logup_records),
-            ipa_proof: builder.ipa_proof.clone(),
+            ipa_proof: std::mem::take(&mut builder.ipa_proof),
         }
     }
 
@@ -652,7 +652,7 @@ impl ProverInstance {
             memory_read_records: read_idx("memory_read_records.txt"),
             memory_write_records: read_idx("memory_write_records.txt"),
             rom_logup_records: read_idx("rom_logup_records.txt"),
-            ipa_proof: vec![],
+            ipa_proof: Default::default(),
         }
     }
 }
