@@ -200,7 +200,7 @@ rests on golf's own fixed-seed engine and is left out of the comparison build.
 | 045 | rollup-c7i | perf(trace): copy selectors in row-chunk tasks | HAVE | `prover_instance.rs` CSR copy cycles and row-chunk selectors in parallel |
 | 046 | rollup-c7i | perf(srs): read and parse the cached Grumpkin CRS in parallel | SKIP | Grumpkin CRS parse, once per server life |
 | 047 | rollup-c7i | perf(ipa): convert the random opening's draws to field elements in parallel | SKIP | IPA random-opening draws / blocked fold scratch: <0.1% or memory-only |
-| 048 | rollup-c7i | perf(ipa): compute the native IPA opening proof of a rollup circuit in the background | REJECTED | profiled: `rec: ipa claim+proof` is 1.2% of the rollup replay, the most a background proof could hide |
+| 048 | rollup-c7i | perf(ipa): compute the native IPA opening proof of a rollup circuit in the background | PORTED | `rollup/ipa.rs` `IpaProof` (f62bae6): block roots 0.97-0.98x, merges 0.98-1.00x. First rejected on a profiled ceiling (1.2% of the replay) that held for the corpus but not per circuit |
 | 049 | rollup-c7i | perf(ipa): fold the SRS in blocks to bound the fold's scratch memory | SKIP | IPA random-opening draws / blocked fold scratch: <0.1% or memory-only |
 | 050 | rollup-c7i | test(common): cover DeferredValue's joins, shared result, exceptions and thread count | NA | tests only |
 | 051 | rollup-c7i | fix(srs): honour BB_VERIFY_CRS in the BN254 loader, as v6.0.0 does | PORTED | `base/srs.rs` `load_bn254_g1_verified` (security parity with v6.0.0; proofs unchanged) |
